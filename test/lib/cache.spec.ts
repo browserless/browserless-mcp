@@ -68,4 +68,37 @@ describe('ResponseCache', () => {
     expect(cache.get('key1')).to.equal('new');
     expect(cache.size).to.equal(1);
   });
+
+  it('sweep removes expired entries automatically', () => {
+    const cache = new ResponseCache(1000);
+    cache.set('a', 1);
+    cache.set('b', 2);
+    expect(cache.size).to.equal(2);
+
+    // Advance past TTL but before sweep interval (ttl * 2)
+    clock.tick(1001);
+    expect(cache.size).to.equal(2); // still in map, just expired
+
+    // Advance to trigger sweep (ttl * 2 = 2000ms total)
+    clock.tick(999);
+    expect(cache.size).to.equal(0); // sweep ran, entries removed
+  });
+
+  it('dispose clears entries and stops sweep timer', () => {
+    const cache = new ResponseCache(1000);
+    cache.set('key1', 'value');
+    expect(cache.size).to.equal(1);
+
+    cache.dispose();
+    expect(cache.size).to.equal(0);
+  });
+
+  it('does not start sweep timer when ttl is 0', () => {
+    const cache = new ResponseCache(0);
+    cache.set('key1', 'value');
+    clock.tick(100000);
+    // No sweep runs, entry stays (ttl=0 means cache is effectively disabled on get anyway)
+    expect(cache.size).to.equal(1);
+    cache.dispose();
+  });
 });
