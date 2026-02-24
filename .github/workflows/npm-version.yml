@@ -60,6 +60,6 @@ jobs:
 
       - name: Push version and tag
         run: |
-          npm version ${{ github.event.inputs.version }}
+          npm version ${{ github.event.inputs.version }} --force
           git push
           git push --tags
