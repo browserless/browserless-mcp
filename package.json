@@ -1,0 +1,55 @@
+{
+  "name": "browserless-mcp",
+  "version": "0.1.0",
+  "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
+  "author": "browserless.io",
+  "license": "SSPL-1.0",
+  "type": "module",
+  "main": "./build/src/index.js",
+  "types": "./build/src/index.d.ts",
+  "bin": {
+    "browserless-mcp": "./bin/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./build/src/index.d.ts",
+      "import": "./build/src/index.js"
+    }
+  },
+  "files": [
+    "build/src/**/*.js",
+    "build/src/**/*.d.ts",
+    "bin/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf build",
+    "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",
+    "lint": "eslint src test --ext .ts",
+    "test": "npm run build && mocha",
+    "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
+    "start": "node build/src/index.js",
+    "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "fastmcp": "^3.33.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.13.4",
+    "@types/sinon": "^17.0.4",
+    "c8": "^10.1.3",
+    "chai": "^5.2.0",
+    "eslint": "^9.20.0",
+    "mocha": "^11.1.0",
+    "sinon": "^19.0.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

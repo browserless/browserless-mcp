@@ -1,0 +1,10 @@
+src/
+test/
+build/test/
+docker/
+.mocharc.yml
+.github/
+tsconfig.json
+.eslintrc.*
+.prettierrc.*
+coverage/

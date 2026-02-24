@@ -1,0 +1,5 @@
+extension:
+  - js
+spec: build/test/**/*.spec.js
+timeout: 15000
+slow: 3000
