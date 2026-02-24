@@ -1,6 +1,6 @@
 {
   "name": "browserless-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
   "license": "SSPL-1.0",
