@@ -55,6 +55,7 @@ if (config.transport === 'httpStream') {
     transportType: 'httpStream',
     httpStream: {
       port: config.port,
+      host: '0.0.0.0',
     },
   });
   console.error(

@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "rootDirs": ["src", "test"],
+    "rootDir": ".",
     "outDir": "build",
     "baseUrl": ".",
     "module": "es2022",
