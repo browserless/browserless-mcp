@@ -1,13 +1,11 @@
 import type { McpConfig } from '../config.js';
-import type { PowerScraperResponse } from '../tools/schemas.js';
+import type { PowerScraperResponse, ScrapeFormat } from '../tools/schemas.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
 
 export interface PowerScrapeRequest {
   url: string;
-  screenshot?: boolean;
-  pdf?: boolean;
-  markdown?: boolean;
+  formats?: ScrapeFormat[];
   timeout?: number;
 }
 
@@ -23,11 +21,10 @@ export function createApiClient(config: McpConfig): ApiClient {
     async powerScrape(
       params: PowerScrapeRequest,
     ): Promise<PowerScraperResponse> {
+      const formats = params.formats ?? ['markdown'];
       const cacheKey = JSON.stringify({
         url: params.url,
-        screenshot: params.screenshot ?? false,
-        pdf: params.pdf ?? false,
-        markdown: params.markdown ?? true,
+        formats: [...formats].sort(),
       });
 
       const cached = cache.get<PowerScraperResponse>(cacheKey);
@@ -41,13 +38,11 @@ export function createApiClient(config: McpConfig): ApiClient {
         timeout: String(timeout),
       });
 
-      const apiUrl = `${config.browserlessApiUrl}?${queryParams.toString()}`;
+      const apiUrl = `${config.browserlessApiUrl}/power-scrape?${queryParams.toString()}`;
 
       const body = {
         url: params.url,
-        screenshot: params.screenshot,
-        pdf: params.pdf,
-        markdown: params.markdown,
+        formats,
       };
 
       const result = await retryWithBackoff(

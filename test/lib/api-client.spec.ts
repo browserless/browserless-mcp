@@ -25,6 +25,7 @@ const mockSuccessResponse = {
   screenshot: null,
   pdf: null,
   markdown: '# Hello',
+  links: null,
 };
 
 describe('createApiClient', () => {
@@ -39,7 +40,7 @@ describe('createApiClient', () => {
   });
 
   describe('powerScrape', () => {
-    it('sends correct request to the API', async () => {
+    it('sends correct request to the /power-scrape endpoint', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {
           status: 200,
@@ -52,13 +53,13 @@ describe('createApiClient', () => {
 
       expect(fetchStub.calledOnce).to.be.true;
       const [url, options] = fetchStub.firstCall.args;
-      expect(url).to.include('https://api.example.com');
+      expect(url).to.include('https://api.example.com/power-scrape');
       expect(url).to.include('token=test-token');
       expect(url).to.include('timeout=30000');
       expect(options.method).to.equal('POST');
-      expect(JSON.parse(options.body)).to.deep.include({
-        url: 'https://example.com',
-      });
+      const body = JSON.parse(options.body);
+      expect(body.url).to.equal('https://example.com');
+      expect(body.formats).to.deep.equal(['markdown']);
     });
 
     it('returns parsed response', async () => {
@@ -77,6 +78,7 @@ describe('createApiClient', () => {
       expect(result.ok).to.be.true;
       expect(result.strategy).to.equal('http-fetch');
       expect(result.markdown).to.equal('# Hello');
+      expect(result.links).to.be.null;
     });
 
     it('uses custom timeout from params', async () => {
@@ -129,7 +131,7 @@ describe('createApiClient', () => {
       expect(fetchStub.calledTwice).to.be.true;
     });
 
-    it('forwards screenshot/pdf/markdown params', async () => {
+    it('forwards formats array in request body', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {
           status: 200,
@@ -140,15 +142,16 @@ describe('createApiClient', () => {
       const client = createApiClient(mockConfig);
       await client.powerScrape({
         url: 'https://example.com',
-        screenshot: true,
-        pdf: true,
-        markdown: false,
+        formats: ['markdown', 'screenshot', 'pdf', 'links'],
       });
 
       const body = JSON.parse(fetchStub.firstCall.args[1].body);
-      expect(body.screenshot).to.be.true;
-      expect(body.pdf).to.be.true;
-      expect(body.markdown).to.be.false;
+      expect(body.formats).to.deep.equal([
+        'markdown',
+        'screenshot',
+        'pdf',
+        'links',
+      ]);
     });
 
     it('throws on 500 errors', async () => {

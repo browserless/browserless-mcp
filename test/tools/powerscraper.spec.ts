@@ -27,6 +27,7 @@ const makeSuccessResponse = (overrides = {}) => ({
   screenshot: null,
   pdf: null,
   markdown: '# Hello World',
+  links: null,
   ...overrides,
 });
 
@@ -42,6 +43,7 @@ const makeFailResponse = (overrides = {}) => ({
   screenshot: null,
   pdf: null,
   markdown: null,
+  links: null,
   ...overrides,
 });
 
@@ -97,9 +99,7 @@ describe('browserless_powerscraper tool', () => {
     const result = await execute(
       {
         url: 'https://example.com',
-        screenshot: false,
-        pdf: false,
-        markdown: true,
+        formats: ['markdown'],
       },
       mockContext,
     );
@@ -135,9 +135,7 @@ describe('browserless_powerscraper tool', () => {
       await execute(
         {
           url: 'https://blocked-site.com',
-          screenshot: false,
-          pdf: false,
-          markdown: true,
+          formats: ['markdown'],
         },
         mockContext,
       );
@@ -157,9 +155,7 @@ describe('browserless_powerscraper tool', () => {
       await execute(
         {
           url: 'ftp://example.com/file',
-          screenshot: false,
-          pdf: false,
-          markdown: true,
+          formats: ['markdown'],
         },
         mockContext,
       );
@@ -191,9 +187,7 @@ describe('browserless_powerscraper tool', () => {
     const result = await execute(
       {
         url: 'https://example.com',
-        screenshot: true,
-        pdf: false,
-        markdown: true,
+        formats: ['markdown', 'screenshot'],
       },
       mockContext,
     );
@@ -231,9 +225,7 @@ describe('browserless_powerscraper tool', () => {
     const result = await execute(
       {
         url: 'https://example.com',
-        screenshot: false,
-        pdf: true,
-        markdown: true,
+        formats: ['markdown', 'pdf'],
       },
       mockContext,
     );
@@ -248,6 +240,46 @@ describe('browserless_powerscraper tool', () => {
     expect(
       (pdfBlock as { text: string }).text,
     ).to.include('JVBERi0xLjQK');
+  });
+
+  it('includes links as text content block', async () => {
+    const mockLinks = [
+      'https://example.com/about',
+      'https://example.com/contact',
+    ];
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({ links: mockLinks }),
+        ),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    const result = await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown', 'links'],
+      },
+      mockContext,
+    );
+
+    const content = (result as { content: Content[] }).content;
+    const linksBlock = content.find(
+      (c: Content) =>
+        c.type === 'text' &&
+        (c as { text: string }).text.includes('Links (2)'),
+    );
+    expect(linksBlock).to.exist;
+    const text = (linksBlock as { text: string }).text;
+    expect(text).to.include('https://example.com/about');
+    expect(text).to.include('https://example.com/contact');
   });
 
   it('falls back to raw HTML when markdown is null', async () => {
@@ -269,9 +301,7 @@ describe('browserless_powerscraper tool', () => {
     const result = await execute(
       {
         url: 'https://example.com',
-        screenshot: false,
-        pdf: false,
-        markdown: true,
+        formats: ['html'],
       },
       mockContext,
     );
@@ -305,9 +335,7 @@ describe('browserless_powerscraper tool', () => {
     const result = await execute(
       {
         url: 'https://example.com/api',
-        screenshot: false,
-        pdf: false,
-        markdown: true,
+        formats: ['html'],
       },
       mockContext,
     );
@@ -340,9 +368,7 @@ describe('browserless_powerscraper tool', () => {
     const result = await execute(
       {
         url: 'https://example.com',
-        screenshot: false,
-        pdf: false,
-        markdown: true,
+        formats: ['markdown'],
       },
       mockContext,
     );
@@ -367,9 +393,7 @@ describe('browserless_powerscraper tool', () => {
     await execute(
       {
         url: 'https://example.com',
-        screenshot: false,
-        pdf: false,
-        markdown: true,
+        formats: ['markdown'],
       },
       mockContext,
     );

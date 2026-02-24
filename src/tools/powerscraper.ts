@@ -12,9 +12,8 @@ export function registerPowerScraperTool(
     name: 'browserless_powerscraper',
     description:
       'Scrape any webpage using the Browserless power scraper. ' +
-      'Returns page content, optionally as markdown, with optional ' +
-      'screenshot (PNG) and PDF. Handles JavaScript-heavy pages, ' +
-      'anti-bot measures, and multiple scraping strategies automatically.',
+      'Returns page content in requested formats (markdown, html, screenshot, pdf, links). ' +
+      'Handles JavaScript-heavy pages, anti-bot measures, and multiple scraping strategies automatically.',
     parameters: PowerScraperParamsSchema,
     annotations: {
       title: 'Browserless Power Scraper',
@@ -52,9 +51,7 @@ export function registerPowerScraperTool(
 
       const response = await client.powerScrape({
         url: args.url,
-        screenshot: args.screenshot,
-        pdf: args.pdf,
-        markdown: args.markdown,
+        formats: args.formats,
         timeout: args.timeout,
       });
 
@@ -76,6 +73,7 @@ export function registerPowerScraperTool(
 
       const contentBlocks: Content[] = [];
 
+      // Primary text content: prefer markdown > string content > object content > diagnostic
       let textContent: string;
       if (response.markdown) {
         textContent = response.markdown;
@@ -98,6 +96,7 @@ export function registerPowerScraperTool(
         text: textContent,
       });
 
+      // Metadata block
       contentBlocks.push({
         type: 'text' as const,
         text: [
@@ -110,6 +109,7 @@ export function registerPowerScraperTool(
         ].join('\n'),
       });
 
+      // Screenshot
       if (response.screenshot) {
         contentBlocks.push({
           type: 'image' as const,
@@ -118,10 +118,19 @@ export function registerPowerScraperTool(
         });
       }
 
+      // PDF
       if (response.pdf) {
         contentBlocks.push({
           type: 'text' as const,
           text: `[PDF Document - base64 encoded, ${response.pdf.length} characters]\n${response.pdf}`,
+        });
+      }
+
+      // Links
+      if (response.links && response.links.length > 0) {
+        contentBlocks.push({
+          type: 'text' as const,
+          text: `## Links (${response.links.length})\n${response.links.join('\n')}`,
         });
       }
 

@@ -1,24 +1,30 @@
 import { z } from 'zod';
 
+/**
+ * Output formats that can be requested.
+ * Mirrors the Firecrawl "formats" convention used by the enterprise API.
+ */
+export const ScrapeFormatSchema = z.enum([
+  'markdown',
+  'html',
+  'screenshot',
+  'pdf',
+  'links',
+]);
+
+export type ScrapeFormat = z.infer<typeof ScrapeFormatSchema>;
+
 export const PowerScraperParamsSchema = z.object({
   url: z
     .url()
     .describe('The URL to scrape (must be http or https)'),
-  screenshot: z
-    .boolean()
+  formats: z
+    .array(ScrapeFormatSchema)
     .optional()
-    .default(false)
-    .describe('Return a base64-encoded PNG screenshot of the page'),
-  pdf: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe('Return a base64-encoded PDF of the page'),
-  markdown: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe('Convert page content to markdown'),
+    .default(['markdown'])
+    .describe(
+      'Output formats to include: "markdown", "html", "screenshot", "pdf", "links". Defaults to ["markdown"].',
+    ),
   timeout: z
     .number()
     .int()
@@ -41,6 +47,7 @@ export const PowerScraperResponseSchema = z.object({
   screenshot: z.string().nullable(),
   pdf: z.string().nullable(),
   markdown: z.string().nullable(),
+  links: z.array(z.string()).nullable(),
 });
 
 export type PowerScraperResponse = z.infer<

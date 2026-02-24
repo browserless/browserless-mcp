@@ -18,7 +18,9 @@ export function registerScrapeUrlPrompt(server: FastMCP): void {
       },
     ],
     load: async ({ url, includeScreenshot }) => {
-      const screenshot = includeScreenshot === 'true';
+      const formats = includeScreenshot === 'true'
+        ? '["markdown", "screenshot"]'
+        : '["markdown"]';
       return {
         messages: [
           {
@@ -27,7 +29,7 @@ export function registerScrapeUrlPrompt(server: FastMCP): void {
               type: 'text' as const,
               text:
                 `Use the browserless_powerscraper tool to scrape the following URL: ${url}\n` +
-                `Options: markdown=true, screenshot=${screenshot}\n` +
+                `Options: formats=${formats}\n` +
                 'Return the markdown content and summarize the key information found on the page.',
             },
           },

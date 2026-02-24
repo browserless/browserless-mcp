@@ -12,7 +12,7 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 
 | Tool | Description |
 |------|-------------|
-| `browserless_powerscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content as markdown, with optional screenshot and PDF. |
+| `browserless_powerscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
 
 ## Configuration
 

@@ -26,7 +26,7 @@ describe('Prompts', () => {
       const msg = messages[0] as { role: string; content: { type: string; text: string } };
       expect(msg.role).to.equal('user');
       expect(msg.content.text).to.include('https://example.com');
-      expect(msg.content.text).to.include('screenshot=false');
+      expect(msg.content.text).to.include('formats=["markdown"]');
     });
 
     it('load handles includeScreenshot=true', async () => {
@@ -41,7 +41,7 @@ describe('Prompts', () => {
 
       const messages = (result as { messages: unknown[] }).messages;
       const msg = messages[0] as { role: string; content: { type: string; text: string } };
-      expect(msg.content.text).to.include('screenshot=true');
+      expect(msg.content.text).to.include('formats=["markdown", "screenshot"]');
     });
   });
 
