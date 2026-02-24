@@ -2,12 +2,15 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { PowerScraperParamsSchema } from './schemas.js';
 import { createApiClient } from '../lib/api-client.js';
+import { ResponseCache } from '../lib/cache.js';
 import type { McpConfig } from '../config.js';
 
 export function registerPowerScraperTool(
   server: FastMCP,
   config: McpConfig,
 ): void {
+  const cache = new ResponseCache(config.cacheTtlMs);
+
   server.addTool({
     name: 'browserless_powerscraper',
     description:
@@ -47,7 +50,7 @@ export function registerPowerScraperTool(
         ...config,
         browserlessToken: token,
         browserlessApiUrl: apiUrl,
-      });
+      }, cache);
 
       const response = await client.powerScrape({
         url: args.url,

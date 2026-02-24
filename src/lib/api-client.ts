@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto';
 import type { McpConfig } from '../config.js';
 import type { PowerScraperResponse, ScrapeFormat } from '../tools/schemas.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
+
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 16);
+}
 
 export interface PowerScrapeRequest {
   url: string;
@@ -14,20 +19,25 @@ export interface ApiClient {
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
-export function createApiClient(config: McpConfig): ApiClient {
-  const cache = new ResponseCache(config.cacheTtlMs);
+export function createApiClient(
+  config: McpConfig,
+  cache?: ResponseCache,
+): ApiClient {
+  const _cache = cache ?? new ResponseCache(config.cacheTtlMs);
 
   return {
     async powerScrape(
       params: PowerScrapeRequest,
     ): Promise<PowerScraperResponse> {
       const formats = params.formats ?? ['markdown'];
+      const tokenHash = hashToken(config.browserlessToken!);
       const cacheKey = JSON.stringify({
+        t: tokenHash,
         url: params.url,
         formats: [...formats].sort(),
       });
 
-      const cached = cache.get<PowerScraperResponse>(cacheKey);
+      const cached = _cache.get<PowerScraperResponse>(cacheKey);
       if (cached) {
         return cached;
       }
@@ -81,7 +91,7 @@ export function createApiClient(config: McpConfig): ApiClient {
         },
       );
 
-      cache.set(cacheKey, result);
+      _cache.set(cacheKey, result);
       return result;
     },
 
