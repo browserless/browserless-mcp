@@ -1,0 +1,65 @@
+name: Version Browserless MCP
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version you want to set ex. major.minor.patch'
+        type: choice
+        options:
+        - minor
+        - patch
+        - major
+        required: true
+      changelog:
+        description: 'Changelog entry in markdown format (optional)'
+        type: string
+        required: false
+jobs:
+  publish-new-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if branch is not main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "This workflow should be triggered on main branch"
+          exit 1
+
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.BROWSERLESS_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.BROWSERLESS_ACTIONS_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set User
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update changelog
+        if: github.event.inputs.changelog != ''
+        env:
+          CHANGELOG_ENTRY: ${{ github.event.inputs.changelog }}
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          NEW_VERSION=$(npx semver -i ${{ github.event.inputs.version }} $CURRENT)
+          node -e "
+            const fs = require('fs');
+            const entry = process.env.CHANGELOG_ENTRY;
+            const version = '${NEW_VERSION}';
+            let content = fs.readFileSync('CHANGELOG.md', 'utf8');
+            const newSection = '\n\n# v' + version + '\n' + entry;
+            content = content.replace(/^# Latest$/m, '# Latest' + newSection);
+            fs.writeFileSync('CHANGELOG.md', content);
+          "
+          git add CHANGELOG.md
+
+      - name: Push version and tag
+        run: |
+          npm version ${{ github.event.inputs.version }}
+          git push
+          git push --tags

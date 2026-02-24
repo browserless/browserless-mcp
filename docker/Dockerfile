@@ -11,7 +11,7 @@ RUN npm run build && npm prune --production
 
 FROM node:24-slim
 
-LABEL org.opencontainers.image.source=https://github.com/browserless/browserless
+LABEL org.opencontainers.image.source=https://github.com/browserless/browserless-mcp
 LABEL org.opencontainers.image.description="Browserless MCP Server"
 
 WORKDIR /app
