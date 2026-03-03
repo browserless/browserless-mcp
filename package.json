@@ -34,6 +34,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1000.0",
     "fastmcp": "^3.33.0",
     "zod": "^4.1.13"
   },

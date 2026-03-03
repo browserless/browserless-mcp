@@ -13,6 +13,8 @@ const mockConfig: McpConfig = {
   requestTimeout: 30000,
   maxRetries: 0,
   cacheTtlMs: 0,
+  analyticsEnabled: false,
+  sqsRegion: 'us-east-1',
 };
 
 const makeSuccessResponse = (overrides = {}) => ({

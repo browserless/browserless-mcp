@@ -104,17 +104,52 @@ Add to your Windsurf MCP configuration:
 
 ### Remote (HTTP Stream)
 
-For hosted deployments or Docker:
+For hosted deployments or Docker, the server supports authentication via headers or URL query parameters.
+
+**Using headers** (recommended for clients that support them):
 
 ```json
 {
   "mcpServers": {
     "browserless": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      }
     }
   }
 }
 ```
+
+To connect to a specific Browserless regional endpoint, add the `x-browserless-api-url` header:
+
+```json
+{
+  "mcpServers": {
+    "browserless": {
+      "url": "http://your-mcp-host:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here",
+        "x-browserless-api-url": "https://production-lon.browserless.io"
+      }
+    }
+  }
+}
+```
+
+**Using URL query parameters** (for clients like Claude.ai custom connectors that only accept a URL):
+
+```text
+https://your-mcp-host:8080/mcp?token=your-token-here
+```
+
+To also specify a regional endpoint:
+
+```text
+https://your-mcp-host:8080/mcp?token=your-token-here&browserlessUrl=https://production-lon.browserless.io
+```
+
+When both headers and query parameters are present, headers take precedence.
 
 ## Docker
 
