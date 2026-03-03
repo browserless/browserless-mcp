@@ -6,8 +6,14 @@ import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
+import { AmplitudeHelper } from './lib/amplitude.js';
 
 const config = getConfig();
+const amplitude = new AmplitudeHelper(
+  config.analyticsEnabled,
+  config.sqsQueueUrl,
+  config.sqsRegion,
+);
 
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
@@ -34,7 +40,7 @@ const server = new FastMCP<BrowserlessSession>({
       : undefined,
 });
 
-registerPowerScraperTool(server, config);
+registerPowerScraperTool(server, config, amplitude);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
 registerScrapeUrlPrompt(server);

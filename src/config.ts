@@ -13,6 +13,9 @@ export interface McpConfig {
   requestTimeout: number;
   maxRetries: number;
   cacheTtlMs: number;
+  analyticsEnabled: boolean;
+  sqsQueueUrl?: string;
+  sqsRegion: string;
 }
 
 export function getConfig(): McpConfig {
@@ -32,5 +35,8 @@ export function getConfig(): McpConfig {
       process.env.BROWSERLESS_CACHE_TTL ?? '60000',
       10,
     ),
+    analyticsEnabled: process.env.ANALYTICS_ENABLED === 'true',
+    sqsQueueUrl: process.env.SQS_QUEUE_URL,
+    sqsRegion: process.env.SQS_REGION ?? 'us-west-2',
   };
 }

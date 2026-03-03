@@ -104,13 +104,32 @@ Add to your Windsurf MCP configuration:
 
 ### Remote (HTTP Stream)
 
-For hosted deployments or Docker:
+For hosted deployments or Docker, the server authenticates via the `Authorization` header. Pass your Browserless API token as a Bearer token:
 
 ```json
 {
   "mcpServers": {
     "browserless": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      }
+    }
+  }
+}
+```
+
+To connect to an specific Browserless instance through the same MCP server, add the `x-browserless-api-url` header:
+
+```json
+{
+  "mcpServers": {
+    "browserless": {
+      "url": "http://your-mcp-host:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here",
+        "x-browserless-api-url": "https://your-browserless-instance.example.com"
+      }
     }
   }
 }

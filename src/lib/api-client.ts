@@ -14,8 +14,10 @@ export interface PowerScrapeRequest {
   timeout?: number;
 }
 
+export type PowerScrapeResult = PowerScraperResponse & { cacheHit: boolean };
+
 export interface ApiClient {
-  powerScrape(params: PowerScrapeRequest): Promise<PowerScraperResponse>;
+  powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -28,7 +30,7 @@ export function createApiClient(
   return {
     async powerScrape(
       params: PowerScrapeRequest,
-    ): Promise<PowerScraperResponse> {
+    ): Promise<PowerScrapeResult> {
       const formats = params.formats ?? ['markdown'];
       const tokenHash = hashToken(config.browserlessToken!);
       const cacheKey = JSON.stringify({
@@ -39,7 +41,7 @@ export function createApiClient(
 
       const cached = _cache.get<PowerScraperResponse>(cacheKey);
       if (cached) {
-        return cached;
+        return { ...cached, cacheHit: true };
       }
 
       const timeout = params.timeout ?? config.requestTimeout;
@@ -92,7 +94,7 @@ export function createApiClient(
       );
 
       _cache.set(cacheKey, result);
-      return result;
+      return { ...result, cacheHit: false };
     },
 
     async getStatus(): Promise<{ ok: boolean; message: string }> {

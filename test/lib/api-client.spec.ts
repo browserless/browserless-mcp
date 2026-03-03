@@ -11,6 +11,8 @@ const mockConfig: McpConfig = {
   requestTimeout: 30000,
   maxRetries: 0,
   cacheTtlMs: 60000,
+  analyticsEnabled: false,
+  sqsRegion: 'us-east-1',
 };
 
 const mockSuccessResponse = {
@@ -79,6 +81,7 @@ describe('createApiClient', () => {
       expect(result.strategy).to.equal('http-fetch');
       expect(result.markdown).to.equal('# Hello');
       expect(result.links).to.be.null;
+      expect(result.cacheHit).to.be.false;
     });
 
     it('uses custom timeout from params', async () => {
@@ -108,10 +111,12 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      await client.powerScrape({ url: 'https://example.com' });
-      await client.powerScrape({ url: 'https://example.com' });
+      const first = await client.powerScrape({ url: 'https://example.com' });
+      const second = await client.powerScrape({ url: 'https://example.com' });
 
       expect(fetchStub.calledOnce).to.be.true;
+      expect(first.cacheHit).to.be.false;
+      expect(second.cacheHit).to.be.true;
     });
 
     it('does not cache different requests', async () => {
