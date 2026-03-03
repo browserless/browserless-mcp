@@ -1,5 +1,9 @@
 # Latest
 
+# v0.2.0
+* Amplitude Events 
+ * Suport token param in URL
+
 # v0.1.2
 * Fix vulnerabilities
 
