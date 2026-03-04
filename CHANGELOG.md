@@ -1,5 +1,8 @@
 # Latest
 
+# v0.3.0
+* replace power-scrape with smart-scrape endpoint
+
 # v0.2.0
 * Amplitude Events 
  * Suport token param in URL
