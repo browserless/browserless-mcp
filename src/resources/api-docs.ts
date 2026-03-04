@@ -12,10 +12,10 @@ export function registerApiDocsResource(
     async load() {
       return {
         text: [
-          '# Browserless Power Scraper API',
+          '# Browserless Smart Scraper API',
           '',
           '## Endpoint',
-          `POST ${config.browserlessApiUrl}/power-scrape`,
+          `POST ${config.browserlessApiUrl}/smart-scrape`,
           '',
           '## Authentication',
           'Pass your API token as the `token` query parameter or via the `Authorization: Bearer <token>` header.',
@@ -41,7 +41,7 @@ export function registerApiDocsResource(
           'Returns JSON with fields: ok, statusCode, content, contentType, headers, strategy, attempted, message, screenshot, pdf, markdown, links.',
           '',
           '## Scraping Strategies',
-          'The power scraper automatically cascades through multiple strategies:',
+          'The smart scraper automatically cascades through multiple strategies:',
           '1. HTTP fetch (fast, no browser)',
           '2. HTTP fetch with proxy',
           '3. Headless browser',

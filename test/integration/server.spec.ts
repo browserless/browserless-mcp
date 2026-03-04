@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
-import { registerPowerScraperTool } from '../../src/tools/powerscraper.js';
+import { registerPowerScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
 import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';

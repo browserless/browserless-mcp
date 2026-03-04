@@ -14,14 +14,14 @@ export function registerPowerScraperTool(
   const cache = new ResponseCache(config.cacheTtlMs);
 
   server.addTool({
-    name: 'browserless_powerscraper',
+    name: 'browserless_smartscraper',
     description:
-      'Scrape any webpage using the Browserless power scraper. ' +
+      'Scrape any webpage using the Browserless smart scraper. ' +
       'Returns page content in requested formats (markdown, html, screenshot, pdf, links). ' +
       'Handles JavaScript-heavy pages, anti-bot measures, and multiple scraping strategies automatically.',
     parameters: PowerScraperParamsSchema,
     annotations: {
-      title: 'Browserless Power Scraper',
+      title: 'Browserless Smart Scraper',
       readOnlyHint: true,
       openWorldHint: true,
     },
@@ -65,7 +65,7 @@ export function registerPowerScraperTool(
       // Fire-and-forget analytics event
       amplitude?.send('MCP Tool Request', djb2(token), {
         token,
-        tool: 'browserless_powerscraper',
+        tool: 'browserless_smartscraper',
         url: args.url,
         formats: (args.formats ?? ['markdown']).join(','),
         timeout: args.timeout ?? config.requestTimeout,

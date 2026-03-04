@@ -4,7 +4,7 @@ export function registerExtractContentPrompt(server: FastMCP): void {
   server.addPrompt({
     name: 'extract-content',
     description:
-      'Extract specific information from a webpage using the power scraper',
+      'Extract specific information from a webpage using the smart scraper',
     arguments: [
       {
         name: 'url',
@@ -25,7 +25,7 @@ export function registerExtractContentPrompt(server: FastMCP): void {
             content: {
               type: 'text' as const,
               text:
-                `Use the browserless_powerscraper tool to scrape: ${url}\n` +
+                `Use the browserless_smartscraper tool to scrape: ${url}\n` +
                 `Then extract the following information: ${instructions}\n` +
                 'Return the extracted information in a structured format.',
             },

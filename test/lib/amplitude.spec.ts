@@ -37,7 +37,7 @@ describe('AmplitudeHelper', () => {
     const helper = new AmplitudeHelper(true, 'https://sqs.example.com/queue', 'us-east-1');
     const result = await helper.send('MCP Tool Request', 12345, {
       token: 'test-token',
-      tool: 'browserless_powerscraper',
+      tool: 'browserless_smartscraper',
       url: 'https://example.com',
     });
 
@@ -55,7 +55,7 @@ describe('AmplitudeHelper', () => {
     expect(event.event_type).to.equal('MCP Tool Request');
     expect(event.session_id).to.equal(12345);
     expect(event.event_properties.token).to.equal('test-token');
-    expect(event.event_properties.tool).to.equal('browserless_powerscraper');
+    expect(event.event_properties.tool).to.equal('browserless_smartscraper');
     expect(event.event_properties.url).to.equal('https://example.com');
     expect(event.time).to.be.a('number');
   });

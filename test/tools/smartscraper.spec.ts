@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { registerPowerScraperTool } from '../../src/tools/powerscraper.js';
+import { registerPowerScraperTool } from '../../src/tools/smartscraper.js';
 import type { McpConfig } from '../../src/config.js';
 
 const mockConfig: McpConfig = {
@@ -62,7 +62,7 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
 };
 
-describe('browserless_powerscraper tool', () => {
+describe('browserless_smartscraper tool', () => {
   let fetchStub: sinon.SinonStub;
 
   beforeEach(() => {

@@ -28,7 +28,7 @@ export function registerScrapeUrlPrompt(server: FastMCP): void {
             content: {
               type: 'text' as const,
               text:
-                `Use the browserless_powerscraper tool to scrape the following URL: ${url}\n` +
+                `Use the browserless_smartscraper tool to scrape the following URL: ${url}\n` +
                 `Options: formats=${formats}\n` +
                 'Return the markdown content and summarize the key information found on the page.',
             },

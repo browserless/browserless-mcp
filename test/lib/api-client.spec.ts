@@ -42,7 +42,7 @@ describe('createApiClient', () => {
   });
 
   describe('powerScrape', () => {
-    it('sends correct request to the /power-scrape endpoint', async () => {
+    it('sends correct request to the /smart-scrape endpoint', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {
           status: 200,
@@ -55,7 +55,7 @@ describe('createApiClient', () => {
 
       expect(fetchStub.calledOnce).to.be.true;
       const [url, options] = fetchStub.firstCall.args;
-      expect(url).to.include('https://api.example.com/power-scrape');
+      expect(url).to.include('https://api.example.com/smart-scrape');
       expect(url).to.include('token=test-token');
       expect(url).to.include('timeout=30000');
       expect(options.method).to.equal('POST');
