@@ -39,7 +39,7 @@ describe('Resources', () => {
       const result = await resource.load();
 
       const text = (result as { text: string }).text;
-      expect(text).to.include('# Browserless Power Scraper API');
+      expect(text).to.include('# Browserless Smart Scraper API');
       expect(text).to.include('https://api.example.com');
       expect(text).to.include('url');
       expect(text).to.include('screenshot');

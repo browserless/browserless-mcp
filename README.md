@@ -1,6 +1,6 @@
 # browserless-mcp
 
-MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io) — expose the Browserless power scraper API to LLM clients like Claude Desktop, Cursor, VS Code, and Windsurf.
+MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io) — expose the Browserless smart scraper API to LLM clients like Claude Desktop, Cursor, VS Code, and Windsurf.
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 
 | Tool | Description |
 |------|-------------|
-| `browserless_powerscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
+| `browserless_smartscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
 
 ## Configuration
 
@@ -173,7 +173,7 @@ npx browserless-mcp
 
 | Resource URI | Description |
 |-------------|-------------|
-| `browserless://api-docs` | Power scraper API documentation |
+| `browserless://api-docs` | Smart scraper API documentation |
 | `browserless://status` | Live service health status |
 
 ## MCP Prompts

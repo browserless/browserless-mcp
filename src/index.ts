@@ -1,7 +1,7 @@
 import { FastMCP } from 'fastmcp';
 import { getConfig } from './config.js';
 import type { BrowserlessSession } from './config.js';
-import { registerPowerScraperTool } from './tools/powerscraper.js';
+import { registerPowerScraperTool } from './tools/smartscraper.js';
 import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';

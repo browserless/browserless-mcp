@@ -50,7 +50,7 @@ export function createApiClient(
         timeout: String(timeout),
       });
 
-      const apiUrl = `${config.browserlessApiUrl}/power-scrape?${queryParams.toString()}`;
+      const apiUrl = `${config.browserlessApiUrl}/smart-scrape?${queryParams.toString()}`;
 
       const body = {
         url: params.url,
