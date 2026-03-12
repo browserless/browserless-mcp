@@ -177,6 +177,220 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('runFunction', () => {
+    it('sends correct request to the /function endpoint', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify({ books: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.runFunction({
+        code: 'export default async ({ page }) => ({ data: {}, type: "application/json" })',
+        context: { page: 1 },
+      });
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const [url, options] = fetchStub.firstCall.args;
+      expect(url).to.include('https://api.example.com/function');
+      expect(url).to.include('token=test-token');
+      expect(options.method).to.equal('POST');
+      const body = JSON.parse(options.body);
+      expect(body.code).to.be.a('string');
+      expect(body.context).to.deep.equal({ page: 1 });
+    });
+
+    it('returns GenericApiResult with text data for JSON responses', async () => {
+      fetchStub.resolves(
+        new Response('{"result":"ok"}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      const result = await client.runFunction({ code: 'test' });
+
+      expect(result.ok).to.be.true;
+      expect(result.statusCode).to.equal(200);
+      expect(result.isBinary).to.be.false;
+      expect(result.data).to.equal('{"result":"ok"}');
+      expect(result.contentType).to.equal('application/json');
+    });
+
+    it('returns GenericApiResult with base64 data for binary responses', async () => {
+      const pdfBuffer = Buffer.from('fake-pdf');
+      fetchStub.resolves(
+        new Response(pdfBuffer, {
+          status: 200,
+          headers: { 'Content-Type': 'application/pdf' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      const result = await client.runFunction({ code: 'test' });
+
+      expect(result.ok).to.be.true;
+      expect(result.isBinary).to.be.true;
+      expect(result.data).to.equal(pdfBuffer.toString('base64'));
+    });
+
+    it('does not include context when not provided', async () => {
+      fetchStub.resolves(
+        new Response('{}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.runFunction({ code: 'test' });
+
+      const body = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(body).to.not.have.property('context');
+    });
+  });
+
+  describe('download', () => {
+    it('sends correct request to the /download endpoint', async () => {
+      fetchStub.resolves(
+        new Response('csv,data', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv',
+            'Content-Disposition': 'attachment; filename="data.csv"',
+          },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.download({ code: 'test-code' });
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const [url] = fetchStub.firstCall.args;
+      expect(url).to.include('https://api.example.com/download');
+    });
+
+    it('returns content-disposition header', async () => {
+      fetchStub.resolves(
+        new Response('csv,data', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv',
+            'Content-Disposition': 'attachment; filename="data.csv"',
+          },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      const result = await client.download({ code: 'test-code' });
+
+      expect(result.contentDisposition).to.include('data.csv');
+      expect(result.isBinary).to.be.false;
+      expect(result.data).to.equal('csv,data');
+    });
+  });
+
+  describe('exportPage', () => {
+    it('sends correct request to the /export endpoint', async () => {
+      fetchStub.resolves(
+        new Response('<html></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.exportPage({
+        url: 'https://example.com',
+        gotoOptions: { waitUntil: 'networkidle0' },
+        bestAttempt: true,
+      });
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const [url, options] = fetchStub.firstCall.args;
+      expect(url).to.include('https://api.example.com/export');
+      expect(url).to.include('token=test-token');
+      const body = JSON.parse(options.body);
+      expect(body.url).to.equal('https://example.com');
+      expect(body.gotoOptions).to.deep.equal({ waitUntil: 'networkidle0' });
+      expect(body.bestAttempt).to.be.true;
+    });
+
+    it('returns HTML content as text', async () => {
+      fetchStub.resolves(
+        new Response('<html><body>Hello</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      const result = await client.exportPage({ url: 'https://example.com' });
+
+      expect(result.ok).to.be.true;
+      expect(result.isBinary).to.be.false;
+      expect(result.data).to.include('Hello');
+    });
+
+    it('returns binary content as base64 for ZIP', async () => {
+      const zipBuffer = Buffer.from('PK-fake-zip');
+      fetchStub.resolves(
+        new Response(zipBuffer, {
+          status: 200,
+          headers: { 'Content-Type': 'application/zip' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      const result = await client.exportPage({
+        url: 'https://example.com',
+        includeResources: true,
+      });
+
+      expect(result.ok).to.be.true;
+      expect(result.isBinary).to.be.true;
+      expect(result.data).to.equal(zipBuffer.toString('base64'));
+    });
+
+    it('does not include optional fields when not provided', async () => {
+      fetchStub.resolves(
+        new Response('<html></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.exportPage({ url: 'https://example.com' });
+
+      const body = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(body).to.have.property('url');
+      expect(body).to.not.have.property('gotoOptions');
+      expect(body).to.not.have.property('bestAttempt');
+      expect(body).to.not.have.property('includeResources');
+    });
+
+    it('throws on 500 errors', async () => {
+      fetchStub.resolves(
+        new Response('Internal Server Error', {
+          status: 500,
+          statusText: 'Internal Server Error',
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.exportPage({ url: 'https://example.com' });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.include('Server error 500');
+      }
+    });
+  });
+
   describe('getStatus', () => {
     it('returns ok when API is reachable', async () => {
       fetchStub.resolves(new Response('[]', { status: 200 }));
