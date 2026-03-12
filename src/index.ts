@@ -2,6 +2,9 @@ import { FastMCP } from 'fastmcp';
 import { getConfig } from './config.js';
 import type { BrowserlessSession } from './config.js';
 import { registerPowerScraperTool } from './tools/smartscraper.js';
+import { registerFunctionTool } from './tools/function.js';
+import { registerDownloadTool } from './tools/download.js';
+import { registerExportTool } from './tools/export.js';
 import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
@@ -49,6 +52,9 @@ const server = new FastMCP<BrowserlessSession>({
 });
 
 registerPowerScraperTool(server, config, amplitude);
+registerFunctionTool(server, config, amplitude);
+registerDownloadTool(server, config, amplitude);
+registerExportTool(server, config, amplitude);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
 registerScrapeUrlPrompt(server);
