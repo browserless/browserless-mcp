@@ -1,5 +1,8 @@
 # Latest
 
+# v0.3.1
+Adding function, download and export apis to the MCP server
+
 # v0.3.0
 * replace power-scrape with smart-scrape endpoint
 
