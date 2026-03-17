@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import { FastMCP, OAuthProvider } from 'fastmcp';
+import { OAuthProxy } from 'fastmcp/auth';
 import { getConfig } from './config.js';
 import type { BrowserlessSession } from './config.js';
 import { registerPowerScraperTool } from './tools/smartscraper.js';
@@ -52,15 +53,30 @@ const amplitude = new AmplitudeHelper(
   config.sqsRegion,
 );
 
-// OAuth proxy via Supabase (for Claude.ai and other OAuth-capable MCP clients).
-// OAuthProvider acts as an OAuth 2.1 proxy implementing the MCP authorization spec:
-// - Protected Resource Metadata (RFC 9728)
-// - Auth Server Metadata (RFC 8414)
-// - Dynamic Client Registration (RFC 7591)
-// - Authorization code flow with PKCE proxied to Supabase
+// Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
+// receives the raw Supabase JWT directly. This eliminates server-side token storage,
+// meaning server restarts don't invalidate client sessions.
+class PassthroughOAuthProvider extends OAuthProvider {
+  protected createProxy(): OAuthProxy {
+    return new OAuthProxy({
+      allowedRedirectUriPatterns: ['http://localhost:*', 'https://*'],
+      baseUrl: this.config.baseUrl,
+      consentRequired: false,
+      enableTokenSwap: false,
+      scopes: this.config.scopes ?? [],
+      upstreamAuthorizationEndpoint: this.genericConfig.authorizationEndpoint,
+      upstreamClientId: this.config.clientId,
+      upstreamClientSecret: this.config.clientSecret,
+      upstreamTokenEndpoint: this.genericConfig.tokenEndpoint,
+      upstreamTokenEndpointAuthMethod:
+        this.genericConfig.tokenEndpointAuthMethod ?? 'client_secret_basic',
+    });
+  }
+}
+
 const oauthProvider =
   config.oauthEnabled && config.transport === 'httpStream'
-    ? new OAuthProvider({
+    ? new PassthroughOAuthProvider({
         baseUrl: config.mcpBaseUrl,
         clientId: config.supabaseOAuthClientId,
         clientSecret: config.supabaseOAuthClientSecret,
@@ -71,10 +87,10 @@ const oauthProvider =
       })
     : undefined;
 
-// Hybrid authenticate: plain API key first, then ?token=, then OAuth fallback.
+// Hybrid authenticate: plain API key first, then ?token=, then OAuth/JWT fallback.
 // 1. Authorization header with plain API key (non-JWT) → direct token session
 // 2. ?token= query param → direct token session
-// 3. Authorization header with JWT → OAuth flow: validate via OAuthProvider,
+// 3. Authorization header with JWT (Supabase token from OAuth) → decode payload,
 //    resolve Browserless API key from Supabase PostgREST, return as session token
 const hybridAuthenticate =
   config.transport === 'httpStream'
@@ -106,17 +122,14 @@ const hybridAuthenticate =
           return { token: directToken, apiUrl } as BrowserlessSession;
         }
 
-        // 3. Authorization header with JWT → OAuth flow
-        if (oauthProvider && isJwt) {
-          const oauthSession = await oauthProvider.authenticate(request);
-          if (oauthSession?.accessToken) {
-            const { apiKey } = await resolveApiKey(
-              config.supabaseUrl,
-              config.supabaseServiceRoleKey,
-              oauthSession.accessToken,
-            );
-            return { token: apiKey, apiUrl } as BrowserlessSession;
-          }
+        // 3. Authorization header with JWT → decode Supabase token directly
+        if (isJwt && headerToken) {
+          const { apiKey } = await resolveApiKey(
+            config.supabaseUrl,
+            config.supabaseServiceRoleKey,
+            headerToken,
+          );
+          return { token: apiKey, apiUrl } as BrowserlessSession;
         }
 
         throw new Error(
