@@ -16,6 +16,13 @@ export interface McpConfig {
   analyticsEnabled: boolean;
   sqsQueueUrl?: string;
   sqsRegion: string;
+  // OAuth (Supabase)
+  oauthEnabled: boolean;
+  supabaseUrl: string;
+  supabaseOAuthClientId: string;
+  supabaseOAuthClientSecret: string;
+  supabaseServiceRoleKey: string;
+  mcpBaseUrl: string;
 }
 
 export function getConfig(): McpConfig {
@@ -38,5 +45,12 @@ export function getConfig(): McpConfig {
     analyticsEnabled: process.env.ANALYTICS_ENABLED === 'true',
     sqsQueueUrl: process.env.SQS_QUEUE_URL,
     sqsRegion: process.env.SQS_REGION ?? 'us-west-2',
+    // OAuth (Supabase)
+    oauthEnabled: process.env.OAUTH_ENABLED === 'true',
+    supabaseUrl: process.env.SUPABASE_URL ?? '',
+    supabaseOAuthClientId: process.env.SUPABASE_OAUTH_CLIENT_ID ?? '',
+    supabaseOAuthClientSecret: process.env.SUPABASE_OAUTH_CLIENT_SECRET ?? '',
+    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+    mcpBaseUrl: process.env.MCP_BASE_URL ?? 'https://mcp.browserless.io',
   };
 }

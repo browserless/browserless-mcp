@@ -15,6 +15,12 @@ const mockConfig: McpConfig = {
   cacheTtlMs: 0,
   analyticsEnabled: false,
   sqsRegion: 'us-east-1',
+  oauthEnabled: false,
+  supabaseUrl: '',
+  supabaseOAuthClientId: '',
+  supabaseOAuthClientSecret: '',
+  supabaseServiceRoleKey: '',
+  mcpBaseUrl: '',
 };
 
 const mockContext = {
