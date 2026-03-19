@@ -1,5 +1,8 @@
 # Latest
 
+# v0.4.0
+* Support OAuth
+
 # v0.3.1
 Adding function, download and export apis to the MCP server
 
