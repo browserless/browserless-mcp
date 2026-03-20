@@ -130,7 +130,7 @@ To connect to a specific Browserless regional endpoint, add the `x-browserless-a
       "url": "http://your-mcp-host:8080/mcp",
       "headers": {
         "Authorization": "Bearer your-token-here",
-        "x-browserless-api-url": "https://production-lon.browserless.io"
+        "x-browserless-api-url": "https://production-sfo.browserless.io"
       }
     }
   }
@@ -146,7 +146,7 @@ https://your-mcp-host:8080/mcp?token=your-token-here
 To also specify a regional endpoint:
 
 ```text
-https://your-mcp-host:8080/mcp?token=your-token-here&browserlessUrl=https://production-lon.browserless.io
+https://your-mcp-host:8080/mcp?token=your-token-here&browserlessUrl=https://production-sfo.browserless.io
 ```
 
 When both headers and query parameters are present, headers take precedence.
