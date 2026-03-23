@@ -8,6 +8,8 @@ import type {
   SearchSource,
   SearchCategory,
   TimeBasedOptions,
+  MapResponse,
+  SitemapMode,
 } from '../tools/schemas.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
@@ -78,12 +80,23 @@ export interface SearchRequest {
   timeout?: number;
 }
 
+export interface MapRequest {
+  url: string;
+  search?: string;
+  limit?: number;
+  sitemap?: SitemapMode;
+  includeSubdomains?: boolean;
+  ignoreQueryParameters?: boolean;
+  timeout?: number;
+}
+
 export interface ApiClient {
   powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
   download(params: DownloadRequest): Promise<GenericApiResult>;
   exportPage(params: ExportRequest): Promise<GenericApiResult>;
   search(params: SearchRequest): Promise<SearchResponse>;
+  map(params: MapRequest): Promise<MapResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -354,6 +367,62 @@ export function createApiClient(
             }
 
             return (await res.json()) as SearchResponse;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: config.maxRetries,
+          baseDelayMs: 1000,
+          shouldRetry: (error: Error) => {
+            return !error.message.startsWith('Server error 4');
+          },
+        },
+      );
+    },
+
+    /* ---- map (/map) ---------------------------------------------- */
+    async map(params: MapRequest): Promise<MapResponse> {
+      const timeout = params.timeout ?? config.requestTimeout;
+      const queryParams = new URLSearchParams({
+        token: config.browserlessToken!,
+        timeout: String(timeout),
+      });
+
+      const apiUrl = `${config.browserlessApiUrl}/map?${queryParams.toString()}`;
+
+      const body: Record<string, unknown> = {
+        url: params.url,
+      };
+      if (params.search !== undefined) body.search = params.search;
+      if (params.limit !== undefined) body.limit = params.limit;
+      if (params.sitemap !== undefined) body.sitemap = params.sitemap;
+      if (params.includeSubdomains !== undefined) body.includeSubdomains = params.includeSubdomains;
+      if (params.ignoreQueryParameters !== undefined) body.ignoreQueryParameters = params.ignoreQueryParameters;
+
+      return retryWithBackoff(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(
+            () => controller.abort(),
+            timeout + 5000,
+          );
+
+          try {
+            const res = await fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
+
+            if (!res.ok && res.status >= 500) {
+              throw new Error(
+                `Server error ${res.status}: ${res.statusText}`,
+              );
+            }
+
+            return (await res.json()) as MapResponse;
           } finally {
             clearTimeout(timeoutId);
           }
