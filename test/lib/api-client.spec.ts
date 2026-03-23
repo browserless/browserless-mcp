@@ -430,4 +430,91 @@ describe('createApiClient', () => {
       expect(status.message).to.include('ECONNREFUSED');
     });
   });
+
+  describe('map', () => {
+    const mockMapResponse = {
+      success: true,
+      links: [
+        { url: 'https://example.com/', title: 'Home' },
+        { url: 'https://example.com/about', title: 'About' },
+      ],
+    };
+
+    it('sends correct request to the /map endpoint', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockMapResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.map({ url: 'https://example.com' });
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const [url, options] = fetchStub.firstCall.args;
+      expect(url).to.include('https://api.example.com/map');
+      expect(url).to.include('token=test-token');
+      expect(options.method).to.equal('POST');
+      const body = JSON.parse(options.body);
+      expect(body.url).to.equal('https://example.com');
+    });
+
+    it('returns map response with links', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockMapResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      const result = await client.map({ url: 'https://example.com' });
+
+      expect(result.success).to.be.true;
+      expect(result.links).to.have.length(2);
+      expect(result.links![0].url).to.equal('https://example.com/');
+    });
+
+    it('includes optional parameters in request', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockMapResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.map({
+        url: 'https://example.com',
+        search: 'products',
+        limit: 100,
+        sitemap: 'only',
+        includeSubdomains: false,
+      });
+
+      const body = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(body.search).to.equal('products');
+      expect(body.limit).to.equal(100);
+      expect(body.sitemap).to.equal('only');
+      expect(body.includeSubdomains).to.be.false;
+    });
+
+    it('throws on 500 errors', async () => {
+      fetchStub.resolves(
+        new Response('Internal Server Error', {
+          status: 500,
+          statusText: 'Internal Server Error',
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.map({ url: 'https://example.com' });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.include('Server error 500');
+      }
+    });
+  });
 });
