@@ -1,5 +1,8 @@
 # Latest
 
+# v0.4.2
+Adding search and map apis to the MCP server
+
 # v0.4.0
 * Support OAuth
 
