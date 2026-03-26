@@ -381,3 +381,89 @@ export interface MapResponse {
   links?: MapLink[];
   error?: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  /bql API – execute BrowserQL (GraphQL) queries                     */
+/* ------------------------------------------------------------------ */
+
+export const BqlParamsSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .describe(
+      'The BrowserQL (GraphQL) query to execute. BQL is a GraphQL-based browser automation language. ' +
+      'Queries are written as GraphQL mutations that run sequentially. ' +
+      'Common operations include:\n' +
+      '- goto(url, waitUntil) — Navigate to a URL\n' +
+      '- click(selector) — Click an element\n' +
+      '- type(selector, text) — Type text into an input\n' +
+      '- screenshot(fullPage) — Take a screenshot\n' +
+      '- pdf — Generate a PDF\n' +
+      '- title — Get the page title\n' +
+      '- url — Get the current URL\n' +
+      '- content(html) — Set page HTML content\n' +
+      '- evaluate(content) — Execute JavaScript in the page\n' +
+      '- querySelector(selector) / querySelectorAll(selector) — Query DOM elements\n' +
+      '- cookies(cookies) — Get or set cookies\n' +
+      '- back / forward — Navigate browser history\n' +
+      '- checkbox(selector, checked) — Toggle checkboxes\n' +
+      '- scroll(selector) — Scroll to an element\n' +
+      '- wait(selector, timeout) — Wait for an element\n' +
+      '- waitForEvent(event, timeout) — Wait for a browser event\n' +
+      '- solve — Auto-detect and solve captchas\n' +
+      '- proxy(country, city) — Configure residential proxy\n' +
+      '- reconnect(timeout) — Keep the browser session alive for reconnection\n' +
+      '- html — Get the full page HTML\n' +
+      '- text — Get the visible text of the page\n' +
+      '- verify — Verify the page anti-bot status\n\n' +
+      'Example query:\n' +
+      '```graphql\n' +
+      'mutation ScrapeExample {\n' +
+      '  goto(url: "https://example.com", waitUntil: networkIdle) {\n' +
+      '    status\n' +
+      '    time\n' +
+      '  }\n' +
+      '  title {\n' +
+      '    title\n' +
+      '  }\n' +
+      '  screenshot(fullPage: true) {\n' +
+      '    base64\n' +
+      '  }\n' +
+      '}\n' +
+      '```\n\n' +
+      'For the full BQL schema reference, see: https://docs.browserless.io/bql-schema/schema',
+    ),
+  variables: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe('Optional variables for the BQL query, used with the @export directive or parameterized queries.'),
+  operationName: z
+    .string()
+    .optional()
+    .describe('The operation name, if the query contains multiple named operations.'),
+  stealth: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      'When true, uses the stealth BQL endpoint (/stealth/bql) which runs in a Brave-based ' +
+      'stealth browser with enhanced anti-detection. Defaults to false (uses /chromium/bql).',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+});
+
+export type BqlParams = z.infer<typeof BqlParamsSchema>;
+
+export interface BqlResponse {
+  data?: Record<string, unknown>;
+  errors?: Array<{
+    message: string;
+    locations?: Array<{ line: number; column: number }>;
+    path?: string[];
+  }>;
+}

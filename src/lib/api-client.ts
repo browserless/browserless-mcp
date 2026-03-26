@@ -10,6 +10,7 @@ import type {
   TimeBasedOptions,
   MapResponse,
   SitemapMode,
+  BqlResponse,
 } from '../tools/schemas.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
@@ -90,6 +91,14 @@ export interface MapRequest {
   timeout?: number;
 }
 
+export interface BqlRequest {
+  query: string;
+  variables?: Record<string, unknown>;
+  operationName?: string;
+  stealth?: boolean;
+  timeout?: number;
+}
+
 export interface ApiClient {
   powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -97,6 +106,7 @@ export interface ApiClient {
   exportPage(params: ExportRequest): Promise<GenericApiResult>;
   search(params: SearchRequest): Promise<SearchResponse>;
   map(params: MapRequest): Promise<MapResponse>;
+  bql(params: BqlRequest): Promise<BqlResponse & { statusCode: number; ok: boolean }>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -296,6 +306,61 @@ export function createApiClient(
         body.waitForTimeout = params.waitForTimeout;
       }
       return postGeneric('/export', body, 'application/json', timeout);
+    },
+
+    /* ---- bql (/chromium/bql or /stealth/bql) ---------------------- */
+    async bql(
+      params: BqlRequest,
+    ): Promise<BqlResponse & { statusCode: number; ok: boolean }> {
+      const timeout = params.timeout ?? config.requestTimeout;
+      const path = params.stealth ? '/stealth/bql' : '/chromium/bql';
+      const queryParams = new URLSearchParams({
+        token: config.browserlessToken!,
+        timeout: String(timeout),
+      });
+
+      const apiUrl = `${config.browserlessApiUrl}${path}?${queryParams.toString()}`;
+
+      const body: Record<string, unknown> = { query: params.query };
+      if (params.variables !== undefined) body.variables = params.variables;
+      if (params.operationName !== undefined) body.operationName = params.operationName;
+
+      return retryWithBackoff(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(
+            () => controller.abort(),
+            timeout + 5000,
+          );
+
+          try {
+            const res = await fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
+
+            if (!res.ok && res.status >= 500) {
+              throw new Error(
+                `Server error ${res.status}: ${res.statusText}`,
+              );
+            }
+
+            const json = (await res.json()) as BqlResponse;
+            return { ...json, statusCode: res.status, ok: res.ok };
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: config.maxRetries,
+          baseDelayMs: 1000,
+          shouldRetry: (error: Error) => {
+            return !error.message.startsWith('Server error 4');
+          },
+        },
+      );
     },
 
     /* ---- getStatus (existing) ------------------------------------ */
