@@ -443,7 +443,7 @@ export function createApiClient(
             if (!res.ok) {
               const text = await res.text();
               throw new Error(
-                `Performance audit failed (${res.status}): ${text.slice(0, 500)}`,
+                `Server error ${res.status}: ${text.slice(0, 500)}`,
               );
             }
 
