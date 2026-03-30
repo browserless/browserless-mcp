@@ -13,6 +13,7 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 | Tool | Description |
 |------|-------------|
 | `browserless_smartscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
+| `browserless_performance` | Run Lighthouse audits on any URL. Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. Optionally filter by category or supply performance budgets. |
 
 ## Configuration
 

@@ -10,6 +10,8 @@ import type {
   TimeBasedOptions,
   MapResponse,
   SitemapMode,
+  LighthouseCategory,
+  PerformanceResponse,
 } from '../tools/schemas.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
@@ -90,6 +92,13 @@ export interface MapRequest {
   timeout?: number;
 }
 
+export interface PerformanceRequest {
+  url: string;
+  categories?: LighthouseCategory[];
+  budgets?: Array<Record<string, unknown>>;
+  timeout?: number;
+}
+
 export interface ApiClient {
   powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -97,6 +106,7 @@ export interface ApiClient {
   exportPage(params: ExportRequest): Promise<GenericApiResult>;
   search(params: SearchRequest): Promise<SearchResponse>;
   map(params: MapRequest): Promise<MapResponse>;
+  performance(params: PerformanceRequest): Promise<PerformanceResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -367,6 +377,77 @@ export function createApiClient(
             }
 
             return (await res.json()) as SearchResponse;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: config.maxRetries,
+          baseDelayMs: 1000,
+          shouldRetry: (error: Error) => {
+            return !error.message.startsWith('Server error 4');
+          },
+        },
+      );
+    },
+
+    /* ---- performance (/performance) ------------------------------ */
+    async performance(params: PerformanceRequest): Promise<PerformanceResponse> {
+      const timeout = params.timeout ?? config.requestTimeout;
+      const queryParams = new URLSearchParams({
+        token: config.browserlessToken!,
+        timeout: String(timeout),
+      });
+
+      const apiUrl = `${config.browserlessApiUrl}/performance?${queryParams.toString()}`;
+
+      const body: Record<string, unknown> = {
+        url: params.url,
+      };
+
+      if (params.categories) {
+        body.config = {
+          extends: 'lighthouse:default',
+          settings: {
+            onlyCategories: params.categories,
+          },
+        };
+      }
+
+      if (params.budgets) {
+        body.budgets = params.budgets;
+      }
+
+      return retryWithBackoff(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(
+            () => controller.abort(),
+            timeout + 5000,
+          );
+
+          try {
+            const res = await fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
+
+            if (!res.ok && res.status >= 500) {
+              throw new Error(
+                `Server error ${res.status}: ${res.statusText}`,
+              );
+            }
+
+            if (!res.ok) {
+              const text = await res.text();
+              throw new Error(
+                `Server error ${res.status}: ${text.slice(0, 500)}`,
+              );
+            }
+
+            return (await res.json()) as PerformanceResponse;
           } finally {
             clearTimeout(timeoutId);
           }

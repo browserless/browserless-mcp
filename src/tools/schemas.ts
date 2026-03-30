@@ -381,3 +381,50 @@ export interface MapResponse {
   links?: MapLink[];
   error?: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  /performance API – run Lighthouse audits                           */
+/* ------------------------------------------------------------------ */
+
+export const LighthouseCategorySchema = z.enum([
+  'accessibility',
+  'best-practices',
+  'performance',
+  'pwa',
+  'seo',
+]);
+
+export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
+
+export const PerformanceParamsSchema = z.object({
+  url: z
+    .url()
+    .describe('The URL to audit (must be http or https)'),
+  categories: z
+    .array(LighthouseCategorySchema)
+    .optional()
+    .describe(
+      'Lighthouse categories to audit: "accessibility", "best-practices", ' +
+      '"performance", "pwa", "seo". Omit for all categories.',
+    ),
+  budgets: z
+    .array(z.record(z.string(), z.unknown()))
+    .optional()
+    .describe(
+      'Lighthouse performance budgets array. ' +
+      'See https://developer.chrome.com/docs/lighthouse/performance/performance-budgets',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds (audits can take 30s–120s)'),
+});
+
+export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
+
+export interface PerformanceResponse {
+  data: Record<string, unknown>;
+  type: string;
+}
