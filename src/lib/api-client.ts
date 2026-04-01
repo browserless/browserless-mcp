@@ -638,14 +638,17 @@ export function createApiClient(
               signal: controller.signal,
             });
 
-            if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
-            }
-
+            // Handle specific error codes first
             if (res.status === 404) {
               throw new Error('Crawl not found');
+            }
+
+            // Reject all non-OK responses to avoid treating error bodies as valid data
+            if (!res.ok) {
+              const errorBody = await res.text().catch(() => res.statusText);
+              throw new Error(
+                `API error ${res.status}: ${errorBody}`,
+              );
             }
 
             return (await res.json()) as CrawlStatusResponse;
@@ -686,12 +689,7 @@ export function createApiClient(
               signal: controller.signal,
             });
 
-            if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
-            }
-
+            // Handle specific error codes first
             if (res.status === 404) {
               throw new Error('Crawl not found');
             }
@@ -699,6 +697,14 @@ export function createApiClient(
             if (res.status === 409) {
               const body = (await res.json()) as { message?: string };
               throw new Error(body.message ?? 'Crawl is already in terminal state');
+            }
+
+            // Reject all non-OK responses to avoid treating error bodies as valid data
+            if (!res.ok) {
+              const errorBody = await res.text().catch(() => res.statusText);
+              throw new Error(
+                `API error ${res.status}: ${errorBody}`,
+              );
             }
 
             return (await res.json()) as CrawlCancelResponse;

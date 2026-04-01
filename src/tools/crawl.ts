@@ -14,6 +14,9 @@ const MAX_CONTENT_PAGES = 50;
 /** Maximum content length per page (chars) before truncation */
 const MAX_CONTENT_LENGTH = 10000;
 
+/** Maximum URLs to list in the crawled URLs section */
+const MAX_URL_LIST = 200;
+
 /** Shape of the JSON returned by contentUrl */
 interface PageContent {
   url: string;
@@ -166,8 +169,7 @@ export function registerCrawlTool(
       const startTime = Date.now();
 
       let statusResponse: CrawlStatusResponse;
-      let lastTotal = 0;
-      let lastCompleted = 0;
+      let isFirstPoll = true;
 
       do {
         // Check if we've exceeded max wait time
@@ -190,10 +192,11 @@ export function registerCrawlTool(
           );
         }
 
-        // Wait before polling (skip first iteration)
-        if (lastTotal > 0 || lastCompleted > 0) {
+        // Always wait between polls (skip only first iteration)
+        if (!isFirstPoll) {
           await new Promise((resolve) => setTimeout(resolve, pollInterval));
         }
+        isFirstPoll = false;
 
         statusResponse = await client.getCrawl(crawlId);
 
@@ -205,9 +208,6 @@ export function registerCrawlTool(
           );
           await reportProgress({ progress, total: 100 });
         }
-
-        lastTotal = statusResponse.total;
-        lastCompleted = statusResponse.completed;
 
         log.debug(
           `Crawl status: ${statusResponse.status}, ` +
@@ -366,11 +366,15 @@ export function registerCrawlTool(
           });
         }
 
-        // URL list for easy reference
-        const urlList = completedPages.map(p => p.metadata.sourceURL).join('\n');
+        // URL list for easy reference (capped to avoid huge responses)
+        const urlsToShow = completedPages.slice(0, MAX_URL_LIST);
+        const urlList = urlsToShow.map(p => p.metadata.sourceURL).join('\n');
+        const urlListSuffix = completedPages.length > MAX_URL_LIST 
+          ? `\n\n... and ${completedPages.length - MAX_URL_LIST} more URLs` 
+          : '';
         contentBlocks.push({
           type: 'text' as const,
-          text: `## All Crawled URLs\n\n${urlList}`,
+          text: `## All Crawled URLs\n\n${urlList}${urlListSuffix}`,
         });
       } else {
         contentBlocks.push({

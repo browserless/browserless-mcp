@@ -497,6 +497,124 @@ describe('browserless_crawl tool', () => {
     });
   });
 
+  it('throws error when getCrawl returns 401 unauthorized', async () => {
+    fetchStub.onCall(0).resolves(
+      new Response(JSON.stringify({
+        success: true,
+        id: 'crawl-auth',
+        url: 'https://api.example.com/crawl/crawl-auth',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    // GET /crawl/{id} returns 401
+    fetchStub.onCall(1).resolves(
+      new Response('Invalid API token', {
+        status: 401,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    try {
+      await execute(
+        { url: 'https://example.com', pollInterval: 10 },
+        mockContext,
+      );
+      expect.fail('should have thrown');
+    } catch (err) {
+      // API client throws regular Error for non-OK responses
+      expect(err).to.be.instanceOf(Error);
+      expect((err as Error).message).to.include('401');
+      expect((err as Error).message).to.include('Invalid API token');
+    }
+  });
+
+  it('always waits between polls even when total/completed is 0', async () => {
+    const pollInterval = 50; // Short interval for test
+    let pollCount = 0;
+    const pollTimes: number[] = [];
+
+    fetchStub.onCall(0).resolves(
+      new Response(JSON.stringify({
+        success: true,
+        id: 'crawl-zero',
+        url: 'https://api.example.com/crawl/crawl-zero',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    // Return 0/0 for first few polls, then complete
+    fetchStub.onCall(1).callsFake(() => {
+      pollTimes.push(Date.now());
+      pollCount++;
+      return Promise.resolve(new Response(JSON.stringify({
+        status: 'in-progress',
+        total: 0,
+        completed: 0,
+        failed: 0,
+        expiresAt: null,
+        next: null,
+        data: [],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    });
+
+    fetchStub.onCall(2).callsFake(() => {
+      pollTimes.push(Date.now());
+      pollCount++;
+      return Promise.resolve(new Response(JSON.stringify({
+        status: 'completed',
+        total: 1,
+        completed: 1,
+        failed: 0,
+        expiresAt: null,
+        next: null,
+        data: [{
+          status: 'completed',
+          contentUrl: null,
+          metadata: {
+            title: 'Page',
+            description: null,
+            language: null,
+            scrapedAt: null,
+            sourceURL: 'https://example.com/',
+            statusCode: 200,
+            error: null,
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    });
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      { url: 'https://example.com', pollInterval },
+      mockContext,
+    );
+
+    // Should have polled twice (one in-progress, one completed)
+    expect(pollCount).to.equal(2);
+    
+    // Time between polls should be at least pollInterval
+    if (pollTimes.length >= 2) {
+      const timeBetweenPolls = pollTimes[1] - pollTimes[0];
+      expect(timeBetweenPolls).to.be.at.least(pollInterval - 10); // Allow 10ms tolerance
+    }
+  });
+
   it('handles pagination when fetching all pages', async () => {
     fetchStub.onCall(0).resolves(
       new Response(JSON.stringify({
@@ -604,5 +722,70 @@ describe('browserless_crawl tool', () => {
 
     // Should have called fetch 3 times (start + 2 status calls)
     expect(fetchStub.callCount).to.equal(3);
+  });
+
+  it('caps URL list at MAX_URL_LIST (200) to avoid huge responses', async () => {
+    // Generate 250 pages to exceed the 200 cap
+    const pages = Array.from({ length: 250 }, (_, i) => ({
+      status: 'completed',
+      contentUrl: null,
+      metadata: {
+        title: `Page ${i + 1}`,
+        description: null,
+        language: null,
+        scrapedAt: null,
+        sourceURL: `https://example.com/page-${i + 1}`,
+        statusCode: 200,
+        error: null,
+      },
+    }));
+
+    fetchStub.onCall(0).resolves(
+      new Response(JSON.stringify({
+        success: true,
+        id: 'crawl-large',
+        url: 'https://api.example.com/crawl/crawl-large',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    fetchStub.onCall(1).resolves(
+      new Response(JSON.stringify({
+        status: 'completed',
+        total: 250,
+        completed: 250,
+        failed: 0,
+        expiresAt: null,
+        next: null,
+        data: pages,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    const result = await execute(
+      { url: 'https://example.com', pollInterval: 10 },
+      mockContext,
+    );
+
+    const content = (result as { content: Content[] }).content;
+    
+    // Find the URL list section
+    const urlListSection = content.find((c: Content) =>
+      c.type === 'text' && (c as { text: string }).text.includes('Crawled URLs'),
+    ) as { type: string; text: string } | undefined;
+
+    expect(urlListSection).to.exist;
+    // Should show truncation message
+    expect(urlListSection!.text).to.include('and 50 more URLs');
+    // Should have page-200 but not page-201
+    expect(urlListSection!.text).to.include('page-200');
+    expect(urlListSection!.text).to.not.include('page-201');
   });
 });
