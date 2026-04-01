@@ -12,6 +12,10 @@ import type {
   SitemapMode,
   LighthouseCategory,
   PerformanceResponse,
+  CrawlStartResponse,
+  CrawlStatusResponse,
+  CrawlSitemapMode,
+  CrawlFormat,
 } from '../tools/schemas.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
@@ -99,6 +103,33 @@ export interface PerformanceRequest {
   timeout?: number;
 }
 
+export interface CrawlRequest {
+  url: string;
+  limit?: number;
+  maxDepth?: number;
+  maxRetries?: number;
+  allowExternalLinks?: boolean;
+  allowSubdomains?: boolean;
+  sitemap?: CrawlSitemapMode;
+  includePaths?: string[];
+  excludePaths?: string[];
+  delay?: number;
+  scrapeOptions?: {
+    formats?: CrawlFormat[];
+    onlyMainContent?: boolean;
+    includeTags?: string[];
+    excludeTags?: string[];
+    waitFor?: number;
+    headers?: Record<string, string>;
+    timeout?: number;
+  };
+  timeout?: number;
+}
+
+export interface CrawlCancelResponse {
+  status: 'cancelled';
+}
+
 export interface ApiClient {
   powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -107,6 +138,9 @@ export interface ApiClient {
   search(params: SearchRequest): Promise<SearchResponse>;
   map(params: MapRequest): Promise<MapResponse>;
   performance(params: PerformanceRequest): Promise<PerformanceResponse>;
+  crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
+  getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
+  cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -514,6 +548,168 @@ export function createApiClient(
           shouldRetry: (error: Error) => {
             return !error.message.startsWith('Server error 4');
           },
+        },
+      );
+    },
+
+    /* ---- crawl (POST /crawl) ------------------------------------- */
+    async crawl(params: CrawlRequest): Promise<CrawlStartResponse> {
+      const timeout = params.timeout ?? config.requestTimeout;
+      // Note: /crawl endpoint only accepts 'token' as query param
+      const queryParams = new URLSearchParams({
+        token: config.browserlessToken!,
+      });
+
+      const apiUrl = `${config.browserlessApiUrl}/crawl?${queryParams.toString()}`;
+
+      const body: Record<string, unknown> = {
+        url: params.url,
+      };
+      if (params.limit !== undefined) body.limit = params.limit;
+      if (params.maxDepth !== undefined) body.maxDepth = params.maxDepth;
+      if (params.maxRetries !== undefined) body.maxRetries = params.maxRetries;
+      if (params.allowExternalLinks !== undefined) body.allowExternalLinks = params.allowExternalLinks;
+      if (params.allowSubdomains !== undefined) body.allowSubdomains = params.allowSubdomains;
+      if (params.sitemap !== undefined) body.sitemap = params.sitemap;
+      if (params.includePaths !== undefined) body.includePaths = params.includePaths;
+      if (params.excludePaths !== undefined) body.excludePaths = params.excludePaths;
+      if (params.delay !== undefined) body.delay = params.delay;
+      if (params.scrapeOptions !== undefined) body.scrapeOptions = params.scrapeOptions;
+
+      return retryWithBackoff(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(
+            () => controller.abort(),
+            timeout + 5000,
+          );
+
+          try {
+            const res = await fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
+
+            if (!res.ok && res.status >= 500) {
+              throw new Error(
+                `Server error ${res.status}: ${res.statusText}`,
+              );
+            }
+
+            return (await res.json()) as CrawlStartResponse;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: config.maxRetries,
+          baseDelayMs: 1000,
+          shouldRetry: (error: Error) => {
+            return !error.message.startsWith('Server error 4');
+          },
+        },
+      );
+    },
+
+    /* ---- getCrawl (GET /crawl/{id}) ------------------------------ */
+    async getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse> {
+      const queryParams = new URLSearchParams({
+        token: config.browserlessToken!,
+      });
+      if (skip !== undefined && skip > 0) {
+        queryParams.set('skip', String(skip));
+      }
+
+      const apiUrl = `${config.browserlessApiUrl}/crawl/${crawlId}?${queryParams.toString()}`;
+
+      return retryWithBackoff(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(
+            () => controller.abort(),
+            config.requestTimeout + 5000,
+          );
+
+          try {
+            const res = await fetch(apiUrl, {
+              method: 'GET',
+              signal: controller.signal,
+            });
+
+            if (!res.ok && res.status >= 500) {
+              throw new Error(
+                `Server error ${res.status}: ${res.statusText}`,
+              );
+            }
+
+            if (res.status === 404) {
+              throw new Error('Crawl not found');
+            }
+
+            return (await res.json()) as CrawlStatusResponse;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: config.maxRetries,
+          baseDelayMs: 1000,
+          shouldRetry: (error: Error) => {
+            return !error.message.startsWith('Server error 4') &&
+                   !error.message.includes('not found');
+          },
+        },
+      );
+    },
+
+    /* ---- cancelCrawl (DELETE /crawl/{id}) ------------------------ */
+    async cancelCrawl(crawlId: string): Promise<CrawlCancelResponse> {
+      const queryParams = new URLSearchParams({
+        token: config.browserlessToken!,
+      });
+
+      const apiUrl = `${config.browserlessApiUrl}/crawl/${crawlId}?${queryParams.toString()}`;
+
+      return retryWithBackoff(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(
+            () => controller.abort(),
+            config.requestTimeout + 5000,
+          );
+
+          try {
+            const res = await fetch(apiUrl, {
+              method: 'DELETE',
+              signal: controller.signal,
+            });
+
+            if (!res.ok && res.status >= 500) {
+              throw new Error(
+                `Server error ${res.status}: ${res.statusText}`,
+              );
+            }
+
+            if (res.status === 404) {
+              throw new Error('Crawl not found');
+            }
+
+            if (res.status === 409) {
+              const body = (await res.json()) as { message?: string };
+              throw new Error(body.message ?? 'Crawl is already in terminal state');
+            }
+
+            return (await res.json()) as CrawlCancelResponse;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        {
+          maxRetries: 0, // Don't retry DELETE operations
+          baseDelayMs: 1000,
+          shouldRetry: () => false,
         },
       );
     },

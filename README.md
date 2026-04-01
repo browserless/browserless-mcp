@@ -13,6 +13,9 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 | Tool | Description |
 |------|-------------|
 | `browserless_smartscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
+| `browserless_search` | Search the web using Browserless and optionally scrape each result. Supports web, news, and image search with geo-targeting and time filters. |
+| `browserless_map` | Discover and map all URLs on a website. Crawls via sitemaps and link extraction. Returns URLs with optional titles and descriptions. Useful for site audits and content discovery. |
+| `browserless_crawl` | Crawl a website and scrape every discovered page. Supports depth control, path filtering, sitemap strategies, and configurable scrape options. Returns scraped content and metadata for each page. |
 | `browserless_performance` | Run Lighthouse audits on any URL. Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. Optionally filter by category or supply performance budgets. |
 
 ## Configuration
