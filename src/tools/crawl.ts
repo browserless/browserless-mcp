@@ -8,6 +8,42 @@ import type { McpConfig } from '../config.js';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
+/** Maximum number of pages to fetch full content for */
+const MAX_CONTENT_PAGES = 50;
+
+/** Maximum content length per page (chars) before truncation */
+const MAX_CONTENT_LENGTH = 10000;
+
+/** Shape of the JSON returned by contentUrl */
+interface PageContent {
+  url: string;
+  statusCode: number;
+  metadata: {
+    title: string | null;
+    description: string | null;
+    language: string | null;
+    contentType: string | null;
+    scrapedAt: string | null;
+  };
+  markdown?: string;
+  html?: string;
+  rawText?: string;
+}
+
+/**
+ * Fetch the actual scraped content from an S3 signed URL.
+ * Returns null on any error (expired URL, network issue, etc.).
+ */
+async function fetchPageContent(contentUrl: string): Promise<PageContent | null> {
+  try {
+    const res = await fetch(contentUrl, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    return (await res.json()) as PageContent;
+  } catch {
+    return null;
+  }
+}
+
 export function registerCrawlTool(
   server: FastMCP,
   config: McpConfig,
@@ -126,7 +162,7 @@ export function registerCrawlTool(
 
       // Poll for completion
       const pollInterval = args.pollInterval ?? 5000;
-      const maxTimeout = args.timeout ?? 300000; // Default 5 minutes
+      const maxWaitTime = args.maxWaitTime ?? 300000; // Default 5 minutes
       const startTime = Date.now();
 
       let statusResponse: CrawlStatusResponse;
@@ -134,8 +170,8 @@ export function registerCrawlTool(
       let lastCompleted = 0;
 
       do {
-        // Check timeout
-        if (Date.now() - startTime > maxTimeout) {
+        // Check if we've exceeded max wait time
+        if (Date.now() - startTime > maxWaitTime) {
           // Return partial results on timeout
           amplitude?.send('MCP Tool Request', djb2(token), {
             token,
@@ -149,8 +185,8 @@ export function registerCrawlTool(
           }).catch(() => {});
 
           throw new UserError(
-            `Crawl timed out after ${maxTimeout}ms. Crawl ID: ${crawlId}. ` +
-            'You can check its status later using the crawl ID.',
+            `Crawl exceeded max wait time of ${maxWaitTime}ms. Crawl ID: ${crawlId}. ` +
+            'The crawl may still be running. You can check its status later using the crawl ID.',
           );
         }
 
@@ -244,36 +280,76 @@ export function registerCrawlTool(
         ].filter(Boolean).join('\n'),
       });
 
-      // Page results
+      // Page results with actual content
       if (allPages.length > 0) {
         const completedPages = allPages.filter(p => p.status === 'completed');
         const failedPages = allPages.filter(p => p.status === 'failed');
 
         if (completedPages.length > 0) {
-          const pageList = completedPages
-            .slice(0, 100) // Limit to avoid overly long output
-            .map((page, index) => {
+          // Fetch actual content for completed pages (up to MAX_CONTENT_PAGES)
+          const pagesToFetch = completedPages.slice(0, MAX_CONTENT_PAGES);
+          
+          log.debug(`Fetching content for ${pagesToFetch.length} pages...`);
+          
+          const contentResults = await Promise.all(
+            pagesToFetch.map(async (page) => {
+              if (!page.contentUrl) return { page, content: null };
+              const content = await fetchPageContent(page.contentUrl);
+              return { page, content };
+            }),
+          );
+
+          // Format pages with their actual content
+          const pageList = contentResults
+            .map(({ page, content }, index) => {
               const lines = [`### ${index + 1}. ${page.metadata.sourceURL}`];
+              
               if (page.metadata.title) {
                 lines.push(`**Title:** ${page.metadata.title}`);
-              }
-              if (page.metadata.description) {
-                lines.push(`**Description:** ${page.metadata.description.slice(0, 200)}${page.metadata.description.length > 200 ? '...' : ''}`);
               }
               if (page.metadata.statusCode) {
                 lines.push(`**Status Code:** ${page.metadata.statusCode}`);
               }
-              if (page.contentUrl) {
-                lines.push(`**Content URL:** ${page.contentUrl}`);
+              
+              // Include the actual scraped content
+              if (content) {
+                // Prefer markdown, then rawText, then html
+                let textContent = content.markdown ?? content.rawText ?? content.html;
+                if (textContent) {
+                  // Truncate if too long
+                  if (textContent.length > MAX_CONTENT_LENGTH) {
+                    textContent = textContent.slice(0, MAX_CONTENT_LENGTH) + 
+                      `\n\n... [Content truncated at ${MAX_CONTENT_LENGTH} characters]`;
+                  }
+                  lines.push('');
+                  lines.push('**Content:**');
+                  lines.push('```');
+                  lines.push(textContent);
+                  lines.push('```');
+                }
+              } else if (page.contentUrl) {
+                // Content fetch failed - note this but don't fail the whole operation
+                lines.push('');
+                lines.push('*[Content could not be fetched - URL may have expired]*');
               }
+              
               return lines.join('\n');
             })
             .join('\n\n---\n\n');
 
           contentBlocks.push({
             type: 'text' as const,
-            text: `## Completed Pages (${completedPages.length})\n\n${pageList}${completedPages.length > 100 ? `\n\n... and ${completedPages.length - 100} more pages` : ''}`,
+            text: `## Scraped Pages (${completedPages.length})\n\n${pageList}`,
           });
+
+          // Note if there are more pages than we fetched content for
+          if (completedPages.length > MAX_CONTENT_PAGES) {
+            contentBlocks.push({
+              type: 'text' as const,
+              text: `\n*Note: Content shown for first ${MAX_CONTENT_PAGES} pages. ` +
+                `${completedPages.length - MAX_CONTENT_PAGES} additional pages were crawled but content not included to avoid response size limits.*`,
+            });
+          }
         }
 
         if (failedPages.length > 0) {
@@ -294,7 +370,7 @@ export function registerCrawlTool(
         const urlList = completedPages.map(p => p.metadata.sourceURL).join('\n');
         contentBlocks.push({
           type: 'text' as const,
-          text: `## Crawled URLs\n\n${urlList}`,
+          text: `## All Crawled URLs\n\n${urlList}`,
         });
       } else {
         contentBlocks.push({

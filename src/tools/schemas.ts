@@ -564,12 +564,19 @@ export const CrawlParamsSchema = z.object({
     .optional()
     .default(5000)
     .describe('Polling interval in ms when waiting for completion (default: 5000)'),
+  maxWaitTime: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(300000)
+    .describe('Maximum time in ms to wait for crawl completion when waitForCompletion is true (default: 300000 = 5 minutes)'),
   timeout: z
     .number()
     .int()
     .positive()
     .optional()
-    .describe('Maximum time to wait for crawl completion in milliseconds'),
+    .describe('HTTP request timeout in milliseconds for API calls (default: 30000)'),
 });
 
 export type CrawlParams = z.infer<typeof CrawlParamsSchema>;
