@@ -428,3 +428,188 @@ export interface PerformanceResponse {
   data: Record<string, unknown>;
   type: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  /crawl API – asynchronous web crawling                             */
+/* ------------------------------------------------------------------ */
+
+export const CrawlStatusSchema = z.enum([
+  'in-progress',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type CrawlStatus = z.infer<typeof CrawlStatusSchema>;
+
+export const PageStatusSchema = z.enum([
+  'queued',
+  'in-progress',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type PageStatus = z.infer<typeof PageStatusSchema>;
+
+export const CrawlSitemapModeSchema = z.enum(['auto', 'force', 'skip']);
+export type CrawlSitemapMode = z.infer<typeof CrawlSitemapModeSchema>;
+
+export const CrawlFormatSchema = z.enum(['markdown', 'html', 'rawText']);
+export type CrawlFormat = z.infer<typeof CrawlFormatSchema>;
+
+export const CrawlScrapeOptionsSchema = z.object({
+  formats: z
+    .array(CrawlFormatSchema)
+    .optional()
+    .default(['markdown'])
+    .describe('Output formats for scraped content'),
+  onlyMainContent: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Extract only the main content using Readability'),
+  includeTags: z
+    .array(z.string())
+    .optional()
+    .describe('HTML tag selectors to include'),
+  excludeTags: z
+    .array(z.string())
+    .optional()
+    .describe('HTML tag selectors to exclude'),
+  waitFor: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(0)
+    .describe('Time in ms to wait after page load before scraping'),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Custom HTTP headers to send with each request'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Navigation timeout in milliseconds'),
+});
+
+export const CrawlParamsSchema = z.object({
+  url: z
+    .url()
+    .describe('The URL to crawl (must be http or https)'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(10000)
+    .optional()
+    .default(100)
+    .describe('Maximum number of pages to crawl (default: 100)'),
+  maxDepth: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(5)
+    .describe('Maximum link-follow depth from the root URL (default: 5)'),
+  maxRetries: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(1)
+    .describe('Number of retry attempts per failed page (default: 1)'),
+  allowExternalLinks: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to follow links to external domains'),
+  allowSubdomains: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to follow links to subdomains'),
+  sitemap: CrawlSitemapModeSchema
+    .optional()
+    .default('auto')
+    .describe('Sitemap handling: "auto" (default), "force", "skip"'),
+  includePaths: z
+    .array(z.string())
+    .optional()
+    .describe('Regex patterns for URL paths to include'),
+  excludePaths: z
+    .array(z.string())
+    .optional()
+    .describe('Regex patterns for URL paths to exclude'),
+  delay: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(200)
+    .describe('Delay between requests in milliseconds (default: 200)'),
+  scrapeOptions: CrawlScrapeOptionsSchema
+    .optional()
+    .describe('Options controlling how each page is scraped'),
+  waitForCompletion: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Whether to wait for crawl completion (default: true). If false, returns immediately with crawl ID.'),
+  pollInterval: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(5000)
+    .describe('Polling interval in ms when waiting for completion (default: 5000)'),
+  maxWaitTime: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(300000)
+    .describe('Maximum time in ms to wait for crawl completion when waitForCompletion is true (default: 300000 = 5 minutes)'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('HTTP request timeout in milliseconds for API calls (default: 30000)'),
+});
+
+export type CrawlParams = z.infer<typeof CrawlParamsSchema>;
+
+export interface CrawlStartResponse {
+  success: boolean;
+  id: string;
+  url: string;
+  error?: string;
+}
+
+export interface CrawlPageMetadata {
+  title: string | null;
+  description: string | null;
+  language: string | null;
+  scrapedAt: string | null;
+  sourceURL: string;
+  statusCode: number | null;
+  error: string | null;
+}
+
+export interface CrawlPageResult {
+  status: PageStatus;
+  contentUrl: string | null;
+  metadata: CrawlPageMetadata;
+}
+
+export interface CrawlStatusResponse {
+  status: CrawlStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  expiresAt: string | null;
+  next: string | null;
+  data: CrawlPageResult[];
+}
