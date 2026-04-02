@@ -167,6 +167,54 @@ export const ExportParamsSchema = z.object({
 export type ExportParams = z.infer<typeof ExportParamsSchema>;
 
 /* ------------------------------------------------------------------ */
+/*  Agent Browsing Protocol – single generic WS passthrough tool       */
+/* ------------------------------------------------------------------ */
+
+const AgentCommandSchema = z.object({
+  method: z.string().describe('The BQL method name'),
+  params: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .default({})
+    .describe('Parameters for the method'),
+});
+
+export const AgentParamsSchema = z.object({
+  method: z
+    .string()
+    .describe(
+      'The BQL method to execute. Common methods:\n' +
+      '- "goto" { url, waitUntil? } — navigate to a URL\n' +
+      '- "snapshot" { maxElements? } — get interactive page elements with selectors\n' +
+      '- "click" { selector } — click an element\n' +
+      '- "type" { selector, text } — type into an input\n' +
+      '- "screenshot" { fullPage? } — take a screenshot\n' +
+      '- "text" { selector } — extract text from an element\n' +
+      '- "select" { selector, value } — select dropdown option\n' +
+      '- "hover" { selector } — hover over an element\n' +
+      '- "scroll" { selector?, direction? } — scroll the page\n' +
+      '- "evaluate" { content } — run JavaScript in the browser\n' +
+      '- "waitForSelector" { selector, timeout? } — wait for element\n' +
+      '- "liveURL" { timeout?, interactable?, quality?, type?, resizable? } — get a shareable live URL to stream the browser\n' +
+      '- "close" — close the browser session',
+    ),
+  params: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .default({})
+    .describe('Parameters for the method as a JSON object.'),
+  commands: z
+    .array(AgentCommandSchema)
+    .optional()
+    .describe(
+      'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
+      'are ignored and commands are executed sequentially. Only the final result is returned. ' +
+      'Use this to batch actions that share the same page state (e.g. filling a form: ' +
+      'type email + type password + click submit). Do NOT batch across navigations.',
+    ),
+});
+
+/* ------------------------------------------------------------------ */
 /*  Generic HTTP response wrapper used by function / download / export */
 /* ------------------------------------------------------------------ */
 
