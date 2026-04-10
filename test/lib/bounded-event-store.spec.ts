@@ -137,4 +137,43 @@ describe('BoundedEventStore', () => {
     });
     expect(replayed).to.have.length(0);
   });
+
+  it('replays correctly when stream IDs contain underscores', async () => {
+    const store = new BoundedEventStore(10);
+    const id1 = await store.storeEvent('stream_a', makeMessage(1));
+    const id2 = await store.storeEvent('stream_a', makeMessage(2));
+
+    const replayed: string[] = [];
+    const streamId = await store.replayEventsAfter(id1, {
+      send: async (eventId) => {
+        replayed.push(eventId);
+      },
+    });
+
+    expect(streamId).to.equal('stream_a');
+    expect(replayed).to.deep.equal([id2]);
+  });
+
+  it('preserves insertion order when many events share a timestamp', async () => {
+    const store = new BoundedEventStore(100);
+    const originalNow = Date.now;
+    Date.now = () => 1234567890;
+    try {
+      const ids: string[] = [];
+      for (let i = 0; i < 12; i++) {
+        ids.push(await store.storeEvent('s', makeMessage(i)));
+      }
+
+      const replayed: number[] = [];
+      await store.replayEventsAfter(ids[0], {
+        send: async (_eventId, message) => {
+          replayed.push((message as unknown as { id: number }).id);
+        },
+      });
+
+      expect(replayed).to.deep.equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
 });

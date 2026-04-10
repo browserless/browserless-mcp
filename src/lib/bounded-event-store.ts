@@ -50,11 +50,8 @@ export class BoundedEventStore implements EventStore {
     }
 
     let foundLastEvent = false;
-    const sortedEvents = [...this.events.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    );
-
-    for (const [eventId, event] of sortedEvents) {
+    // Map preserves insertion order, which matches chronological order
+    for (const [eventId, event] of this.events) {
       if (event.streamId !== streamId) continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
@@ -79,7 +76,9 @@ export class BoundedEventStore implements EventStore {
   }
 
   private getStreamIdFromEventId(eventId: string): string | undefined {
+    // Event ID format: {streamId}_{timestamp}_{counter}_{random}
+    // streamId itself may contain underscores, so take everything except the last 3 segments
     const parts = eventId.split('_');
-    return parts.length >= 4 ? parts[0] : undefined;
+    return parts.length >= 4 ? parts.slice(0, -3).join('_') : undefined;
   }
 }
