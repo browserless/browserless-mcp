@@ -50,8 +50,9 @@ export class BoundedEventStore implements EventStore {
     }
 
     let foundLastEvent = false;
-    // Map preserves insertion order, which matches chronological order
-    for (const [eventId, event] of this.events) {
+    // Snapshot to avoid absorbing events added concurrently during async send()
+    const snapshot = [...this.events.entries()];
+    for (const [eventId, event] of snapshot) {
       if (event.streamId !== streamId) continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
