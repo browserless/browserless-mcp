@@ -1,5 +1,8 @@
 # Latest
 
+# v0.5.0
+add bounded event store to prevent memory leak + OpenAI challenge
+
 # v0.4.3
 Added crawl endpoint to mcp
 
