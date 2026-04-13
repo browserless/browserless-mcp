@@ -18,6 +18,8 @@ import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AmplitudeHelper } from './lib/amplitude.js';
 import { resolveApiKey } from './lib/account-resolver.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
+import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
+import { Redis } from 'ioredis';
 
 const config = getConfig();
 
@@ -61,10 +63,26 @@ const amplitude = new AmplitudeHelper(
 // Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
 // receives the raw Supabase JWT directly. This eliminates server-side token storage,
 // meaning server restarts don't invalidate client sessions.
+// When REDIS_URL is set, OAuth flow state is stored in Redis to support
+// multi-instance deployments behind a load balancer.
+const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
+if (redisClient) {
+  redisClient.on('error', (err: Error) =>
+    console.error('[browserless-mcp] Redis error:', err.message),
+  );
+  redisClient.on('ready', () =>
+    console.error('[browserless-mcp] Redis connected for OAuth state storage'),
+  );
+}
+
 class PassthroughOAuthProvider extends OAuthProvider {
   protected createProxy(): OAuthProxy {
-    return new OAuthProxy({
-      allowedRedirectUriPatterns: ['http://localhost:*', 'https://*'],
+    const proxyConfig = {
+      allowedRedirectUriPatterns: [
+        'http://localhost:*',
+        'http://127.0.0.1:*',
+        'https://*',
+      ],
       baseUrl: this.config.baseUrl,
       consentRequired: false,
       enableTokenSwap: false,
@@ -75,7 +93,11 @@ class PassthroughOAuthProvider extends OAuthProvider {
       upstreamTokenEndpoint: this.genericConfig.tokenEndpoint,
       upstreamTokenEndpointAuthMethod:
         this.genericConfig.tokenEndpointAuthMethod ?? 'client_secret_basic',
-    });
+    };
+    if (redisClient) {
+      return new RedisOAuthProxy(proxyConfig, redisClient);
+    }
+    return new OAuthProxy(proxyConfig);
   }
 }
 
@@ -188,6 +210,7 @@ if (config.transport === 'httpStream') {
       port: config.port,
       host: '0.0.0.0',
       eventStore: new BoundedEventStore(10_000),
+      stateless: true,
     },
   });
   console.error(

@@ -23,6 +23,7 @@ export interface McpConfig {
   supabaseOAuthClientSecret: string;
   supabaseServiceRoleKey: string;
   mcpBaseUrl: string;
+  redisUrl?: string;
 }
 
 export function getConfig(): McpConfig {
@@ -52,5 +53,6 @@ export function getConfig(): McpConfig {
     supabaseOAuthClientSecret: process.env.SUPABASE_OAUTH_CLIENT_SECRET ?? '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     mcpBaseUrl: process.env.MCP_BASE_URL ?? 'https://mcp.browserless.io',
+    redisUrl: process.env.REDIS_URL || undefined,
   };
 }
