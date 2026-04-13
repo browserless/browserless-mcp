@@ -407,9 +407,6 @@ export function createApiClient(
             if (!res.ok) {
               const errorBody = await res.text();
               const message = errorBody.trim() || res.statusText;
-              if (res.status >= 500) {
-                throw new Error(`Server error ${res.status}: ${message}`);
-              }
               throw new Error(`Server error ${res.status}: ${message}`);
             }
 
