@@ -70,7 +70,9 @@ if (redisClient) {
   redisClient.on('error', (err: Error) =>
     console.error('[browserless-mcp] Redis error:', err.message),
   );
-  console.error('[browserless-mcp] Redis connected for OAuth state storage');
+  redisClient.on('ready', () =>
+    console.error('[browserless-mcp] Redis connected for OAuth state storage'),
+  );
 }
 
 class PassthroughOAuthProvider extends OAuthProvider {
