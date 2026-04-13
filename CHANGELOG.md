@@ -1,5 +1,8 @@
 # Latest
 
+# v1.0.0
+Fix OAuth flow for multi instance cluster
+
 # v0.5.0
 add bounded event store to prevent memory leak + OpenAI challenge
 
