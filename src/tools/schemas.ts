@@ -182,6 +182,8 @@ const AgentCommandSchema = z.object({
 export const AgentParamsSchema = z.object({
   method: z
     .string()
+    .optional()
+    .default('')
     .describe(
       'The BQL method to execute. Common methods:\n' +
       '- "goto" { url, waitUntil? } — navigate to a URL\n' +

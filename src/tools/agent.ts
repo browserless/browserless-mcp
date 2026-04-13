@@ -146,7 +146,7 @@ After a snapshot, plan ALL actions before needing a new snapshot. Batch in one c
 
 **Example — complete form fill + submit in ONE call:**
 \`\`\`json
-{ "method": "", "commands": [
+{ "commands": [
   { "method": "type", "params": { "selector": "input#first", "text": "John" } },
   { "method": "type", "params": { "selector": "input#last", "text": "Doe" } },
   { "method": "type", "params": { "selector": "input#email", "text": "j@d.com" } },

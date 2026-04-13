@@ -155,6 +155,7 @@ export const getOrCreateSession = async (
 
 /**
  * Send a command to the agent browser session.
+ * If the connection is closed, transparently reconnects with a fresh browser.
  */
 export const agentSend = async (
   session: ActiveSession,
@@ -163,7 +164,21 @@ export const agentSend = async (
   timeoutMs?: number,
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
-    throw new Error('Agent browser session is closed. Use browserless_agent_navigate to start a new session.');
+    // Reconnect transparently — each new connection gets a fresh browser
+    const ws = await connect(session.apiUrl, session.token);
+    session.ws = ws;
+    session.msgId = 0;
+
+    // Re-register auto-cleanup
+    const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
+    if (key) {
+      ws.addEventListener('close', () => {
+        const current = sessions.get(key);
+        if (current?.ws === ws) {
+          sessions.delete(key);
+        }
+      });
+    }
   }
 
   session.msgId++;
