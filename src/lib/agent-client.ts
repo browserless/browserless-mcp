@@ -12,10 +12,18 @@ export interface AgentMessage {
   params?: Record<string, unknown>;
 }
 
+export interface AgentError {
+  code?: string;
+  message: string;
+  retryable?: boolean;
+  suggestion?: string;
+  snapshot?: SnapshotResult;
+}
+
 export interface AgentResponse {
   id: number;
   result?: unknown;
-  error?: { message: string };
+  error?: AgentError;
 }
 
 export interface SnapshotElement {
@@ -142,7 +150,12 @@ export const getOrCreateSession = async (
   const session: ActiveSession = { ws, msgId: 0, apiUrl, token };
 
   // Auto-cleanup on close
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', (event) => {
+    if (event.code !== 1000) {
+      console.error(
+        `[agent-client] WebSocket closed unexpectedly: code=${event.code} reason=${event.reason || 'none'}`,
+      );
+    }
     const current = sessions.get(key);
     if (current?.ws === ws) {
       sessions.delete(key);
