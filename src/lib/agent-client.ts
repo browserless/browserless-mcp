@@ -99,6 +99,7 @@ const connect = (
 
 /**
  * Send a JSON-RPC message and wait for the response.
+ * Rejects if the WebSocket closes before a response arrives.
  */
 const sendMessage = (
   ws: WebSocket,
@@ -106,14 +107,28 @@ const sendMessage = (
   timeoutMs: number = DEFAULT_TIMEOUT,
 ): Promise<AgentResponse> =>
   new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`Agent command "${msg.method}" timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
-
-    const handler = (event: MessageEvent) => {
+    const cleanup = () => {
       clearTimeout(timeout);
       ws.removeEventListener('message', handler);
+      ws.removeEventListener('close', closeHandler);
+    };
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Agent command "${msg.method}" timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const closeHandler = () => {
+      cleanup();
+      reject(
+        new Error(
+          `WebSocket closed while waiting for "${msg.method}" response`,
+        ),
+      );
+    };
+
+    const handler = (event: MessageEvent) => {
+      cleanup();
       try {
         resolve(JSON.parse(String(event.data)) as AgentResponse);
       } catch (e) {
@@ -122,6 +137,7 @@ const sendMessage = (
     };
 
     ws.addEventListener('message', handler);
+    ws.addEventListener('close', closeHandler);
     ws.send(JSON.stringify(msg));
   });
 
@@ -203,9 +219,26 @@ export const agentSend = async (
 };
 
 /**
- * Close an agent session.
+ * Close an agent session gracefully.
  */
 export const closeSession = (
+  mcpSessionId: string | undefined,
+  token: string,
+): void => {
+  const key = sessionKey(mcpSessionId, token);
+  const session = sessions.get(key);
+  if (session) {
+    try { session.ws.close(); } catch { /* ignore */ }
+    sessions.delete(key);
+  }
+};
+
+/**
+ * Force-destroy a session. Used when the server signals the browser has
+ * crashed or the session is otherwise unrecoverable, so the next tool
+ * call will create a fresh connection instead of reusing a dead one.
+ */
+export const destroySession = (
   mcpSessionId: string | undefined,
   token: string,
 ): void => {

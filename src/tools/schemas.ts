@@ -206,6 +206,42 @@ const SnapshotCommandSchema = z.object({
     .default({}),
 });
 
+const BackCommandSchema = z.object({
+  method: z.literal('back'),
+  params: z
+    .object({
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Defaults to "load".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
+const ForwardCommandSchema = z.object({
+  method: z.literal('forward'),
+  params: z
+    .object({
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Defaults to "load".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
+const ReloadCommandSchema = z.object({
+  method: z.literal('reload'),
+  params: z
+    .object({
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Defaults to "load".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
 const ClickCommandSchema = z.object({
   method: z.literal('click'),
   params: z.object({
@@ -226,6 +262,17 @@ const SelectCommandSchema = z.object({
   params: z.object({
     selector: z.string().describe('CSS selector of the select element'),
     value: z.string().describe('Option value to select'),
+  }),
+});
+
+const CheckboxCommandSchema = z.object({
+  method: z.literal('checkbox'),
+  params: z.object({
+    selector: z.string().describe('CSS selector of the checkbox element'),
+    checked: z
+      .boolean()
+      .optional()
+      .describe('Desired checked state (default: toggle)'),
   }),
 });
 
@@ -314,6 +361,19 @@ const WaitForSelectorCommandSchema = z.object({
   }),
 });
 
+const WaitForNavigationCommandSchema = z.object({
+  method: z.literal('waitForNavigation'),
+  params: z
+    .object({
+      timeout: z
+        .number()
+        .optional()
+        .describe('Timeout in milliseconds (default 30000)'),
+    })
+    .optional()
+    .default({}),
+});
+
 const LiveURLCommandSchema = z.object({
   method: z.literal('liveURL'),
   params: z
@@ -371,10 +431,14 @@ const GenericCommandSchema = z.object({
  */
 const AgentCommandSchema = z.union([
   GotoCommandSchema,
+  BackCommandSchema,
+  ForwardCommandSchema,
+  ReloadCommandSchema,
   SnapshotCommandSchema,
   ClickCommandSchema,
   TypeCommandSchema,
   SelectCommandSchema,
+  CheckboxCommandSchema,
   HoverCommandSchema,
   ScrollCommandSchema,
   EvaluateCommandSchema,
@@ -382,6 +446,7 @@ const AgentCommandSchema = z.union([
   HtmlCommandSchema,
   ScreenshotCommandSchema,
   WaitForSelectorCommandSchema,
+  WaitForNavigationCommandSchema,
   LiveURLCommandSchema,
   CloseCommandSchema,
   GenericCommandSchema,
