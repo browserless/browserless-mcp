@@ -50,7 +50,11 @@ const formatElement = (el: SnapshotElement): string => {
   if (name) parts.push(`"${name}"`);
 
   // The selector the agent should use in commands
-  parts.push(`ref=${el.selector}`);
+  if (el.selector.startsWith('< ')) {
+    parts.push(`deep-ref=${el.selector}`);
+  } else {
+    parts.push(`ref=${el.selector}`);
+  }
 
   // Current value (inputs, selects)
   if (el.value) parts.push(`value="${el.value}"`);
@@ -107,25 +111,33 @@ const SNAPSHOT_METHOD = 'snapshot';
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
-1. **goto** to navigate — always waits for "load" unless you specify otherwise
-2. **snapshot** to observe the page — returns every interactive element with a ref= selector
+1. **goto** to navigate — waits for "domcontentloaded" by default
+2. **snapshot** to observe the page — returns interactive and informational elements (buttons, links, inputs, headings, images with alt text) with ref= selectors
 3. **Plan** all actions you can take from this snapshot
 4. **Batch execute** using the commands array — include as many actions as possible
 5. **Re-snapshot** only if the page changed (click, goto, navigation)
 6. Repeat until task is done, then **close**
 
 ## Snapshot Rules
-- ALWAYS snapshot before your first interaction on any page
-- NEVER guess or infer selectors — only use ref= values from the snapshot
+- ALWAYS snapshot before your first interaction on any page — no exceptions
+- **NEVER guess, assume, or infer selectors** — CSS selectors from your training data are wrong. The ONLY valid selectors are ref= or deep-ref= values from the most recent snapshot
+- If you haven't snapshotted yet on this page, you CANNOT click, type, or interact — snapshot first
+- **Cookie/consent dialogs** are almost always in shadow DOM — look for deep-ref= selectors in the snapshot. Dismiss them first, then re-snapshot before interacting with the page behind them
 - Your snapshot is STALE after: click, goto, select (may trigger navigation), any navigation
 - Your snapshot is VALID after: type, hover, scroll, evaluate — no need to re-snapshot
 - When you expect new content ("next page", "search results", "after login") → re-snapshot
 - The snapshot includes element roles (link, button, textbox, combobox, checkbox, heading, etc.) — use these to understand what each element does
 
 ## Using Selectors
-- Every element in the snapshot has a ref= value — this is the CSS selector to use
+- Every element in the snapshot has a **ref=** or **deep-ref=** value — this is the selector to use
 - Pass it directly to click, type, select, hover commands as the "selector" param
-- Example: snapshot shows \`[3] button button "Sign In" ref=button#submit\` → use \`{ "selector": "button#submit" }\`
+- **ref=** is a standard CSS selector: \`[3] button "Sign In" ref=button#submit\` → use \`"button#submit"\`
+- **deep-ref=** is a shadow DOM selector (starts with \`< \`): \`[7] button "Deny" deep-ref=< button#deny\` → use \`"< button#deny"\` exactly as shown, including the \`< \` prefix. This is a valid Browserless deep selector, not a malformed string
+
+## Navigating Links
+- When a snapshot shows a link with an href, **prefer goto over click** — it is more reliable (immune to layout shifts, overlapping elements, or misclicks)
+- Example: snapshot shows \`[5] a link "About" ref=a[href='/about']\` → use \`goto { url: "https://example.com/about" }\` instead of \`click { selector: "a[href='/about']" }\`
+- Only use click on links when the href is \`javascript:\`, \`#\`, or missing — those require a real click
 
 ## Extracting Content (priority order)
 1. **Check your in-memory snapshot first** — element names, text, and values are already there
@@ -160,27 +172,42 @@ After a snapshot, plan ALL actions before needing a new snapshot. Batch in one c
 \`\`\`
 Do NOT batch across navigations or page reloads.
 
-## Iframes & Shadow DOM — Deep Selectors
-The snapshot only covers the **main frame**. Elements inside iframes (e.g., captchas, embedded editors, payment forms) are invisible to snapshot.
+## Shadow DOM & Iframes — Deep Selectors
+Elements inside shadow DOMs appear in the snapshot with **deep-ref=** instead of ref=. These selectors start with \`< \` — use them exactly as shown, including the prefix. This is a valid Browserless deep selector syntax.
+- Example: \`[7] button button "Deny" deep-ref=< button#deny\` → use selector \`"< button#deny"\`
+- Cookie/consent dialogs, web components (Google, GitHub, etc.), and embedded widgets commonly use shadow DOM
 
-To interact with iframe/shadow DOM elements, prefix the selector with \`< \`:
-- \`< button#submit\` — finds the button across ALL iframes and shadow DOMs
+For **iframe** elements not visible in the snapshot, construct a deep selector manually:
 - \`< *google.com/recaptcha* #recaptcha-anchor\` — target a specific iframe by URL pattern
-- \`< *stripe.com/* input[name='cardnumber']\` — target elements within a Stripe payment iframe
+- \`< *stripe.com/* input[name='cardnumber']\` — target elements within a specific iframe
 
 **What works with deep selectors:** click, type, hover, checkbox (coordinate-based actions)
 **What does NOT work:** text (returns null), html (throws error)
-**Workaround for reading iframe content:** use evaluate with JS:
+**Workaround for reading iframe/shadow content:** use evaluate with JS:
 \`{ "method": "evaluate", "params": { "content": "(() => { const f = document.querySelector('iframe#myFrame'); return f?.contentDocument?.body?.textContent; })()" } }\`
 
+## When Snapshot Misses Content
+- Images without alt text are excluded — use evaluate to read img alt or nearby text
+- Canvas/WebGL content is invisible — use screenshot for visual capture
+- Content may exceed the 500-element limit — scroll and re-snapshot, or increase maxElements
+- For sites rendering results as images (e.g., WolframAlpha, LaTeX renderers):
+  use evaluate to extract: \`(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt))()\`
+
+## Waiting for Dynamic Content
+- After triggering a search or form submit, content may load asynchronously
+- Use **waitForTimeout** { time: 3000 } for simple delays
+- Use **waitForResponse** { url: "*api/pattern*" } to wait for specific API calls
+- Use **waitForSelector** { selector: ".results" } to wait for result elements
+- NEVER use evaluate with setTimeout — use the wait methods above
+
 ## Error Recovery
-- Selector not found → re-snapshot (the page likely changed)
-- Timeout → try waitForSelector first, then re-snapshot
-- Unexpected page state → re-snapshot and re-plan (do not retry blindly)
+- Selector not found → first try the **deep selector** version (\`< selector\`) in case the element is in a shadow root. If that also fails, re-snapshot
+- Timeout → re-snapshot and re-plan (do not retry blindly)
+- Unexpected page state → re-snapshot and re-plan
 - Never retry the exact same failed action without re-snapshotting first
 
 ## Available Methods
-- **goto** { url, waitUntil? } — navigate to URL. Always use waitUntil: "load" or "domcontentloaded" to avoid timing issues, unless you have a specific reason not to.
+- **goto** { url, waitUntil? } — navigate to URL. Defaults to waitUntil: "domcontentloaded". Prefer goto over clicking links (see Navigating Links above).
 - **back** { waitUntil? } — go back in browser history
 - **forward** { waitUntil? } — go forward in browser history
 - **reload** { waitUntil? } — reload the current page
@@ -196,6 +223,9 @@ To interact with iframe/shadow DOM elements, prefix the selector with \`< \`:
 - **html** { selector? } — get HTML content
 - **waitForSelector** { selector, timeout? } — wait for element. Always set a timeout between 5-10s to avoid hanging.
 - **waitForNavigation** { timeout? } — wait for page navigation to complete
+- **waitForTimeout** { time } — wait for a fixed duration in milliseconds. Use after actions that trigger async content loading
+- **waitForRequest** { url?, method?, timeout? } — wait for the browser to make a matching network request (glob patterns supported)
+- **waitForResponse** { url?, statuses?, timeout? } — wait for a matching network response (e.g., url: "*api/results*", statuses: [200])
 - **screenshot** { fullPage? } — capture screenshot (only when user asks)
 - **liveURL** { timeout?, interactable?, quality?, type?, resizable? } — shareable live browser stream
 - **close** — end browser session`;
@@ -302,7 +332,20 @@ export function registerAgentTools(
 
             const parts: string[] = [prefix + err.message];
             if (err.code) parts[0] = `[${err.code}] ${parts[0]}`;
-            if (err.suggestion) parts.push(`Suggestion: ${err.suggestion}`);
+
+            // For SELECTOR_NOT_FOUND: suggest the concrete deep selector to try
+            if (
+              err.code === 'SELECTOR_NOT_FOUND' &&
+              cmd.params.selector &&
+              typeof cmd.params.selector === 'string' &&
+              !cmd.params.selector.startsWith('< ')
+            ) {
+              parts.push(
+                `Suggestion: Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`,
+              );
+            } else if (err.suggestion) {
+              parts.push(`Suggestion: ${err.suggestion}`);
+            }
             if (err.snapshot) {
               parts.push(
                 `Updated snapshot:\n${formatSnapshot(err.snapshot)}`,

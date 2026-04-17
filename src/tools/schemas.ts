@@ -182,7 +182,7 @@ const GotoCommandSchema = z.object({
   params: z.object({
     url: z.string().describe('The URL to navigate to'),
     waitUntil: WaitUntilSchema.optional().describe(
-      'When to consider navigation complete. Defaults to "load".',
+      'When to consider navigation complete. Defaults to "domcontentloaded". Avoid networkidle0/networkidle2 unless explicitly needed — they hang on SPAs and dynamic sites.',
     ),
     timeout: z
       .number()
@@ -374,6 +374,51 @@ const WaitForNavigationCommandSchema = z.object({
     .default({}),
 });
 
+const WaitForTimeoutCommandSchema = z.object({
+  method: z.literal('waitForTimeout'),
+  params: z.object({
+    time: z
+      .number()
+      .describe('Time to wait in milliseconds (e.g., 3000 for 3 seconds)'),
+  }),
+});
+
+const WaitForRequestCommandSchema = z.object({
+  method: z.literal('waitForRequest'),
+  params: z.object({
+    url: z
+      .string()
+      .optional()
+      .describe('URL pattern to match (glob-style, e.g., "*api/results*")'),
+    method: z
+      .string()
+      .optional()
+      .describe('HTTP method to match (e.g., "GET", "POST")'),
+    timeout: z
+      .number()
+      .optional()
+      .describe('Timeout in milliseconds (default 30000)'),
+  }),
+});
+
+const WaitForResponseCommandSchema = z.object({
+  method: z.literal('waitForResponse'),
+  params: z.object({
+    url: z
+      .string()
+      .optional()
+      .describe('URL pattern to match (glob-style, e.g., "*api/results*")'),
+    statuses: z
+      .array(z.number())
+      .optional()
+      .describe('HTTP status codes to match (e.g., [200, 201])'),
+    timeout: z
+      .number()
+      .optional()
+      .describe('Timeout in milliseconds (default 30000)'),
+  }),
+});
+
 const LiveURLCommandSchema = z.object({
   method: z.literal('liveURL'),
   params: z
@@ -447,6 +492,9 @@ const AgentCommandSchema = z.union([
   ScreenshotCommandSchema,
   WaitForSelectorCommandSchema,
   WaitForNavigationCommandSchema,
+  WaitForTimeoutCommandSchema,
+  WaitForRequestCommandSchema,
+  WaitForResponseCommandSchema,
   LiveURLCommandSchema,
   CloseCommandSchema,
   GenericCommandSchema,
