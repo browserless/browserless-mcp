@@ -1,11 +1,3 @@
-/**
- * WebSocket client for the Browserless Agent Protocol.
- *
- * Manages persistent WebSocket connections to /chromium/agent endpoints.
- * Each connection represents a browser session that persists across tool calls.
- * Connections are keyed by MCP session ID so each MCP client gets its own browser.
- */
-
 export interface AgentMessage {
   id: number;
   method: string;
@@ -64,16 +56,9 @@ const sessions = new Map<string, ActiveSession>();
 
 const DEFAULT_TIMEOUT = 60_000;
 
-/**
- * Derive a stable session key. For stdio transport there's no MCP session ID,
- * so we fall back to token-based keying (one browser per token).
- */
-const sessionKey = (mcpSessionId: string | undefined, token: string): string =>
+const getSessionKey = (mcpSessionId: string | undefined, token: string): string =>
   mcpSessionId ?? `stdio:${token}`;
 
-/**
- * Connect to the agent WebSocket endpoint and return the session.
- */
 const connect = (
   apiUrl: string,
   token: string,
@@ -98,10 +83,6 @@ const connect = (
     });
   });
 
-/**
- * Send a JSON-RPC message and wait for the response.
- * Rejects if the WebSocket closes before a response arrives.
- */
 const sendMessage = (
   ws: WebSocket,
   msg: AgentMessage,
@@ -146,15 +127,12 @@ const sendMessage = (
     ws.send(JSON.stringify(msg));
   });
 
-/**
- * Get or create an agent session for the given MCP session.
- */
 export const getOrCreateSession = async (
   mcpSessionId: string | undefined,
   apiUrl: string,
   token: string,
 ): Promise<ActiveSession> => {
-  const key = sessionKey(mcpSessionId, token);
+  const key = getSessionKey(mcpSessionId, token);
   const existing = sessions.get(key);
 
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
@@ -187,19 +165,13 @@ export const getOrCreateSession = async (
   return session;
 };
 
-/**
- * Send a command to the agent browser session.
- * If the connection is closed, transparently reconnects with a fresh browser.
- */
-export const agentSend = async (
+export const send = async (
   session: ActiveSession,
   method: string,
   params: Record<string, unknown> = {},
   timeoutMs?: number,
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
-    // Serialize reconnects: if another caller is already connecting, await
-    // their promise instead of starting a second connect().
     if (!session.reconnecting) {
       session.reconnecting = connect(session.apiUrl, session.token).finally(
         () => {
@@ -233,14 +205,11 @@ export const agentSend = async (
   );
 };
 
-/**
- * Close an agent session gracefully.
- */
 export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
 ): void => {
-  const key = sessionKey(mcpSessionId, token);
+  const key = getSessionKey(mcpSessionId, token);
   const session = sessions.get(key);
   if (session) {
     try { session.ws.close(); } catch { /* ignore */ }
@@ -257,7 +226,7 @@ export const destroySession = (
   mcpSessionId: string | undefined,
   token: string,
 ): void => {
-  const key = sessionKey(mcpSessionId, token);
+  const key = getSessionKey(mcpSessionId, token);
   const session = sessions.get(key);
   if (session) {
     try { session.ws.close(); } catch { /* ignore */ }
