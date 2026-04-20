@@ -337,19 +337,6 @@ const HtmlCommandSchema = z.object({
     .default({}),
 });
 
-const ScreenshotCommandSchema = z.object({
-  method: z.literal('screenshot'),
-  params: z
-    .object({
-      fullPage: z
-        .boolean()
-        .optional()
-        .describe('Capture the full scrollable page'),
-    })
-    .optional()
-    .default({}),
-});
-
 const WaitForSelectorCommandSchema = z.object({
   method: z.literal('waitForSelector'),
   params: z.object({
@@ -489,7 +476,6 @@ const AgentCommandSchema = z.union([
   EvaluateCommandSchema,
   TextCommandSchema,
   HtmlCommandSchema,
-  ScreenshotCommandSchema,
   WaitForSelectorCommandSchema,
   WaitForNavigationCommandSchema,
   WaitForTimeoutCommandSchema,

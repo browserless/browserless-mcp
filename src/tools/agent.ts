@@ -101,7 +101,6 @@ const coerceParams = (params: Record<string, unknown> | undefined): Record<strin
   return params;
 };
 
-const IMAGE_METHODS = new Set(['screenshot', 'pdf']);
 const SNAPSHOT_METHOD = 'snapshot';
 
 /* ------------------------------------------------------------------ */
@@ -144,8 +143,6 @@ const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent sessio
 2. **text** { selector } — extract text from a specific element using a snapshot ref
 3. **evaluate** { content } — run JS in browser (always use IIFE syntax): \`(() => { return ... })()\`
 4. **html** { selector } — get raw HTML of a section
-5. NEVER use screenshot to verify page state — it is slow and wastes tokens
-6. Only use screenshot when the user explicitly asks for a visual capture
 
 ## Batching — Maximize Commands Per Call
 After a snapshot, plan ALL actions before needing a new snapshot. Batch in one call.
@@ -188,7 +185,6 @@ For **iframe** elements not visible in the snapshot, construct a deep selector m
 
 ## When Snapshot Misses Content
 - Images without alt text are excluded — use evaluate to read img alt or nearby text
-- Canvas/WebGL content is invisible — use screenshot for visual capture
 - Content may exceed the 500-element limit — scroll and re-snapshot, or increase maxElements
 - For sites rendering results as images (e.g., WolframAlpha, LaTeX renderers):
   use evaluate to extract: \`(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt))()\`
@@ -226,7 +222,6 @@ For **iframe** elements not visible in the snapshot, construct a deep selector m
 - **waitForTimeout** { time } — wait for a fixed duration in milliseconds. Use after actions that trigger async content loading
 - **waitForRequest** { url?, method?, timeout? } — wait for the browser to make a matching network request (glob patterns supported)
 - **waitForResponse** { url?, statuses?, timeout? } — wait for a matching network response (e.g., url: "*api/results*", statuses: [200])
-- **screenshot** { fullPage? } — capture screenshot (only when user asks)
 - **liveURL** { timeout?, interactable?, quality?, type?, resizable? } — shareable live browser stream
 - **close** — end browser session`;
 
@@ -378,20 +373,6 @@ export function registerAgentTools(
               },
             ],
           };
-        }
-
-        // Screenshot/PDF: return as image
-        if (IMAGE_METHODS.has(last.method) && lastResult?.base64) {
-          const content: Content[] = [];
-          if (batchPrefix) {
-            content.push({ type: 'text' as const, text: batchPrefix.trim() });
-          }
-          content.push({
-            type: 'image' as const,
-            data: lastResult.base64 as string,
-            mimeType: 'image/png',
-          });
-          return { content };
         }
 
         // Everything else: return as JSON text
