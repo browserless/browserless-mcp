@@ -1,6 +1,6 @@
-Add the following configuration at you Claude/agent settings file:
+Add the following configuration at your Claude/agent settings file:
 
-```
+```json
   "mcpServers": {
     "browserless-agent": {
       "type": "stdio",
