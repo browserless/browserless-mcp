@@ -57,6 +57,7 @@ interface ActiveSession {
   msgId: number;
   apiUrl: string;
   token: string;
+  reconnecting?: Promise<WebSocket>;
 }
 
 const sessions = new Map<string, ActiveSession>();
@@ -128,12 +129,16 @@ const sendMessage = (
     };
 
     const handler = (event: MessageEvent) => {
-      cleanup();
+      let response: AgentResponse;
       try {
-        resolve(JSON.parse(String(event.data)) as AgentResponse);
-      } catch (e) {
-        reject(new Error(`Invalid JSON response from agent: ${e}`));
+        response = JSON.parse(String(event.data)) as AgentResponse;
+      } catch {
+        return;
       }
+      // Only accept the response whose id matches the request we sent.
+      if (response.id !== msg.id) return;
+      cleanup();
+      resolve(response);
     };
 
     ws.addEventListener('message', handler);
@@ -193,20 +198,30 @@ export const agentSend = async (
   timeoutMs?: number,
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
-    // Reconnect transparently — each new connection gets a fresh browser
-    const ws = await connect(session.apiUrl, session.token);
-    session.ws = ws;
-    session.msgId = 0;
+    // Serialize reconnects: if another caller is already connecting, await
+    // their promise instead of starting a second connect().
+    if (!session.reconnecting) {
+      session.reconnecting = connect(session.apiUrl, session.token).finally(
+        () => {
+          session.reconnecting = undefined;
+        },
+      );
+    }
+    const ws = await session.reconnecting;
 
-    // Re-register auto-cleanup
-    const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
-    if (key) {
-      ws.addEventListener('close', () => {
-        const current = sessions.get(key);
-        if (current?.ws === ws) {
-          sessions.delete(key);
-        }
-      });
+    if (session.ws !== ws) {
+      session.ws = ws;
+      session.msgId = 0;
+
+      const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
+      if (key) {
+        ws.addEventListener('close', () => {
+          const current = sessions.get(key);
+          if (current?.ws === ws) {
+            sessions.delete(key);
+          }
+        });
+      }
     }
   }
 
@@ -250,14 +265,3 @@ export const destroySession = (
   }
 };
 
-/**
- * Check if a session exists and is open.
- */
-export const hasActiveSession = (
-  mcpSessionId: string | undefined,
-  token: string,
-): boolean => {
-  const key = sessionKey(mcpSessionId, token);
-  const session = sessions.get(key);
-  return !!session && session.ws.readyState === WebSocket.OPEN;
-};
