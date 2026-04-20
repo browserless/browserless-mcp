@@ -53,6 +53,10 @@ interface ActiveSession {
 }
 
 const sessions = new Map<string, ActiveSession>();
+// In-flight session creations keyed by session key. Concurrent
+// getOrCreateSession callers await the same promise instead of each
+// opening their own WebSocket.
+const pending = new Map<string, Promise<ActiveSession>>();
 
 const DEFAULT_TIMEOUT = 60_000;
 
@@ -139,30 +143,47 @@ export const getOrCreateSession = async (
     return existing;
   }
 
+  // Another caller is already creating a session for this key — share it.
+  const inFlight = pending.get(key);
+  if (inFlight) return inFlight;
+
   // Clean up stale session if any
   if (existing) {
     try { existing.ws.close(); } catch { /* ignore */ }
     sessions.delete(key);
   }
 
-  const ws = await connect(apiUrl, token);
-  const session: ActiveSession = { ws, msgId: 0, apiUrl, token };
+  const creation = (async (): Promise<ActiveSession> => {
+    const ws = await connect(apiUrl, token);
+    const session: ActiveSession = { ws, msgId: 0, apiUrl, token };
 
-  // Auto-cleanup on close
-  ws.addEventListener('close', (event) => {
-    if (event.code !== 1000) {
-      console.error(
-        `[agent-client] WebSocket closed unexpectedly: code=${event.code} reason=${event.reason || 'none'}`,
-      );
-    }
-    const current = sessions.get(key);
-    if (current?.ws === ws) {
-      sessions.delete(key);
-    }
-  });
+    // Auto-cleanup on close
+    ws.addEventListener('close', (event) => {
+      if (event.code !== 1000) {
+        console.error(
+          `[agent-client] WebSocket closed unexpectedly: code=${event.code} reason=${event.reason || 'none'}`,
+        );
+      }
+      const current = sessions.get(key);
+      if (current?.ws === ws) {
+        sessions.delete(key);
+      }
+    });
 
-  sessions.set(key, session);
-  return session;
+    sessions.set(key, session);
+    return session;
+  })();
+
+  pending.set(key, creation);
+  try {
+    return await creation;
+  } finally {
+    // Clear the placeholder whether connect succeeded or threw, so a failed
+    // attempt doesn't block future retries.
+    if (pending.get(key) === creation) {
+      pending.delete(key);
+    }
+  }
 };
 
 export const send = async (
