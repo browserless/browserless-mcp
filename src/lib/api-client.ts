@@ -404,10 +404,10 @@ export function createApiClient(
               signal: controller.signal,
             });
 
-            if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+            if (!res.ok) {
+              const errorBody = await res.text();
+              const message = errorBody.trim() || res.statusText;
+              throw new Error(`Server error ${res.status}: ${message}`);
             }
 
             return (await res.json()) as SearchResponse;
