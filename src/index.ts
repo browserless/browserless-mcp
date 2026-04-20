@@ -8,12 +8,19 @@ import { registerFunctionTool } from './tools/function.js';
 import { registerDownloadTool } from './tools/download.js';
 import { registerExportTool } from './tools/export.js';
 import { registerAgentTools } from './tools/agent.js';
+import { registerSearchTool } from './tools/search.js';
+import { registerMapTool } from './tools/map.js';
+import { registerCrawlTool } from './tools/crawl.js';
+import { registerPerformanceTool } from './tools/performance.js';
 import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AmplitudeHelper } from './lib/amplitude.js';
 import { resolveApiKey } from './lib/account-resolver.js';
+import { BoundedEventStore } from './lib/bounded-event-store.js';
+import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
+import { Redis } from 'ioredis';
 
 const config = getConfig();
 
@@ -57,10 +64,26 @@ const amplitude = new AmplitudeHelper(
 // Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
 // receives the raw Supabase JWT directly. This eliminates server-side token storage,
 // meaning server restarts don't invalidate client sessions.
+// When REDIS_URL is set, OAuth flow state is stored in Redis to support
+// multi-instance deployments behind a load balancer.
+const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
+if (redisClient) {
+  redisClient.on('error', (err: Error) =>
+    console.error('[browserless-mcp] Redis error:', err.message),
+  );
+  redisClient.on('ready', () =>
+    console.error('[browserless-mcp] Redis connected for OAuth state storage'),
+  );
+}
+
 class PassthroughOAuthProvider extends OAuthProvider {
   protected createProxy(): OAuthProxy {
-    return new OAuthProxy({
-      allowedRedirectUriPatterns: ['http://localhost:*', 'https://*'],
+    const proxyConfig = {
+      allowedRedirectUriPatterns: [
+        'http://localhost:*',
+        'http://127.0.0.1:*',
+        'https://*',
+      ],
       baseUrl: this.config.baseUrl,
       consentRequired: false,
       enableTokenSwap: false,
@@ -71,7 +94,11 @@ class PassthroughOAuthProvider extends OAuthProvider {
       upstreamTokenEndpoint: this.genericConfig.tokenEndpoint,
       upstreamTokenEndpointAuthMethod:
         this.genericConfig.tokenEndpointAuthMethod ?? 'client_secret_basic',
-    });
+    };
+    if (redisClient) {
+      return new RedisOAuthProxy(proxyConfig, redisClient);
+    }
+    return new OAuthProxy(proxyConfig);
   }
 }
 
@@ -153,6 +180,10 @@ registerFunctionTool(server, config, amplitude);
 registerDownloadTool(server, config, amplitude);
 registerExportTool(server, config, amplitude);
 registerAgentTools(server, config);
+registerSearchTool(server, config, amplitude);
+registerMapTool(server, config, amplitude);
+registerCrawlTool(server, config, amplitude);
+registerPerformanceTool(server, config, amplitude);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
 registerScrapeUrlPrompt(server);
@@ -168,12 +199,20 @@ server.on('disconnect', (event) => {
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
 });
 
+// OpenAI Apps Challenge verification endpoint
+const app = server.getApp();
+app.get('/.well-known/openai-apps-challenge', (c) => {
+  return c.text('aaf7cYxvDaXPvZ2Vg40MCTvYzhCO0KW5mlqmvVIyh5o');
+});
+
 if (config.transport === 'httpStream') {
   server.start({
     transportType: 'httpStream',
     httpStream: {
       port: config.port,
       host: '0.0.0.0',
+      eventStore: new BoundedEventStore(10_000),
+      stateless: true,
     },
   });
   console.error(

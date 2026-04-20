@@ -1,6 +1,6 @@
 {
   "name": "browserless-mcp",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
   "license": "SSPL-1.0",
@@ -36,6 +36,7 @@
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1000.0",
     "fastmcp": "^3.33.0",
+    "ioredis": "^5.10.1",
     "zod": "^4.1.13"
   },
   "devDependencies": {

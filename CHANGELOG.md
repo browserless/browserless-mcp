@@ -1,5 +1,17 @@
 # Latest
 
+# v1.0.0
+Fix OAuth flow for multi instance cluster
+
+# v0.5.0
+add bounded event store to prevent memory leak + OpenAI challenge
+
+# v0.4.3
+Added crawl endpoint to mcp
+
+# v0.4.2
+Adding search and map apis to the MCP server
+
 # v0.4.0
 * Support OAuth
 

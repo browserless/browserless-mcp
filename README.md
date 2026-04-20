@@ -13,6 +13,10 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 | Tool | Description |
 |------|-------------|
 | `browserless_smartscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
+| `browserless_search` | Search the web using Browserless and optionally scrape each result. Supports web, news, and image search with geo-targeting and time filters. |
+| `browserless_map` | Discover and map all URLs on a website. Crawls via sitemaps and link extraction. Returns URLs with optional titles and descriptions. Useful for site audits and content discovery. |
+| `browserless_crawl` | Crawl a website and scrape every discovered page. Supports depth control, path filtering, sitemap strategies, and configurable scrape options. Returns scraped content and metadata for each page. |
+| `browserless_performance` | Run Lighthouse audits on any URL. Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. Optionally filter by category or supply performance budgets. |
 
 ## Configuration
 
@@ -130,7 +134,7 @@ To connect to a specific Browserless regional endpoint, add the `x-browserless-a
       "url": "http://your-mcp-host:8080/mcp",
       "headers": {
         "Authorization": "Bearer your-token-here",
-        "x-browserless-api-url": "https://production-lon.browserless.io"
+        "x-browserless-api-url": "https://production-sfo.browserless.io"
       }
     }
   }
@@ -146,7 +150,7 @@ https://your-mcp-host:8080/mcp?token=your-token-here
 To also specify a regional endpoint:
 
 ```text
-https://your-mcp-host:8080/mcp?token=your-token-here&browserlessUrl=https://production-lon.browserless.io
+https://your-mcp-host:8080/mcp?token=your-token-here&browserlessUrl=https://production-sfo.browserless.io
 ```
 
 When both headers and query parameters are present, headers take precedence.

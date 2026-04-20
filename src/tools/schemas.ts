@@ -531,3 +531,430 @@ export interface GenericApiResult {
   /** Whether the data field is base64-encoded binary */
   isBinary: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/*  /search API – web search with optional scraping                    */
+/* ------------------------------------------------------------------ */
+
+export const SearchSourceSchema = z.enum(['web', 'news', 'images']);
+export type SearchSource = z.infer<typeof SearchSourceSchema>;
+
+export const SearchCategorySchema = z.enum(['github', 'research', 'pdf']);
+export type SearchCategory = z.infer<typeof SearchCategorySchema>;
+
+export const TimeBasedOptionsSchema = z.enum([
+  'day',
+  'week',
+  'month',
+  'year',
+]);
+export type TimeBasedOptions = z.infer<typeof TimeBasedOptionsSchema>;
+
+export const SearchScrapeOptionsSchema = z.object({
+  formats: z
+    .array(z.enum(['markdown', 'html', 'links', 'screenshot']))
+    .optional()
+    .describe('Output formats for scraped content'),
+  onlyMainContent: z
+    .boolean()
+    .optional()
+    .describe('Extract only the main content using Readability'),
+  includeTags: z
+    .array(z.string())
+    .optional()
+    .describe('Only include content from these HTML tags'),
+  excludeTags: z
+    .array(z.string())
+    .optional()
+    .describe('Exclude content from these HTML tags'),
+});
+
+export const SearchParamsSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .describe('The search query string'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(100)
+    .optional()
+    .default(10)
+    .describe('Maximum number of results to return (default: 10, max: 100)'),
+  lang: z
+    .string()
+    .optional()
+    .default('en')
+    .describe('Language code for search results (default: "en")'),
+  country: z
+    .string()
+    .optional()
+    .describe('Country code for geo-targeted results'),
+  location: z
+    .string()
+    .optional()
+    .describe('Location string for geo-targeted results'),
+  tbs: TimeBasedOptionsSchema
+    .optional()
+    .describe('Time-based filter: "day", "week", "month", "year"'),
+  sources: z
+    .array(SearchSourceSchema)
+    .optional()
+    .default(['web'])
+    .describe('Search sources: "web", "news", "images" (default: ["web"])'),
+  categories: z
+    .array(SearchCategorySchema)
+    .optional()
+    .describe('Filter by categories: "github", "research", "pdf"'),
+  scrapeOptions: SearchScrapeOptionsSchema
+    .optional()
+    .describe('Options for scraping each search result'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+});
+
+export type SearchParams = z.infer<typeof SearchParamsSchema>;
+
+export interface SearchResultBase {
+  title: string;
+  url: string;
+  description: string;
+  position?: number;
+}
+
+export interface ScrapedContent {
+  markdown?: string;
+  html?: string;
+  links?: string[];
+  screenshot?: string;
+  metadata?: {
+    statusCode: number | null;
+    strategy?: string;
+    error?: string;
+  };
+}
+
+export interface WebSearchResult extends SearchResultBase, ScrapedContent {}
+
+export interface NewsSearchResult extends WebSearchResult {
+  date?: string;
+  imageUrl?: string;
+}
+
+export interface ImageSearchResult {
+  title?: string;
+  imageUrl?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  url?: string;
+  position?: number;
+}
+
+export interface SearchResponseData {
+  web?: WebSearchResult[];
+  news?: NewsSearchResult[];
+  images?: ImageSearchResult[];
+}
+
+export interface SearchResponse {
+  success: boolean;
+  data: SearchResponseData;
+  totalResults: number;
+  error?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  /map API – site mapping / URL discovery                            */
+/* ------------------------------------------------------------------ */
+
+export const SitemapModeSchema = z.enum(['include', 'skip', 'only']);
+export type SitemapMode = z.infer<typeof SitemapModeSchema>;
+
+export const MapParamsSchema = z.object({
+  url: z
+    .url()
+    .describe('The base URL to start mapping from (must be http or https)'),
+  search: z
+    .string()
+    .optional()
+    .describe('Search query to order results by relevance'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(5000)
+    .optional()
+    .default(100)
+    .describe('Maximum number of links to return (default: 100, max: 5000)'),
+  sitemap: SitemapModeSchema
+    .optional()
+    .default('include')
+    .describe('Sitemap handling: "include" (default), "skip", "only"'),
+  includeSubdomains: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Include URLs from subdomains (default: true)'),
+  ignoreQueryParameters: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Exclude URLs with query parameters (default: true)'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+});
+
+export type MapParams = z.infer<typeof MapParamsSchema>;
+
+export interface MapLink {
+  url: string;
+  title?: string;
+  description?: string;
+}
+
+export interface MapResponse {
+  success: boolean;
+  links?: MapLink[];
+  error?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  /performance API – run Lighthouse audits                           */
+/* ------------------------------------------------------------------ */
+
+export const LighthouseCategorySchema = z.enum([
+  'accessibility',
+  'best-practices',
+  'performance',
+  'pwa',
+  'seo',
+]);
+
+export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
+
+export const PerformanceParamsSchema = z.object({
+  url: z
+    .url()
+    .describe('The URL to audit (must be http or https)'),
+  categories: z
+    .array(LighthouseCategorySchema)
+    .optional()
+    .describe(
+      'Lighthouse categories to audit: "accessibility", "best-practices", ' +
+      '"performance", "pwa", "seo". Omit for all categories.',
+    ),
+  budgets: z
+    .array(z.record(z.string(), z.unknown()))
+    .optional()
+    .describe(
+      'Lighthouse performance budgets array. ' +
+      'See https://developer.chrome.com/docs/lighthouse/performance/performance-budgets',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds (audits can take 30s–120s)'),
+});
+
+export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
+
+export interface PerformanceResponse {
+  data: Record<string, unknown>;
+  type: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  /crawl API – asynchronous web crawling                             */
+/* ------------------------------------------------------------------ */
+
+export const CrawlStatusSchema = z.enum([
+  'in-progress',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type CrawlStatus = z.infer<typeof CrawlStatusSchema>;
+
+export const PageStatusSchema = z.enum([
+  'queued',
+  'in-progress',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type PageStatus = z.infer<typeof PageStatusSchema>;
+
+export const CrawlSitemapModeSchema = z.enum(['auto', 'force', 'skip']);
+export type CrawlSitemapMode = z.infer<typeof CrawlSitemapModeSchema>;
+
+export const CrawlFormatSchema = z.enum(['markdown', 'html', 'rawText']);
+export type CrawlFormat = z.infer<typeof CrawlFormatSchema>;
+
+export const CrawlScrapeOptionsSchema = z.object({
+  formats: z
+    .array(CrawlFormatSchema)
+    .optional()
+    .default(['markdown'])
+    .describe('Output formats for scraped content'),
+  onlyMainContent: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Extract only the main content using Readability'),
+  includeTags: z
+    .array(z.string())
+    .optional()
+    .describe('HTML tag selectors to include'),
+  excludeTags: z
+    .array(z.string())
+    .optional()
+    .describe('HTML tag selectors to exclude'),
+  waitFor: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(0)
+    .describe('Time in ms to wait after page load before scraping'),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Custom HTTP headers to send with each request'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Navigation timeout in milliseconds'),
+});
+
+export const CrawlParamsSchema = z.object({
+  url: z
+    .url()
+    .describe('The URL to crawl (must be http or https)'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(10000)
+    .optional()
+    .default(100)
+    .describe('Maximum number of pages to crawl (default: 100)'),
+  maxDepth: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(5)
+    .describe('Maximum link-follow depth from the root URL (default: 5)'),
+  maxRetries: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(1)
+    .describe('Number of retry attempts per failed page (default: 1)'),
+  allowExternalLinks: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to follow links to external domains'),
+  allowSubdomains: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to follow links to subdomains'),
+  sitemap: CrawlSitemapModeSchema
+    .optional()
+    .default('auto')
+    .describe('Sitemap handling: "auto" (default), "force", "skip"'),
+  includePaths: z
+    .array(z.string())
+    .optional()
+    .describe('Regex patterns for URL paths to include'),
+  excludePaths: z
+    .array(z.string())
+    .optional()
+    .describe('Regex patterns for URL paths to exclude'),
+  delay: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(200)
+    .describe('Delay between requests in milliseconds (default: 200)'),
+  scrapeOptions: CrawlScrapeOptionsSchema
+    .optional()
+    .describe('Options controlling how each page is scraped'),
+  waitForCompletion: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Whether to wait for crawl completion (default: true). If false, returns immediately with crawl ID.'),
+  pollInterval: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(5000)
+    .describe('Polling interval in ms when waiting for completion (default: 5000)'),
+  maxWaitTime: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(300000)
+    .describe('Maximum time in ms to wait for crawl completion when waitForCompletion is true (default: 300000 = 5 minutes)'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('HTTP request timeout in milliseconds for API calls (default: 30000)'),
+});
+
+export type CrawlParams = z.infer<typeof CrawlParamsSchema>;
+
+export interface CrawlStartResponse {
+  success: boolean;
+  id: string;
+  url: string;
+  error?: string;
+}
+
+export interface CrawlPageMetadata {
+  title: string | null;
+  description: string | null;
+  language: string | null;
+  scrapedAt: string | null;
+  sourceURL: string;
+  statusCode: number | null;
+  error: string | null;
+}
+
+export interface CrawlPageResult {
+  status: PageStatus;
+  contentUrl: string | null;
+  metadata: CrawlPageMetadata;
+}
+
+export interface CrawlStatusResponse {
+  status: CrawlStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  expiresAt: string | null;
+  next: string | null;
+  data: CrawlPageResult[];
+}
