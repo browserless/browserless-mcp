@@ -198,6 +198,128 @@ describe('RedisOAuthProxy', () => {
         expect((err as OAuthProxyError).code).to.equal('invalid_client');
       }
     });
+
+    async function runToAuthorizationCode(p: RedisOAuthProxy) {
+      await p.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      const authResp = await p.authorize(baseAuthorizeParams());
+      const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
+        'state',
+      )!;
+      const cbReq = new Request(
+        `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
+      );
+      const cbResp = await p.handleCallback(cbReq);
+      return new URL(cbResp.headers.get('Location')!).searchParams.get('code')!;
+    }
+
+    it('non-PKCE happy path returns the upstream access token', async () => {
+      mockUpstreamTokenFetch();
+      const code = await runToAuthorizationCode(proxy);
+
+      const tokens = await proxy.exchangeAuthorizationCode({
+        client_id: UPSTREAM_CLIENT_ID,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: LEGIT_REDIRECT,
+      });
+
+      expect(tokens.access_token).to.equal('UP_ACCESS_TOKEN');
+      expect(tokens.token_type).to.equal('Bearer');
+      expect(tokens.refresh_token).to.equal('UP_REFRESH_TOKEN');
+    });
+
+    it('non-PKCE redemption is one-time use — second call throws invalid_grant', async () => {
+      mockUpstreamTokenFetch();
+      const code = await runToAuthorizationCode(proxy);
+
+      await proxy.exchangeAuthorizationCode({
+        client_id: UPSTREAM_CLIENT_ID,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: LEGIT_REDIRECT,
+      });
+
+      try {
+        await proxy.exchangeAuthorizationCode({
+          client_id: UPSTREAM_CLIENT_ID,
+          code,
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_grant');
+      }
+    });
+
+    it('redemption is atomic across instances — GETDEL wins once', async () => {
+      // Two proxies sharing Redis simulate two app instances racing to redeem
+      // the same code. Exactly one should succeed; the other should see
+      // invalid_grant. Without GETDEL (plain GET + DEL) both would succeed.
+      mockUpstreamTokenFetch();
+      const code = await runToAuthorizationCode(proxy);
+
+      const proxyB = new RedisOAuthProxy(buildConfig(), redis);
+      try {
+        const results = await Promise.allSettled([
+          proxy.exchangeAuthorizationCode({
+            client_id: UPSTREAM_CLIENT_ID,
+            code,
+            grant_type: 'authorization_code',
+            redirect_uri: LEGIT_REDIRECT,
+          }),
+          proxyB.exchangeAuthorizationCode({
+            client_id: UPSTREAM_CLIENT_ID,
+            code,
+            grant_type: 'authorization_code',
+            redirect_uri: LEGIT_REDIRECT,
+          }),
+        ]);
+        const fulfilled = results.filter((r) => r.status === 'fulfilled');
+        const rejected = results.filter(
+          (r): r is PromiseRejectedResult => r.status === 'rejected',
+        );
+        expect(fulfilled).to.have.lengthOf(1);
+        expect(rejected).to.have.lengthOf(1);
+        expect(rejected[0].reason).to.be.instanceOf(OAuthProxyError);
+        expect((rejected[0].reason as OAuthProxyError).code).to.equal(
+          'invalid_grant',
+        );
+      } finally {
+        proxyB.destroy();
+      }
+    });
+  });
+
+  describe('registerClient Redis failure rollback', () => {
+    it('rolls back the parent Map entry when the Redis mirror fails', async () => {
+      // Force redis.set to fail so the mirror rejects. The parent has already
+      // populated its in-memory registeredClients Map synchronously; without
+      // rollback, this instance's authorize() would accept the URI while
+      // other instances would reject it — reintroducing the cross-instance
+      // inconsistency this class exists to prevent.
+      const setStub = sinon
+        .stub(redis, 'set')
+        .rejects(new Error('redis down'));
+
+      try {
+        await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.equal('redis down');
+      }
+      setStub.restore();
+
+      // authorize must now reject — neither Map nor Redis should list the URI
+      try {
+        await proxy.authorize(baseAuthorizeParams());
+        expect.fail('authorize should have rejected the un-registered URI');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+      }
+    });
   });
 
   describe('handleCallback defense-in-depth', () => {

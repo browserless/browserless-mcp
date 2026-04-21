@@ -104,17 +104,39 @@ export class RedisOAuthProxy extends OAuthProxy {
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
     // Delegate validation, local-Map write, and response synthesis to the
     // parent. We then mirror the accepted URIs into Redis so other instances
-    // can honor the v4 redirect_uri check. Use the response URIs — which are
-    // the authoritative accepted set — rather than request URIs, so if fastmcp
-    // ever normalizes URIs during registration, Redis keys track the Map.
+    // can honor the v4 redirect_uri check. Prefer the response's redirect_uris
+    // so Redis keys track the Map even if fastmcp starts normalizing URIs
+    // during registration — today the two are identical.
     const response = await super.registerClient(request);
     const ttl =
       this._internal.config.clientRegistrationTtl ?? DEFAULT_CLIENT_TTL;
-    await Promise.all(
+
+    const writes = await Promise.allSettled(
       response.redirect_uris.map((uri) =>
         this.redis.set(`${CLIENT_PREFIX}${uri}`, '1', 'EX', ttl),
       ),
     );
+    const failed = writes.find(
+      (w): w is PromiseRejectedResult => w.status === 'rejected',
+    );
+    if (failed) {
+      // Partial Redis state would reintroduce the cross-instance
+      // inconsistency this class exists to prevent: local authorize() would
+      // accept the URI (parent populated its Map synchronously) while other
+      // instances would reject it. Roll back both — local Map and any Redis
+      // keys that succeeded — before surfacing the error. Best-effort Redis
+      // cleanup: if these deletes also fail the originating error still wins.
+      for (const uri of response.redirect_uris) {
+        this._internal.registeredClients.delete(uri);
+      }
+      await Promise.allSettled(
+        response.redirect_uris.map((uri) =>
+          this.redis.del(`${CLIENT_PREFIX}${uri}`),
+        ),
+      );
+      throw failed.reason;
+    }
+
     return response;
   }
 
@@ -265,7 +287,13 @@ export class RedisOAuthProxy extends OAuthProxy {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
 
-    const codeJson = await this.redis.get(`${CODE_PREFIX}${request.code}`);
+    // Atomically read-and-delete the code. The parent enforces one-time use
+    // via an in-memory `used` flag, which can't work across instances: two
+    // concurrent redemptions hitting different instances would both see the
+    // code as valid before either could persist `used=true`. GETDEL makes the
+    // consume race-free — only one redemption can pull a value, regardless of
+    // instance.
+    const codeJson = await this.redis.getdel(`${CODE_PREFIX}${request.code}`);
     if (!codeJson) {
       throw new OAuthProxyError(
         'invalid_grant',
@@ -284,24 +312,16 @@ export class RedisOAuthProxy extends OAuthProxy {
       );
     }
     if (clientCode.codeChallenge && request.code_verifier) {
-      // Delegate PKCE validation to parent by placing code in Map temporarily
+      // Delegate PKCE validation to parent by placing code in Map temporarily.
+      // Redis key is already consumed by GETDEL above, so no additional del
+      // is needed in finally — only the local Map cleanup.
       this._internal.clientCodes.set(request.code, clientCode);
       try {
         return await super.exchangeAuthorizationCode(request);
       } finally {
         this._internal.clientCodes.delete(request.code);
-        await this.redis.del(`${CODE_PREFIX}${request.code}`);
       }
     }
-    if (clientCode.used) {
-      throw new OAuthProxyError(
-        'invalid_grant',
-        'Authorization code already used',
-      );
-    }
-
-    // One-time use: delete from Redis
-    await this.redis.del(`${CODE_PREFIX}${request.code}`);
 
     const response: TokenResponse = {
       access_token: clientCode.upstreamTokens.accessToken,
