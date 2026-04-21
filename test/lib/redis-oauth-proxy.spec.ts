@@ -321,6 +321,33 @@ describe('RedisOAuthProxy', () => {
       }
     });
 
+    it('rolls back the parent Map when the Redis pre-existence probe fails', async () => {
+      // If Redis goes down after super.registerClient populates the parent
+      // Map but before any Redis writes, the exists() probe must not leak
+      // the error out of registerClient without first rolling back the Map —
+      // otherwise this instance would accept the URI via the local Map
+      // while every other instance rejected it.
+      const existsStub = sinon
+        .stub(redis, 'exists')
+        .rejects(new Error('redis unreachable'));
+
+      try {
+        await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.equal('redis unreachable');
+      }
+      existsStub.restore();
+
+      try {
+        await proxy.authorize(baseAuthorizeParams());
+        expect.fail('authorize should have rejected the un-registered URI');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+      }
+    });
+
     it('preserves pre-existing registrations when a later overlapping DCR fails', async () => {
       // Two different DCR calls happen to share a redirect_uri (rare but
       // possible: same client re-registering, or two clients with colliding

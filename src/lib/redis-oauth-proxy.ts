@@ -125,13 +125,41 @@ export class RedisOAuthProxy extends OAuthProxy {
     const ttl =
       this._internal.config.clientRegistrationTtl ?? DEFAULT_CLIENT_TTL;
 
-    const redisPreExisting = new Set<string>();
-    await Promise.all(
-      response.redirect_uris.map(async (uri) => {
-        if ((await this.redis.exists(`${CLIENT_PREFIX}${uri}`)) > 0) {
-          redisPreExisting.add(uri);
+    // Use allSettled so a Redis failure during the exists-probe doesn't
+    // propagate out BEFORE the writes/rollback block — which would strand
+    // the parent's already-populated Map entries with no cleanup. If the
+    // probe itself fails for any URI, fail fast with synchronous Map
+    // rollback: no writes have been attempted yet, so no Redis cleanup is
+    // needed either.
+    const probes = await Promise.allSettled(
+      response.redirect_uris.map(async (uri) => ({
+        uri,
+        existed: (await this.redis.exists(`${CLIENT_PREFIX}${uri}`)) > 0,
+      })),
+    );
+    const probeFailed = probes.find(
+      (p): p is PromiseRejectedResult => p.status === 'rejected',
+    );
+    const rollbackLocalMap = () => {
+      for (const uri of response.redirect_uris) {
+        if (!localPreExisting.has(uri)) {
+          this._internal.registeredClients.delete(uri);
         }
-      }),
+      }
+    };
+    if (probeFailed) {
+      rollbackLocalMap();
+      throw probeFailed.reason;
+    }
+    const redisPreExisting = new Set<string>(
+      probes
+        .filter(
+          (
+            p,
+          ): p is PromiseFulfilledResult<{ uri: string; existed: boolean }> =>
+            p.status === 'fulfilled' && p.value.existed,
+        )
+        .map((p) => p.value.uri),
     );
 
     const writes = await Promise.allSettled(
@@ -139,10 +167,10 @@ export class RedisOAuthProxy extends OAuthProxy {
         this.redis.set(`${CLIENT_PREFIX}${uri}`, '1', 'EX', ttl),
       ),
     );
-    const failed = writes.find(
+    const writeFailed = writes.find(
       (w): w is PromiseRejectedResult => w.status === 'rejected',
     );
-    if (failed) {
+    if (writeFailed) {
       // Partial Redis state would reintroduce the cross-instance
       // inconsistency this class exists to prevent: local authorize() would
       // accept the URI (parent populated its Map synchronously) while other
@@ -150,17 +178,13 @@ export class RedisOAuthProxy extends OAuthProxy {
       // this call introduced — pre-existing registrations stay put. Best-
       // effort Redis cleanup: if these deletes also fail, the originating
       // error still wins.
-      for (const uri of response.redirect_uris) {
-        if (!localPreExisting.has(uri)) {
-          this._internal.registeredClients.delete(uri);
-        }
-      }
+      rollbackLocalMap();
       await Promise.allSettled(
         response.redirect_uris
           .filter((uri) => !redisPreExisting.has(uri))
           .map((uri) => this.redis.del(`${CLIENT_PREFIX}${uri}`)),
       );
-      throw failed.reason;
+      throw writeFailed.reason;
     }
 
     return response;
