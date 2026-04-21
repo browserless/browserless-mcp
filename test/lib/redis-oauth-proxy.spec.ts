@@ -80,6 +80,15 @@ describe('RedisOAuthProxy', () => {
     await redis.quit();
   });
 
+  describe('constructor', () => {
+    it('throws when consentRequired is true (unsupported in multi-instance)', () => {
+      expect(
+        () =>
+          new RedisOAuthProxy(buildConfig({ consentRequired: true }), redis),
+      ).to.throw(/consentRequired: false/);
+    });
+  });
+
   describe('registerClient', () => {
     it('mirrors every redirect_uri to Redis under the client registry prefix', async () => {
       await proxy.registerClient({
@@ -158,7 +167,7 @@ describe('RedisOAuthProxy', () => {
       await proxyA.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
       proxyA.destroy();
 
-      // Instance B: authorize (empty local registeredClients Map)
+      // Instance B: authorize reads the DCR state from shared Redis
       const proxyB = new RedisOAuthProxy(buildConfig(), redis);
       try {
         const response = await proxyB.authorize(baseAuthorizeParams());
@@ -293,12 +302,7 @@ describe('RedisOAuthProxy', () => {
   });
 
   describe('registerClient Redis failure rollback', () => {
-    it('rolls back the parent Map entry when the Redis mirror fails', async () => {
-      // Force redis.set to fail so the mirror rejects. The parent has already
-      // populated its in-memory registeredClients Map synchronously; without
-      // rollback, this instance's authorize() would accept the URI while
-      // other instances would reject it — reintroducing the cross-instance
-      // inconsistency this class exists to prevent.
+    it('does not leave any Redis state when the mirror write fails', async () => {
       const setStub = sinon
         .stub(redis, 'set')
         .rejects(new Error('redis down'));
@@ -311,7 +315,7 @@ describe('RedisOAuthProxy', () => {
       }
       setStub.restore();
 
-      // authorize must now reject — neither Map nor Redis should list the URI
+      // Redis has no registration → authorize rejects the URI
       try {
         await proxy.authorize(baseAuthorizeParams());
         expect.fail('authorize should have rejected the un-registered URI');
@@ -321,12 +325,7 @@ describe('RedisOAuthProxy', () => {
       }
     });
 
-    it('rolls back the parent Map when the Redis pre-existence probe fails', async () => {
-      // If Redis goes down after super.registerClient populates the parent
-      // Map but before any Redis writes, the exists() probe must not leak
-      // the error out of registerClient without first rolling back the Map —
-      // otherwise this instance would accept the URI via the local Map
-      // while every other instance rejected it.
+    it('surfaces the probe failure without attempting any writes', async () => {
       const existsStub = sinon
         .stub(redis, 'exists')
         .rejects(new Error('redis unreachable'));

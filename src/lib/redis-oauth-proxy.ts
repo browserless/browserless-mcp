@@ -14,9 +14,9 @@ import {
 } from 'fastmcp/auth';
 
 /**
- * Redis-backed OAuthProxy that stores OAuth flow state (transactions,
- * authorization codes, and Dynamic Client Registrations) in Redis instead of
- * in-memory Maps.
+ * Redis-backed OAuthProxy that uses Redis as the single source of truth for
+ * OAuth flow state (transactions, authorization codes, and Dynamic Client
+ * Registrations).
  *
  * Multi-instance flows supported behind a load balancer:
  *   1. registerClient() on Instance A  → DCR record written to Redis
@@ -25,15 +25,24 @@ import {
  *   4. exchangeAuthorizationCode() on Instance D → reads code from Redis
  *
  * fastmcp v4.0.0 (CWE-601 hardening) made DCR state load-bearing for
- * authorize() and handleCallback() — both check `registeredClients.has(uri)`.
- * Because that Map is process-local, a naive multi-instance deployment breaks:
- * DCR on A, authorize on B → B rejects the legitimate redirect_uri. We mirror
- * every registration to Redis and re-implement the v4 security checks against
- * the shared store so the fix is applied in multi-instance mode, not bypassed.
+ * authorize(), handleCallback(), and handleConsent() — all three check
+ * `registeredClients.has(uri)` against an in-memory Map. That Map is
+ * process-local, so a naive multi-instance deployment breaks: DCR on A,
+ * authorize on B → B rejects the legitimate redirect_uri.
+ *
+ * We resolve this by ignoring the parent's Map entirely and validating
+ * against Redis in the three override paths. `super.registerClient` still
+ * populates the parent Map as a side effect; we don't read from it, so its
+ * state is irrelevant to correctness.
+ *
+ * Consent is explicitly NOT supported. The parent's handleConsent reads
+ * transactions from a process-local Map, which would reintroduce the
+ * multi-instance bug, and our authorize() override short-circuits the
+ * consent branch regardless. The constructor throws if consent is enabled.
  *
  * Storage requirements: Redis 6.2+ or Valkey 7+. The token-exchange path uses
- * GETDEL for atomic one-time-use of authorization codes across instances; that
- * command landed in Redis 6.2 and has been in every Valkey release.
+ * GETDEL for atomic one-time-use of authorization codes across instances;
+ * that command landed in Redis 6.2 and has been in every Valkey release.
  */
 
 const KEY_PREFIX = 'mcp:oauth:';
@@ -90,7 +99,6 @@ interface OAuthProxyInternals {
     upstreamTokens: UpstreamTokenSet,
   ): string;
   redirectToUpstream(transaction: OAuthTransaction): Response;
-  registeredClients: Map<string, unknown>;
 }
 
 export class RedisOAuthProxy extends OAuthProxy {
@@ -99,6 +107,14 @@ export class RedisOAuthProxy extends OAuthProxy {
   constructor(config: OAuthProxyConfig, redis: Redis) {
     super(config);
     this.redis = redis;
+    // Our authorize() override short-circuits the parent's consent branch,
+    // and the parent's handleConsent reads transactions from a process-local
+    // Map which breaks in multi-instance. Fail fast if a caller opts in.
+    if ((this as unknown as OAuthProxyInternals).config.consentRequired) {
+      throw new Error(
+        'RedisOAuthProxy requires consentRequired: false — consent flow is not supported in multi-instance mode',
+      );
+    }
   }
 
   private get _internal(): OAuthProxyInternals {
@@ -106,31 +122,20 @@ export class RedisOAuthProxy extends OAuthProxy {
   }
 
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
-    // Snapshot which URIs were already registered so partial-failure rollback
-    // only clears entries THIS call introduced. Without this guard, a Redis
-    // write failure during a second DCR that overlaps a prior client's URI
-    // would deregister the prior client's still-valid registration.
-    const localPreExisting = new Set<string>(
-      (request.redirect_uris ?? []).filter((uri) =>
-        this._internal.registeredClients.has(uri),
-      ),
-    );
-
-    // Delegate validation, local-Map write, and response synthesis to the
-    // parent. We then mirror the accepted URIs into Redis so other instances
-    // can honor the v4 redirect_uri check. Prefer the response's redirect_uris
-    // so Redis keys track the Map even if fastmcp starts normalizing URIs
-    // during registration — today the two are identical.
+    // Delegate validation and response synthesis to the parent, then mirror
+    // the accepted URIs into Redis so every instance can honor the v4
+    // redirect_uri check. The parent also populates its in-memory Map as a
+    // side effect — we don't read from it, so its state doesn't affect
+    // correctness and we don't need to keep it in sync.
     const response = await super.registerClient(request);
     const ttl =
       this._internal.config.clientRegistrationTtl ?? DEFAULT_CLIENT_TTL;
 
-    // Use allSettled so a Redis failure during the exists-probe doesn't
-    // propagate out BEFORE the writes/rollback block — which would strand
-    // the parent's already-populated Map entries with no cleanup. If the
-    // probe itself fails for any URI, fail fast with synchronous Map
-    // rollback: no writes have been attempted yet, so no Redis cleanup is
-    // needed either.
+    // Snapshot Redis pre-existence so rollback doesn't DEL a valid prior
+    // registration of the same URI (two DCR calls sharing a redirect_uri —
+    // rare but possible). Use allSettled so a Redis failure here doesn't
+    // escape as a raw probe error; treat probe failure as fail-fast with
+    // no writes attempted.
     const probes = await Promise.allSettled(
       response.redirect_uris.map(async (uri) => ({
         uri,
@@ -140,15 +145,7 @@ export class RedisOAuthProxy extends OAuthProxy {
     const probeFailed = probes.find(
       (p): p is PromiseRejectedResult => p.status === 'rejected',
     );
-    const rollbackLocalMap = () => {
-      for (const uri of response.redirect_uris) {
-        if (!localPreExisting.has(uri)) {
-          this._internal.registeredClients.delete(uri);
-        }
-      }
-    };
     if (probeFailed) {
-      rollbackLocalMap();
       throw probeFailed.reason;
     }
     const redisPreExisting = new Set<string>(
@@ -171,14 +168,8 @@ export class RedisOAuthProxy extends OAuthProxy {
       (w): w is PromiseRejectedResult => w.status === 'rejected',
     );
     if (writeFailed) {
-      // Partial Redis state would reintroduce the cross-instance
-      // inconsistency this class exists to prevent: local authorize() would
-      // accept the URI (parent populated its Map synchronously) while other
-      // instances would reject it. Roll back both layers, but only for keys
-      // this call introduced — pre-existing registrations stay put. Best-
-      // effort Redis cleanup: if these deletes also fail, the originating
-      // error still wins.
-      rollbackLocalMap();
+      // Best-effort cleanup of Redis keys this call introduced; if these
+      // deletes also fail the originating error still wins.
       await Promise.allSettled(
         response.redirect_uris
           .filter((uri) => !redisPreExisting.has(uri))
@@ -191,9 +182,7 @@ export class RedisOAuthProxy extends OAuthProxy {
   }
 
   private async isClientRegistered(uri: string): Promise<boolean> {
-    if (this._internal.registeredClients.has(uri)) return true;
-    const exists = await this.redis.exists(`${CLIENT_PREFIX}${uri}`);
-    return exists === 1;
+    return (await this.redis.exists(`${CLIENT_PREFIX}${uri}`)) === 1;
   }
 
   override async authorize(params: AuthorizationParams): Promise<Response> {
