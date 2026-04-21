@@ -24,6 +24,20 @@ export interface McpConfig {
   supabaseServiceRoleKey: string;
   mcpBaseUrl: string;
   redisUrl?: string;
+  oauthAllowedRedirectUriPatterns: string[];
+}
+
+const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
+  'http://localhost:*',
+  'http://127.0.0.1:*',
+];
+
+function parseAllowedRedirectUriPatterns(raw: string | undefined): string[] {
+  if (!raw) return DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS;
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 export function getConfig(): McpConfig {
@@ -54,5 +68,8 @@ export function getConfig(): McpConfig {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     mcpBaseUrl: process.env.MCP_BASE_URL ?? 'https://mcp.browserless.io',
     redisUrl: process.env.REDIS_URL || undefined,
+    oauthAllowedRedirectUriPatterns: parseAllowedRedirectUriPatterns(
+      process.env.OAUTH_ALLOWED_REDIRECT_URI_PATTERNS,
+    ),
   };
 }
