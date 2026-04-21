@@ -19,7 +19,9 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
+    "types": ["node", "mocha"]
   },
   "include": ["./src/**/*", "./test/**/*"]
 }
