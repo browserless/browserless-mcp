@@ -2,7 +2,6 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "build",
-    "baseUrl": ".",
     "module": "Node16",
     "moduleResolution": "Node16",
     "target": "es2022",
@@ -20,7 +19,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
     "types": ["node", "mocha"]
   },
   "include": ["./src/**/*", "./test/**/*"]
