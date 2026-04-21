@@ -104,12 +104,14 @@ export class RedisOAuthProxy extends OAuthProxy {
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
     // Delegate validation, local-Map write, and response synthesis to the
     // parent. We then mirror the accepted URIs into Redis so other instances
-    // can honor the v4 redirect_uri check.
+    // can honor the v4 redirect_uri check. Use the response URIs — which are
+    // the authoritative accepted set — rather than request URIs, so if fastmcp
+    // ever normalizes URIs during registration, Redis keys track the Map.
     const response = await super.registerClient(request);
     const ttl =
       this._internal.config.clientRegistrationTtl ?? DEFAULT_CLIENT_TTL;
     await Promise.all(
-      (request.redirect_uris ?? []).map((uri) =>
+      response.redirect_uris.map((uri) =>
         this.redis.set(`${CLIENT_PREFIX}${uri}`, '1', 'EX', ttl),
       ),
     );
