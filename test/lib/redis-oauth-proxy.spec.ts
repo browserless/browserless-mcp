@@ -320,6 +320,38 @@ describe('RedisOAuthProxy', () => {
         expect((err as OAuthProxyError).code).to.equal('invalid_request');
       }
     });
+
+    it('preserves pre-existing registrations when a later overlapping DCR fails', async () => {
+      // Two different DCR calls happen to share a redirect_uri (rare but
+      // possible: same client re-registering, or two clients with colliding
+      // localhost ports). The first succeeds; the second fails its Redis
+      // mirror. Rollback must NOT remove the URI that the first call
+      // already legitimately registered.
+      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+
+      // Verify initial registration is honored end-to-end
+      const authOk = await proxy.authorize(baseAuthorizeParams());
+      expect(authOk.status).to.equal(302);
+
+      // Second DCR for the same URI: force Redis failure mid-mirror
+      const setStub = sinon
+        .stub(redis, 'set')
+        .rejects(new Error('redis transient'));
+      try {
+        await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.equal('redis transient');
+      }
+      setStub.restore();
+
+      // The prior registration must still be valid on both layers
+      expect(
+        await redis.exists(`mcp:oauth:client:${LEGIT_REDIRECT}`),
+      ).to.equal(1);
+      const authStillOk = await proxy.authorize(baseAuthorizeParams());
+      expect(authStillOk.status).to.equal(302);
+    });
   });
 
   describe('handleCallback defense-in-depth', () => {
