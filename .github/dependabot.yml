@@ -1,0 +1,45 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      testing:
+        patterns:
+          - "mocha"
+          - "chai"
+          - "sinon"
+          - "c8"
+          - "@types/mocha"
+          - "@types/chai"
+          - "@types/sinon"
+      types:
+        patterns:
+          - "@types/*"
+        exclude-patterns:
+          - "@types/mocha"
+          - "@types/chai"
+          - "@types/sinon"
+      linting:
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+      typescript:
+        patterns:
+          - "typescript"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
