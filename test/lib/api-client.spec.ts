@@ -519,6 +519,42 @@ describe('createApiClient', () => {
         expect((err as Error).message).to.include('Server error 500');
       }
     });
+
+    it('throws on 4xx errors with plain-text body', async () => {
+      fetchStub.resolves(
+        new Response('"limit" must not exceed 1\n', {
+          status: 422,
+          statusText: 'Unprocessable Entity',
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.search({ query: 'test', limit: 999 });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.include('Server error 422');
+        expect((err as Error).message).to.include('"limit" must not exceed 1');
+      }
+    });
+
+    it('falls back to statusText when 4xx body is empty', async () => {
+      fetchStub.resolves(
+        new Response('', {
+          status: 429,
+          statusText: 'Too Many Requests',
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.search({ query: 'test' });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).to.include('Server error 429');
+        expect((err as Error).message).to.include('Too Many Requests');
+      }
+    });
   });
 
   describe('map', () => {
