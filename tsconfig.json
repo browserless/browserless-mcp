@@ -19,7 +19,7 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
-    "types": ["node", "mocha"]
+    "types": ["node", "mocha", "chai", "sinon"]
   },
   "include": ["./src/**/*", "./test/**/*"]
 }

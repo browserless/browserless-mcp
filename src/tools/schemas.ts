@@ -167,6 +167,351 @@ export const ExportParamsSchema = z.object({
 export type ExportParams = z.infer<typeof ExportParamsSchema>;
 
 /* ------------------------------------------------------------------ */
+/*  Agent Browsing Protocol – typed command schemas                     */
+/* ------------------------------------------------------------------ */
+
+const WaitUntilSchema = z.enum([
+  'load',
+  'domcontentloaded',
+  'networkidle0',
+  'networkidle2',
+]);
+
+const GotoCommandSchema = z.object({
+  method: z.literal('goto'),
+  params: z.object({
+    url: z.string().describe('The URL to navigate to'),
+    waitUntil: WaitUntilSchema.optional().describe(
+      'When to consider navigation complete. Defaults to "domcontentloaded". Avoid networkidle0/networkidle2 unless explicitly needed — they hang on SPAs and dynamic sites.',
+    ),
+    timeout: z
+      .number()
+      .optional()
+      .describe('Navigation timeout in milliseconds'),
+  }),
+});
+
+const SnapshotCommandSchema = z.object({
+  method: z.literal('snapshot'),
+  params: z
+    .object({
+      maxElements: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum number of elements to return (default 500)'),
+    })
+    .optional()
+    .default({}),
+});
+
+const BackCommandSchema = z.object({
+  method: z.literal('back'),
+  params: z
+    .object({
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Defaults to "load".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
+const ForwardCommandSchema = z.object({
+  method: z.literal('forward'),
+  params: z
+    .object({
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Defaults to "load".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
+const ReloadCommandSchema = z.object({
+  method: z.literal('reload'),
+  params: z
+    .object({
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Defaults to "load".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
+const ClickCommandSchema = z.object({
+  method: z.literal('click'),
+  params: z.object({
+    selector: z.string().describe('CSS selector of the element to click'),
+  }),
+});
+
+const TypeCommandSchema = z.object({
+  method: z.literal('type'),
+  params: z.object({
+    selector: z.string().describe('CSS selector of the input element'),
+    text: z.string().describe('Text to type into the element'),
+  }),
+});
+
+const SelectCommandSchema = z.object({
+  method: z.literal('select'),
+  params: z.object({
+    selector: z.string().describe('CSS selector of the select element'),
+    value: z.string().describe('Option value to select'),
+  }),
+});
+
+const CheckboxCommandSchema = z.object({
+  method: z.literal('checkbox'),
+  params: z.object({
+    selector: z.string().describe('CSS selector of the checkbox element'),
+    checked: z
+      .boolean()
+      .optional()
+      .describe('Desired checked state (default: toggle)'),
+  }),
+});
+
+const HoverCommandSchema = z.object({
+  method: z.literal('hover'),
+  params: z.object({
+    selector: z
+      .string()
+      .describe('CSS selector of the element to hover over'),
+  }),
+});
+
+const ScrollCommandSchema = z.object({
+  method: z.literal('scroll'),
+  params: z
+    .object({
+      selector: z
+        .string()
+        .optional()
+        .describe('CSS selector of element to scroll (omit for page scroll)'),
+      direction: z
+        .enum(['up', 'down', 'left', 'right'])
+        .optional()
+        .describe('Scroll direction. Defaults to "down".'),
+    })
+    .optional()
+    .default({}),
+});
+
+const EvaluateCommandSchema = z.object({
+  method: z.literal('evaluate'),
+  params: z.object({
+    content: z
+      .string()
+      .describe('JavaScript code to execute (use IIFE syntax)'),
+  }),
+});
+
+const TextCommandSchema = z.object({
+  method: z.literal('text'),
+  params: z
+    .object({
+      selector: z
+        .string()
+        .optional()
+        .describe('CSS selector to extract text from'),
+    })
+    .optional()
+    .default({}),
+});
+
+const HtmlCommandSchema = z.object({
+  method: z.literal('html'),
+  params: z
+    .object({
+      selector: z
+        .string()
+        .optional()
+        .describe('CSS selector to get HTML from'),
+    })
+    .optional()
+    .default({}),
+});
+
+const WaitForSelectorCommandSchema = z.object({
+  method: z.literal('waitForSelector'),
+  params: z.object({
+    selector: z.string().describe('CSS selector to wait for'),
+    timeout: z
+      .number()
+      .optional()
+      .describe('Timeout in milliseconds (recommend 5000-10000)'),
+  }),
+});
+
+const WaitForNavigationCommandSchema = z.object({
+  method: z.literal('waitForNavigation'),
+  params: z
+    .object({
+      timeout: z
+        .number()
+        .optional()
+        .describe('Timeout in milliseconds (default 30000)'),
+    })
+    .optional()
+    .default({}),
+});
+
+const WaitForTimeoutCommandSchema = z.object({
+  method: z.literal('waitForTimeout'),
+  params: z.object({
+    time: z
+      .number()
+      .describe('Time to wait in milliseconds (e.g., 3000 for 3 seconds)'),
+  }),
+});
+
+const WaitForRequestCommandSchema = z.object({
+  method: z.literal('waitForRequest'),
+  params: z.object({
+    url: z
+      .string()
+      .optional()
+      .describe('URL pattern to match (glob-style, e.g., "*api/results*")'),
+    method: z
+      .string()
+      .optional()
+      .describe('HTTP method to match (e.g., "GET", "POST")'),
+    timeout: z
+      .number()
+      .optional()
+      .describe('Timeout in milliseconds (default 30000)'),
+  }),
+});
+
+const WaitForResponseCommandSchema = z.object({
+  method: z.literal('waitForResponse'),
+  params: z.object({
+    url: z
+      .string()
+      .optional()
+      .describe('URL pattern to match (glob-style, e.g., "*api/results*")'),
+    statuses: z
+      .array(z.number())
+      .optional()
+      .describe('HTTP status codes to match (e.g., [200, 201])'),
+    timeout: z
+      .number()
+      .optional()
+      .describe('Timeout in milliseconds (default 30000)'),
+  }),
+});
+
+const LiveURLCommandSchema = z.object({
+  method: z.literal('liveURL'),
+  params: z
+    .object({
+      timeout: z
+        .number()
+        .optional()
+        .describe('How long the live URL stays active (ms)'),
+      interactable: z
+        .boolean()
+        .optional()
+        .describe('Allow interaction via the live URL'),
+      quality: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe('Image quality (1-100)'),
+      type: z
+        .enum(['jpeg', 'png'])
+        .optional()
+        .describe('Image format for the stream'),
+      resizable: z
+        .boolean()
+        .optional()
+        .describe('Allow resizing the browser viewport'),
+    })
+    .optional()
+    .default({}),
+});
+
+const CloseCommandSchema = z.object({
+  method: z.literal('close'),
+  params: z
+    .object({})
+    .optional()
+    .default({}),
+});
+
+/** Fallback for less-common BQL methods not explicitly typed above. */
+const GenericCommandSchema = z.object({
+  method: z.string().describe('The BQL method name'),
+  params: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .default({})
+    .describe('Parameters for the method'),
+});
+
+/**
+ * Typed command union — typed variants are tried first, generic fallback last.
+ * This gives LLMs structured type information for the most common methods
+ * while still allowing any BQL method to be called.
+ */
+const AgentCommandSchema = z.union([
+  GotoCommandSchema,
+  BackCommandSchema,
+  ForwardCommandSchema,
+  ReloadCommandSchema,
+  SnapshotCommandSchema,
+  ClickCommandSchema,
+  TypeCommandSchema,
+  SelectCommandSchema,
+  CheckboxCommandSchema,
+  HoverCommandSchema,
+  ScrollCommandSchema,
+  EvaluateCommandSchema,
+  TextCommandSchema,
+  HtmlCommandSchema,
+  WaitForSelectorCommandSchema,
+  WaitForNavigationCommandSchema,
+  WaitForTimeoutCommandSchema,
+  WaitForRequestCommandSchema,
+  WaitForResponseCommandSchema,
+  LiveURLCommandSchema,
+  CloseCommandSchema,
+  GenericCommandSchema,
+]);
+
+export const AgentParamsSchema = z.object({
+  method: z
+    .string()
+    .optional()
+    .default('')
+    .describe(
+      'The BQL method to execute (used for single-command calls). ' +
+        'When using "commands" array, this field is ignored.',
+    ),
+  params: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .default({})
+    .describe('Parameters for the method (used for single-command calls).'),
+  commands: z
+    .array(AgentCommandSchema)
+    .optional()
+    .describe(
+      'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
+        'are ignored and commands are executed sequentially. Only the final result is returned. ' +
+        'Use this to batch actions that share the same page state (e.g. filling a form: ' +
+        'type email + type password + click submit). Do NOT batch across navigations.',
+    ),
+});
+
+/* ------------------------------------------------------------------ */
 /*  Generic HTTP response wrapper used by function / download / export */
 /* ------------------------------------------------------------------ */
 
