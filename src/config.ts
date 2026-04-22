@@ -24,6 +24,33 @@ export interface McpConfig {
   supabaseServiceRoleKey: string;
   mcpBaseUrl: string;
   redisUrl?: string;
+  oauthAllowedRedirectUriPatterns: string[];
+}
+
+// Baseline allow-list of redirect URIs trusted by the hosted
+// mcp.browserless.io deployment. These are the known MCP clients that
+// legitimately DCR against this server today:
+//   - http://localhost:*, http://127.0.0.1:* — Claude Desktop, Cursor,
+//     VS Code, Windsurf, and anything else using a local loopback callback
+//   - https://claude.ai/api/mcp/auth_callback — Claude.ai web custom connectors
+//   - https://chatgpt.com/connector_platform_oauth_redirect — ChatGPT MCP
+//     connector
+// Deployments that need to allow additional clients (new MCP hosts,
+// staging domains, etc.) can extend this list at runtime via
+// OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS — see parseRedirectUriPatterns.
+const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
+  'http://localhost:*',
+  'http://127.0.0.1:*',
+  'https://claude.ai/api/mcp/auth_callback',
+  'https://chatgpt.com/connector_platform_oauth_redirect',
+];
+
+function parseRedirectUriPatterns(raw: string | undefined): string[] {
+  const additional = (raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return [...DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS, ...additional];
 }
 
 export function getConfig(): McpConfig {
@@ -54,5 +81,8 @@ export function getConfig(): McpConfig {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     mcpBaseUrl: process.env.MCP_BASE_URL ?? 'https://mcp.browserless.io',
     redisUrl: process.env.REDIS_URL || undefined,
+    oauthAllowedRedirectUriPatterns: parseRedirectUriPatterns(
+      process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS,
+    ),
   };
 }

@@ -24,6 +24,7 @@ const mockConfig: McpConfig = {
   supabaseOAuthClientSecret: '',
   supabaseServiceRoleKey: '',
   mcpBaseUrl: '',
+  oauthAllowedRedirectUriPatterns: [],
 };
 
 describe('MCP Server Integration', () => {

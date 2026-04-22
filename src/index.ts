@@ -79,11 +79,7 @@ if (redisClient) {
 class PassthroughOAuthProvider extends OAuthProvider {
   protected createProxy(): OAuthProxy {
     const proxyConfig = {
-      allowedRedirectUriPatterns: [
-        'http://localhost:*',
-        'http://127.0.0.1:*',
-        'https://*',
-      ],
+      allowedRedirectUriPatterns: config.oauthAllowedRedirectUriPatterns,
       baseUrl: this.config.baseUrl,
       consentRequired: false,
       enableTokenSwap: false,
@@ -111,7 +107,7 @@ const oauthProvider =
         authorizationEndpoint: `${config.supabaseUrl}/auth/v1/oauth/authorize`,
         tokenEndpoint: `${config.supabaseUrl}/auth/v1/oauth/token`,
         scopes: ['email'],
-        consentRequired: true,
+        consentRequired: false,
       })
     : undefined;
 
