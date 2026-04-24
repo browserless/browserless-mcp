@@ -74,14 +74,10 @@ After a snapshot, plan ALL actions before needing a new snapshot. Batch in one c
 \`\`\`
 Do NOT batch across navigations or page reloads.
 
-## Shadow DOM & Iframes — Deep Selectors
+## Shadow DOM: Deep Selectors
 Elements inside shadow DOMs appear in the snapshot with **deep-ref=** instead of ref=. These selectors start with \`< \` — use them exactly as shown, including the prefix. This is a valid Browserless deep selector syntax.
 - Example: \`[7] button button "Deny" deep-ref=< button#deny\` → use selector \`"< button#deny"\`
 - Cookie/consent dialogs, web components (Google, GitHub, etc.), and embedded widgets commonly use shadow DOM
-
-For **iframe** elements not visible in the snapshot, construct a deep selector manually:
-- \`< *google.com/recaptcha* #recaptcha-anchor\` — target a specific iframe by URL pattern
-- \`< *stripe.com/* input[name='cardnumber']\` — target elements within a specific iframe
 
 **What works with deep selectors:** click, type, hover, checkbox (coordinate-based actions)
 **What does NOT work:** text (returns null), html (throws error)
@@ -128,7 +124,21 @@ For **iframe** elements not visible in the snapshot, construct a deep selector m
 - **waitForRequest** { url?, method?, timeout? } — wait for the browser to make a matching network request (glob patterns supported)
 - **waitForResponse** { url?, statuses?, timeout? } — wait for a matching network response (e.g., url: "*api/results*", statuses: [200])
 - **liveURL** { timeout?, interactable?, quality?, type?, resizable? } — shareable live browser stream
-- **close** — end browser session`;
+- **getTabs** — list all open tabs with their targetIds, URLs, titles, and which is active
+- **switchTab** { targetId } — make another tab the active one
+- **createTab** { url?, activate?, waitUntil? } — open a new tab. Defaults to activate: true (mirrors window.open with focus)
+- **closeTab** { targetId } — close a tab. Closing the active tab auto-switches to the newest remaining tab
+- **close** — end browser session
+
+## Working with Tabs
+- **Snapshots always include \`tabs\` and \`activeTargetId\`** — after any action that might spawn a tab (target=_blank clicks, window.open), the next snapshot's tabs list will include it. No need to call getTabs unless you want a fresh list without snapshotting.
+- **createTab { url }** defaults to \`activate: true\` — the new tab becomes the active one, matching what agents expect from \`window.open(url, '_blank')\` with focus. Pass \`activate: false\` to open a background tab and keep working in the current one.
+- **closeTab on the active tab** auto-switches to the newest remaining tab. If the response has \`activeTargetId: null\`, no tabs remain — open a new tab or end the session.
+- **snapshot { targetId }** peeks at a non-active tab without switching — useful for comparing two pages or checking a popup before deciding whether to switch.
+- **Error handling:**
+  - \`TAB_NOT_FOUND\` — the targetId is stale; call getTabs to refresh.
+  - \`TAB_CLOSED\` — the tab went away mid-operation; call getTabs and retry.
+  - \`TAB_LIMIT_EXCEEDED\` — too many tabs open; closeTab an unused one first.`;
 
 const getAuth = (
   session: Record<string, unknown> | undefined,
