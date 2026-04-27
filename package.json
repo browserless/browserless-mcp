@@ -31,7 +31,8 @@
     "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1033.0",
@@ -50,6 +51,7 @@
     "eslint": "^10.2.1",
     "ioredis-mock": "^8.13.1",
     "mocha": "^11.1.0",
+    "patch-package": "^8.0.1",
     "sinon": "^21.1.2",
     "typescript": "^6.0.3"
   },
