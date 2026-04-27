@@ -1,5 +1,12 @@
 # Latest
 
+# v1.2.0
+Improve OAuth secutiry
+Improve agentic browsing
+
+# v1.1.0
+Support agentic browsing
+
 # v1.0.0
 Fix OAuth flow for multi instance cluster
 
