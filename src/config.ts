@@ -30,11 +30,13 @@ export interface McpConfig {
 // Baseline allow-list of redirect URIs trusted by the hosted
 // mcp.browserless.io deployment. These are the known MCP clients that
 // legitimately DCR against this server today:
-//   - http://localhost:*, http://127.0.0.1:* — Claude Desktop, Cursor,
-//     VS Code, Windsurf, and anything else using a local loopback callback
+//   - http://localhost:*, http://127.0.0.1:* — Claude Desktop, VS Code,
+//     Windsurf, and anything else using a local loopback callback
 //   - https://claude.ai/api/mcp/auth_callback — Claude.ai web custom connectors
 //   - https://chatgpt.com/connector_platform_oauth_redirect — ChatGPT MCP
 //     connector
+//   - cursor://anysphere.cursor-mcp/oauth/callback — Cursor (private-use
+//     URI scheme registered by the desktop app)
 // Deployments that need to allow additional clients (new MCP hosts,
 // staging domains, etc.) can extend this list at runtime via
 // OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS — see parseRedirectUriPatterns.
@@ -43,6 +45,7 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'http://127.0.0.1:*',
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
+  'cursor://anysphere.cursor-mcp/oauth/callback',
 ];
 
 function parseRedirectUriPatterns(raw: string | undefined): string[] {
