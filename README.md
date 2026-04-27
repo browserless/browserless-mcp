@@ -196,6 +196,15 @@ npm test
 npm run coverage
 ```
 
+### Tests
+
+The test suite uses [Mocha](https://mochajs.org/) with [Chai](https://www.chaijs.com/) and [Sinon](https://sinonjs.org/). Specs live alongside the code in `test/` (`test/lib/`, `test/tools/`, `test/prompts/`, `test/resources/`, `test/integration/`) and run against the compiled output in `build/`.
+
+- `npm test` — compiles TypeScript and runs every `*.spec.js` under `build/test/`. No external services or `BROWSERLESS_TOKEN` are required; the API client is stubbed.
+- `npm run coverage` — runs the suite under [c8](https://github.com/bcoe/c8) with the thresholds configured in `package.json` (lines ≥ 80%, branches ≥ 70%, functions ≥ 80%).
+
+Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24. PRs must keep the suite green before they can merge.
+
 ## API Token
 
 Get your API token at [browserless.io](https://browserless.io). The token authenticates all requests to the Browserless API.
