@@ -37,11 +37,20 @@ export interface SnapshotElement {
   ariaLabel?: string;
 }
 
+export interface TabInfo {
+  targetId: string;
+  url: string;
+  title: string;
+  active: boolean;
+}
+
 export interface SnapshotResult {
   url: string;
   title: string;
   elements: SnapshotElement[];
   time: number;
+  tabs?: TabInfo[];
+  activeTargetId?: string | null;
 }
 
 interface ActiveSession {
