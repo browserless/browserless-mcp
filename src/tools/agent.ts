@@ -128,7 +128,7 @@ Elements inside shadow DOMs appear in the snapshot with **deep-ref=** instead of
 - **switchTab** { targetId } — make another tab the active one
 - **createTab** { url?, activate?, waitUntil? } — open a new tab. Defaults to activate: true (mirrors window.open with focus)
 - **closeTab** { targetId } — close a tab. Closing the active tab auto-switches to the newest remaining tab
-- **close** — end browser session
+- **close** — end browser session. **Issue this as its own call, NOT batched with other commands.** Only call close once you have self-assessed the task as complete or the user has explicitly asked you to end the session. Closing prematurely throws away the page state you would need to recover from a mistake.
 
 ## Working with Tabs
 - **Snapshots always include \`tabs\` and \`activeTargetId\`** — after any action that might spawn a tab (target=_blank clicks, window.open), the next snapshot's tabs list will include it. No need to call getTabs unless you want a fresh list without snapshotting.
@@ -283,7 +283,15 @@ export function registerAgentTools(
 
         // Execute all commands sequentially
         const results: Array<{ method: string; result?: unknown }> = [];
+        let closedDuringBatch = false;
         for (const cmd of commands) {
+          if (cmd.method === 'close') {
+            closeSession(mcpSessionId, token);
+            results.push({ method: 'close', result: { closed: true } });
+            closedDuringBatch = true;
+            break;
+          }
+
           log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
 
           let resp;
@@ -340,9 +348,13 @@ export function registerAgentTools(
           results.push({ method: cmd.method, result: resp.result });
         }
 
-        // Format the response based on the LAST command's result
-        const last = results[results.length - 1];
-        const lastResult = last.result as Record<string, unknown>;
+        // If the batch ended with close, format the result around the
+        // command before close (close itself has no useful payload).
+        const reportable = closedDuringBatch ? results.slice(0, -1) : results;
+        const last = reportable[reportable.length - 1];
+        const closedSuffix = closedDuringBatch
+          ? '\n\nBrowser session closed.'
+          : '';
 
         // Batch summary prefix (only if >1 command)
         const batchPrefix =
@@ -350,13 +362,28 @@ export function registerAgentTools(
             ? `Executed: ${results.map((r) => r.method).join(' → ')}\n\n`
             : '';
 
+        // The whole batch was just `close` (or close-only after a no-op
+        // prefix that produced nothing reportable).
+        if (!last) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'Browser session closed.' },
+            ],
+          };
+        }
+
+        const lastResult = last.result as Record<string, unknown>;
+
         // Snapshot: format as compact ref-based text
         if (last.method === SNAPSHOT_METHOD) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: batchPrefix + formatSnapshot(lastResult as unknown as SnapshotResult),
+                text:
+                  batchPrefix +
+                  formatSnapshot(lastResult as unknown as SnapshotResult) +
+                  closedSuffix,
               },
             ],
           };
@@ -367,7 +394,8 @@ export function registerAgentTools(
           content: [
             {
               type: 'text' as const,
-              text: batchPrefix + JSON.stringify(lastResult, null, 2),
+              text:
+                batchPrefix + JSON.stringify(lastResult, null, 2) + closedSuffix,
             },
           ],
         };
