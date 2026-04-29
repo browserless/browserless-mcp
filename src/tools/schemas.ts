@@ -201,9 +201,62 @@ const SnapshotCommandSchema = z.object({
         .positive()
         .optional()
         .describe('Maximum number of elements to return (default 500)'),
+      targetId: z
+        .string()
+        .optional()
+        .describe(
+          'Optional tab targetId to peek at without switching the active tab. ' +
+            'Obtain via getTabs or a prior snapshot response. Omit to snapshot the active tab.',
+        ),
     })
     .optional()
     .default({}),
+});
+
+const GetTabsCommandSchema = z.object({
+  method: z.literal('getTabs'),
+  params: z.object({}).optional().default({}),
+});
+
+const SwitchTabCommandSchema = z.object({
+  method: z.literal('switchTab'),
+  params: z.object({
+    targetId: z
+      .string()
+      .describe('The targetId of the tab to make active (from getTabs).'),
+  }),
+});
+
+const CreateTabCommandSchema = z.object({
+  method: z.literal('createTab'),
+  params: z
+    .object({
+      url: z
+        .string()
+        .optional()
+        .describe(
+          'URL to open in the new tab. Defaults to about:blank if omitted.',
+        ),
+      activate: z
+        .boolean()
+        .optional()
+        .describe(
+          'If true (default), switch to the new tab. If false, open it in the background ' +
+            'and leave the current tab active.',
+        ),
+      waitUntil: WaitUntilSchema.optional().describe(
+        'When to consider navigation complete. Only applies when activate is true. Defaults to "domcontentloaded".',
+      ),
+    })
+    .optional()
+    .default({}),
+});
+
+const CloseTabCommandSchema = z.object({
+  method: z.literal('closeTab'),
+  params: z.object({
+    targetId: z.string().describe('The targetId of the tab to close.'),
+  }),
 });
 
 const BackCommandSchema = z.object({
@@ -567,6 +620,10 @@ const AgentCommandSchema = z.union([
   ForwardCommandSchema,
   ReloadCommandSchema,
   SnapshotCommandSchema,
+  GetTabsCommandSchema,
+  SwitchTabCommandSchema,
+  CreateTabCommandSchema,
+  CloseTabCommandSchema,
   ClickCommandSchema,
   TypeCommandSchema,
   SelectCommandSchema,

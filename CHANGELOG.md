@@ -1,5 +1,11 @@
 # Latest
 
+# v1.2.2
+- Introduce tab management methods for agent
+
+# v1.2.1
+- Fix OAuth patch
+
 # v1.2.0
 - Improve OAuth secutiry
 - Improve agentic browsing
