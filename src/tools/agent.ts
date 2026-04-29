@@ -107,14 +107,12 @@ After actions that trigger async loading (search, form submit, lazy modal), use 
 Non-obvious quirks called out below. For everything else, the typed schema is authoritative.
 - **goto** { url, waitUntil? } — defaults to \`domcontentloaded\`. Prefer goto over clicking anchors.
 - **snapshot** { maxElements?, targetId? } — get page elements with selectors. Default cap 500. \`targetId\` peeks at a non-active tab without switching.
-- **screenshot** { type?, fullPage?, selector?, quality?, clip?, omitBackground?, waitForImages?, timeout? } — capture an image. Returns as a vision content block (you will see the image directly). Defaults to PNG, viewport-only.
 - **evaluate** { content } — must be IIFE: \`(() => { return ... })()\`
 - **waitForSelector** { selector, timeout? } — always set timeout 5000-10000ms.
 - **waitForResponse** { url?, statuses?, timeout? } — url is a glob, e.g. \`"*api/results*"\`.
 - **createTab** { url?, activate?, waitUntil? } — defaults to \`activate: true\` (matches \`window.open\` with focus). Pass \`activate: false\` for a background tab.
-- **solve** { type?, timeout?, wait? } — captcha solver. EXPERIMENTAL, Browserless Cloud only. See the captchas skill.
 - **close** — end browser session. **Issue as its own call, NOT batched.** Only call once the task is complete; closing prematurely throws away page state.
-- **back** / **forward** / **reload** / **click** / **type** / **select** / **checkbox** / **hover** / **scroll** / **text** / **html** / **waitForNavigation** / **waitForTimeout** / **waitForRequest** / **liveURL** / **getTabs** / **switchTab** / **closeTab** — see schema.
+- **screenshot** / **solve** / **back** / **forward** / **reload** / **click** / **type** / **select** / **checkbox** / **hover** / **scroll** / **text** / **html** / **waitForNavigation** / **waitForTimeout** / **waitForRequest** / **liveURL** / **getTabs** / **switchTab** / **closeTab** — see schema.
 
 `;
 

@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all seven skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(7);
+  it('loads all eight skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(8);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -47,6 +47,7 @@ describe('skills/registry', () => {
       'snapshot-misses',
       'dynamic-content',
       'screenshots',
+      'tabs',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -254,6 +255,64 @@ describe('skills/detectSkills - snapshot-misses', () => {
     expect(detectSkills(ctx, createSkillState())).to.not.include(
       'snapshot-misses',
     );
+  });
+});
+
+describe('skills/detectSkills - tabs', () => {
+  const snapshotWithTabs = (
+    tabCount: number,
+  ): SnapshotResult => ({
+    url: 'https://example.com',
+    title: 'Example',
+    elements: [],
+    time: 0,
+    tabs: Array.from({ length: tabCount }, (_, i) => ({
+      targetId: `t${i}`,
+      url: `https://example.com/${i}`,
+      title: `Tab ${i}`,
+      active: i === 0,
+    })),
+    activeTargetId: tabCount > 0 ? 't0' : null,
+  });
+
+  it('fires when more than one tab is present', () => {
+    const ctx = { snapshot: snapshotWithTabs(2) };
+    expect(detectSkills(ctx, createSkillState())).to.include('tabs');
+  });
+
+  it('does not fire when only one tab is present', () => {
+    const ctx = { snapshot: snapshotWithTabs(1) };
+    expect(detectSkills(ctx, createSkillState())).to.not.include('tabs');
+  });
+
+  it('fires on a TAB_NOT_FOUND error', () => {
+    const ctx = {
+      cmd: { method: 'switchTab', params: { targetId: 'gone' } },
+      error: { code: 'TAB_NOT_FOUND', message: 'no such tab' },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include('tabs');
+  });
+
+  it('fires on a TAB_LIMIT_EXCEEDED error', () => {
+    const ctx = {
+      cmd: { method: 'createTab', params: {} },
+      error: { code: 'TAB_LIMIT_EXCEEDED', message: 'too many tabs' },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include('tabs');
+  });
+
+  it('fires when an explicit tab command is issued', () => {
+    const ctx = {
+      cmd: { method: 'createTab', params: { url: 'https://example.com' } },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include('tabs');
+  });
+
+  it('does not fire on unrelated commands', () => {
+    const ctx = {
+      cmd: { method: 'click', params: { selector: 'button' } },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.not.include('tabs');
   });
 });
 

@@ -10,9 +10,21 @@ export type SkillId =
   | 'captchas'
   | 'snapshot-misses'
   | 'dynamic-content'
-  | 'screenshots';
+  | 'screenshots'
+  | 'tabs';
 
 const DEFAULT_MAX_ELEMENTS = 500;
+const TAB_ERROR_CODES = new Set([
+  'TAB_NOT_FOUND',
+  'TAB_CLOSED',
+  'TAB_LIMIT_EXCEEDED',
+]);
+const TAB_COMMAND_METHODS = new Set([
+  'getTabs',
+  'switchTab',
+  'createTab',
+  'closeTab',
+]);
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
@@ -126,6 +138,17 @@ const skills: Skill[] = [
       if (!error || !cmd) return false;
       if (!cmd.method.startsWith('wait')) return false;
       return /timeout|timed out/i.test(error.message || '');
+    },
+  },
+  {
+    id: 'tabs',
+    path: 'src/skills/tabs.md',
+    body: loadBody('tabs.md'),
+    detect: ({ snapshot, error, cmd }) => {
+      if (snapshot?.tabs && snapshot.tabs.length > 1) return true;
+      if (error?.code && TAB_ERROR_CODES.has(error.code)) return true;
+      if (cmd?.method && TAB_COMMAND_METHODS.has(cmd.method)) return true;
+      return false;
     },
   },
   {
