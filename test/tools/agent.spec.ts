@@ -2,7 +2,10 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { registerAgentTools } from '../../src/tools/agent.js';
+import {
+  formatScreenshotContent,
+  registerAgentTools,
+} from '../../src/tools/agent.js';
 import type { McpConfig } from '../../src/config.js';
 
 const mockConfig: McpConfig = {
@@ -82,5 +85,89 @@ describe('browserless_skill tool', () => {
     };
     expect(schema.safeParse({ id: 'shadow-dom' }).success).to.equal(true);
     expect(schema.safeParse({ id: 'not-a-skill' }).success).to.equal(false);
+  });
+});
+
+describe('formatScreenshotContent', () => {
+  const FAKE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+
+  it('returns image + caption blocks for a valid base64 result', () => {
+    const content = formatScreenshotContent(
+      { base64: FAKE_PNG },
+      { params: {} },
+      '',
+      '',
+    );
+    expect(content).to.not.be.null;
+    expect(content).to.have.lengthOf(2);
+    const caption = content![0] as Extract<Content, { type: 'text' }>;
+    const image = content![1] as Extract<Content, { type: 'image' }>;
+    expect(caption.text).to.match(/Screenshot captured \(image\/png/);
+    expect(image.data).to.equal(FAKE_PNG);
+    expect(image.mimeType).to.equal('image/png');
+  });
+
+  it('uses image/jpeg when type=jpeg was requested', () => {
+    const content = formatScreenshotContent(
+      { base64: FAKE_PNG },
+      { params: { type: 'jpeg' } },
+      '',
+      '',
+    );
+    const image = content![1] as Extract<Content, { type: 'image' }>;
+    expect(image.mimeType).to.equal('image/jpeg');
+  });
+
+  it('uses image/webp when type=webp was requested', () => {
+    const content = formatScreenshotContent(
+      { base64: FAKE_PNG },
+      { params: { type: 'webp' } },
+      '',
+      '',
+    );
+    const image = content![1] as Extract<Content, { type: 'image' }>;
+    expect(image.mimeType).to.equal('image/webp');
+  });
+
+  it('returns null when base64 is missing', () => {
+    expect(
+      formatScreenshotContent({}, { params: {} }, '', ''),
+    ).to.be.null;
+    expect(
+      formatScreenshotContent(null, { params: {} }, '', ''),
+    ).to.be.null;
+    expect(
+      formatScreenshotContent(
+        { base64: '' },
+        { params: {} },
+        '',
+        '',
+      ),
+    ).to.be.null;
+  });
+
+  it('appends rendered skills as a third text block when triggered', () => {
+    const skills = '--- SKILL: modals (src/skills/modals.md) ---\nbody\n--- END SKILL ---';
+    const content = formatScreenshotContent(
+      { base64: FAKE_PNG },
+      { params: {} },
+      '',
+      skills,
+    );
+    expect(content).to.have.lengthOf(3);
+    const tail = content![2] as Extract<Content, { type: 'text' }>;
+    expect(tail.text).to.include('SKILL: modals');
+  });
+
+  it('includes batch prefix in the caption when provided', () => {
+    const content = formatScreenshotContent(
+      { base64: FAKE_PNG },
+      { params: {} },
+      'Executed: goto → screenshot\n\n',
+      '',
+    );
+    const caption = content![0] as Extract<Content, { type: 'text' }>;
+    expect(caption.text).to.match(/^Executed: goto → screenshot/);
+    expect(caption.text).to.include('Screenshot captured');
   });
 });

@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all six skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(6);
+  it('loads all seven skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(7);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -46,6 +46,7 @@ describe('skills/registry', () => {
       'captchas',
       'snapshot-misses',
       'dynamic-content',
+      'screenshots',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -253,6 +254,38 @@ describe('skills/detectSkills - snapshot-misses', () => {
     expect(detectSkills(ctx, createSkillState())).to.not.include(
       'snapshot-misses',
     );
+  });
+});
+
+describe('skills/detectSkills - screenshots', () => {
+  it('fires on the first screenshot command', () => {
+    const ctx = {
+      cmd: { method: 'screenshot', params: { fullPage: true } },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include('screenshots');
+  });
+
+  it('does not fire on snapshot or other commands', () => {
+    const state = createSkillState();
+    expect(
+      detectSkills({ cmd: { method: 'snapshot', params: {} } }, state),
+    ).to.not.include('screenshots');
+    expect(
+      detectSkills(
+        { cmd: { method: 'click', params: { selector: 'button' } } },
+        state,
+      ),
+    ).to.not.include('screenshots');
+  });
+
+  it('fires only once per session (no refireAfter)', () => {
+    const state = createSkillState();
+    const ctx = { cmd: { method: 'screenshot', params: {} } };
+    state.cmdIndex = 1;
+    markFired(state, detectSkills(ctx, state));
+
+    state.cmdIndex = 100;
+    expect(detectSkills(ctx, state)).to.not.include('screenshots');
   });
 });
 

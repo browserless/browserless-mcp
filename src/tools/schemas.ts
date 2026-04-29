@@ -438,6 +438,62 @@ const LiveURLCommandSchema = z.object({
     .default({}),
 });
 
+const ScreenshotTypeSchema = z.enum(['jpeg', 'png', 'webp']);
+
+const ScreenshotClipSchema = z.object({
+  x: z.number().describe('X coordinate of the top-left corner, in CSS pixels'),
+  y: z.number().describe('Y coordinate of the top-left corner, in CSS pixels'),
+  width: z.number().describe('Width of the clip, in CSS pixels'),
+  height: z.number().describe('Height of the clip, in CSS pixels'),
+  scale: z
+    .number()
+    .optional()
+    .describe('Scale factor of the clip (default 1)'),
+});
+
+const ScreenshotCommandSchema = z.object({
+  method: z.literal('screenshot'),
+  params: z
+    .object({
+      type: ScreenshotTypeSchema.optional().describe(
+        'Image format. Default "png". Use "jpeg" for smaller payloads on large pages.',
+      ),
+      fullPage: z
+        .boolean()
+        .optional()
+        .describe('Capture the entire scrollable page (default false)'),
+      selector: z
+        .string()
+        .optional()
+        .describe(
+          'CSS selector of an element to screenshot. Mutually exclusive with fullPage/clip.',
+        ),
+      quality: z
+        .number()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe('Image quality 0-100. Applies to jpeg/webp only.'),
+      omitBackground: z
+        .boolean()
+        .optional()
+        .describe('Hide default white background for transparent screenshots'),
+      clip: ScreenshotClipSchema.optional().describe(
+        'Region of the page to capture. Mutually exclusive with selector/fullPage.',
+      ),
+      waitForImages: z
+        .boolean()
+        .optional()
+        .describe('Wait for all images on the page to load before capturing'),
+      timeout: z
+        .number()
+        .optional()
+        .describe('Timeout in milliseconds (default 30000)'),
+    })
+    .optional()
+    .default({}),
+});
+
 const CaptchaTypeSchema = z.enum([
   'cloudflare',
   'hcaptcha',
@@ -527,6 +583,7 @@ const AgentCommandSchema = z.union([
   WaitForResponseCommandSchema,
   LiveURLCommandSchema,
   SolveCommandSchema,
+  ScreenshotCommandSchema,
   CloseCommandSchema,
   GenericCommandSchema,
 ]);

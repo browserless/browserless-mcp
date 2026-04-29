@@ -33,6 +33,7 @@ If you suspect a mechanic is in play but no SKILL block was injected, call **bro
 - \`captchas\` — the \`solve\` command (Cloud only)
 - \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
 - \`dynamic-content\` — choosing the right \`wait*\` method
+- \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
 
 ## Core Loop (ReAct: Reason → Act → Observe)
 1. **goto** to navigate — waits for "domcontentloaded" by default
@@ -102,6 +103,7 @@ After actions that trigger async loading (search, form submit, lazy modal), use 
 Non-obvious quirks called out below. For everything else, the typed schema is authoritative.
 - **goto** { url, waitUntil? } — defaults to \`domcontentloaded\`. Prefer goto over clicking anchors.
 - **snapshot** { maxElements? } — get page elements with selectors. Default cap 500.
+- **screenshot** { type?, fullPage?, selector?, quality?, clip?, omitBackground?, waitForImages?, timeout? } — capture an image. Returns as a vision content block (you will see the image directly). Defaults to PNG, viewport-only. Use \`fullPage: true\` for full scrollable page, \`selector\` for an element-only shot, or \`clip\` for a custom region.
 - **evaluate** { content } — must be IIFE: \`(() => { return ... })()\`
 - **waitForSelector** { selector, timeout? } — always set timeout 5000-10000ms.
 - **waitForResponse** { url?, statuses?, timeout? } — url is a glob, e.g. \`"*api/results*"\`.
@@ -183,6 +185,51 @@ const appendSkills = (
 ): string => {
   if (ids.length === 0) return base;
   return `${base}\n\n${renderSkills(ids)}`;
+};
+
+const SCREENSHOT_MIME: Record<string, string> = {
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  png: 'image/png',
+};
+
+/**
+ * Build the MCP response for a screenshot command. Returns null if the result
+ * doesn't carry a base64 payload (caller falls back to JSON text output).
+ *
+ * Splitting this out lets us return the screenshot as a vision content block
+ * (~1.5K tokens) instead of inlining the base64 as text (~67K tokens for a
+ * typical PNG).
+ */
+export const formatScreenshotContent = (
+  result: unknown,
+  cmd: { params?: Record<string, unknown> },
+  caption: string,
+  skills: string,
+): Content[] | null => {
+  const base64 =
+    typeof (result as Record<string, unknown> | null)?.base64 === 'string'
+      ? ((result as Record<string, unknown>).base64 as string)
+      : '';
+  if (!base64) return null;
+
+  const requestedType =
+    typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
+  const mimeType = SCREENSHOT_MIME[requestedType] ?? 'image/png';
+
+  const captionText = [
+    caption.trimEnd(),
+    `Screenshot captured (${mimeType}, ${base64.length} base64 chars).`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const content: Content[] = [
+    { type: 'text', text: captionText },
+    { type: 'image', data: base64, mimeType },
+  ];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
 };
 
 const coerceParams = (params: Record<string, unknown> | undefined): Record<string, unknown> => {
@@ -392,6 +439,18 @@ export function registerAgentTools(
               },
             ],
           };
+        }
+
+        // Screenshot: return as image content block (vision input ≈ 1.5K tokens
+        // vs. ~67K tokens if we dumped the base64 inline as text).
+        if (last.method === 'screenshot') {
+          const content = formatScreenshotContent(
+            lastResult,
+            lastCmd,
+            batchPrefix,
+            triggered.length > 0 ? renderSkills(triggered) : '',
+          );
+          if (content) return { content };
         }
 
         // Everything else: return as JSON text

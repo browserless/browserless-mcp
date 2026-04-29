@@ -9,7 +9,8 @@ export type SkillId =
   | 'modals'
   | 'captchas'
   | 'snapshot-misses'
-  | 'dynamic-content';
+  | 'dynamic-content'
+  | 'screenshots';
 
 const DEFAULT_MAX_ELEMENTS = 500;
 
@@ -110,6 +111,12 @@ const skills: Skill[] = [
           : DEFAULT_MAX_ELEMENTS;
       return len >= requestedMax;
     },
+  },
+  {
+    id: 'screenshots',
+    path: 'src/skills/screenshots.md',
+    body: loadBody('screenshots.md'),
+    detect: ({ cmd }) => cmd?.method === 'screenshot',
   },
   {
     id: 'dynamic-content',
