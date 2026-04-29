@@ -23,7 +23,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:skills",
+    "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
     "clean": "rm -rf build",
     "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",
     "lint": "eslint src test --ext .ts",

@@ -44,12 +44,16 @@ export interface SnapshotResult {
   time: number;
 }
 
-interface ActiveSession {
+import { createSkillState } from '../skills/index.js';
+import type { SkillFireState } from '../skills/index.js';
+
+export interface ActiveSession {
   ws: WebSocket;
   msgId: number;
   apiUrl: string;
   token: string;
   reconnecting?: Promise<WebSocket>;
+  skillState: SkillFireState;
 }
 
 const sessions = new Map<string, ActiveSession>();
@@ -155,7 +159,13 @@ export const getOrCreateSession = async (
 
   const creation = (async (): Promise<ActiveSession> => {
     const ws = await connect(apiUrl, token);
-    const session: ActiveSession = { ws, msgId: 0, apiUrl, token };
+    const session: ActiveSession = {
+      ws,
+      msgId: 0,
+      apiUrl,
+      token,
+      skillState: createSkillState(),
+    };
 
     // Auto-cleanup on close
     ws.addEventListener('close', (event) => {

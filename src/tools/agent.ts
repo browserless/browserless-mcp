@@ -1,5 +1,6 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { z } from 'zod';
 import { AgentParamsSchema } from './schemas.js';
 import {
   getOrCreateSession,
@@ -9,10 +10,29 @@ import {
 } from '../lib/agent-client.js';
 import type { SnapshotResult, SnapshotElement } from '../lib/agent-client.js';
 import type { McpConfig } from '../config.js';
+import {
+  detectSkills,
+  markFired,
+  renderSkill,
+  renderSkills,
+  skillsRegistry,
+} from '../skills/index.js';
+import type { SkillId } from '../skills/index.js';
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
+
+## Skills (auto-injected guidance)
+When the page or an error involves a non-trivial mechanic, a SKILL block will be auto-injected into your response between \`--- SKILL: <id> ---\` and \`--- END SKILL ---\` markers. Read it carefully — it contains the exact recipe.
+
+If you suspect a mechanic is in play but no SKILL block was injected, call **browserless_skill** with the id to load the recipe yourself. Available skills:
+- \`shadow-dom\` — deep selectors, iframe targeting
+- \`cookie-consent\` — vendor-specific dismiss recipes
+- \`modals\` — closing dialogs and alertdialogs
+- \`captchas\` — the \`solve\` command (Cloud only)
+- \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
+- \`dynamic-content\` — choosing the right \`wait*\` method
 
 ## Core Loop (ReAct: Reason → Act → Observe)
 1. **goto** to navigate — waits for "domcontentloaded" by default
@@ -26,7 +46,6 @@ const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent sessio
 - ALWAYS snapshot before your first interaction on any page — no exceptions
 - **NEVER guess, assume, or infer selectors** — CSS selectors from your training data are wrong. The ONLY valid selectors are ref= or deep-ref= values from the most recent snapshot
 - If you haven't snapshotted yet on this page, you CANNOT click, type, or interact — snapshot first
-- **Cookie/consent dialogs** are almost always in shadow DOM — look for deep-ref= selectors in the snapshot. Dismiss them first, then re-snapshot before interacting with the page behind them
 - Your snapshot is STALE after: click, goto, select (may trigger navigation), any navigation
 - Your snapshot is VALID after: type, hover, scroll, evaluate — no need to re-snapshot
 - When you expect new content ("next page", "search results", "after login") → re-snapshot
@@ -36,7 +55,7 @@ const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent sessio
 - Every element in the snapshot has a **ref=** or **deep-ref=** value — this is the selector to use
 - Pass it directly to click, type, select, hover commands as the "selector" param
 - **ref=** is a standard CSS selector: \`[3] button "Sign In" ref=button#submit\` → use \`"button#submit"\`
-- **deep-ref=** is a shadow DOM selector (starts with \`< \`): \`[7] button "Deny" deep-ref=< button#deny\` → use \`"< button#deny"\` exactly as shown, including the \`< \` prefix. This is a valid Browserless deep selector, not a malformed string
+- **deep-ref=** is a Browserless deep selector starting with \`< \` — use it exactly as shown, including the \`< \` prefix. The shadow-dom skill explains the syntax in full.
 
 ## Navigating Links
 - When a snapshot shows a link with an href, **prefer goto over click** — it is more reliable (immune to layout shifts, overlapping elements, or misclicks)
@@ -64,42 +83,14 @@ After a snapshot, plan ALL actions before needing a new snapshot. Batch in one c
 **Example — complete form fill + submit in ONE call:**
 \`\`\`json
 { "commands": [
-  { "method": "type", "params": { "selector": "input#first", "text": "John" } },
-  { "method": "type", "params": { "selector": "input#last", "text": "Doe" } },
   { "method": "type", "params": { "selector": "input#email", "text": "j@d.com" } },
-  { "method": "select", "params": { "selector": "select#country", "value": "US" } },
-  { "method": "click", "params": { "selector": "input#terms" } },
   { "method": "click", "params": { "selector": "button#submit" } }
 ] }
 \`\`\`
 Do NOT batch across navigations or page reloads.
 
-## Shadow DOM & Iframes — Deep Selectors
-Elements inside shadow DOMs appear in the snapshot with **deep-ref=** instead of ref=. These selectors start with \`< \` — use them exactly as shown, including the prefix. This is a valid Browserless deep selector syntax.
-- Example: \`[7] button button "Deny" deep-ref=< button#deny\` → use selector \`"< button#deny"\`
-- Cookie/consent dialogs, web components (Google, GitHub, etc.), and embedded widgets commonly use shadow DOM
-
-For **iframe** elements not visible in the snapshot, construct a deep selector manually:
-- \`< *google.com/recaptcha* #recaptcha-anchor\` — target a specific iframe by URL pattern
-- \`< *stripe.com/* input[name='cardnumber']\` — target elements within a specific iframe
-
-**What works with deep selectors:** click, type, hover, checkbox (coordinate-based actions)
-**What does NOT work:** text (returns null), html (throws error)
-**Workaround for reading iframe/shadow content:** use evaluate with JS:
-\`{ "method": "evaluate", "params": { "content": "(() => { const f = document.querySelector('iframe#myFrame'); return f?.contentDocument?.body?.textContent; })()" } }\`
-
-## When Snapshot Misses Content
-- Images without alt text are excluded — use evaluate to read img alt or nearby text
-- Content may exceed the 500-element limit — scroll and re-snapshot, or increase maxElements
-- For sites rendering results as images (e.g., WolframAlpha, LaTeX renderers):
-  use evaluate to extract: \`(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt))()\`
-
-## Waiting for Dynamic Content
-- After triggering a search or form submit, content may load asynchronously
-- Use **waitForTimeout** { time: 3000 } for simple delays
-- Use **waitForResponse** { url: "*api/pattern*" } to wait for specific API calls
-- Use **waitForSelector** { selector: ".results" } to wait for result elements
-- NEVER use evaluate with setTimeout — use the wait methods above
+## Async Content
+After actions that trigger async loading (search, form submit, lazy modal), use a \`wait*\` method before re-snapshotting — \`waitForResponse\` is the most reliable when you know the API URL. The \`dynamic-content\` skill auto-loads on a \`wait*\` timeout and explains the choice. Never use \`evaluate\` with setTimeout to wait.
 
 ## Error Recovery
 - Selector not found → first try the **deep selector** version (\`< selector\`) in case the element is in a shadow root. If that also fails, re-snapshot
@@ -108,27 +99,14 @@ For **iframe** elements not visible in the snapshot, construct a deep selector m
 - Never retry the exact same failed action without re-snapshotting first
 
 ## Available Methods
-- **goto** { url, waitUntil? } — navigate to URL. Defaults to waitUntil: "domcontentloaded". Prefer goto over clicking links (see Navigating Links above).
-- **back** { waitUntil? } — go back in browser history
-- **forward** { waitUntil? } — go forward in browser history
-- **reload** { waitUntil? } — reload the current page
-- **snapshot** { maxElements? } — get page elements with selectors
-- **click** { selector } — click element (use this for form submission: click the submit button)
-- **type** { selector, text } — type into input
-- **select** { selector, value } — select dropdown option
-- **checkbox** { selector, checked? } — toggle a checkbox (prefer over click for checkboxes)
-- **hover** { selector } — hover over element
-- **scroll** { selector?, direction? } — scroll page (default) or specific element
-- **evaluate** { content } — run JS (IIFE syntax)
-- **text** { selector } — extract element text
-- **html** { selector? } — get HTML content
-- **waitForSelector** { selector, timeout? } — wait for element. Always set a timeout between 5-10s to avoid hanging.
-- **waitForNavigation** { timeout? } — wait for page navigation to complete
-- **waitForTimeout** { time } — wait for a fixed duration in milliseconds. Use after actions that trigger async content loading
-- **waitForRequest** { url?, method?, timeout? } — wait for the browser to make a matching network request (glob patterns supported)
-- **waitForResponse** { url?, statuses?, timeout? } — wait for a matching network response (e.g., url: "*api/results*", statuses: [200])
-- **liveURL** { timeout?, interactable?, quality?, type?, resizable? } — shareable live browser stream
-- **close** — end browser session`;
+Non-obvious quirks called out below. For everything else, the typed schema is authoritative.
+- **goto** { url, waitUntil? } — defaults to \`domcontentloaded\`. Prefer goto over clicking anchors.
+- **snapshot** { maxElements? } — get page elements with selectors. Default cap 500.
+- **evaluate** { content } — must be IIFE: \`(() => { return ... })()\`
+- **waitForSelector** { selector, timeout? } — always set timeout 5000-10000ms.
+- **waitForResponse** { url?, statuses?, timeout? } — url is a glob, e.g. \`"*api/results*"\`.
+- **solve** { type?, timeout?, wait? } — captcha solver. EXPERIMENTAL, Browserless Cloud only. See the captchas skill.
+- **back** / **forward** / **reload** / **click** / **type** / **select** / **checkbox** / **hover** / **scroll** / **text** / **html** / **waitForNavigation** / **waitForTimeout** / **waitForRequest** / **liveURL** / **close** — see schema.`;
 
 const getAuth = (
   session: Record<string, unknown> | undefined,
@@ -199,6 +177,14 @@ const formatSnapshot = (snapshot: SnapshotResult): string => {
   return lines.join('\n');
 };
 
+const appendSkills = (
+  base: string,
+  ids: ReadonlyArray<SkillId>,
+): string => {
+  if (ids.length === 0) return base;
+  return `${base}\n\n${renderSkills(ids)}`;
+};
+
 const coerceParams = (params: Record<string, unknown> | undefined): Record<string, unknown> => {
   if (!params) return {};
   if (typeof params === 'string') {
@@ -207,10 +193,48 @@ const coerceParams = (params: Record<string, unknown> | undefined): Record<strin
   return params;
 };
 
+const SkillIdSchema = z.enum(
+  skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
+);
+
+const SkillToolParamsSchema = z.object({
+  id: SkillIdSchema.describe(
+    'The skill to load: shadow-dom, cookie-consent, modals, or captchas.',
+  ),
+});
+
+const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
+
+Use this when you suspect the page exhibits a non-trivial mechanic (shadow DOM, cookie banner, modal dialog, captcha) but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
+
+Available skills:
+- **shadow-dom** — deep selectors, iframe URL-pattern syntax, what works through deep-ref
+- **cookie-consent** — vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, etc.)
+- **modals** — close-button heuristics, ESC handling, alertdialog vs. dialog
+- **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)`;
+
 export function registerAgentTools(
   server: FastMCP,
   config: McpConfig,
 ): void {
+  server.addTool({
+    name: 'browserless_skill',
+    description: SKILL_TOOL_DESCRIPTION,
+    parameters: SkillToolParamsSchema,
+    annotations: {
+      title: 'Load Browserless Skill',
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+    execute: async (args) => {
+      const body = renderSkill(args.id);
+      if (!body) {
+        throw new UserError(`Unknown skill id: ${args.id}`);
+      }
+      return { content: [{ type: 'text' as const, text: body }] };
+    },
+  });
+
   server.addTool({
     name: 'browserless_agent',
     description: TOOL_DESCRIPTION,
@@ -266,6 +290,8 @@ export function registerAgentTools(
         for (const cmd of commands) {
           log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
 
+          agentSession.skillState.cmdIndex += 1;
+
           let resp;
           try {
             resp = await send(agentSession, cmd.method, cmd.params);
@@ -314,7 +340,13 @@ export function registerAgentTools(
               );
             }
 
-            throw new UserError(parts.join('\n\n'));
+            const triggered = detectSkills(
+              { snapshot: err.snapshot, error: err, cmd, apiUrl },
+              agentSession.skillState,
+            );
+            markFired(agentSession.skillState, triggered);
+
+            throw new UserError(appendSkills(parts.join('\n\n'), triggered));
           }
 
           results.push({ method: cmd.method, result: resp.result });
@@ -323,6 +355,7 @@ export function registerAgentTools(
         // Format the response based on the LAST command's result
         const last = results[results.length - 1];
         const lastResult = last.result as Record<string, unknown>;
+        const lastCmd = commands[commands.length - 1];
 
         // Batch summary prefix (only if >1 command)
         const batchPrefix =
@@ -330,13 +363,32 @@ export function registerAgentTools(
             ? `Executed: ${results.map((r) => r.method).join(' → ')}\n\n`
             : '';
 
+        const lastSnapshot =
+          last.method === SNAPSHOT_METHOD
+            ? (lastResult as unknown as SnapshotResult)
+            : undefined;
+
+        const triggered = detectSkills(
+          {
+            snapshot: lastSnapshot,
+            cmd: lastCmd,
+            resp: lastResult,
+            apiUrl,
+          },
+          agentSession.skillState,
+        );
+        markFired(agentSession.skillState, triggered);
+
         // Snapshot: format as compact ref-based text
-        if (last.method === SNAPSHOT_METHOD) {
+        if (lastSnapshot) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: batchPrefix + formatSnapshot(lastResult as unknown as SnapshotResult),
+                text: appendSkills(
+                  batchPrefix + formatSnapshot(lastSnapshot),
+                  triggered,
+                ),
               },
             ],
           };
@@ -347,7 +399,10 @@ export function registerAgentTools(
           content: [
             {
               type: 'text' as const,
-              text: batchPrefix + JSON.stringify(lastResult, null, 2),
+              text: appendSkills(
+                batchPrefix + JSON.stringify(lastResult, null, 2),
+                triggered,
+              ),
             },
           ],
         };

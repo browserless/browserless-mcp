@@ -438,6 +438,50 @@ const LiveURLCommandSchema = z.object({
     .default({}),
 });
 
+const CaptchaTypeSchema = z.enum([
+  'cloudflare',
+  'hcaptcha',
+  'recaptcha',
+  'recaptchaV3',
+  'geetest',
+  'normal',
+  'friendlyCaptcha',
+  'capy',
+  'textCaptcha',
+  'amazonWaf',
+  'dataDome',
+  'akamai',
+  'lemin',
+  'mtcaptcha',
+  'slider',
+]);
+
+const SolveCommandSchema = z.object({
+  method: z.literal('solve'),
+  params: z
+    .object({
+      type: CaptchaTypeSchema.optional().describe(
+        'Captcha type to solve. Omit to auto-detect.',
+      ),
+      timeout: z
+        .number()
+        .optional()
+        .describe(
+          'How long to wait for the captcha to appear (ms). Default 30000. ' +
+            'Does not bound the solver itself once a captcha is found.',
+        ),
+      wait: z
+        .boolean()
+        .optional()
+        .describe(
+          'Wait for the captcha to appear before solving (default true). ' +
+            'Set false if you have already verified the widget is on screen.',
+        ),
+    })
+    .optional()
+    .default({}),
+});
+
 const CloseCommandSchema = z.object({
   method: z.literal('close'),
   params: z
@@ -482,6 +526,7 @@ const AgentCommandSchema = z.union([
   WaitForRequestCommandSchema,
   WaitForResponseCommandSchema,
   LiveURLCommandSchema,
+  SolveCommandSchema,
   CloseCommandSchema,
   GenericCommandSchema,
 ]);
