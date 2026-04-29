@@ -7,6 +7,7 @@ const BASELINE_PATTERNS = [
   'http://127.0.0.1:*',
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
+  'cursor://anysphere.cursor-mcp/oauth/callback',
 ];
 
 describe('config.oauthAllowedRedirectUriPatterns', () => {

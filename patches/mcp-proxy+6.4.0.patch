@@ -1,0 +1,31 @@
+diff --git a/node_modules/mcp-proxy/dist/stdio-CyOk7u4Q.mjs b/node_modules/mcp-proxy/dist/stdio-CyOk7u4Q.mjs
+index bfd727e..3350845 100644
+--- a/node_modules/mcp-proxy/dist/stdio-CyOk7u4Q.mjs
++++ b/node_modules/mcp-proxy/dist/stdio-CyOk7u4Q.mjs
+@@ -15479,6 +15479,10 @@ const handleStreamRequest = async ({ activeTransports, authenticate, authMiddlew
+ 		const sessionId = req.headers["mcp-session-id"];
+ 		const activeTransport = sessionId ? activeTransports[sessionId] : void 0;
+ 		if (!sessionId) {
++			if (stateless) {
++				res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
++				return true;
++			}
+ 			res.writeHead(400).end("No sessionId");
+ 			return true;
+ 		}
+diff --git a/node_modules/mcp-proxy/src/startHTTPServer.ts b/node_modules/mcp-proxy/src/startHTTPServer.ts
+index 80e8cb7..ac051a1 100644
+--- a/node_modules/mcp-proxy/src/startHTTPServer.ts
++++ b/node_modules/mcp-proxy/src/startHTTPServer.ts
+@@ -686,6 +686,11 @@ const handleStreamRequest = async <T extends ServerLike>({
+       | undefined = sessionId ? activeTransports[sessionId] : undefined;
+ 
+     if (!sessionId) {
++      if (stateless) {
++        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
++
++        return true;
++      }
+       res.writeHead(400).end("No sessionId");
+ 
+       return true;
