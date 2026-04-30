@@ -496,12 +496,13 @@ const ScreenshotTypeSchema = z.enum(['jpeg', 'png', 'webp']);
 const ScreenshotClipSchema = z.object({
   x: z.number().describe('X coordinate of the top-left corner, in CSS pixels'),
   y: z.number().describe('Y coordinate of the top-left corner, in CSS pixels'),
-  width: z.number().describe('Width of the clip, in CSS pixels'),
-  height: z.number().describe('Height of the clip, in CSS pixels'),
+  width: z.number().min(1).describe('Width of the clip, in CSS pixels (>0)'),
+  height: z.number().min(1).describe('Height of the clip, in CSS pixels (>0)'),
   scale: z
     .number()
+    .positive()
     .optional()
-    .describe('Scale factor of the clip (default 1)'),
+    .describe('Scale factor of the clip (default 1, >0)'),
 });
 
 const ScreenshotCommandSchema = z.object({
@@ -544,7 +545,21 @@ const ScreenshotCommandSchema = z.object({
         .describe('Timeout in milliseconds (default 30000)'),
     })
     .optional()
-    .default({}),
+    .default({})
+    .superRefine((params, ctx) => {
+      const set = [
+        params.selector !== undefined ? 'selector' : null,
+        params.clip !== undefined ? 'clip' : null,
+        params.fullPage === true ? 'fullPage' : null,
+      ].filter((v): v is string => v !== null);
+
+      if (set.length > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `selector, clip, and fullPage are mutually exclusive (got: ${set.join(', ')})`,
+        });
+      }
+    }),
 });
 
 const CaptchaTypeSchema = z.enum([
