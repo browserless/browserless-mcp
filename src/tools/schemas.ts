@@ -589,6 +589,8 @@ const SolveCommandSchema = z.object({
       ),
       timeout: z
         .number()
+        .int()
+        .positive()
         .optional()
         .describe(
           'How long to wait for the captcha to appear (ms). Default 30000. ' +
