@@ -12,7 +12,7 @@ You're about to capture or just captured a screenshot. The image arrives as a vi
 | Capture a chart, map, image-rendered formula | `screenshot` with a tight `selector` |
 | Verify "does this look right?" | `screenshot` |
 
-A snapshot is roughly free (one-liner per element). A screenshot costs ~1.5K vision tokens regardless of dimensions, but it's also the *only* way to see actual rendering. Use it when visual fidelity is the point, not as a substitute for inspecting the DOM.
+A snapshot is roughly free (one-liner per element). A screenshot's token cost is image- and model-dependent — varying with size and the consuming model rather than a fixed number — and is typically higher than a snapshot, but it's also the *only* way to see actual rendering. Use it when visual fidelity is the point, not as a substitute for inspecting the DOM.
 
 ## Scope: smallest region that answers the question
 
