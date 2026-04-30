@@ -107,6 +107,33 @@ describe('formatScreenshotContent', () => {
     expect(image.mimeType).to.equal('image/png');
   });
 
+  it('caption reports decoded byte size, not base64 char count', () => {
+    // ~660,000 base64 chars decodes to ~495 KB
+    const big = 'A'.repeat(660_000);
+    const content = formatScreenshotContent(
+      { base64: big },
+      { params: {} },
+      '',
+      '',
+    );
+    const caption = content![0] as Extract<Content, { type: 'text' }>;
+    expect(caption.text).to.match(/~\d+ KB/);
+    expect(caption.text).to.not.include('base64 chars');
+  });
+
+  it('formats large screenshots in MB', () => {
+    // ~3 MB worth of base64
+    const big = 'A'.repeat(4_200_000);
+    const content = formatScreenshotContent(
+      { base64: big },
+      { params: {} },
+      '',
+      '',
+    );
+    const caption = content![0] as Extract<Content, { type: 'text' }>;
+    expect(caption.text).to.match(/~\d+(\.\d)? MB/);
+  });
+
   it('uses image/jpeg when type=jpeg was requested', () => {
     const content = formatScreenshotContent(
       { base64: FAKE_PNG },

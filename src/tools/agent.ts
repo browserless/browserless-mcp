@@ -233,9 +233,17 @@ export const formatScreenshotContent = (
     typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
   const mimeType = SCREENSHOT_MIME[requestedType] ?? 'image/png';
 
+  // Decoded byte size, not base64 char count — avoids implying the bytes are
+  // in-band as text for clients that don't render image content blocks.
+  const decodedBytes = Math.floor(base64.length * 0.75);
+  const sizeLabel =
+    decodedBytes >= 1_048_576
+      ? `${(decodedBytes / 1_048_576).toFixed(1)} MB`
+      : `${Math.round(decodedBytes / 1024)} KB`;
+
   const captionText = [
     caption.trimEnd(),
-    `Screenshot captured (${mimeType}, ${base64.length} base64 chars).`,
+    `Screenshot captured (${mimeType}, ~${sizeLabel}).`,
   ]
     .filter(Boolean)
     .join('\n\n');
