@@ -2,7 +2,12 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { registerFunctionTool } from '../../src/tools/function.js';
+import {
+  MAX_TEXT_RESPONSE_CHARS,
+  formatFunctionContent,
+  registerFunctionTool,
+} from '../../src/tools/function.js';
+import type { GenericApiResult } from '../../src/tools/schemas.js';
 import type { McpConfig } from '../../src/config.js';
 
 const mockConfig: McpConfig = {
@@ -162,7 +167,7 @@ describe('browserless_function tool', () => {
     }
   });
 
-  it('handles binary response with base64 encoding', async () => {
+  it('returns a PDF response as a resource block, not inline base64', async () => {
     const pdfBuffer = Buffer.from('fake-pdf-content');
     fetchStub.resolves(
       new Response(pdfBuffer, {
@@ -175,17 +180,22 @@ describe('browserless_function tool', () => {
     const execute = getToolExecute(server);
 
     const result = await execute(
-      {
-        code: 'export default async ({ page }) => page.pdf()',
-      },
+      { code: 'export default async ({ page }) => page.pdf()' },
       mockContext,
     );
 
     const content = (result as { content: Content[] }).content;
-    const mainContent = content[0] as { type: string; text: string };
-    expect(mainContent.text).to.include('Binary response');
-    expect(mainContent.text).to.include('application/pdf');
-    expect(mainContent.text).to.include(pdfBuffer.toString('base64'));
+    const metadata = content[0] as Extract<Content, { type: 'text' }>;
+    expect(metadata.text).to.include('Content-Type: application/pdf');
+    // Crucially, the base64 must NOT be inlined as text — that was the old
+    // bug that torched context.
+    expect(metadata.text).to.not.include(pdfBuffer.toString('base64'));
+
+    const resource = content[1] as Extract<Content, { type: 'resource' }>;
+    expect(resource.type).to.equal('resource');
+    expect(resource.resource.mimeType).to.equal('application/pdf');
+    expect(resource.resource.blob).to.equal(pdfBuffer.toString('base64'));
+    expect(resource.resource.uri).to.match(/\.pdf$/);
   });
 
   it('reports progress during execution', async () => {
@@ -213,5 +223,107 @@ describe('browserless_function tool', () => {
       progress: 100,
       total: 100,
     });
+  });
+});
+
+describe('formatFunctionContent', () => {
+  const FAKE_BASE64 = 'Zm9vYmFy';
+
+  const makeResponse = (
+    overrides: Partial<GenericApiResult> = {},
+  ): GenericApiResult => ({
+    data: 'hello',
+    contentType: 'text/plain',
+    contentDisposition: null,
+    statusCode: 200,
+    ok: true,
+    size: 5,
+    isBinary: false,
+    ...overrides,
+  });
+
+  it('promotes image/png to an image content block', () => {
+    const content = formatFunctionContent(
+      makeResponse({
+        contentType: 'image/png',
+        isBinary: true,
+        data: FAKE_BASE64,
+      }),
+    );
+    const image = content[1] as Extract<Content, { type: 'image' }>;
+    expect(image.type).to.equal('image');
+    expect(image.mimeType).to.equal('image/png');
+    expect(image.data).to.equal(FAKE_BASE64);
+  });
+
+  it('promotes image/jpeg, normalizing charset parameters', () => {
+    const content = formatFunctionContent(
+      makeResponse({
+        contentType: 'image/jpeg; charset=binary',
+        isBinary: true,
+        data: FAKE_BASE64,
+      }),
+    );
+    const image = content[1] as Extract<Content, { type: 'image' }>;
+    expect(image.mimeType).to.equal('image/jpeg');
+  });
+
+  it('promotes audio/mpeg to an audio content block', () => {
+    const content = formatFunctionContent(
+      makeResponse({
+        contentType: 'audio/mpeg',
+        isBinary: true,
+        data: FAKE_BASE64,
+      }),
+    );
+    const audio = content[1] as Extract<Content, { type: 'audio' }>;
+    expect(audio.type).to.equal('audio');
+    expect(audio.mimeType).to.equal('audio/mpeg');
+  });
+
+  it('emits a resource block for non-image/audio binaries', () => {
+    const content = formatFunctionContent(
+      makeResponse({
+        contentType: 'application/zip',
+        isBinary: true,
+        data: FAKE_BASE64,
+      }),
+    );
+    const resource = content[1] as Extract<Content, { type: 'resource' }>;
+    expect(resource.type).to.equal('resource');
+    expect(resource.resource.uri).to.match(/\.zip$/);
+    expect(resource.resource.blob).to.equal(FAKE_BASE64);
+  });
+
+  it('throws UserError when text payload exceeds the cap', () => {
+    const huge = 'a'.repeat(MAX_TEXT_RESPONSE_CHARS + 1);
+    expect(() =>
+      formatFunctionContent(makeResponse({ data: huge, size: huge.length })),
+    ).to.throw(UserError, /exceeding the .* limit/);
+  });
+
+  it('error message points to image/audio types as the fix', () => {
+    const huge = 'a'.repeat(MAX_TEXT_RESPONSE_CHARS + 1);
+    try {
+      formatFunctionContent(makeResponse({ data: huge, size: huge.length }));
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).to.match(/image\/jpeg|image\/png/);
+      expect((err as Error).message).to.include('application/pdf');
+    }
+  });
+
+  it('passes text payloads under the cap through normally', () => {
+    const content = formatFunctionContent(
+      makeResponse({
+        data: '{"books":[]}',
+        contentType: 'application/json',
+        size: 12,
+      }),
+    );
+    const main = content[0] as Extract<Content, { type: 'text' }>;
+    expect(main.text).to.equal('{"books":[]}');
+    const meta = content[1] as Extract<Content, { type: 'text' }>;
+    expect(meta.text).to.include('Content-Type: application/json');
   });
 });

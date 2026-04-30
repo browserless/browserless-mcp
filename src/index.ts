@@ -175,7 +175,7 @@ registerPowerScraperTool(server, config, amplitude);
 registerFunctionTool(server, config, amplitude);
 registerDownloadTool(server, config, amplitude);
 registerExportTool(server, config, amplitude);
-registerAgentTools(server, config);
+registerAgentTools(server, config, amplitude);
 registerSearchTool(server, config, amplitude);
 registerMapTool(server, config, amplitude);
 registerCrawlTool(server, config, amplitude);

@@ -491,6 +491,123 @@ const LiveURLCommandSchema = z.object({
     .default({}),
 });
 
+const ScreenshotTypeSchema = z.enum(['jpeg', 'png', 'webp']);
+
+const ScreenshotClipSchema = z.object({
+  x: z.number().describe('X coordinate of the top-left corner, in CSS pixels'),
+  y: z.number().describe('Y coordinate of the top-left corner, in CSS pixels'),
+  width: z.number().min(1).describe('Width of the clip, in CSS pixels (>0)'),
+  height: z.number().min(1).describe('Height of the clip, in CSS pixels (>0)'),
+  scale: z
+    .number()
+    .positive()
+    .optional()
+    .describe('Scale factor of the clip (default 1, >0)'),
+});
+
+const ScreenshotCommandSchema = z.object({
+  method: z.literal('screenshot'),
+  params: z
+    .object({
+      type: ScreenshotTypeSchema.optional().describe(
+        'Image format. Default "png". Use "jpeg" for smaller payloads on large pages.',
+      ),
+      fullPage: z
+        .boolean()
+        .optional()
+        .describe('Capture the entire scrollable page (default false)'),
+      selector: z
+        .string()
+        .optional()
+        .describe(
+          'CSS selector of an element to screenshot. Mutually exclusive with fullPage/clip.',
+        ),
+      quality: z
+        .number()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe('Image quality 0-100. Applies to jpeg/webp only.'),
+      omitBackground: z
+        .boolean()
+        .optional()
+        .describe('Hide default white background for transparent screenshots'),
+      clip: ScreenshotClipSchema.optional().describe(
+        'Region of the page to capture. Mutually exclusive with selector/fullPage.',
+      ),
+      waitForImages: z
+        .boolean()
+        .optional()
+        .describe('Wait for all images on the page to load before capturing'),
+      timeout: z
+        .number()
+        .optional()
+        .describe('Timeout in milliseconds (default 30000)'),
+    })
+    .optional()
+    .default({})
+    .superRefine((params, ctx) => {
+      const set = [
+        params.selector !== undefined ? 'selector' : null,
+        params.clip !== undefined ? 'clip' : null,
+        params.fullPage === true ? 'fullPage' : null,
+      ].filter((v): v is string => v !== null);
+
+      if (set.length > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `selector, clip, and fullPage are mutually exclusive (got: ${set.join(', ')})`,
+        });
+      }
+    }),
+});
+
+const CaptchaTypeSchema = z.enum([
+  'cloudflare',
+  'hcaptcha',
+  'recaptcha',
+  'recaptchaV3',
+  'geetest',
+  'normal',
+  'friendlyCaptcha',
+  'capy',
+  'textCaptcha',
+  'amazonWaf',
+  'dataDome',
+  'akamai',
+  'lemin',
+  'mtcaptcha',
+  'slider',
+]);
+
+const SolveCommandSchema = z.object({
+  method: z.literal('solve'),
+  params: z
+    .object({
+      type: CaptchaTypeSchema.optional().describe(
+        'Captcha type to solve. Omit to auto-detect.',
+      ),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          'How long to wait for the captcha to appear (ms). Default 30000. ' +
+            'Does not bound the solver itself once a captcha is found.',
+        ),
+      wait: z
+        .boolean()
+        .optional()
+        .describe(
+          'Wait for the captcha to appear before solving (default true). ' +
+            'Set false if you have already verified the widget is on screen.',
+        ),
+    })
+    .optional()
+    .default({}),
+});
+
 const CloseCommandSchema = z.object({
   method: z.literal('close'),
   params: z
@@ -539,6 +656,8 @@ const AgentCommandSchema = z.union([
   WaitForRequestCommandSchema,
   WaitForResponseCommandSchema,
   LiveURLCommandSchema,
+  SolveCommandSchema,
+  ScreenshotCommandSchema,
   CloseCommandSchema,
   GenericCommandSchema,
 ]);
