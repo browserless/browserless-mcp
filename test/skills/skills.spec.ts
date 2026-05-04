@@ -199,6 +199,13 @@ describe('skills/detectSkills - captchas', () => {
     };
     expect(detectSkills(ctx, createSkillState())).to.not.include('captchas');
   });
+
+  it('fires on detectedChallenges regardless of URL or element heuristics', () => {
+    const snap = snapshot([], 'https://example.com');
+    snap.detectedChallenges = ['cloudflare'];
+    const ctx = { snapshot: snap, apiUrl: CLOUD };
+    expect(detectSkills(ctx, createSkillState())).to.include('captchas');
+  });
 });
 
 describe('skills/detectSkills - snapshot-misses', () => {

@@ -4,8 +4,10 @@ import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   formatScreenshotContent,
+  formatSnapshot,
   registerAgentTools,
 } from '../../src/tools/agent.js';
+import type { SnapshotResult } from '../../src/lib/agent-client.js';
 import type { McpConfig } from '../../src/config.js';
 
 const mockConfig: McpConfig = {
@@ -196,5 +198,32 @@ describe('formatScreenshotContent', () => {
     const caption = content![0] as Extract<Content, { type: 'text' }>;
     expect(caption.text).to.match(/^Executed: goto → screenshot/);
     expect(caption.text).to.include('Screenshot captured');
+  });
+});
+
+describe('formatSnapshot', () => {
+  const baseSnap = (
+    overrides: Partial<SnapshotResult> = {},
+  ): SnapshotResult => ({
+    url: 'https://example.com',
+    title: 'Example',
+    elements: [],
+    time: 0,
+    ...overrides,
+  });
+
+  it('prepends a "! Detected challenge: <type>" header for each entry', () => {
+    const out = formatSnapshot(
+      baseSnap({ detectedChallenges: ['cloudflare', 'hcaptcha'] }),
+    );
+    expect(out).to.include('! Detected challenge: cloudflare');
+    expect(out).to.include('! Detected challenge: hcaptcha');
+  });
+
+  it('omits the header when detectedChallenges is empty or absent', () => {
+    expect(formatSnapshot(baseSnap())).to.not.include('Detected challenge');
+    expect(
+      formatSnapshot(baseSnap({ detectedChallenges: [] })),
+    ).to.not.include('Detected challenge');
   });
 });

@@ -51,6 +51,7 @@ export interface SnapshotResult {
   time: number;
   tabs?: TabInfo[];
   activeTargetId?: string | null;
+  detectedChallenges?: string[];
 }
 
 import { createSkillState } from '../skills/index.js';
