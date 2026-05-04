@@ -336,11 +336,9 @@ export function registerAgentTools(
       readOnlyHint: false,
       openWorldHint: true,
     },
-    execute: async (args, { session, log }) => {
+    execute: async (args, { session, sessionId, log }) => {
       const { token, apiUrl } = getAuth(session, config);
-      const mcpSessionId = (session as Record<string, unknown>)?.sessionId as
-        | string
-        | undefined;
+      const mcpSessionId = sessionId;
 
       const commands: Array<{ method: string; params: Record<string, unknown> }> =
         args.commands && args.commands.length > 0
