@@ -1,4 +1,13 @@
 # Latest
+- Emit Amplitude `MCP Tool Request` events for the `browserless_agent` and `browserless_skill` tools
+
+# 1.3.1
+- Enable stateful connections
+
+# 1.3.0
+- Skills
+- Screenshot support for vision engines
+- Captcha handling support
 
 # v1.2.2
 - Introduce tab management methods for agent
