@@ -39,7 +39,7 @@
     "@aws-sdk/client-sqs": "^3.1038.0",
     "fastmcp": "^4.0.0",
     "ioredis": "^5.10.1",
-    "zod": "^4.1.13"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/chai": "^5.2.2",
