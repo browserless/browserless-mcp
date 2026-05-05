@@ -51,6 +51,7 @@ export interface SnapshotResult {
   time: number;
   tabs?: TabInfo[];
   activeTargetId?: string | null;
+  detectedChallenges?: string[];
 }
 
 import { createSkillState } from '../skills/index.js';
@@ -63,6 +64,7 @@ export interface ActiveSession {
   token: string;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
+  lastUsedAt: number;
 }
 
 const sessions = new Map<string, ActiveSession>();
@@ -72,6 +74,35 @@ const sessions = new Map<string, ActiveSession>();
 const pending = new Map<string, Promise<ActiveSession>>();
 
 const DEFAULT_TIMEOUT = 60_000;
+const IDLE_TTL_MS = 15 * 60 * 1000;
+const MAX_SESSIONS = 500;
+
+const closeAndDelete = (key: string, reason: string): void => {
+  const session = sessions.get(key);
+  if (!session) return;
+  try { session.ws.close(); } catch { /* ignore */ }
+  sessions.delete(key);
+  console.error(`[agent-client] evicted session key=${key} reason=${reason}`);
+};
+
+// Sweep idle sessions and enforce a hard cap. Called on every
+// getOrCreateSession; cheap because the map is bounded.
+const sweepSessions = (): void => {
+  const now = Date.now();
+  for (const [key, session] of sessions) {
+    if (now - session.lastUsedAt > IDLE_TTL_MS) {
+      closeAndDelete(key, 'idle');
+    }
+  }
+  if (sessions.size <= MAX_SESSIONS) return;
+  const overage = sessions.size - MAX_SESSIONS;
+  const oldest = [...sessions.entries()]
+    .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
+    .slice(0, overage);
+  for (const [key] of oldest) {
+    closeAndDelete(key, 'cap');
+  }
+};
 
 const getSessionKey = (mcpSessionId: string | undefined, token: string): string =>
   mcpSessionId ?? `stdio:${token}`;
@@ -149,10 +180,12 @@ export const getOrCreateSession = async (
   apiUrl: string,
   token: string,
 ): Promise<ActiveSession> => {
+  sweepSessions();
   const key = getSessionKey(mcpSessionId, token);
   const existing = sessions.get(key);
 
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
+    existing.lastUsedAt = Date.now();
     return existing;
   }
 
@@ -174,6 +207,7 @@ export const getOrCreateSession = async (
       apiUrl,
       token,
       skillState: createSkillState(),
+      lastUsedAt: Date.now(),
     };
 
     // Auto-cleanup on close
@@ -238,6 +272,7 @@ export const send = async (
   }
 
   session.msgId++;
+  session.lastUsedAt = Date.now();
   return sendMessage(
     session.ws,
     { id: session.msgId, method, params },

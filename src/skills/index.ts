@@ -158,6 +158,7 @@ const skills: Skill[] = [
     cloudOnly: true,
     refireAfter: 3,
     detect: ({ snapshot, error, cmd }) => {
+      if (snapshot?.detectedChallenges?.length) return true;
       if (snapshot?.url && CAPTCHA_HOST_RE.test(snapshot.url)) return true;
       if (
         snapshot?.elements?.some((el) => {

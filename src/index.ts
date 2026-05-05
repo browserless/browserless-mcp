@@ -208,7 +208,7 @@ if (config.transport === 'httpStream') {
       port: config.port,
       host: '0.0.0.0',
       eventStore: new BoundedEventStore(10_000),
-      stateless: true,
+      stateless: false,
     },
   });
   console.error(
