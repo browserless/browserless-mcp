@@ -1,6 +1,9 @@
 # Latest
 - Emit Amplitude `MCP Tool Request` events for the `browserless_agent` and `browserless_skill` tools
 
+# 1.3.2
+- Anable Devin domains for OAuth
+
 # 1.3.1
 - Enable stateful connections
 
