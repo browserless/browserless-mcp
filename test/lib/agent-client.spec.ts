@@ -105,4 +105,24 @@ describe('agent-client proxyFingerprint', () => {
   it('differs from no-proxy when only sticky is set', () => {
     expect(proxyFingerprint({ proxySticky: true })).to.not.equal('');
   });
+
+  it('does not include externalProxyServer credentials verbatim', () => {
+    const fp = proxyFingerprint({
+      externalProxyServer: 'http://user:hunter2@host.example.com:8080',
+    });
+    expect(fp).to.not.include('hunter2');
+    expect(fp).to.not.include('user:');
+    expect(fp).to.not.include('host.example.com');
+  });
+
+  it('keys distinct externalProxyServer URLs to distinct fingerprints', () => {
+    const a = proxyFingerprint({
+      externalProxyServer: 'http://u:p@host-a:8080',
+    });
+    const b = proxyFingerprint({
+      externalProxyServer: 'http://u:p@host-b:8080',
+    });
+    expect(a).to.not.equal(b);
+    expect(a).to.not.equal('');
+  });
 });

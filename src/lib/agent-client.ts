@@ -56,6 +56,7 @@ export interface SnapshotResult {
 
 import { createSkillState } from '../skills/index.js';
 import type { SkillFireState } from '../skills/index.js';
+import { djb2 } from './amplitude.js';
 import type { ProxyOptions } from '../tools/schemas.js';
 
 export interface ActiveSession {
@@ -120,10 +121,22 @@ const PROXY_FIELDS = [
   'externalProxyServer',
 ] as const;
 
+// Hash externalProxyServer rather than serializing it raw — the session key
+// is logged on eviction (closeAndDelete), and the URL may carry user:pass
+// credentials. Hashing preserves per-upstream session distinctness without
+// putting secrets in stderr.
+const fingerprintValue = (
+  field: (typeof PROXY_FIELDS)[number],
+  value: unknown,
+): string =>
+  field === 'externalProxyServer'
+    ? `external#${djb2(String(value)).toString(36)}`
+    : String(value);
+
 export const proxyFingerprint = (proxy?: ProxyOptions): string => {
   if (!proxy) return '';
   const parts = PROXY_FIELDS.map((k) =>
-    proxy[k] === undefined ? null : `${k}=${proxy[k]}`,
+    proxy[k] === undefined ? null : `${k}=${fingerprintValue(k, proxy[k])}`,
   ).filter(Boolean);
   return parts.length ? '|' + parts.join('&') : '';
 };
