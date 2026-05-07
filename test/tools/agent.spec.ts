@@ -319,6 +319,22 @@ describe('buildCrossOriginNotice', () => {
     ).to.equal('');
   });
 
+  it('returns a notice when only the protocol differs (http vs https)', () => {
+    const out = buildCrossOriginNotice(
+      'http://example.com/',
+      'https://example.com/',
+    );
+    expect(out).to.match(/^! NOTICE: URL changed cross-origin/);
+  });
+
+  it('returns a notice when only the port differs', () => {
+    const out = buildCrossOriginNotice(
+      'https://example.com/',
+      'https://example.com:8080/',
+    );
+    expect(out).to.match(/^! NOTICE: URL changed cross-origin/);
+  });
+
   it('returns empty string when previous URL is missing', () => {
     expect(
       buildCrossOriginNotice(undefined, 'https://example.com'),

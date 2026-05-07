@@ -24,9 +24,9 @@ import type { SkillId } from '../skills/index.js';
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
 
-const safeHost = (url: string): string | undefined => {
+const safeOrigin = (url: string): string | undefined => {
   try {
-    return new URL(url).host;
+    return new URL(url).origin;
   } catch {
     return undefined;
   }
@@ -34,18 +34,19 @@ const safeHost = (url: string): string | undefined => {
 
 /**
  * Build the cross-origin notice line shown above a snapshot when the page
- * navigated to a different host since the last snapshot. Returns '' when
- * the hosts match or either URL is missing/unparseable.
+ * navigated to a different origin (protocol + host + port) since the last
+ * snapshot. Returns '' when the origins match or either URL is missing or
+ * unparseable.
  */
 export const buildCrossOriginNotice = (
   previousUrl: string | undefined,
   newUrl: string | undefined,
 ): string => {
   if (!previousUrl || !newUrl) return '';
-  const prevHost = safeHost(previousUrl);
-  const newHost = safeHost(newUrl);
-  if (!prevHost || !newHost) return '';
-  if (prevHost === newHost) return '';
+  const prevOrigin = safeOrigin(previousUrl);
+  const newOrigin = safeOrigin(newUrl);
+  if (!prevOrigin || !newOrigin) return '';
+  if (prevOrigin === newOrigin) return '';
   return `! NOTICE: URL changed cross-origin — ${previousUrl} → ${newUrl}. Prior plan/refs likely invalid; re-plan from this snapshot.`;
 };
 
