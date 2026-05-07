@@ -20,6 +20,11 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.protocol).to.equal('wss:');
   });
 
+  it('strips a trailing slash from apiUrl so the path is single-slashed', () => {
+    const url = new URL(buildAgentWsUrl('http://localhost:3000/', 'tok'));
+    expect(url.pathname).to.equal('/chromium/agent');
+  });
+
   it('URL-encodes the token', () => {
     const url = new URL(
       buildAgentWsUrl('http://localhost:3000', 'a/b c?d&e=1'),

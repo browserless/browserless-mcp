@@ -152,7 +152,8 @@ export const buildAgentWsUrl = (
   token: string,
   proxy?: ProxyOptions,
 ): string => {
-  const url = new URL(apiUrl.replace(/^http/, 'ws') + '/chromium/agent');
+  const base = apiUrl.replace(/^http/, 'ws').replace(/\/+$/, '');
+  const url = new URL(base + '/chromium/agent');
   url.searchParams.set('token', token);
   if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
   if (proxy?.proxyCountry)
