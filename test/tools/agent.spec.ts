@@ -3,6 +3,8 @@ import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
+  buildCrossOriginNotice,
+  formatErrorMessage,
   formatScreenshotContent,
   formatSnapshot,
   registerAgentTools,
@@ -227,3 +229,109 @@ describe('formatSnapshot', () => {
     ).to.not.include('Detected challenge');
   });
 });
+
+describe('formatErrorMessage', () => {
+  it('emits Category, [CODE]-prefixed head, Suggestion, and Recovery in order', () => {
+    const out = formatErrorMessage({
+      category: 'SELECTOR_MISS',
+      code: 'SELECTOR_NOT_FOUND',
+      prefix: 'click failed: ',
+      message: 'no element matched "button#submit"',
+      suggestion: 'Retry with deep selector "< button#submit"',
+      recovery: 'Re-snapshot — the element is not in the current DOM.',
+    });
+
+    const lines = out.split('\n\n');
+    expect(lines[0]).to.equal('Category: SELECTOR_MISS');
+    expect(lines[1]).to.equal(
+      '[SELECTOR_NOT_FOUND] click failed: no element matched "button#submit"',
+    );
+    expect(lines[2]).to.match(/^Suggestion: /);
+    expect(lines[3]).to.match(/^Recovery: /);
+  });
+
+  it('omits Suggestion when none provided and places Recovery directly after head', () => {
+    const out = formatErrorMessage({
+      category: 'FORBIDDEN',
+      prefix: 'goto failed: ',
+      message: 'origin returned 403',
+      recovery: 'Cookies/auth may be missing.',
+    });
+    const lines = out.split('\n\n');
+    expect(lines[0]).to.equal('Category: FORBIDDEN');
+    expect(lines[1]).to.equal('goto failed: origin returned 403');
+    expect(lines[2]).to.equal('Recovery: Cookies/auth may be missing.');
+    expect(out).to.not.include('Suggestion:');
+  });
+
+  it('appends "Updated snapshot" block when snapshotText is provided', () => {
+    const out = formatErrorMessage({
+      category: 'UNKNOWN',
+      prefix: 'click failed: ',
+      message: 'oops',
+      recovery: 'Re-snapshot.',
+      snapshotText: '--- PAGE SNAPSHOT ---\nfoo\n--- END SNAPSHOT ---',
+    });
+    expect(out).to.include('Updated snapshot:\n--- PAGE SNAPSHOT ---');
+    // Recovery still appears before the snapshot dump
+    const recoveryIdx = out.indexOf('Recovery:');
+    const snapIdx = out.indexOf('Updated snapshot:');
+    expect(recoveryIdx).to.be.greaterThan(0);
+    expect(snapIdx).to.be.greaterThan(recoveryIdx);
+  });
+
+  it('produces the WS-send-catch shape when no code is given', () => {
+    // Mirrors the catch site: message comes from the WebSocket layer,
+    // there's no upstream code, no snapshot, no suggestion.
+    const out = formatErrorMessage({
+      category: 'SESSION_LOST',
+      prefix: 'click failed: ',
+      message: 'WebSocket closed while waiting for "click" response',
+      recovery: 'A fresh session was opened automatically.',
+    });
+    expect(out).to.match(/^Category: SESSION_LOST\n\n/);
+    expect(out).to.include(
+      'click failed: WebSocket closed while waiting for "click" response',
+    );
+    expect(out).to.not.include('[');
+    expect(out).to.include('Recovery: A fresh session was opened');
+  });
+});
+
+describe('buildCrossOriginNotice', () => {
+  it('returns a notice when hosts differ', () => {
+    const out = buildCrossOriginNotice(
+      'https://app.example.com/dashboard',
+      'https://accounts.google.com/signin',
+    );
+    expect(out).to.match(/^! NOTICE: URL changed cross-origin/);
+    expect(out).to.include('app.example.com');
+    expect(out).to.include('accounts.google.com');
+    expect(out).to.include('Prior plan/refs likely invalid');
+  });
+
+  it('returns empty string when hosts match (same-origin nav)', () => {
+    expect(
+      buildCrossOriginNotice(
+        'https://example.com/a',
+        'https://example.com/b',
+      ),
+    ).to.equal('');
+  });
+
+  it('returns empty string when previous URL is missing', () => {
+    expect(
+      buildCrossOriginNotice(undefined, 'https://example.com'),
+    ).to.equal('');
+  });
+
+  it('returns empty string when either URL is unparseable', () => {
+    expect(buildCrossOriginNotice('not-a-url', 'https://example.com')).to.equal(
+      '',
+    );
+    expect(buildCrossOriginNotice('https://example.com', 'also-not-a-url')).to.equal(
+      '',
+    );
+  });
+});
+
