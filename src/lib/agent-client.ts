@@ -278,8 +278,6 @@ export const send = async (
     { id: session.msgId, method, params },
     timeoutMs,
   );
-
-
 };
 
 export const closeSession = (
