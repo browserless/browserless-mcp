@@ -147,8 +147,7 @@ export const buildAgentWsUrl = (
   if (proxy?.proxyState) url.searchParams.set('proxyState', proxy.proxyState);
   if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
   if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
-  if (proxy?.proxyLocaleMatch)
-    url.searchParams.set('proxyLocaleMatch', 'true');
+  if (proxy?.proxyLocaleMatch) url.searchParams.set('proxyLocaleMatch', 'true');
   if (proxy?.externalProxyServer)
     url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
   return url.toString();

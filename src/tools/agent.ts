@@ -211,10 +211,7 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
   return lines.join('\n');
 };
 
-const appendSkills = (
-  base: string,
-  ids: ReadonlyArray<SkillId>,
-): string => {
+const appendSkills = (base: string, ids: ReadonlyArray<SkillId>): string => {
   if (ids.length === 0) return base;
   return `${base}\n\n${renderSkills(ids)}`;
 };
@@ -272,10 +269,16 @@ export const formatScreenshotContent = (
   return content;
 };
 
-const coerceParams = (params: Record<string, unknown> | undefined): Record<string, unknown> => {
+const coerceParams = (
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> => {
   if (!params) return {};
   if (typeof params === 'string') {
-    try { return JSON.parse(params); } catch { return {}; }
+    try {
+      return JSON.parse(params);
+    } catch {
+      return {};
+    }
   }
   return params;
 };
@@ -349,7 +352,10 @@ export function registerAgentTools(
       const { token, apiUrl } = getAuth(session, config);
       const mcpSessionId = sessionId;
 
-      const commands: Array<{ method: string; params: Record<string, unknown> }> =
+      const commands: Array<{
+        method: string;
+        params: Record<string, unknown>;
+      }> =
         args.commands && args.commands.length > 0
           ? args.commands.map((c) => ({
               method: c.method,
@@ -428,9 +434,7 @@ export function registerAgentTools(
             if (!isRetry) {
               return runCommands(true);
             }
-            throw new UserError(
-              `${cmd.method} failed: ${sendErr.message}`,
-            );
+            throw new UserError(`${cmd.method} failed: ${sendErr.message}`);
           }
 
           if (resp.error) {
@@ -463,9 +467,7 @@ export function registerAgentTools(
               parts.push(`Suggestion: ${err.suggestion}`);
             }
             if (err.snapshot) {
-              parts.push(
-                `Updated snapshot:\n${formatSnapshot(err.snapshot)}`,
-              );
+              parts.push(`Updated snapshot:\n${formatSnapshot(err.snapshot)}`);
             }
 
             const triggered = detectSkills(
