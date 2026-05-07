@@ -56,12 +56,14 @@ export interface SnapshotResult {
 
 import { createSkillState } from '../skills/index.js';
 import type { SkillFireState } from '../skills/index.js';
+import type { ProxyOptions } from '../tools/schemas.js';
 
 export interface ActiveSession {
   ws: WebSocket;
   msgId: number;
   apiUrl: string;
   token: string;
+  proxy?: ProxyOptions;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;
@@ -108,14 +110,57 @@ const sweepSessions = (): void => {
   }
 };
 
+const PROXY_FIELDS = [
+  'proxy',
+  'proxyCountry',
+  'proxyState',
+  'proxyCity',
+  'proxySticky',
+  'proxyLocaleMatch',
+  'externalProxyServer',
+] as const;
+
+export const proxyFingerprint = (proxy?: ProxyOptions): string => {
+  if (!proxy) return '';
+  const parts = PROXY_FIELDS.map((k) =>
+    proxy[k] === undefined ? null : `${k}=${proxy[k]}`,
+  ).filter(Boolean);
+  return parts.length ? '|' + parts.join('&') : '';
+};
+
 const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
-): string => mcpSessionId ?? `stdio:${token}`;
+  proxy?: ProxyOptions,
+): string => (mcpSessionId ?? `stdio:${token}`) + proxyFingerprint(proxy);
 
-const connect = (apiUrl: string, token: string): Promise<WebSocket> =>
+export const buildAgentWsUrl = (
+  apiUrl: string,
+  token: string,
+  proxy?: ProxyOptions,
+): string => {
+  const url = new URL(apiUrl.replace(/^http/, 'ws') + '/chromium/agent');
+  url.searchParams.set('token', token);
+  if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
+  if (proxy?.proxyCountry)
+    url.searchParams.set('proxyCountry', proxy.proxyCountry);
+  if (proxy?.proxyState) url.searchParams.set('proxyState', proxy.proxyState);
+  if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
+  if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
+  if (proxy?.proxyLocaleMatch)
+    url.searchParams.set('proxyLocaleMatch', 'true');
+  if (proxy?.externalProxyServer)
+    url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
+  return url.toString();
+};
+
+const connect = (
+  apiUrl: string,
+  token: string,
+  proxy?: ProxyOptions,
+): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
-    const wsUrl = `${apiUrl.replace(/^http/, 'ws')}/chromium/agent?token=${encodeURIComponent(token)}`;
+    const wsUrl = buildAgentWsUrl(apiUrl, token, proxy);
     const ws = new WebSocket(wsUrl);
 
     const timeout = setTimeout(() => {
@@ -190,9 +235,10 @@ export const getOrCreateSession = async (
   mcpSessionId: string | undefined,
   apiUrl: string,
   token: string,
+  proxy?: ProxyOptions,
 ): Promise<ActiveSession> => {
   sweepSessions();
-  const key = getSessionKey(mcpSessionId, token);
+  const key = getSessionKey(mcpSessionId, token, proxy);
   const existing = sessions.get(key);
 
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
@@ -215,12 +261,13 @@ export const getOrCreateSession = async (
   }
 
   const creation = (async (): Promise<ActiveSession> => {
-    const ws = await connect(apiUrl, token);
+    const ws = await connect(apiUrl, token, proxy);
     const session: ActiveSession = {
       ws,
       msgId: 0,
       apiUrl,
       token,
+      proxy,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -262,11 +309,13 @@ export const send = async (
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
     if (!session.reconnecting) {
-      session.reconnecting = connect(session.apiUrl, session.token).finally(
-        () => {
-          session.reconnecting = undefined;
-        },
-      );
+      session.reconnecting = connect(
+        session.apiUrl,
+        session.token,
+        session.proxy,
+      ).finally(() => {
+        session.reconnecting = undefined;
+      });
     }
     const ws = await session.reconnecting;
 
@@ -298,8 +347,9 @@ export const send = async (
 export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
+  proxy?: ProxyOptions,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token);
+  const key = getSessionKey(mcpSessionId, token, proxy);
   const session = sessions.get(key);
   if (session) {
     try {
@@ -319,8 +369,9 @@ export const closeSession = (
 export const destroySession = (
   mcpSessionId: string | undefined,
   token: string,
+  proxy?: ProxyOptions,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token);
+  const key = getSessionKey(mcpSessionId, token, proxy);
   const session = sessions.get(key);
   if (session) {
     try {

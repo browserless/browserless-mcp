@@ -662,6 +662,34 @@ const AgentCommandSchema = z.union([
   GenericCommandSchema,
 ]);
 
+export const ProxyOptionsSchema = z.object({
+  proxy: z
+    .enum(['residential'])
+    .optional()
+    .describe('Routing tier. Only "residential" is supported today.'),
+  proxyCountry: z
+    .string()
+    .length(2)
+    .optional()
+    .describe('ISO-2 country code (e.g. "us", "de"). Lowercase preferred.'),
+  proxyState: z.string().optional(),
+  proxyCity: z
+    .string()
+    .optional()
+    .describe('Requires enterprise license — non-enterprise tokens get 403.'),
+  proxySticky: z
+    .boolean()
+    .optional()
+    .describe('Stable IP for the lifetime of this agent session.'),
+  proxyLocaleMatch: z.boolean().optional(),
+  externalProxyServer: z
+    .string()
+    .url()
+    .optional()
+    .describe('Bring-your-own upstream, e.g. http://user:pass@host:port'),
+});
+export type ProxyOptions = z.infer<typeof ProxyOptionsSchema>;
+
 export const AgentParamsSchema = z.object({
   method: z
     .string()
@@ -685,6 +713,10 @@ export const AgentParamsSchema = z.object({
         'Use this to batch actions that share the same page state (e.g. filling a form: ' +
         'type email + type password + click submit). Do NOT batch across navigations.',
     ),
+  proxy: ProxyOptionsSchema.optional().describe(
+    'Residential / external proxy config. Set at session create time. ' +
+      'Changing requires close() + new session.',
+  ),
 });
 
 /* ------------------------------------------------------------------ */

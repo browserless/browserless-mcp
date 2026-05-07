@@ -24,6 +24,15 @@ const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
 
+## Residential proxy (optional)
+Pass top-level \`proxy\` to route the session through residential IPs. Use this when target sites IP-block datacenter traffic.
+- \`proxy: "residential"\` — turn on residential routing
+- \`proxyCountry: "us"\` — ISO-2 geo target
+- \`proxySticky: true\` — same IP for the session (resets on reconnect after a WS drop)
+- \`externalProxyServer: "http://u:p@host:port"\` — bring-your-own upstream
+- \`proxyCity\` requires an enterprise license; non-enterprise tokens get a 403.
+The \`proxy\` object is read once at session create. To change it, run \`close\` and start a new session.
+
 ## Skills (auto-injected guidance)
 When the page or an error involves a non-trivial mechanic, a SKILL block will be auto-injected into your response between \`--- SKILL: <id> ---\` and \`--- END SKILL ---\` markers. Read it carefully — it contains the exact recipe.
 
@@ -348,6 +357,8 @@ export function registerAgentTools(
             }))
           : [{ method: args.method, params: coerceParams(args.params) }];
 
+      const proxy = args.proxy;
+
       const sendAnalytics = (success: boolean) => {
         amplitude
           ?.send('MCP Tool Request', djb2(token), {
@@ -357,12 +368,16 @@ export function registerAgentTools(
             command_count: commands.length,
             api_url: apiUrl,
             success,
+            proxy_tier: proxy?.proxy ?? null,
+            proxy_country: proxy?.proxyCountry ?? null,
+            proxy_sticky: !!proxy?.proxySticky,
+            proxy_external: !!proxy?.externalProxyServer,
           })
           .catch(() => {});
       };
 
       if (commands.length === 1 && commands[0].method === 'close') {
-        closeSession(mcpSessionId, token);
+        closeSession(mcpSessionId, token, proxy);
         sendAnalytics(true);
         return {
           content: [{ type: 'text' as const, text: 'Browser session closed.' }],
@@ -378,6 +393,7 @@ export function registerAgentTools(
             mcpSessionId,
             apiUrl,
             token,
+            proxy,
           );
         } catch (connErr: any) {
           if (isRetry) {
@@ -385,7 +401,7 @@ export function registerAgentTools(
               `Failed to connect to browser agent: ${connErr.message}`,
             );
           }
-          destroySession(mcpSessionId, token);
+          destroySession(mcpSessionId, token, proxy);
           return runCommands(true);
         }
 
@@ -394,7 +410,7 @@ export function registerAgentTools(
         let closedDuringBatch = false;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
-            closeSession(mcpSessionId, token);
+            closeSession(mcpSessionId, token, proxy);
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
             break;
@@ -408,7 +424,7 @@ export function registerAgentTools(
           try {
             resp = await send(agentSession, cmd.method, cmd.params);
           } catch (sendErr: any) {
-            destroySession(mcpSessionId, token);
+            destroySession(mcpSessionId, token, proxy);
             if (!isRetry) {
               return runCommands(true);
             }
@@ -420,7 +436,7 @@ export function registerAgentTools(
           if (resp.error) {
             const err = resp.error;
             if (err.code && FATAL_CODES.has(err.code)) {
-              destroySession(mcpSessionId, token);
+              destroySession(mcpSessionId, token, proxy);
               if (!isRetry) {
                 return runCommands(true);
               }
