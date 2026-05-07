@@ -110,10 +110,8 @@ export const classifyAgentError = (
     return { category: 'SELECTOR_MISS', code, recovery: RECOVERY.SELECTOR_MISS };
   }
 
-  if (
-    code === 'INVALID_PARAMS' ||
-    INVALID_PARAMS_PATTERNS.some((re) => re.test(message))
-  ) {
+  // Authoritative upstream codes win first.
+  if (code === 'INVALID_PARAMS') {
     return {
       category: 'INVALID_PARAMS',
       code,
@@ -125,6 +123,8 @@ export const classifyAgentError = (
     return { category: 'SESSION_LOST', code, recovery: RECOVERY.SESSION_LOST };
   }
 
+  // HTTP status before the INVALID_PARAMS *message-pattern* heuristic so a
+  // message that happens to mention 4xx/5xx isn't swallowed by it.
   const status = extractStatus(err);
   if (status !== undefined) {
     const fromCode = fromStatus(status);
@@ -136,6 +136,14 @@ export const classifyAgentError = (
         recovery: RECOVERY[fromCode],
       };
     }
+  }
+
+  if (INVALID_PARAMS_PATTERNS.some((re) => re.test(message))) {
+    return {
+      category: 'INVALID_PARAMS',
+      code,
+      recovery: RECOVERY.INVALID_PARAMS,
+    };
   }
 
   const isTimeout = TIMEOUT_PATTERNS.some((re) => re.test(message));
