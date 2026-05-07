@@ -80,7 +80,11 @@ const MAX_SESSIONS = 500;
 const closeAndDelete = (key: string, reason: string): void => {
   const session = sessions.get(key);
   if (!session) return;
-  try { session.ws.close(); } catch { /* ignore */ }
+  try {
+    session.ws.close();
+  } catch {
+    /* ignore */
+  }
   sessions.delete(key);
   console.error(`[agent-client] evicted session key=${key} reason=${reason}`);
 };
@@ -104,13 +108,12 @@ const sweepSessions = (): void => {
   }
 };
 
-const getSessionKey = (mcpSessionId: string | undefined, token: string): string =>
-  mcpSessionId ?? `stdio:${token}`;
-
-const connect = (
-  apiUrl: string,
+const getSessionKey = (
+  mcpSessionId: string | undefined,
   token: string,
-): Promise<WebSocket> =>
+): string => mcpSessionId ?? `stdio:${token}`;
+
+const connect = (apiUrl: string, token: string): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = `${apiUrl.replace(/^http/, 'ws')}/chromium/agent?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
@@ -127,7 +130,11 @@ const connect = (
 
     ws.addEventListener('error', (event) => {
       clearTimeout(timeout);
-      reject(new Error(`Agent WebSocket connection failed: ${(event as Event & { message?: string }).message ?? 'unknown error'}`));
+      reject(
+        new Error(
+          `Agent WebSocket connection failed: ${(event as Event & { message?: string }).message ?? 'unknown error'}`,
+        ),
+      );
     });
   });
 
@@ -145,7 +152,11 @@ const sendMessage = (
 
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error(`Agent command "${msg.method}" timed out after ${timeoutMs}ms`));
+      reject(
+        new Error(
+          `Agent command "${msg.method}" timed out after ${timeoutMs}ms`,
+        ),
+      );
     }, timeoutMs);
 
     const closeHandler = () => {
@@ -195,7 +206,11 @@ export const getOrCreateSession = async (
 
   // Clean up stale session if any
   if (existing) {
-    try { existing.ws.close(); } catch { /* ignore */ }
+    try {
+      existing.ws.close();
+    } catch {
+      /* ignore */
+    }
     sessions.delete(key);
   }
 
@@ -287,7 +302,11 @@ export const closeSession = (
   const key = getSessionKey(mcpSessionId, token);
   const session = sessions.get(key);
   if (session) {
-    try { session.ws.close(); } catch { /* ignore */ }
+    try {
+      session.ws.close();
+    } catch {
+      /* ignore */
+    }
     sessions.delete(key);
   }
 };
@@ -304,8 +323,11 @@ export const destroySession = (
   const key = getSessionKey(mcpSessionId, token);
   const session = sessions.get(key);
   if (session) {
-    try { session.ws.close(); } catch { /* ignore */ }
+    try {
+      session.ws.close();
+    } catch {
+      /* ignore */
+    }
     sessions.delete(key);
   }
 };
-

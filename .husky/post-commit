@@ -1,0 +1,32 @@
+#!/usr/bin/env sh
+
+# Runs Prettier after each commit. If it changes files, make a follow-up commit: "chore: prettier"
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+  CHANGED="$(git diff-tree -r --name-only --diff-filter=ACMRT HEAD~1 HEAD)"
+else
+  CHANGED="$(git ls-files)"
+fi
+
+[ -z "$CHANGED" ] && exit 0
+
+# Format only the committed files
+# shellcheck disable=SC2086
+npx --no-install prettier --write --ignore-unknown $CHANGED
+
+# Check if any of the files we processed were actually changed by Prettier
+PRETTIER_CHANGED=""
+for file in $CHANGED; do
+  if ! git diff --quiet HEAD -- "$file"; then
+    PRETTIER_CHANGED="$PRETTIER_CHANGED $file"
+  fi
+done
+
+# If Prettier made changes, stage and commit only those files
+if [ -n "$PRETTIER_CHANGED" ]; then
+  git add $PRETTIER_CHANGED
+  HUSKY=0 git commit -m "chore: prettier" || true
+fi

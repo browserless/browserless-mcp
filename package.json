@@ -33,7 +33,15 @@
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
     "prepack": "npm run build",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "prepare": "husky",
+    "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
+  },
+  "prettier": {
+    "semi": true,
+    "trailingComma": "all",
+    "singleQuote": true,
+    "printWidth": 80
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1042.0",
@@ -50,9 +58,11 @@
     "c8": "^11.0.0",
     "chai": "^6.2.2",
     "eslint": "^10.3.0",
+    "husky": "^9.1.7",
     "ioredis-mock": "^8.13.1",
     "mocha": "^11.1.0",
     "patch-package": "^8.0.1",
+    "prettier": "^3.8.3",
     "sinon": "^21.1.2",
     "typescript": "^6.0.3"
   },
