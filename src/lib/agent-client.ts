@@ -145,7 +145,9 @@ const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
   proxy?: ProxyOptions,
-): string => (mcpSessionId ?? `stdio:${token}`) + proxyFingerprint(proxy);
+): string =>
+  (mcpSessionId ?? `stdio:${djb2(token).toString(36)}`) +
+  proxyFingerprint(proxy);
 
 export const buildAgentWsUrl = (
   apiUrl: string,
