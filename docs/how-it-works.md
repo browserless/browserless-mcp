@@ -15,7 +15,7 @@ It is built on [`fastmcp`](https://github.com/punkpeye/fastmcp). Two transports 
 - **`stdio`** — local process, the LLM client spawns the binary
 - **`httpStream`** — long-running HTTP server, used for hosted deployments at `mcp.browserless.io`
 
-The full list of tools, resources, prompts, and config knobs lives in [README.md](../README.md). This doc focuses on the *how* and the *why*.
+The full list of tools, resources, prompts, and config knobs lives in [README.md](../README.md). This doc focuses on the _how_ and the _why_.
 
 ---
 
@@ -55,20 +55,20 @@ LLM client (Claude / Cursor / etc.)
 
 ### Where each piece of code lives
 
-| Path | Role |
-|---|---|
-| [src/index.ts](../src/index.ts) | Entry point. Constructs the FastMCP server, sets up OAuth/auth, wires every `register*` function, picks the transport. |
-| [src/config.ts](../src/config.ts) | Reads `process.env` into a typed `McpConfig`. Single source of truth for all configurable values. |
-| [src/tools/](../src/tools/) | One file per MCP tool. Each exports a `register<Name>Tool(server, config, amplitude)` function. |
-| [src/tools/schemas.ts](../src/tools/schemas.ts) | Zod parameter schemas for every tool. The schema *is* the user-facing contract; LLMs see this verbatim. |
-| [src/lib/api-client.ts](../src/lib/api-client.ts) | One HTTP client wrapping every Browserless REST endpoint we hit. Handles retries, timeouts, caching, base64 vs. text. |
-| [src/lib/agent-client.ts](../src/lib/agent-client.ts) | Persistent WebSocket session pool for the `browserless_agent` tool — distinct from the REST client because the agent tool needs stateful conversations with `/chromium/agent`. |
-| [src/skills/](../src/skills/) | Just-in-time guidance for the agent loop. `index.ts` is the registry + detection logic; `*.md` files are the actual prose injected into responses. |
-| [src/prompts/](../src/prompts/) | MCP prompts (user-invoked starter templates — not auto-injected). |
-| [src/resources/](../src/resources/) | MCP resources (live status + API docs the client can read). |
-| [src/lib/redis-oauth-proxy.ts](../src/lib/redis-oauth-proxy.ts) | Multi-instance OAuth state store. Only used when `REDIS_URL` is set (hosted deploys behind a load balancer). |
-| [src/lib/account-resolver.ts](../src/lib/account-resolver.ts) | Resolves a Supabase JWT → Browserless API key by hitting Supabase PostgREST. |
-| [src/lib/amplitude.ts](../src/lib/amplitude.ts) | Fire-and-forget analytics events sent via SQS. Disabled unless `ANALYTICS_ENABLED=true`. |
+| Path                                                            | Role                                                                                                                                                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [src/index.ts](../src/index.ts)                                 | Entry point. Constructs the FastMCP server, sets up OAuth/auth, wires every `register*` function, picks the transport.                                                         |
+| [src/config.ts](../src/config.ts)                               | Reads `process.env` into a typed `McpConfig`. Single source of truth for all configurable values.                                                                              |
+| [src/tools/](../src/tools/)                                     | One file per MCP tool. Each exports a `register<Name>Tool(server, config, amplitude)` function.                                                                                |
+| [src/tools/schemas.ts](../src/tools/schemas.ts)                 | Zod parameter schemas for every tool. The schema _is_ the user-facing contract; LLMs see this verbatim.                                                                        |
+| [src/lib/api-client.ts](../src/lib/api-client.ts)               | One HTTP client wrapping every Browserless REST endpoint we hit. Handles retries, timeouts, caching, base64 vs. text.                                                          |
+| [src/lib/agent-client.ts](../src/lib/agent-client.ts)           | Persistent WebSocket session pool for the `browserless_agent` tool — distinct from the REST client because the agent tool needs stateful conversations with `/chromium/agent`. |
+| [src/skills/](../src/skills/)                                   | Just-in-time guidance for the agent loop. `index.ts` is the registry + detection logic; `*.md` files are the actual prose injected into responses.                             |
+| [src/prompts/](../src/prompts/)                                 | MCP prompts (user-invoked starter templates — not auto-injected).                                                                                                              |
+| [src/resources/](../src/resources/)                             | MCP resources (live status + API docs the client can read).                                                                                                                    |
+| [src/lib/redis-oauth-proxy.ts](../src/lib/redis-oauth-proxy.ts) | Multi-instance OAuth state store. Only used when `REDIS_URL` is set (hosted deploys behind a load balancer).                                                                   |
+| [src/lib/account-resolver.ts](../src/lib/account-resolver.ts)   | Resolves a Supabase JWT → Browserless API key by hitting Supabase PostgREST.                                                                                                   |
+| [src/lib/amplitude.ts](../src/lib/amplitude.ts)                 | Fire-and-forget analytics events sent via SQS. Disabled unless `ANALYTICS_ENABLED=true`.                                                                                       |
 
 ---
 
@@ -102,17 +102,17 @@ Two tools are different:
 
 Each tool maps to one or more routes in the enterprise repo (or to OSS browserless routes that enterprise inherits). When debugging a tool, start by reading the matching enterprise file:
 
-| MCP tool | Enterprise route | File |
-|---|---|---|
-| `browserless_smartscraper` | `POST /smart-scrape` | [enterprise/src/shared/http/smart-scrape.http.ts](/Users/andy/projects/enterprise/src/shared/http/smart-scrape.http.ts) |
-| `browserless_search` | `POST /search` | [enterprise/src/shared/http/search.http.ts](/Users/andy/projects/enterprise/src/shared/http/search.http.ts) |
-| `browserless_map` | `POST /map` | [enterprise/src/shared/http/map.http.ts](/Users/andy/projects/enterprise/src/shared/http/map.http.ts) |
-| `browserless_crawl` | `POST/GET/DELETE /crawl` | [enterprise/src/cloud/http/crawl-post.http.ts](/Users/andy/projects/enterprise/src/cloud/http/crawl-post.http.ts), `crawl-get.http.ts`, `crawl-delete.http.ts` |
-| `browserless_export` | `POST /chromium/export` | [enterprise/src/shared/http/chromium.export.http.ts](/Users/andy/projects/enterprise/src/shared/http/chromium.export.http.ts) |
-| `browserless_function` | `POST /function` | OSS browserless (`@browserless.io/browserless`) |
-| `browserless_download` | `POST /download` | OSS browserless |
-| `browserless_performance` | `POST /performance` | OSS browserless |
-| `browserless_agent` (WS) | `WS /chromium/agent` | [enterprise/src/shared/browserql/agent/agent.chromium.ws.ts](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent.chromium.ws.ts), [`agent-api.ts`](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent-api.ts) |
+| MCP tool                   | Enterprise route         | File                                                                                                                                                                                                                                     |
+| -------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `browserless_smartscraper` | `POST /smart-scrape`     | [enterprise/src/shared/http/smart-scrape.http.ts](/Users/andy/projects/enterprise/src/shared/http/smart-scrape.http.ts)                                                                                                                  |
+| `browserless_search`       | `POST /search`           | [enterprise/src/shared/http/search.http.ts](/Users/andy/projects/enterprise/src/shared/http/search.http.ts)                                                                                                                              |
+| `browserless_map`          | `POST /map`              | [enterprise/src/shared/http/map.http.ts](/Users/andy/projects/enterprise/src/shared/http/map.http.ts)                                                                                                                                    |
+| `browserless_crawl`        | `POST/GET/DELETE /crawl` | [enterprise/src/cloud/http/crawl-post.http.ts](/Users/andy/projects/enterprise/src/cloud/http/crawl-post.http.ts), `crawl-get.http.ts`, `crawl-delete.http.ts`                                                                           |
+| `browserless_export`       | `POST /chromium/export`  | [enterprise/src/shared/http/chromium.export.http.ts](/Users/andy/projects/enterprise/src/shared/http/chromium.export.http.ts)                                                                                                            |
+| `browserless_function`     | `POST /function`         | OSS browserless (`@browserless.io/browserless`)                                                                                                                                                                                          |
+| `browserless_download`     | `POST /download`         | OSS browserless                                                                                                                                                                                                                          |
+| `browserless_performance`  | `POST /performance`      | OSS browserless                                                                                                                                                                                                                          |
+| `browserless_agent` (WS)   | `WS /chromium/agent`     | [enterprise/src/shared/browserql/agent/agent.chromium.ws.ts](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent.chromium.ws.ts), [`agent-api.ts`](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent-api.ts) |
 
 The agent tool is the one most often impacted by enterprise-side changes. If a new agent command is added in [agent-api.ts](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent-api.ts) (e.g. a new `Browserless.*` method), the MCP's agent tool description, the schema, and possibly a skill all need updating in this repo.
 
@@ -229,26 +229,40 @@ export function registerMyTool(
 ): void {
   server.addTool({
     name: 'browserless_mything',
-    description: 'One-paragraph explanation of when to use this tool. The LLM reads this verbatim.',
+    description:
+      'One-paragraph explanation of when to use this tool. The LLM reads this verbatim.',
     parameters: MyToolParamsSchema,
     annotations: {
       title: 'Browserless My Thing',
-      readOnlyHint: true,   // false if it has side effects
-      openWorldHint: true,  // true if it touches the open web
+      readOnlyHint: true, // false if it has side effects
+      openWorldHint: true, // true if it touches the open web
     },
     execute: async (args, { session, log }) => {
-      const token = (session?.token as string | undefined) ?? config.browserlessToken;
+      const token =
+        (session?.token as string | undefined) ?? config.browserlessToken;
       if (!token) throw new UserError('No Browserless API token provided. ...');
-      const apiUrl = (session?.apiUrl as string | undefined) ?? config.browserlessApiUrl;
+      const apiUrl =
+        (session?.apiUrl as string | undefined) ?? config.browserlessApiUrl;
 
-      const client = createApiClient({ ...config, browserlessToken: token, browserlessApiUrl: apiUrl });
+      const client = createApiClient({
+        ...config,
+        browserlessToken: token,
+        browserlessApiUrl: apiUrl,
+      });
       const response = await client.myThing(args);
 
-      amplitude?.send('MCP Tool Request', djb2(token), {
-        token, tool: 'browserless_mything', api_url: apiUrl, ok: true,
-      }).catch(() => {});
+      amplitude
+        ?.send('MCP Tool Request', djb2(token), {
+          token,
+          tool: 'browserless_mything',
+          api_url: apiUrl,
+          ok: true,
+        })
+        .catch(() => {});
 
-      return { content: [{ type: 'text', text: JSON.stringify(response, null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response, null, 2) }],
+      };
     },
   });
 }
@@ -263,6 +277,7 @@ Import and call your `register*Tool` from [src/index.ts](../src/index.ts), next 
 ### Step 5: Add a spec
 
 Tests live in `test/tools/`. Stub `createApiClient` and assert that:
+
 - Required params are validated (Zod throws on invalid input).
 - The right API method is called with the right args.
 - Errors surface as `UserError`.
@@ -282,7 +297,7 @@ The agent tool drives a generic browser. Real pages have non-generic mechanics: 
 
 We can't shove every recipe into the system prompt: it would be 50× longer, mostly irrelevant, and the LLM would skim it. We also can't expect the LLM to "just know" — selector syntax for shadow DOM, the difference between `wait*` methods, the `solve` command for captchas, etc., are all Browserless-specific and not in any LLM's training data.
 
-**Skills are just-in-time guidance.** Each skill is a short markdown recipe that gets injected into the agent's response *only when* the page state suggests it's relevant. The LLM gets the right recipe at the moment it needs it.
+**Skills are just-in-time guidance.** Each skill is a short markdown recipe that gets injected into the agent's response _only when_ the page state suggests it's relevant. The LLM gets the right recipe at the moment it needs it.
 
 ### How a skill is built
 
@@ -344,7 +359,7 @@ For prose changes: just edit the `.md` file and rebuild. No code changes.
 
 For detection changes: edit the `detect` predicate in `index.ts` and update the spec.
 
-If you change the trigger condition meaningfully, also update the matching bullet in the agent tool description — it's the user-visible contract for what each skill is *for*.
+If you change the trigger condition meaningfully, also update the matching bullet in the agent tool description — it's the user-visible contract for what each skill is _for_.
 
 ---
 
