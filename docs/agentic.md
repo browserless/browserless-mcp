@@ -31,23 +31,23 @@ Pass a top-level `proxy` object on `browserless_agent` to route the session thro
       "proxy": {
         "proxy": "residential",
         "proxyCountry": "us",
-        "proxySticky": true
-      }
-    }
-  }
+        "proxySticky": true,
+      },
+    },
+  },
 }
 ```
 
 Supported fields:
 
-| Field                 | Notes                                                                |
-| --------------------- | -------------------------------------------------------------------- |
-| `proxy`               | `"residential"` — only value supported today.                        |
-| `proxyCountry`        | ISO-2 country code, lowercase preferred (`"us"`, `"de"`).            |
-| `proxyState`          | Region/state name.                                                   |
-| `proxyCity`           | Enterprise license only — non-enterprise tokens get a 403.           |
-| `proxySticky`         | Stable IP for the session. Resets to a new IP if the WS reconnects.  |
-| `proxyLocaleMatch`    | Match browser locale to the proxy geo.                               |
-| `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`.          |
+| Field                 | Notes                                                               |
+| --------------------- | ------------------------------------------------------------------- |
+| `proxy`               | `"residential"` — only value supported today.                       |
+| `proxyCountry`        | ISO-2 country code, lowercase preferred (`"us"`, `"de"`).           |
+| `proxyState`          | Region/state name.                                                  |
+| `proxyCity`           | Enterprise license only — non-enterprise tokens get a 403.          |
+| `proxySticky`         | Stable IP for the session. Resets to a new IP if the WS reconnects. |
+| `proxyLocaleMatch`    | Match browser locale to the proxy geo.                              |
+| `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`.         |
 
 The `proxy` object is read once at session create. To change it, call `close` and start a new session — the agent client keys sessions on the proxy fingerprint, so passing a different config will land on a fresh WebSocket.
