@@ -2,7 +2,7 @@
 
 A field guide for engineers who need to modify this project. Covers the architecture, install/run instructions, and concrete recipes for the modifications you're most likely to make: adding a tool, editing a skill, wiring up auth, etc.
 
-> **Companion repo:** This project is a thin layer on top of the [`enterprise`](https://github.com/browserless/enterprise) repo (`/Users/andy/projects/enterprise` locally). Every tool here ultimately calls an HTTP/WS route defined in that repo. When in doubt about API shape or behavior, the enterprise repo is the source of truth — links to the relevant files appear throughout this document.
+> **Companion repo:** This project is a thin layer on top of the [`browserless/enterprise`](https://github.com/browserless/enterprise) repo. Every tool here ultimately calls an HTTP/WS route defined in that repo. When in doubt about API shape or behavior, the enterprise repo is the source of truth — links to the relevant files appear throughout this document.
 
 ---
 
@@ -21,36 +21,29 @@ The full list of tools, resources, prompts, and config knobs lives in [README.md
 
 ## 2. High-level architecture
 
-```
-LLM client (Claude / Cursor / etc.)
-         │
-         │  MCP protocol (stdio or HTTP+SSE)
-         ▼
-  ┌──────────────────────┐
-  │  src/index.ts        │   ← entry point: builds FastMCP server,
-  │  (FastMCP + auth)    │     registers everything, picks transport
-  └──────────┬───────────┘
-             │
-   ┌─────────┼─────────┬─────────────┬──────────────┐
-   ▼         ▼         ▼             ▼              ▼
- tools/    skills/   prompts/    resources/      lib/
- (10×)     (8 .md)    (2×)        (2×)         (api-client,
-                                                agent-client,
-                                                amplitude,
-                                                cache, retry,
-                                                redis-oauth)
-             │                                       │
-             │  ──────────── HTTP ──────────────►    │
-             │  (POST /smart-scrape, /search,        │
-             │   /map, /crawl, /performance, etc.)   │
-             │                                       │
-             │  ──────── WebSocket ────────────►     │
-             │  (/chromium/agent — agent tool only)  │
-             ▼                                       ▼
-   ┌────────────────────────────────────────────────┐
-   │    Browserless instance (enterprise repo)     │
-   │    or browserless.io cloud                    │
-   └────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    client["LLM client<br/>(Claude / Cursor / VS Code / etc.)"]
+    entry["<b>src/index.ts</b><br/>FastMCP server + auth<br/>(picks transport, registers everything)"]
+
+    subgraph internals["browserless-mcp internals"]
+        direction LR
+        tools["<b>tools/</b><br/>10 MCP tools"]
+        skills["<b>skills/</b><br/>8 markdown recipes<br/>+ detection registry"]
+        prompts["<b>prompts/</b><br/>2 user-invoked templates"]
+        resources["<b>resources/</b><br/>2 readable URIs"]
+        lib["<b>lib/</b><br/>api-client, agent-client,<br/>amplitude, cache, retry,<br/>redis-oauth"]
+    end
+
+    backend["<b>Browserless instance</b><br/>self-hosted enterprise<br/>or browserless.io cloud"]
+
+    client -->|"MCP protocol<br/>(stdio or HTTP+SSE)"| entry
+    entry --> internals
+    tools -.uses.-> lib
+    skills -.uses.-> lib
+
+    lib -->|"HTTP<br/>POST /smart-scrape, /search,<br/>/map, /crawl, /performance, …"| backend
+    lib -->|"WebSocket<br/>/chromium/agent<br/>(agent tool only)"| backend
 ```
 
 ### Where each piece of code lives
@@ -104,17 +97,17 @@ Each tool maps to one or more routes in the enterprise repo (or to OSS browserle
 
 | MCP tool                   | Enterprise route         | File                                                                                                                                                                                                                                     |
 | -------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `browserless_smartscraper` | `POST /smart-scrape`     | [enterprise/src/shared/http/smart-scrape.http.ts](/Users/andy/projects/enterprise/src/shared/http/smart-scrape.http.ts)                                                                                                                  |
-| `browserless_search`       | `POST /search`           | [enterprise/src/shared/http/search.http.ts](/Users/andy/projects/enterprise/src/shared/http/search.http.ts)                                                                                                                              |
-| `browserless_map`          | `POST /map`              | [enterprise/src/shared/http/map.http.ts](/Users/andy/projects/enterprise/src/shared/http/map.http.ts)                                                                                                                                    |
-| `browserless_crawl`        | `POST/GET/DELETE /crawl` | [enterprise/src/cloud/http/crawl-post.http.ts](/Users/andy/projects/enterprise/src/cloud/http/crawl-post.http.ts), `crawl-get.http.ts`, `crawl-delete.http.ts`                                                                           |
-| `browserless_export`       | `POST /chromium/export`  | [enterprise/src/shared/http/chromium.export.http.ts](/Users/andy/projects/enterprise/src/shared/http/chromium.export.http.ts)                                                                                                            |
+| `browserless_smartscraper` | `POST /smart-scrape`     | [enterprise/src/shared/http/smart-scrape.http.ts](https://github.com/browserless/enterprise/blob/main/src/shared/http/smart-scrape.http.ts)                                                                                                                  |
+| `browserless_search`       | `POST /search`           | [enterprise/src/shared/http/search.http.ts](https://github.com/browserless/enterprise/blob/main/src/shared/http/search.http.ts)                                                                                                                              |
+| `browserless_map`          | `POST /map`              | [enterprise/src/shared/http/map.http.ts](https://github.com/browserless/enterprise/blob/main/src/shared/http/map.http.ts)                                                                                                                                    |
+| `browserless_crawl`        | `POST/GET/DELETE /crawl` | [enterprise/src/cloud/http/crawl-post.http.ts](https://github.com/browserless/enterprise/blob/main/src/cloud/http/crawl-post.http.ts), [`crawl-get.http.ts`](https://github.com/browserless/enterprise/blob/main/src/cloud/http/crawl-get.http.ts), [`crawl-delete.http.ts`](https://github.com/browserless/enterprise/blob/main/src/cloud/http/crawl-delete.http.ts)                                                                           |
+| `browserless_export`       | `POST /chromium/export`  | [enterprise/src/shared/http/chromium.export.http.ts](https://github.com/browserless/enterprise/blob/main/src/shared/http/chromium.export.http.ts)                                                                                                            |
 | `browserless_function`     | `POST /function`         | OSS browserless (`@browserless.io/browserless`)                                                                                                                                                                                          |
 | `browserless_download`     | `POST /download`         | OSS browserless                                                                                                                                                                                                                          |
 | `browserless_performance`  | `POST /performance`      | OSS browserless                                                                                                                                                                                                                          |
-| `browserless_agent` (WS)   | `WS /chromium/agent`     | [enterprise/src/shared/browserql/agent/agent.chromium.ws.ts](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent.chromium.ws.ts), [`agent-api.ts`](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent-api.ts) |
+| `browserless_agent` (WS)   | `WS /chromium/agent`     | [enterprise/src/shared/browserql/agent/agent.chromium.ws.ts](https://github.com/browserless/enterprise/blob/main/src/shared/browserql/agent/agent.chromium.ws.ts), [`agent-api.ts`](https://github.com/browserless/enterprise/blob/main/src/shared/browserql/agent/agent-api.ts) |
 
-The agent tool is the one most often impacted by enterprise-side changes. If a new agent command is added in [agent-api.ts](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent-api.ts) (e.g. a new `Browserless.*` method), the MCP's agent tool description, the schema, and possibly a skill all need updating in this repo.
+The agent tool is the one most often impacted by enterprise-side changes. If a new agent command is added in [agent-api.ts](https://github.com/browserless/enterprise/blob/main/src/shared/browserql/agent/agent-api.ts) (e.g. a new `Browserless.*` method), the MCP's agent tool description, the schema, and possibly a skill all need updating in this repo.
 
 ---
 
@@ -148,7 +141,7 @@ BROWSERLESS_API_URL=http://localhost:3000 \
 node build/src/index.js
 ```
 
-To bring up the enterprise instance: see the **Local Development with Docker** section in [enterprise/CLAUDE.md](/Users/andy/projects/enterprise/CLAUDE.md). TL;DR: `npm run docker:up:detached` in the enterprise repo, then point this MCP server at `http://localhost:3000`.
+To bring up the enterprise instance: see the **Local Development with Docker** section in [enterprise/CLAUDE.md](https://github.com/browserless/enterprise/blob/main/CLAUDE.md). TL;DR: `npm run docker:up:detached` in the enterprise repo, then point this MCP server at `http://localhost:3000`.
 
 ### Run as an HTTP server
 
@@ -413,7 +406,7 @@ Region selection is per-request via the `x-browserless-api-url` header or `?brow
 
 ### "An enterprise PR changes the agent WebSocket protocol"
 
-The agent tool depends on the message shape defined by [enterprise/src/shared/browserql/agent/agent-api.ts](/Users/andy/projects/enterprise/src/shared/browserql/agent/agent-api.ts) and [`types.ts`](/Users/andy/projects/enterprise/src/shared/browserql/agent/types.ts). If those change:
+The agent tool depends on the message shape defined by [enterprise/src/shared/browserql/agent/agent-api.ts](https://github.com/browserless/enterprise/blob/main/src/shared/browserql/agent/agent-api.ts) and [`types.ts`](https://github.com/browserless/enterprise/blob/main/src/shared/browserql/agent/types.ts). If those change:
 
 1. Update [src/lib/agent-client.ts](../src/lib/agent-client.ts) types (`SnapshotElement`, `SnapshotResult`, `AgentResponse`).
 2. Check `formatElement` and `formatSnapshot` in [src/tools/agent.ts](../src/tools/agent.ts) — they depend on `SnapshotElement` shape.
