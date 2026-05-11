@@ -873,6 +873,34 @@ describe('browserless_crawl tool', () => {
     expect(url).to.include('profile=profile+with+spaces');
   });
 
+  it('throws UserError (not a property-access crash) when the profile does not exist', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({ error: 'Profile "missing-crawl" was not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    try {
+      await execute(
+        {
+          url: 'https://example.com',
+          profile: 'missing-crawl',
+          waitForCompletion: false,
+        },
+        mockContext,
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.include('Profile "missing-crawl"');
+      expect((err as Error).message).to.not.include('Cannot read properties');
+    }
+  });
+
   it('caps URL list at MAX_URL_LIST (200) to avoid huge responses', async () => {
     // Generate 250 pages to exceed the 200 cap
     const pages = Array.from({ length: 250 }, (_, i) => ({

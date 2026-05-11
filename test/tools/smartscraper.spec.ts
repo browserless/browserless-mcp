@@ -440,6 +440,35 @@ describe('browserless_smartscraper tool', () => {
     expect(url).to.include('profile=profile+with+spaces');
   });
 
+  it('throws UserError (not a property-access crash) when the profile does not exist', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({ error: 'Profile "missing" was not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    try {
+      await execute(
+        {
+          url: 'https://example.com',
+          formats: ['markdown'],
+          profile: 'missing',
+        },
+        mockContext,
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.include('Profile "missing"');
+      expect((err as Error).message).to.not.include('attempted');
+      expect((err as Error).message).to.not.include('Cannot read properties');
+    }
+  });
+
   it('reports progress during execution', async () => {
     fetchStub.resolves(
       new Response(JSON.stringify(makeSuccessResponse()), {

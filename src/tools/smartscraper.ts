@@ -1,7 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { PowerScraperParamsSchema } from './schemas.js';
-import { createApiClient } from '../lib/api-client.js';
+import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
 import { ResponseCache } from '../lib/cache.js';
 import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
 import type { McpConfig } from '../config.js';
@@ -59,12 +59,25 @@ export function registerPowerScraperTool(
         cache,
       );
 
-      const response = await client.powerScrape({
-        url: args.url,
-        formats: args.formats,
-        timeout: args.timeout,
-        profile: args.profile,
-      });
+      let response;
+      try {
+        response = await client.powerScrape({
+          url: args.url,
+          formats: args.formats,
+          timeout: args.timeout,
+          profile: args.profile,
+        });
+      } catch (err) {
+        if (err instanceof ProfileNotFoundError) {
+          throw new UserError(
+            `Profile "${err.profile}" was not found for the configured API ` +
+              `token. Create the profile with Browserless.saveProfile in a ` +
+              `live session first, or omit the profile parameter to scrape ` +
+              `anonymously.`,
+          );
+        }
+        throw err;
+      }
 
       await reportProgress({ progress: 100, total: 100 });
 

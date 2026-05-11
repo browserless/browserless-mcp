@@ -24,6 +24,47 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
+/**
+ * Thrown when an API call references a profile that does not exist for the
+ * current API token. Tools catch this and re-throw as a UserError so the LLM
+ * sees a clean explanation instead of a downstream property-access crash on
+ * the 404 body shape `{ error: '...' }`.
+ */
+export class ProfileNotFoundError extends Error {
+  constructor(
+    public readonly profile: string,
+    public readonly statusCode: number,
+    serverMessage?: string,
+  ) {
+    super(
+      serverMessage ??
+        `Profile "${profile}" was not found for the configured token.`,
+    );
+    this.name = 'ProfileNotFoundError';
+  }
+}
+
+/**
+ * If the response is a 404 from /smart-scrape or /crawl referencing a missing
+ * profile, throw a typed ProfileNotFoundError so the caller can surface it as
+ * a UserError. Returns the response untouched otherwise.
+ */
+async function throwIfProfileMissing(
+  res: Response,
+  profile: string | undefined,
+): Promise<void> {
+  if (!profile || res.status !== 404) return;
+  const cloned = res.clone();
+  const body = await cloned.json().catch(() => null);
+  const message =
+    body && typeof body === 'object' && 'error' in body
+      ? String((body as { error: unknown }).error)
+      : undefined;
+  if (message && message.toLowerCase().includes('profile')) {
+    throw new ProfileNotFoundError(profile, res.status, message);
+  }
+}
+
 /** Content-Types that should be treated as text (not base64-encoded). */
 const TEXT_CONTENT_TYPES = [
   'text/',
@@ -284,6 +325,8 @@ export function createApiClient(
               throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
+            await throwIfProfileMissing(res, params.profile);
+
             return (await res.json()) as PowerScraperResponse;
           } finally {
             clearTimeout(timeoutId);
@@ -293,6 +336,7 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
+            if (error instanceof ProfileNotFoundError) return false;
             return !error.message.startsWith('Server error 4');
           },
         },
@@ -604,6 +648,8 @@ export function createApiClient(
               throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
+            await throwIfProfileMissing(res, params.profile);
+
             return (await res.json()) as CrawlStartResponse;
           } finally {
             clearTimeout(timeoutId);
@@ -613,6 +659,7 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
+            if (error instanceof ProfileNotFoundError) return false;
             return !error.message.startsWith('Server error 4');
           },
         },
