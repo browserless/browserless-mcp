@@ -277,6 +277,9 @@ export function createApiClient(
       const tokenHash = hashToken(config.browserlessToken!);
       const cacheKey = JSON.stringify({
         t: tokenHash,
+        // The api URL can be overridden per-session, so two backends sharing
+        // the same token must not share cache entries.
+        api: config.browserlessApiUrl,
         url: params.url,
         formats: [...formats].sort(),
         // Profiles inject auth state — a cache hit across profiles would
