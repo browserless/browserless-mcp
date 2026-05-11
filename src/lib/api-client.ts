@@ -172,10 +172,7 @@ export function createApiClient(
     return retryWithBackoff(
       async () => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(
-          () => controller.abort(),
-          timeout + 5000,
-        );
+        const timeoutId = setTimeout(() => controller.abort(), timeout + 5000);
 
         try {
           const res = await fetch(apiUrl, {
@@ -186,9 +183,7 @@ export function createApiClient(
           });
 
           if (!res.ok && res.status >= 500) {
-            throw new Error(
-              `Server error ${res.status}: ${res.statusText}`,
-            );
+            throw new Error(`Server error ${res.status}: ${res.statusText}`);
           }
 
           const respContentType =
@@ -236,9 +231,7 @@ export function createApiClient(
 
   return {
     /* ---- powerScrape (existing) ---------------------------------- */
-    async powerScrape(
-      params: PowerScrapeRequest,
-    ): Promise<PowerScrapeResult> {
+    async powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult> {
       const formats = params.formats ?? ['markdown'];
       const tokenHash = hashToken(config.browserlessToken!);
       const cacheKey = JSON.stringify({
@@ -288,9 +281,7 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
             return (await res.json()) as PowerScraperResponse;
@@ -394,7 +385,8 @@ export function createApiClient(
       if (params.tbs !== undefined) body.tbs = params.tbs;
       if (params.sources !== undefined) body.sources = params.sources;
       if (params.categories !== undefined) body.categories = params.categories;
-      if (params.scrapeOptions !== undefined) body.scrapeOptions = params.scrapeOptions;
+      if (params.scrapeOptions !== undefined)
+        body.scrapeOptions = params.scrapeOptions;
 
       return retryWithBackoff(
         async () => {
@@ -434,7 +426,9 @@ export function createApiClient(
     },
 
     /* ---- performance (/performance) ------------------------------ */
-    async performance(params: PerformanceRequest): Promise<PerformanceResponse> {
+    async performance(
+      params: PerformanceRequest,
+    ): Promise<PerformanceResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
       const queryParams = new URLSearchParams({
         token: config.browserlessToken!,
@@ -477,9 +471,7 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
             if (!res.ok) {
@@ -520,8 +512,10 @@ export function createApiClient(
       if (params.search !== undefined) body.search = params.search;
       if (params.limit !== undefined) body.limit = params.limit;
       if (params.sitemap !== undefined) body.sitemap = params.sitemap;
-      if (params.includeSubdomains !== undefined) body.includeSubdomains = params.includeSubdomains;
-      if (params.ignoreQueryParameters !== undefined) body.ignoreQueryParameters = params.ignoreQueryParameters;
+      if (params.includeSubdomains !== undefined)
+        body.includeSubdomains = params.includeSubdomains;
+      if (params.ignoreQueryParameters !== undefined)
+        body.ignoreQueryParameters = params.ignoreQueryParameters;
 
       return retryWithBackoff(
         async () => {
@@ -540,9 +534,7 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
             return (await res.json()) as MapResponse;
@@ -579,13 +571,18 @@ export function createApiClient(
       if (params.limit !== undefined) body.limit = params.limit;
       if (params.maxDepth !== undefined) body.maxDepth = params.maxDepth;
       if (params.maxRetries !== undefined) body.maxRetries = params.maxRetries;
-      if (params.allowExternalLinks !== undefined) body.allowExternalLinks = params.allowExternalLinks;
-      if (params.allowSubdomains !== undefined) body.allowSubdomains = params.allowSubdomains;
+      if (params.allowExternalLinks !== undefined)
+        body.allowExternalLinks = params.allowExternalLinks;
+      if (params.allowSubdomains !== undefined)
+        body.allowSubdomains = params.allowSubdomains;
       if (params.sitemap !== undefined) body.sitemap = params.sitemap;
-      if (params.includePaths !== undefined) body.includePaths = params.includePaths;
-      if (params.excludePaths !== undefined) body.excludePaths = params.excludePaths;
+      if (params.includePaths !== undefined)
+        body.includePaths = params.includePaths;
+      if (params.excludePaths !== undefined)
+        body.excludePaths = params.excludePaths;
       if (params.delay !== undefined) body.delay = params.delay;
-      if (params.scrapeOptions !== undefined) body.scrapeOptions = params.scrapeOptions;
+      if (params.scrapeOptions !== undefined)
+        body.scrapeOptions = params.scrapeOptions;
 
       return retryWithBackoff(
         async () => {
@@ -604,9 +601,7 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
             return (await res.json()) as CrawlStartResponse;
@@ -625,7 +620,10 @@ export function createApiClient(
     },
 
     /* ---- getCrawl (GET /crawl/{id}) ------------------------------ */
-    async getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse> {
+    async getCrawl(
+      crawlId: string,
+      skip?: number,
+    ): Promise<CrawlStatusResponse> {
       const queryParams = new URLSearchParams({
         token: config.browserlessToken!,
       });
@@ -657,9 +655,7 @@ export function createApiClient(
             // Reject all non-OK responses to avoid treating error bodies as valid data
             if (!res.ok) {
               const errorBody = await res.text().catch(() => res.statusText);
-              throw new Error(
-                `API error ${res.status}: ${errorBody}`,
-              );
+              throw new Error(`API error ${res.status}: ${errorBody}`);
             }
 
             return (await res.json()) as CrawlStatusResponse;
@@ -671,8 +667,10 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
-            return !error.message.startsWith('Server error 4') &&
-                   !error.message.includes('not found');
+            return (
+              !error.message.startsWith('Server error 4') &&
+              !error.message.includes('not found')
+            );
           },
         },
       );
@@ -707,15 +705,15 @@ export function createApiClient(
 
             if (res.status === 409) {
               const body = (await res.json()) as { message?: string };
-              throw new Error(body.message ?? 'Crawl is already in terminal state');
+              throw new Error(
+                body.message ?? 'Crawl is already in terminal state',
+              );
             }
 
             // Reject all non-OK responses to avoid treating error bodies as valid data
             if (!res.ok) {
               const errorBody = await res.text().catch(() => res.statusText);
-              throw new Error(
-                `API error ${res.status}: ${errorBody}`,
-              );
+              throw new Error(`API error ${res.status}: ${errorBody}`);
             }
 
             return (await res.json()) as CrawlCancelResponse;

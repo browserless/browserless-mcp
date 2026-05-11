@@ -444,9 +444,7 @@ describe('createApiClient', () => {
     });
 
     it('returns not ok on non-200 status', async () => {
-      fetchStub.resolves(
-        new Response('Unauthorized', { status: 401 }),
-      );
+      fetchStub.resolves(new Response('Unauthorized', { status: 401 }));
 
       const client = createApiClient(mockConfig);
       const status = await client.getStatus();
@@ -472,8 +470,16 @@ describe('createApiClient', () => {
       totalResults: 2,
       data: {
         web: [
-          { title: 'Result 1', url: 'https://example.com/1', description: 'First' },
-          { title: 'Result 2', url: 'https://example.com/2', description: 'Second' },
+          {
+            title: 'Result 1',
+            url: 'https://example.com/1',
+            description: 'First',
+          },
+          {
+            title: 'Result 2',
+            url: 'https://example.com/2',
+            description: 'Second',
+          },
         ],
       },
     };
