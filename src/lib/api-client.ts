@@ -33,7 +33,6 @@ function hashToken(token: string): string {
 export class ProfileNotFoundError extends Error {
   constructor(
     public readonly profile: string,
-    public readonly statusCode: number,
     serverMessage?: string,
   ) {
     super(
@@ -45,24 +44,30 @@ export class ProfileNotFoundError extends Error {
 }
 
 /**
- * If the response is a 404 from /smart-scrape or /crawl referencing a missing
- * profile, throw a typed ProfileNotFoundError so the caller can surface it as
- * a UserError. Returns the response untouched otherwise.
+ * If the response is a 404 from /smart-scrape or /crawl with a profile set,
+ * throw a typed ProfileNotFoundError so the caller can surface it as a
+ * UserError. We treat any 404 + profile as profile-not-found regardless of
+ * body shape — the error body varies (`error` / `message` / `detail` /
+ * malformed JSON) and the downstream `await res.json()` would crash anyway.
  */
 async function throwIfProfileMissing(
   res: Response,
   profile: string | undefined,
 ): Promise<void> {
   if (!profile || res.status !== 404) return;
-  const cloned = res.clone();
-  const body = await cloned.json().catch(() => null);
-  const message =
-    body && typeof body === 'object' && 'error' in body
-      ? String((body as { error: unknown }).error)
-      : undefined;
-  if (message && message.toLowerCase().includes('profile')) {
-    throw new ProfileNotFoundError(profile, res.status, message);
+  const body = await res.clone().json().catch(() => null);
+  let serverMessage: string | undefined;
+  if (body && typeof body === 'object') {
+    const b = body as Record<string, unknown>;
+    const candidates = [
+      b.error,
+      b.message,
+      b.detail,
+      Array.isArray(b.errors) ? b.errors[0] : undefined,
+    ];
+    serverMessage = candidates.find((v): v is string => typeof v === 'string');
   }
+  throw new ProfileNotFoundError(profile, serverMessage);
 }
 
 /** Content-Types that should be treated as text (not base64-encoded). */
