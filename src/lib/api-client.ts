@@ -55,7 +55,10 @@ async function throwIfProfileMissing(
   profile: string | undefined,
 ): Promise<void> {
   if (!profile || res.status !== 404) return;
-  const body = await res.clone().json().catch(() => null);
+  const body = await res
+    .clone()
+    .json()
+    .catch(() => null);
   let serverMessage: string | undefined;
   if (body && typeof body === 'object') {
     const b = body as Record<string, unknown>;
