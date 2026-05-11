@@ -338,6 +338,16 @@ export function createApiClient(
 
             await throwIfProfileMissing(res, params.profile);
 
+            // Reject any remaining 4xx before parsing or caching — a 400/401/403
+            // body must not be returned as a valid PowerScraperResponse, and
+            // must not poison the cache. The `Server error` prefix also lets
+            // the existing retry-suppression predicate skip these.
+            if (!res.ok) {
+              const errorBody = await res.text().catch(() => res.statusText);
+              const message = errorBody.trim() || res.statusText;
+              throw new Error(`Server error ${res.status}: ${message}`);
+            }
+
             return (await res.json()) as PowerScraperResponse;
           } finally {
             clearTimeout(timeoutId);
@@ -660,6 +670,29 @@ export function createApiClient(
             }
 
             await throwIfProfileMissing(res, params.profile);
+
+            // The /crawl endpoint returns a structured
+            // `{ success: false, error: string }` body on some 4xx responses
+            // (e.g. 429 rate limit). Forward those so the tool can surface
+            // them as a clean UserError. Non-JSON 4xx bodies surface as a
+            // Server error so retry suppression catches them.
+            if (!res.ok) {
+              const text = await res.text().catch(() => '');
+              try {
+                const parsed = JSON.parse(text);
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  (parsed as { success?: unknown }).success === false
+                ) {
+                  return parsed as CrawlStartResponse;
+                }
+              } catch {
+                // Non-JSON body — fall through.
+              }
+              const message = text.trim() || res.statusText;
+              throw new Error(`Server error ${res.status}: ${message}`);
+            }
 
             return (await res.json()) as CrawlStartResponse;
           } finally {

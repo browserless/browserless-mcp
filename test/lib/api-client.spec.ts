@@ -302,6 +302,39 @@ describe('createApiClient', () => {
       ]);
     });
 
+    it('rejects non-profile 4xx with Server error prefix and does not cache it', async () => {
+      // First call: 401 must throw with Server error prefix (so retry
+      // suppression catches it) and must not write to the cache.
+      fetchStub.resolves(
+        new Response('Invalid token', {
+          status: 401,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.powerScrape({ url: 'https://example.com' });
+        expect.fail('expected Server error');
+      } catch (err) {
+        expect((err as Error).message).to.match(/^Server error 401:/);
+      }
+
+      // Second call: replay the same URL with a 200. If the cache had been
+      // poisoned by the 401, we'd see a cache hit and zero further fetches.
+      fetchStub.resetHistory();
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const result = await client.powerScrape({ url: 'https://example.com' });
+
+      expect(fetchStub.calledOnce).to.be.true;
+      expect(result.cacheHit).to.be.false;
+    });
+
     it('throws on 500 errors', async () => {
       fetchStub.resolves(
         new Response('Internal Server Error', {
@@ -321,6 +354,23 @@ describe('createApiClient', () => {
   });
 
   describe('crawl', () => {
+    it('rejects non-profile 4xx with Server error prefix', async () => {
+      fetchStub.resolves(
+        new Response('Bad Request', {
+          status: 400,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.crawl({ url: 'https://example.com' });
+        expect.fail('expected Server error');
+      } catch (err) {
+        expect((err as Error).message).to.match(/^Server error 400:/);
+      }
+    });
+
     it('throws ProfileNotFoundError on 404 with profile set', async () => {
       fetchStub.resolves(
         new Response(
