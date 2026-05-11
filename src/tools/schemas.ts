@@ -14,6 +14,14 @@ export const ScrapeFormatSchema = z.enum([
 
 export type ScrapeFormat = z.infer<typeof ScrapeFormatSchema>;
 
+function profileDescription(whenLoaded: string): string {
+  return (
+    `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
+    "The profile's cookies, localStorage, and IndexedDB are loaded into the session before navigation. " +
+    'The profile must already exist for the API token in use.'
+  );
+}
+
 export const PowerScraperParamsSchema = z.object({
   url: z
     .url()
@@ -31,6 +39,11 @@ export const PowerScraperParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds'),
+  profile: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(profileDescription('before scraping')),
 });
 
 export type PowerScraperParams = z.infer<typeof PowerScraperParamsSchema>;
@@ -1098,6 +1111,11 @@ export const CrawlParamsSchema = z.object({
     .positive()
     .optional()
     .describe('HTTP request timeout in milliseconds for API calls (default: 30000)'),
+  profile: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(profileDescription('before each page is scraped')),
 });
 
 export type CrawlParams = z.infer<typeof CrawlParamsSchema>;

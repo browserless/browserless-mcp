@@ -388,6 +388,79 @@ describe('browserless_smartscraper tool', () => {
     expect(mainContent.text).to.include('http-fetch');
   });
 
+  it('does not include profile in the outbound URL when omitted', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown'],
+      },
+      mockContext,
+    );
+
+    expect(fetchStub.calledOnce).to.be.true;
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.not.include('profile=');
+  });
+
+  it('forwards profile as a query parameter to /smart-scrape', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown'],
+        profile: 'my-login',
+      },
+      mockContext,
+    );
+
+    expect(fetchStub.calledOnce).to.be.true;
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.include('profile=my-login');
+  });
+
+  it('URL-encodes the profile name', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown'],
+        profile: 'profile with spaces',
+      },
+      mockContext,
+    );
+
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.include('profile=profile+with+spaces');
+  });
+
   it('reports progress during execution', async () => {
     fetchStub.resolves(
       new Response(JSON.stringify(makeSuccessResponse()), {

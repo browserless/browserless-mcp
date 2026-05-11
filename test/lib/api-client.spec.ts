@@ -143,6 +143,40 @@ describe('createApiClient', () => {
       expect(fetchStub.calledTwice).to.be.true;
     });
 
+    it('isolates cache entries by profile', async () => {
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(mockSuccessResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      const first = await client.powerScrape({
+        url: 'https://example.com',
+        profile: 'user-a',
+      });
+      const second = await client.powerScrape({
+        url: 'https://example.com',
+        profile: 'user-b',
+      });
+      const third = await client.powerScrape({
+        url: 'https://example.com',
+        profile: 'user-a',
+      });
+      const fourth = await client.powerScrape({
+        url: 'https://example.com',
+      });
+
+      expect(fetchStub.callCount).to.equal(3);
+      expect(first.cacheHit).to.be.false;
+      expect(second.cacheHit).to.be.false;
+      expect(third.cacheHit).to.be.true;
+      expect(fourth.cacheHit).to.be.false;
+    });
+
     it('forwards formats array in request body', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {

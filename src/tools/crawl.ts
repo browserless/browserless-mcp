@@ -107,16 +107,22 @@ export function registerCrawlTool(
         delay: args.delay,
         scrapeOptions: args.scrapeOptions,
         timeout: args.timeout,
+        profile: args.profile,
       });
+
+      const analyticsBase = {
+        token,
+        tool: 'browserless_crawl',
+        url: args.url,
+        limit: args.limit ?? 100,
+        api_url: apiUrl,
+        profile_used: !!args.profile,
+      };
 
       if (!startResponse.success) {
         // Fire-and-forget analytics for failed start
         amplitude?.send('MCP Tool Request', djb2(token), {
-          token,
-          tool: 'browserless_crawl',
-          url: args.url,
-          limit: args.limit ?? 100,
-          api_url: apiUrl,
+          ...analyticsBase,
           success: false,
           error: startResponse.error ?? 'Unknown error',
         }).catch(() => {});
@@ -135,11 +141,7 @@ export function registerCrawlTool(
         await reportProgress({ progress: 100, total: 100 });
 
         amplitude?.send('MCP Tool Request', djb2(token), {
-          token,
-          tool: 'browserless_crawl',
-          url: args.url,
-          limit: args.limit ?? 100,
-          api_url: apiUrl,
+          ...analyticsBase,
           success: true,
           crawl_id: crawlId,
           wait_for_completion: false,
@@ -176,11 +178,7 @@ export function registerCrawlTool(
         if (Date.now() - startTime > maxWaitTime) {
           // Return partial results on timeout
           amplitude?.send('MCP Tool Request', djb2(token), {
-            token,
-            tool: 'browserless_crawl',
-            url: args.url,
-            limit: args.limit ?? 100,
-            api_url: apiUrl,
+            ...analyticsBase,
             success: false,
             crawl_id: crawlId,
             timeout: true,
@@ -232,11 +230,7 @@ export function registerCrawlTool(
 
       // Fire-and-forget analytics
       amplitude?.send('MCP Tool Request', djb2(token), {
-        token,
-        tool: 'browserless_crawl',
-        url: args.url,
-        limit: args.limit ?? 100,
-        api_url: apiUrl,
+        ...analyticsBase,
         success: statusResponse.status === 'completed',
         crawl_id: crawlId,
         status: statusResponse.status,

@@ -58,6 +58,7 @@ export function registerPowerScraperTool(
         url: args.url,
         formats: args.formats,
         timeout: args.timeout,
+        profile: args.profile,
       });
 
       await reportProgress({ progress: 100, total: 100 });
@@ -74,6 +75,7 @@ export function registerPowerScraperTool(
         ok: response.ok,
         status_code: response.statusCode,
         strategy: response.strategy,
+        profile_used: !!args.profile,
       }).catch(() => {});
 
       if (!response.ok) {

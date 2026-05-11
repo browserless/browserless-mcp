@@ -43,6 +43,7 @@ export interface PowerScrapeRequest {
   url: string;
   formats?: ScrapeFormat[];
   timeout?: number;
+  profile?: string;
 }
 
 export type PowerScrapeResult = PowerScraperResponse & { cacheHit: boolean };
@@ -124,6 +125,7 @@ export interface CrawlRequest {
     timeout?: number;
   };
   timeout?: number;
+  profile?: string;
 }
 
 export interface CrawlCancelResponse {
@@ -243,6 +245,9 @@ export function createApiClient(
         t: tokenHash,
         url: params.url,
         formats: [...formats].sort(),
+        // Profiles inject auth state — a cache hit across profiles would
+        // leak one user's session into another's response.
+        profile: params.profile ?? null,
       });
 
       const cached = _cache.get<PowerScraperResponse>(cacheKey);
@@ -255,6 +260,9 @@ export function createApiClient(
         token: config.browserlessToken!,
         timeout: String(timeout),
       });
+      if (params.profile) {
+        queryParams.set('profile', params.profile);
+      }
 
       const apiUrl = `${config.browserlessApiUrl}/smart-scrape?${queryParams.toString()}`;
 
@@ -555,10 +563,13 @@ export function createApiClient(
     /* ---- crawl (POST /crawl) ------------------------------------- */
     async crawl(params: CrawlRequest): Promise<CrawlStartResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
-      // Note: /crawl endpoint only accepts 'token' as query param
+      // Note: /crawl endpoint accepts 'token' and 'profile' as query params
       const queryParams = new URLSearchParams({
         token: config.browserlessToken!,
       });
+      if (params.profile) {
+        queryParams.set('profile', params.profile);
+      }
 
       const apiUrl = `${config.browserlessApiUrl}/crawl?${queryParams.toString()}`;
 
