@@ -14,10 +14,16 @@ export const ScrapeFormatSchema = z.enum([
 
 export type ScrapeFormat = z.infer<typeof ScrapeFormatSchema>;
 
+function profileDescription(whenLoaded: string): string {
+  return (
+    `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
+    "The profile's cookies, localStorage, and IndexedDB are loaded into the session before navigation. " +
+    'The profile must already exist for the API token in use.'
+  );
+}
+
 export const PowerScraperParamsSchema = z.object({
-  url: z
-    .url()
-    .describe('The URL to scrape (must be http or https)'),
+  url: z.url().describe('The URL to scrape (must be http or https)'),
   formats: z
     .array(ScrapeFormatSchema)
     .optional()
@@ -31,6 +37,11 @@ export const PowerScraperParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds'),
+  profile: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(profileDescription('before scraping')),
 });
 
 export type PowerScraperParams = z.infer<typeof PowerScraperParamsSchema>;
@@ -50,9 +61,7 @@ export const PowerScraperResponseSchema = z.object({
   links: z.array(z.string()).nullable(),
 });
 
-export type PowerScraperResponse = z.infer<
-  typeof PowerScraperResponseSchema
->;
+export type PowerScraperResponse = z.infer<typeof PowerScraperResponseSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  /function API – execute custom Puppeteer code server-side          */
@@ -63,8 +72,8 @@ export const FunctionParamsSchema = z.object({
     .string()
     .describe(
       'JavaScript (ESM) code to execute. The default export receives ' +
-      '{ page, context } and should return { data, type } where data ' +
-      'is the response payload and type is the Content-Type string.',
+        '{ page, context } and should return { data, type } where data ' +
+        'is the response payload and type is the Content-Type string.',
     ),
   context: z
     .record(z.string(), z.unknown())
@@ -91,15 +100,13 @@ export const DownloadParamsSchema = z.object({
     .string()
     .describe(
       'JavaScript (ESM) code to execute. The default export receives ' +
-      '{ page, context }. During execution the code should trigger a ' +
-      'file download in the browser (e.g. clicking a download link).',
+        '{ page, context }. During execution the code should trigger a ' +
+        'file download in the browser (e.g. clicking a download link).',
     ),
   context: z
     .record(z.string(), z.unknown())
     .optional()
-    .describe(
-      'Optional context object passed to the function.',
-    ),
+    .describe('Optional context object passed to the function.'),
   timeout: z
     .number()
     .int()
@@ -115,15 +122,20 @@ export type DownloadParams = z.infer<typeof DownloadParamsSchema>;
 /* ------------------------------------------------------------------ */
 
 export const ExportParamsSchema = z.object({
-  url: z
-    .url()
-    .describe('The URL to export (must be http or https)'),
+  url: z.url().describe('The URL to export (must be http or https)'),
   gotoOptions: z
     .object({
       waitUntil: z
         .union([
           z.enum(['load', 'domcontentloaded', 'networkidle0', 'networkidle2']),
-          z.array(z.enum(['load', 'domcontentloaded', 'networkidle0', 'networkidle2'])),
+          z.array(
+            z.enum([
+              'load',
+              'domcontentloaded',
+              'networkidle0',
+              'networkidle2',
+            ]),
+          ),
         ])
         .optional()
         .describe('When to consider navigation complete'),
@@ -131,19 +143,14 @@ export const ExportParamsSchema = z.object({
         .number()
         .optional()
         .describe('Navigation timeout in milliseconds'),
-      referer: z
-        .string()
-        .optional()
-        .describe('Referer header value'),
+      referer: z.string().optional().describe('Referer header value'),
     })
     .optional()
     .describe('Puppeteer Page.goto() options for navigation'),
   bestAttempt: z
     .boolean()
     .optional()
-    .describe(
-      'When true, proceed even if awaited events fail or timeout.',
-    ),
+    .describe('When true, proceed even if awaited events fail or timeout.'),
   includeResources: z
     .boolean()
     .optional()
@@ -332,9 +339,7 @@ const CheckboxCommandSchema = z.object({
 const HoverCommandSchema = z.object({
   method: z.literal('hover'),
   params: z.object({
-    selector: z
-      .string()
-      .describe('CSS selector of the element to hover over'),
+    selector: z.string().describe('CSS selector of the element to hover over'),
   }),
 });
 
@@ -381,10 +386,7 @@ const HtmlCommandSchema = z.object({
   method: z.literal('html'),
   params: z
     .object({
-      selector: z
-        .string()
-        .optional()
-        .describe('CSS selector to get HTML from'),
+      selector: z.string().optional().describe('CSS selector to get HTML from'),
     })
     .optional()
     .default({}),
@@ -610,10 +612,7 @@ const SolveCommandSchema = z.object({
 
 const CloseCommandSchema = z.object({
   method: z.literal('close'),
-  params: z
-    .object({})
-    .optional()
-    .default({}),
+  params: z.object({}).optional().default({}),
 });
 
 /** Fallback for less-common BQL methods not explicitly typed above. */
@@ -718,12 +717,7 @@ export type SearchSource = z.infer<typeof SearchSourceSchema>;
 export const SearchCategorySchema = z.enum(['github', 'research', 'pdf']);
 export type SearchCategory = z.infer<typeof SearchCategorySchema>;
 
-export const TimeBasedOptionsSchema = z.enum([
-  'day',
-  'week',
-  'month',
-  'year',
-]);
+export const TimeBasedOptionsSchema = z.enum(['day', 'week', 'month', 'year']);
 export type TimeBasedOptions = z.infer<typeof TimeBasedOptionsSchema>;
 
 export const SearchScrapeOptionsSchema = z.object({
@@ -746,10 +740,7 @@ export const SearchScrapeOptionsSchema = z.object({
 });
 
 export const SearchParamsSchema = z.object({
-  query: z
-    .string()
-    .min(1)
-    .describe('The search query string'),
+  query: z.string().min(1).describe('The search query string'),
   limit: z
     .number()
     .int()
@@ -771,9 +762,9 @@ export const SearchParamsSchema = z.object({
     .string()
     .optional()
     .describe('Location string for geo-targeted results'),
-  tbs: TimeBasedOptionsSchema
-    .optional()
-    .describe('Time-based filter: "day", "week", "month", "year"'),
+  tbs: TimeBasedOptionsSchema.optional().describe(
+    'Time-based filter: "day", "week", "month", "year"',
+  ),
   sources: z
     .array(SearchSourceSchema)
     .optional()
@@ -783,9 +774,9 @@ export const SearchParamsSchema = z.object({
     .array(SearchCategorySchema)
     .optional()
     .describe('Filter by categories: "github", "research", "pdf"'),
-  scrapeOptions: SearchScrapeOptionsSchema
-    .optional()
-    .describe('Options for scraping each search result'),
+  scrapeOptions: SearchScrapeOptionsSchema.optional().describe(
+    'Options for scraping each search result',
+  ),
   timeout: z
     .number()
     .int()
@@ -867,8 +858,7 @@ export const MapParamsSchema = z.object({
     .optional()
     .default(100)
     .describe('Maximum number of links to return (default: 100, max: 5000)'),
-  sitemap: SitemapModeSchema
-    .optional()
+  sitemap: SitemapModeSchema.optional()
     .default('include')
     .describe('Sitemap handling: "include" (default), "skip", "only"'),
   includeSubdomains: z
@@ -918,22 +908,20 @@ export const LighthouseCategorySchema = z.enum([
 export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
 
 export const PerformanceParamsSchema = z.object({
-  url: z
-    .url()
-    .describe('The URL to audit (must be http or https)'),
+  url: z.url().describe('The URL to audit (must be http or https)'),
   categories: z
     .array(LighthouseCategorySchema)
     .optional()
     .describe(
       'Lighthouse categories to audit: "accessibility", "best-practices", ' +
-      '"performance", "pwa", "seo". Omit for all categories.',
+        '"performance", "pwa", "seo". Omit for all categories.',
     ),
   budgets: z
     .array(z.record(z.string(), z.unknown()))
     .optional()
     .describe(
       'Lighthouse performance budgets array. ' +
-      'See https://developer.chrome.com/docs/lighthouse/performance/performance-budgets',
+        'See https://developer.chrome.com/docs/lighthouse/performance/performance-budgets',
     ),
   timeout: z
     .number()
@@ -1016,9 +1004,7 @@ export const CrawlScrapeOptionsSchema = z.object({
 });
 
 export const CrawlParamsSchema = z.object({
-  url: z
-    .url()
-    .describe('The URL to crawl (must be http or https)'),
+  url: z.url().describe('The URL to crawl (must be http or https)'),
   limit: z
     .number()
     .int()
@@ -1051,8 +1037,7 @@ export const CrawlParamsSchema = z.object({
     .optional()
     .default(false)
     .describe('Whether to follow links to subdomains'),
-  sitemap: CrawlSitemapModeSchema
-    .optional()
+  sitemap: CrawlSitemapModeSchema.optional()
     .default('auto')
     .describe('Sitemap handling: "auto" (default), "force", "skip"'),
   includePaths: z
@@ -1070,34 +1055,47 @@ export const CrawlParamsSchema = z.object({
     .optional()
     .default(200)
     .describe('Delay between requests in milliseconds (default: 200)'),
-  scrapeOptions: CrawlScrapeOptionsSchema
-    .optional()
-    .describe('Options controlling how each page is scraped'),
+  scrapeOptions: CrawlScrapeOptionsSchema.optional().describe(
+    'Options controlling how each page is scraped',
+  ),
   waitForCompletion: z
     .boolean()
     .optional()
     .default(true)
-    .describe('Whether to wait for crawl completion (default: true). If false, returns immediately with crawl ID.'),
+    .describe(
+      'Whether to wait for crawl completion (default: true). If false, returns immediately with crawl ID.',
+    ),
   pollInterval: z
     .number()
     .int()
     .positive()
     .optional()
     .default(5000)
-    .describe('Polling interval in ms when waiting for completion (default: 5000)'),
+    .describe(
+      'Polling interval in ms when waiting for completion (default: 5000)',
+    ),
   maxWaitTime: z
     .number()
     .int()
     .positive()
     .optional()
     .default(300000)
-    .describe('Maximum time in ms to wait for crawl completion when waitForCompletion is true (default: 300000 = 5 minutes)'),
+    .describe(
+      'Maximum time in ms to wait for crawl completion when waitForCompletion is true (default: 300000 = 5 minutes)',
+    ),
   timeout: z
     .number()
     .int()
     .positive()
     .optional()
-    .describe('HTTP request timeout in milliseconds for API calls (default: 30000)'),
+    .describe(
+      'HTTP request timeout in milliseconds for API calls (default: 30000)',
+    ),
+  profile: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(profileDescription('before each page is scraped')),
 });
 
 export type CrawlParams = z.infer<typeof CrawlParamsSchema>;
