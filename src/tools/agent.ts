@@ -75,6 +75,19 @@ export const formatErrorMessage = (opts: {
 };
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
 
+## Residential proxy (optional)
+Pass top-level \`proxy\` to route the session through residential IPs. Use this when target sites IP-block datacenter traffic.
+- \`proxy: "residential"\` — turn on residential routing
+- \`proxyCountry: "us"\` — ISO-2 geo target (lowercase preferred; auto-normalized)
+- \`proxyState: "new_york"\` — region target (paid-plan gated, 401 otherwise)
+- \`proxyCity\` — city target (paid/enterprise plan gated, 401 otherwise)
+- \`proxySticky: true\` — stable IP while the WebSocket stays open; reconnects allocate a new sticky id
+- \`proxyLocaleMatch: true\` — match navigator locale to the proxy IP country
+- \`proxyPreset: "px_amazon01"\` — named preset (plan-dependent; ask support for your list)
+- \`externalProxyServer: "http://u:p@host:port"\` — bring-your-own upstream (http(s) only)
+Geo/preset/sticky fields require \`proxy: "residential"\` or \`externalProxyServer\` to be set — otherwise the API silently ignores them. The MCP rejects this combination at validation time.
+The \`proxy\` object is read once at session creation. To change it, run \`close\` and start a new session.
+
 ## Skills (auto-injected guidance)
 When the page or an error involves a non-trivial mechanic, a SKILL block will be auto-injected into your response between \`--- SKILL: <id> ---\` and \`--- END SKILL ---\` markers. Read it carefully — it contains the exact recipe.
 
@@ -261,10 +274,7 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
   return lines.join('\n');
 };
 
-const appendSkills = (
-  base: string,
-  ids: ReadonlyArray<SkillId>,
-): string => {
+const appendSkills = (base: string, ids: ReadonlyArray<SkillId>): string => {
   if (ids.length === 0) return base;
   return `${base}\n\n${renderSkills(ids)}`;
 };
@@ -322,13 +332,13 @@ export const formatScreenshotContent = (
   return content;
 };
 
-const coerceParams = (params: Record<string, unknown> | undefined): Record<string, unknown> => {
-  if (!params) return {};
-  if (typeof params === 'string') {
-    try { return JSON.parse(params); } catch { return {}; }
-  }
-  return params;
-};
+// Zod parses params at the tool boundary, so this only needs to provide the
+// {} default when the field was omitted. The earlier JSON.parse / non-object
+// branches were dead code — the schema (z.record(z.string(), z.unknown()))
+// never delivers a string, an array, or null here.
+const coerceParams = (
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> => params ?? {};
 
 const SkillIdSchema = z.enum(
   skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
@@ -399,13 +409,18 @@ export function registerAgentTools(
       const { token, apiUrl } = getAuth(session, config);
       const mcpSessionId = sessionId;
 
-      const commands: Array<{ method: string; params: Record<string, unknown> }> =
+      const commands: Array<{
+        method: string;
+        params: Record<string, unknown>;
+      }> =
         args.commands && args.commands.length > 0
           ? args.commands.map((c) => ({
               method: c.method,
               params: coerceParams(c.params),
             }))
           : [{ method: args.method, params: coerceParams(args.params) }];
+
+      const proxy = args.proxy;
 
       const sendAnalytics = (success: boolean) => {
         amplitude
@@ -416,12 +431,16 @@ export function registerAgentTools(
             command_count: commands.length,
             api_url: apiUrl,
             success,
+            proxy_tier: proxy?.proxy ?? null,
+            proxy_country: proxy?.proxyCountry ?? null,
+            proxy_sticky: !!proxy?.proxySticky,
+            proxy_external: !!proxy?.externalProxyServer,
           })
           .catch(() => {});
       };
 
       if (commands.length === 1 && commands[0].method === 'close') {
-        closeSession(mcpSessionId, token);
+        closeSession(mcpSessionId, token, proxy);
         sendAnalytics(true);
         return {
           content: [{ type: 'text' as const, text: 'Browser session closed.' }],
@@ -437,6 +456,7 @@ export function registerAgentTools(
             mcpSessionId,
             apiUrl,
             token,
+            proxy,
           );
         } catch (connErr: any) {
           if (isRetry) {
@@ -444,7 +464,7 @@ export function registerAgentTools(
               `Failed to connect to browser agent: ${connErr.message}`,
             );
           }
-          destroySession(mcpSessionId, token);
+          destroySession(mcpSessionId, token, proxy);
           return runCommands(true);
         }
 
@@ -459,7 +479,7 @@ export function registerAgentTools(
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
-            closeSession(mcpSessionId, token);
+            closeSession(mcpSessionId, token, proxy);
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
             break;
@@ -473,8 +493,11 @@ export function registerAgentTools(
           try {
             resp = await send(agentSession, cmd.method, cmd.params);
           } catch (sendErr: any) {
-            destroySession(mcpSessionId, token);
+            destroySession(mcpSessionId, token, proxy);
             if (!isRetry) {
+              log.warn(
+                `agent: ${cmd.method} failed (first attempt, retrying once): ${sendErr?.message ?? sendErr}`,
+              );
               return runCommands(true);
             }
             const classified = classifyAgentError({
@@ -494,7 +517,7 @@ export function registerAgentTools(
           if (resp.error) {
             const err = resp.error;
             if (err.code && FATAL_CODES.has(err.code)) {
-              destroySession(mcpSessionId, token);
+              destroySession(mcpSessionId, token, proxy);
               if (!isRetry) {
                 return runCommands(true);
               }

@@ -10,32 +10,69 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `browserless_smartscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`. |
-| `browserless_search` | Search the web using Browserless and optionally scrape each result. Supports web, news, and image search with geo-targeting and time filters. |
-| `browserless_map` | Discover and map all URLs on a website. Crawls via sitemaps and link extraction. Returns URLs with optional titles and descriptions. Useful for site audits and content discovery. |
-| `browserless_crawl` | Crawl a website and scrape every discovered page. Supports depth control, path filtering, sitemap strategies, and configurable scrape options. Returns scraped content and metadata for each page. |
-| `browserless_performance` | Run Lighthouse audits on any URL. Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. Optionally filter by category or supply performance budgets. |
-| `browserless_function` | Execute custom Puppeteer JavaScript on the Browserless cloud. The function receives a `page` object and optional `context`; return `{ data, type }` to control the payload and Content-Type. |
-| `browserless_download` | Run custom Puppeteer code and return the file Chrome downloads during execution (e.g. after clicking a download link). The downloaded file is streamed back to the caller. |
-| `browserless_export` | Export a webpage via the Browserless `/export` API. Fetches the URL and returns its native content (HTML, PDF, image, etc.) with automatic content-type detection. |
-| `browserless_agent` | Drive a persistent browser session via a ReAct loop: snapshot the page, plan, batch interactions (click, type, scroll, evaluate, etc.), and re-snapshot. Uses ref-based selectors derived from snapshots, supports multi-tab workflows, screenshots, captcha solving, and live URLs. |
-| `browserless_skill` | Load an on-demand recipe for a non-trivial page mechanic (shadow DOM, cookie consent, modals, captchas, dynamic content, snapshot misses, screenshots, tabs). Companion to `browserless_agent`. |
+| Tool                       | Description                                                                                                                                                                                                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `browserless_smartscraper` | Scrape any webpage using cascading strategies (HTTP fetch, proxy, headless browser, captcha solving). Returns content in requested formats: `markdown`, `html`, `screenshot`, `pdf`, `links`.                                                                                        |
+| `browserless_search`       | Search the web using Browserless and optionally scrape each result. Supports web, news, and image search with geo-targeting and time filters.                                                                                                                                        |
+| `browserless_map`          | Discover and map all URLs on a website. Crawls via sitemaps and link extraction. Returns URLs with optional titles and descriptions. Useful for site audits and content discovery.                                                                                                   |
+| `browserless_crawl`        | Crawl a website and scrape every discovered page. Supports depth control, path filtering, sitemap strategies, and configurable scrape options. Returns scraped content and metadata for each page.                                                                                   |
+| `browserless_performance`  | Run Lighthouse audits on any URL. Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. Optionally filter by category or supply performance budgets.                                                                                              |
+| `browserless_function`     | Execute custom Puppeteer JavaScript on the Browserless cloud. The function receives a `page` object and optional `context`; return `{ data, type }` to control the payload and Content-Type.                                                                                         |
+| `browserless_download`     | Run custom Puppeteer code and return the file Chrome downloads during execution (e.g. after clicking a download link). The downloaded file is streamed back to the caller.                                                                                                           |
+| `browserless_export`       | Export a webpage via the Browserless `/export` API. Fetches the URL and returns its native content (HTML, PDF, image, etc.) with automatic content-type detection.                                                                                                                   |
+| `browserless_agent`        | Drive a persistent browser session via a ReAct loop: snapshot the page, plan, batch interactions (click, type, scroll, evaluate, etc.), and re-snapshot. Uses ref-based selectors derived from snapshots, supports multi-tab workflows, screenshots, captcha solving, and live URLs. |
+| `browserless_skill`        | Load an on-demand recipe for a non-trivial page mechanic (shadow DOM, cookie consent, modals, captchas, dynamic content, snapshot misses, screenshots, tabs). Companion to `browserless_agent`.                                                                                      |
+
+### Residential proxy (`browserless_agent`)
+
+Pass a top-level `proxy` object on `browserless_agent` to route the session through residential IPs. Use this when targets IP-block datacenter traffic.
+
+```jsonc
+{
+  "method": "tools/call",
+  "params": {
+    "name": "browserless_agent",
+    "arguments": {
+      "method": "goto",
+      "params": { "url": "https://example.com" },
+      "proxy": {
+        "proxy": "residential",
+        "proxyCountry": "us",
+        "proxySticky": true,
+      },
+    },
+  },
+}
+```
+
+| Field                 | Notes                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proxy`               | `"residential"` — only value supported today.                                                                                                 |
+| `proxyCountry`        | ISO-2 country code (`"us"`, `"de"`). Auto-normalized to lowercase. Non-letter values are rejected.                                            |
+| `proxyState`          | US state name with whitespace replaced by underscores (`"new_york"`). Paid-plan gated — non-eligible tokens get a 401.                        |
+| `proxyCity`           | City target. Paid/enterprise plan gated — non-eligible tokens get a 401.                                                                      |
+| `proxySticky`         | Stable IP while the underlying WebSocket stays open. Reconnects (idle drop, network blip, browser crash) allocate a new sticky id and new IP. |
+| `proxyLocaleMatch`    | Match `navigator` locale to the proxy IP country.                                                                                             |
+| `proxyPreset`         | Named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.                            |
+| `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`. Must be `http://` or `https://`.                                                  |
+
+> **Note:** `proxyCountry` / `proxyState` / `proxyCity` / `proxySticky` / `proxyLocaleMatch` / `proxyPreset` require either `proxy: "residential"` or `externalProxyServer` to be set. The MCP rejects this combination at validation time; without it, the API would silently ignore them.
+
+The `proxy` object is read once at session creation. To change it, call `close` and start a new session — the agent client keys sessions on the proxy fingerprint, so passing a different config will land on a fresh WebSocket.
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `BROWSERLESS_TOKEN` | Yes | — | Your Browserless API token |
-| `BROWSERLESS_API_URL` | No | `https://production-sfo.browserless.io` | API endpoint (for self-hosted instances) |
-| `TRANSPORT` | No | `stdio` | Transport type: `stdio` or `httpStream` |
-| `PORT` | No | `8080` | HTTP server port (only for `httpStream` transport) |
-| `BROWSERLESS_TIMEOUT` | No | `30000` | Request timeout in milliseconds |
-| `BROWSERLESS_MAX_RETRIES` | No | `3` | Max retry attempts for failed requests |
-| `BROWSERLESS_CACHE_TTL` | No | `60000` | Cache TTL in milliseconds (0 to disable) |
+| Variable                  | Required | Default                                 | Description                                        |
+| ------------------------- | -------- | --------------------------------------- | -------------------------------------------------- |
+| `BROWSERLESS_TOKEN`       | Yes      | —                                       | Your Browserless API token                         |
+| `BROWSERLESS_API_URL`     | No       | `https://production-sfo.browserless.io` | API endpoint (for self-hosted instances)           |
+| `TRANSPORT`               | No       | `stdio`                                 | Transport type: `stdio` or `httpStream`            |
+| `PORT`                    | No       | `8080`                                  | HTTP server port (only for `httpStream` transport) |
+| `BROWSERLESS_TIMEOUT`     | No       | `30000`                                 | Request timeout in milliseconds                    |
+| `BROWSERLESS_MAX_RETRIES` | No       | `3`                                     | Max retry attempts for failed requests             |
+| `BROWSERLESS_CACHE_TTL`   | No       | `60000`                                 | Cache TTL in milliseconds (0 to disable)           |
 
 ### Claude Desktop
 
@@ -180,16 +217,16 @@ npx browserless-mcp
 
 ## MCP Resources
 
-| Resource URI | Description |
-|-------------|-------------|
+| Resource URI             | Description                     |
+| ------------------------ | ------------------------------- |
 | `browserless://api-docs` | Smart scraper API documentation |
-| `browserless://status` | Live service health status |
+| `browserless://status`   | Live service health status      |
 
 ## MCP Prompts
 
-| Prompt | Description |
-|--------|-------------|
-| `scrape-url` | Scrape a webpage and summarize its content |
+| Prompt            | Description                                 |
+| ----------------- | ------------------------------------------- |
+| `scrape-url`      | Scrape a webpage and summarize its content  |
 | `extract-content` | Extract specific information from a webpage |
 
 ## Development

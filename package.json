@@ -27,7 +27,7 @@
     "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
     "clean": "rm -rf build",
     "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",
-    "lint": "eslint src test --ext .ts",
+    "lint": "eslint src test",
     "test": "npm run build && mocha",
     "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
     "start": "node build/src/index.js",
@@ -50,6 +50,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/chai": "^5.2.2",
     "@types/ioredis-mock": "^8.2.7",
     "@types/mocha": "^10.0.10",
@@ -58,13 +59,15 @@
     "c8": "^11.0.0",
     "chai": "^6.2.2",
     "eslint": "^10.3.0",
+    "globals": "^17.6.0",
     "husky": "^9.1.7",
     "ioredis-mock": "^8.13.1",
     "mocha": "^11.1.0",
     "patch-package": "^8.0.1",
     "prettier": "^3.8.3",
     "sinon": "^22.0.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.3"
   },
   "engines": {
     "node": ">=18"
