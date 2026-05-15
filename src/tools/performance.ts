@@ -1,7 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { PerformanceParamsSchema } from './schemas.js';
-import { createApiClient } from '../lib/api-client.js';
+import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
 import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
 import type { McpConfig } from '../config.js';
 
@@ -50,12 +50,26 @@ export function registerPerformanceTool(
         browserlessApiUrl: apiUrl,
       });
 
-      const response = await client.performance({
-        url: args.url,
-        categories: args.categories,
-        budgets: args.budgets,
-        timeout: args.timeout,
-      });
+      let response;
+      try {
+        response = await client.performance({
+          url: args.url,
+          categories: args.categories,
+          budgets: args.budgets,
+          timeout: args.timeout,
+          profile: args.profile,
+        });
+      } catch (err) {
+        if (err instanceof ProfileNotFoundError) {
+          throw new UserError(
+            `Profile "${err.profile}" was not found for the configured API ` +
+              `token. Create the profile with Browserless.saveProfile in a ` +
+              `live session first, or omit the profile parameter to audit ` +
+              `the page anonymously.`,
+          );
+        }
+        throw err;
+      }
 
       await reportProgress({ progress: 100, total: 100 });
 
@@ -66,6 +80,7 @@ export function registerPerformanceTool(
         url: args.url,
         categories: (args.categories ?? []).join(','),
         api_url: apiUrl,
+        profile_used: !!args.profile,
       }).catch(() => {});
 
       log.debug(

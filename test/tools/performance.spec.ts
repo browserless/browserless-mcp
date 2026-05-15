@@ -253,4 +253,86 @@ describe('browserless_performance tool', () => {
     const metadata = content[content.length - 1] as { type: string; text: string };
     expect(metadata.text).to.include('Categories: accessibility');
   });
+
+  it('does not include profile in the outbound URL when omitted', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute({ url: 'https://example.com/' }, mockContext);
+
+    expect(fetchStub.calledOnce).to.be.true;
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.not.include('profile=');
+  });
+
+  it('forwards profile as a query parameter to /performance', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      { url: 'https://example.com/', profile: 'my-login' },
+      mockContext,
+    );
+
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.include('profile=my-login');
+  });
+
+  it('URL-encodes the profile name', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      { url: 'https://example.com/', profile: 'profile with spaces' },
+      mockContext,
+    );
+
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.include('profile=profile+with+spaces');
+  });
+
+  it('throws UserError when the profile does not exist', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({ error: 'Profile "missing" was not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    try {
+      await execute(
+        { url: 'https://example.com/', profile: 'missing' },
+        mockContext,
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.include('Profile "missing"');
+      expect((err as Error).message).to.include('Browserless.saveProfile');
+    }
+  });
 });

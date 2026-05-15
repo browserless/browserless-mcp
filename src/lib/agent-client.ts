@@ -66,6 +66,7 @@ export interface ActiveSession {
   apiUrl: string;
   token: string;
   proxy?: ProxyOptions;
+  profile?: string;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;
@@ -149,12 +150,19 @@ export const proxyFingerprint = (proxy?: ProxyOptions): string => {
   return parts.length ? KEY_SEP + parts.join('&') : '';
 };
 
+// Hash the profile rather than serializing it raw — like externalProxyServer,
+// the session key is logged on eviction (closeAndDelete), and a profile name
+// may be a user-identifying label. Hashing preserves per-profile session
+// distinctness without putting the raw name in stderr.
 const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
   proxy?: ProxyOptions,
+  profile?: string,
 ): string =>
-  (mcpSessionId ?? `stdio:${sha256Short(token)}`) + proxyFingerprint(proxy);
+  (mcpSessionId ?? `stdio:${sha256Short(token)}`) +
+  proxyFingerprint(proxy) +
+  (profile ? KEY_SEP + 'profile#' + sha256Short(profile) : '');
 
 /**
  * Build the WebSocket URL for `/chromium/agent`. Normalizes trailing
@@ -166,6 +174,7 @@ export const buildAgentWsUrl = (
   apiUrl: string,
   token: string,
   proxy?: ProxyOptions,
+  profile?: string,
 ): string => {
   const base = apiUrl.replace(/^http/i, 'ws').replace(/\/+$/, '');
   const url = new URL(base + '/chromium/agent');
@@ -181,6 +190,7 @@ export const buildAgentWsUrl = (
     url.searchParams.set('proxyPreset', proxy.proxyPreset);
   if (proxy?.externalProxyServer)
     url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
+  if (profile) url.searchParams.set('profile', profile);
   return url.toString();
 };
 
@@ -191,7 +201,7 @@ export const buildAgentWsUrl = (
 const describeConnectCloseCode = (code: number, reason: string): string => {
   if (reason) return `code=${code}, reason="${reason}"`;
   if (code === 1006)
-    return 'code=1006 (abnormal close during upgrade — likely auth (401), proxy plan-gate (401/403), or a network error reaching the server)';
+    return 'code=1006 (abnormal close during upgrade — likely auth (401), proxy plan-gate (401/403), an unknown profile for the configured token, or a network error reaching the server)';
   if (code === 1008) return 'code=1008 (policy violation)';
   if (code === 1011) return 'code=1011 (server error during upgrade)';
   return `code=${code}`;
@@ -201,9 +211,10 @@ const connect = (
   apiUrl: string,
   token: string,
   proxy?: ProxyOptions,
+  profile?: string,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
-    const wsUrl = buildAgentWsUrl(apiUrl, token, proxy);
+    const wsUrl = buildAgentWsUrl(apiUrl, token, proxy, profile);
     const ws = new WebSocket(wsUrl);
     let settled = false;
 
@@ -310,9 +321,10 @@ export const getOrCreateSession = async (
   apiUrl: string,
   token: string,
   proxy?: ProxyOptions,
+  profile?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
-  const key = getSessionKey(mcpSessionId, token, proxy);
+  const key = getSessionKey(mcpSessionId, token, proxy, profile);
   const existing = sessions.get(key);
 
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
@@ -335,13 +347,14 @@ export const getOrCreateSession = async (
   }
 
   const creation = (async (): Promise<ActiveSession> => {
-    const ws = await connect(apiUrl, token, proxy);
+    const ws = await connect(apiUrl, token, proxy, profile);
     const session: ActiveSession = {
       ws,
       msgId: 0,
       apiUrl,
       token,
       proxy,
+      profile,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -387,6 +400,7 @@ export const send = async (
         session.apiUrl,
         session.token,
         session.proxy,
+        session.profile,
       ).finally(() => {
         session.reconnecting = undefined;
       });
@@ -422,8 +436,9 @@ export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
   proxy?: ProxyOptions,
+  profile?: string,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token, proxy);
+  const key = getSessionKey(mcpSessionId, token, proxy, profile);
   const session = sessions.get(key);
   if (session) {
     try {
@@ -447,8 +462,9 @@ export const destroySession = (
   mcpSessionId: string | undefined,
   token: string,
   proxy?: ProxyOptions,
+  profile?: string,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token, proxy);
+  const key = getSessionKey(mcpSessionId, token, proxy, profile);
   const session = sessions.get(key);
   if (session) {
     try {

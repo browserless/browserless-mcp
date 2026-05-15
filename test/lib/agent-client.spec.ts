@@ -109,6 +109,45 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.get('proxyState')).to.equal('CA');
     expect(url.searchParams.get('proxyCity')).to.equal('Los Angeles');
   });
+
+  it('omits profile when not set', () => {
+    const url = new URL(buildAgentWsUrl('http://localhost:3000', 'tok'));
+    expect(url.searchParams.has('profile')).to.equal(false);
+  });
+
+  it('appends profile when set', () => {
+    const url = new URL(
+      buildAgentWsUrl('http://localhost:3000', 'tok', undefined, 'my-login'),
+    );
+    expect(url.searchParams.get('profile')).to.equal('my-login');
+  });
+
+  it('URL-encodes the profile name', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        'profile with spaces',
+      ),
+    );
+    expect(url.searchParams.get('profile')).to.equal('profile with spaces');
+    expect(url.toString()).to.include('profile=profile+with+spaces');
+  });
+
+  it('combines profile and proxy params on the same URL', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        { proxy: 'residential', proxyCountry: 'us' },
+        'my-login',
+      ),
+    );
+    expect(url.searchParams.get('proxy')).to.equal('residential');
+    expect(url.searchParams.get('proxyCountry')).to.equal('us');
+    expect(url.searchParams.get('profile')).to.equal('my-login');
+  });
 });
 
 describe('agent-client proxyFingerprint', () => {

@@ -391,6 +391,29 @@ describe('createApiClient', () => {
         expect((err as ProfileNotFoundError).profile).to.equal('missing-c');
       }
     });
+
+    it('does not retry on ProfileNotFoundError', async () => {
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: 'Profile "missing-c" was not found' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+      );
+
+      const client = createApiClient({ ...mockConfig, maxRetries: 3 });
+      try {
+        await client.crawl({
+          url: 'https://example.com',
+          profile: 'missing-c',
+        });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+      }
+      expect(fetchStub.calledOnce).to.be.true;
+    });
   });
 
   describe('runFunction', () => {
@@ -467,6 +490,59 @@ describe('createApiClient', () => {
       const body = JSON.parse(fetchStub.firstCall.args[1].body);
       expect(body).to.not.have.property('context');
     });
+
+    it('forwards profile as a query parameter', async () => {
+      fetchStub.resolves(
+        new Response('{}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.runFunction({ code: 'test', profile: 'my-login' });
+
+      const [url] = fetchStub.firstCall.args;
+      expect(url).to.include('profile=my-login');
+    });
+
+    it('throws ProfileNotFoundError on 404 with profile set', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ error: 'Profile "missing" was not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.runFunction({ code: 'test', profile: 'missing' });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+        expect((err as ProfileNotFoundError).profile).to.equal('missing');
+      }
+    });
+
+    it('does not retry on ProfileNotFoundError', async () => {
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: 'Profile "missing" was not found' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+      );
+
+      const client = createApiClient({ ...mockConfig, maxRetries: 3 });
+      try {
+        await client.runFunction({ code: 'test', profile: 'missing' });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+      }
+      expect(fetchStub.calledOnce).to.be.true;
+    });
   });
 
   describe('download', () => {
@@ -506,6 +582,39 @@ describe('createApiClient', () => {
       expect(result.contentDisposition).to.include('data.csv');
       expect(result.isBinary).to.be.false;
       expect(result.data).to.equal('csv,data');
+    });
+
+    it('forwards profile as a query parameter', async () => {
+      fetchStub.resolves(
+        new Response('data', {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.download({ code: 'test-code', profile: 'my-login' });
+
+      const [url] = fetchStub.firstCall.args;
+      expect(url).to.include('profile=my-login');
+    });
+
+    it('throws ProfileNotFoundError on 404 with profile set', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ error: 'Profile "missing" was not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.download({ code: 'test', profile: 'missing' });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+        expect((err as ProfileNotFoundError).profile).to.equal('missing');
+      }
     });
   });
 
@@ -603,6 +712,45 @@ describe('createApiClient', () => {
         expect.fail('should have thrown');
       } catch (err) {
         expect((err as Error).message).to.include('Server error 500');
+      }
+    });
+
+    it('forwards profile as a query parameter', async () => {
+      fetchStub.resolves(
+        new Response('<html></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.exportPage({
+        url: 'https://example.com',
+        profile: 'my-login',
+      });
+
+      const [url] = fetchStub.firstCall.args;
+      expect(url).to.include('profile=my-login');
+    });
+
+    it('throws ProfileNotFoundError on 404 with profile set', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ error: 'Profile "missing" was not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.exportPage({
+          url: 'https://example.com',
+          profile: 'missing',
+        });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+        expect((err as ProfileNotFoundError).profile).to.equal('missing');
       }
     });
   });
