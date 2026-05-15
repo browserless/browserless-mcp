@@ -1,6 +1,6 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 import {
-  __setUpgradeBodyReadTimeoutForTesting,
   buildAgentWsUrl,
   getOrCreateSession,
   isRetryableUpgradeError,
@@ -443,20 +443,32 @@ describe('agent-client connect (upgrade error handling)', () => {
     // Regression: connect() previously cleared the 30s timer before
     // readUpgradeError started, so a server that promises a body
     // (Content-Length) but never sends it would leave the promise pending
-    // forever. The body-read timeout now resolves with a partial UpgradeError.
-    __setUpgradeBodyReadTimeoutForTesting(100);
+    // forever. Fake only setTimeout/clearTimeout so the WS handshake's
+    // setImmediate-based scheduling is untouched, and tick the fake clock
+    // past the 10s body-read timeout.
     const server = await makeStallingServer(503);
+    const clock = sinon.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+    });
     try {
-      const err = await getOrCreateSession(
+      const errPromise = getOrCreateSession(
         'mcp-stall',
         server.url,
         'tok',
       ).catch((e: unknown) => e);
+      // Yield until the unexpected-response handler runs and arms the
+      // body-read setTimeout. A few microtask-flushes are enough — the WS
+      // handshake itself completes via I/O events, not fake-timer scheduling.
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setImmediate(r));
+      }
+      await clock.tickAsync(11_000);
+      const err = await errPromise;
       expect(err).to.be.instanceOf(UpgradeError);
       expect((err as UpgradeError).statusCode).to.equal(503);
       expect((err as UpgradeError).body).to.include('timed out');
     } finally {
-      __setUpgradeBodyReadTimeoutForTesting(10_000);
+      clock.restore();
       await server.close();
     }
   });

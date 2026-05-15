@@ -303,14 +303,8 @@ const READ_TIMEOUT_MARKER = '\n…[response body read timed out]';
 
 // Bound the body-read phase so a server that sends non-101 headers and then
 // stalls the body stream can't hang connect() indefinitely. The connect-level
-// 30s timeout has already been cleared by the time we get here. Exported as a
-// `let` so tests can shrink it to keep the suite fast.
-export let UPGRADE_BODY_READ_TIMEOUT_MS = 10_000;
-
-/** Test-only override for the body-read timeout. */
-export const __setUpgradeBodyReadTimeoutForTesting = (ms: number): void => {
-  UPGRADE_BODY_READ_TIMEOUT_MS = ms;
-};
+// 30s timeout has already been cleared by the time we get here.
+const UPGRADE_BODY_READ_TIMEOUT_MS = 10_000;
 
 const readUpgradeError = (
   res: IncomingMessage,
