@@ -67,6 +67,45 @@ export const makeRejectingServer = async (
 };
 
 /**
+ * Spin up an HTTP server that sends non-101 headers (with a Content-Length
+ * that will never be reached) and then stalls — never writes the body, never
+ * closes the socket. Used to verify the upgrade body-read timeout in
+ * readUpgradeError.
+ */
+export const makeStallingServer = async (
+  status: number,
+): Promise<UpgradeServerHandle> => {
+  const server = http.createServer();
+  const openSockets: { destroy: () => void }[] = [];
+  server.on('upgrade', (_req, socket) => {
+    socket.on('error', () => {});
+    openSockets.push(socket);
+    const statusLine = `HTTP/1.1 ${status} ${http.STATUS_CODES[status] ?? ''}`;
+    // Promise a body of 999 bytes we will never deliver.
+    const headers = [
+      statusLine,
+      'Content-Type: text/plain; charset=utf-8',
+      'Content-Length: 999',
+      'Connection: keep-alive',
+      '\r\n',
+    ].join('\r\n');
+    socket.write(headers);
+    // Deliberately no body, no .end().
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((r) => {
+        openSockets.forEach((s) => s.destroy());
+        server.closeAllConnections?.();
+        server.close(() => r());
+      }),
+  };
+};
+
+/**
  * Spin up an HTTP server that completes the WS upgrade successfully. Used by
  * tests that need a live session — the server holds connections open until
  * `close()` terminates them.

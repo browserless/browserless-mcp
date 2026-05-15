@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import {
+  __setUpgradeBodyReadTimeoutForTesting,
   buildAgentWsUrl,
   getOrCreateSession,
   isRetryableUpgradeError,
@@ -11,6 +12,7 @@ import type { ProxyOptions } from '../../src/tools/schemas.js';
 import {
   makeAcceptingServer,
   makeRejectingServer,
+  makeStallingServer,
 } from '../helpers/upgrade-server.js';
 
 describe('agent-client buildAgentWsUrl', () => {
@@ -435,6 +437,28 @@ describe('agent-client connect (upgrade error handling)', () => {
     });
     expect(err).to.be.instanceOf(UpgradeError);
     expect((err as UpgradeError).body).to.include('truncated');
+  });
+
+  it('does not hang when the server sends headers and stalls the body', async () => {
+    // Regression: connect() previously cleared the 30s timer before
+    // readUpgradeError started, so a server that promises a body
+    // (Content-Length) but never sends it would leave the promise pending
+    // forever. The body-read timeout now resolves with a partial UpgradeError.
+    __setUpgradeBodyReadTimeoutForTesting(100);
+    const server = await makeStallingServer(503);
+    try {
+      const err = await getOrCreateSession(
+        'mcp-stall',
+        server.url,
+        'tok',
+      ).catch((e: unknown) => e);
+      expect(err).to.be.instanceOf(UpgradeError);
+      expect((err as UpgradeError).statusCode).to.equal(503);
+      expect((err as UpgradeError).body).to.include('timed out');
+    } finally {
+      __setUpgradeBodyReadTimeoutForTesting(10_000);
+      await server.close();
+    }
   });
 });
 

@@ -368,12 +368,13 @@ describe('formatConnectError', () => {
     expect(out).to.include('city-level');
   });
 
-  it('renders 401 with a token-fixup hint', () => {
+  it('renders 401 with a transport-agnostic auth-fixup hint', () => {
     const out = formatConnectError(
       new UpgradeError(401, 'Unauthorized', 'Bad or missing authentication'),
     );
     expect(out).to.match(/^Authentication failed \(401\)/);
     expect(out).to.include('BROWSERLESS_TOKEN');
+    expect(out).to.include('Authorization header');
   });
 
   it('renders 403 as a plan-gate message', () => {

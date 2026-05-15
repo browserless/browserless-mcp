@@ -299,6 +299,18 @@ const describeConnectErrorCode = (err: unknown): string | undefined => {
 const MAX_UPGRADE_BODY_BYTES = 64 * 1024;
 
 const TRUNCATION_MARKER = `\n…[response truncated at ${MAX_UPGRADE_BODY_BYTES} bytes]`;
+const READ_TIMEOUT_MARKER = '\n…[response body read timed out]';
+
+// Bound the body-read phase so a server that sends non-101 headers and then
+// stalls the body stream can't hang connect() indefinitely. The connect-level
+// 30s timeout has already been cleared by the time we get here. Exported as a
+// `let` so tests can shrink it to keep the suite fast.
+export let UPGRADE_BODY_READ_TIMEOUT_MS = 10_000;
+
+/** Test-only override for the body-read timeout. */
+export const __setUpgradeBodyReadTimeoutForTesting = (ms: number): void => {
+  UPGRADE_BODY_READ_TIMEOUT_MS = ms;
+};
 
 const readUpgradeError = (
   res: IncomingMessage,
@@ -308,7 +320,16 @@ const readUpgradeError = (
     const chunks: Buffer[] = [];
     let total = 0;
     let truncated = false;
+    let timedOut = false;
     let settled = false;
+
+    const readTimeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      // res.destroy() fires 'close' → finish() → resolve with whatever
+      // bytes arrived before the deadline.
+      res.destroy();
+    }, UPGRADE_BODY_READ_TIMEOUT_MS);
 
     const onData = (chunk: Buffer): void => {
       if (settled) return;
@@ -339,6 +360,7 @@ const readUpgradeError = (
     const finish = (): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(readTimeout);
       res.off('data', onData);
       res.off('end', finish);
       res.off('error', onError);
@@ -347,6 +369,7 @@ const readUpgradeError = (
       // and the body — trim so renderers don't open with a blank line.
       let body = Buffer.concat(chunks).toString('utf8').trim();
       if (truncated) body += TRUNCATION_MARKER;
+      else if (timedOut) body += READ_TIMEOUT_MARKER;
       const status = res.statusCode ?? 0;
       const statusMessage = res.statusMessage ?? '';
       if (status === 404 && profile) {

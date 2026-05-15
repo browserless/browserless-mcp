@@ -127,7 +127,7 @@ export const formatConnectError = (err: unknown): string => {
       case 400:
         return `Bad request (400) — the server rejected the agent connection parameters${detail ? `: ${detail}` : ''}. Common causes: invalid proxy preset, malformed externalProxyServer URL, or unsupported combination of options.`;
       case 401:
-        return `Authentication failed (401) — verify the BROWSERLESS_TOKEN is set correctly${detail ? ` (server says: ${detail})` : ''}.`;
+        return `Authentication failed (401) — verify the Browserless API token (BROWSERLESS_TOKEN env var or per-request Authorization header) is set correctly${detail ? ` (server says: ${detail})` : ''}.`;
       case 403:
         return `Forbidden (403) — your plan does not include this feature${detail ? ` (server says: ${detail})` : ''}.`;
       case 429:
