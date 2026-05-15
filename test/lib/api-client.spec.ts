@@ -1,6 +1,10 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { createApiClient } from '../../src/lib/api-client.js';
+import {
+  createApiClient,
+  ProfileNotFoundError,
+} from '../../src/lib/api-client.js';
+import { ResponseCache } from '../../src/lib/cache.js';
 import type { McpConfig } from '../../src/config.js';
 
 const mockConfig: McpConfig = {
@@ -143,6 +147,138 @@ describe('createApiClient', () => {
       expect(fetchStub.calledTwice).to.be.true;
     });
 
+    it('isolates cache entries by API URL when the cache is shared', async () => {
+      // Mirrors production where one ResponseCache is owned by the tool
+      // registration and reused across requests that can override apiUrl per
+      // session. Two backends sharing a token must not share cached responses.
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(mockSuccessResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const sharedCache = new ResponseCache(60000);
+      const clientA = createApiClient(mockConfig, sharedCache);
+      const clientB = createApiClient(
+        {
+          ...mockConfig,
+          browserlessApiUrl: 'https://other-backend.example.com',
+        },
+        sharedCache,
+      );
+
+      const first = await clientA.powerScrape({ url: 'https://example.com' });
+      const second = await clientB.powerScrape({ url: 'https://example.com' });
+
+      expect(fetchStub.calledTwice).to.be.true;
+      expect(first.cacheHit).to.be.false;
+      expect(second.cacheHit).to.be.false;
+    });
+
+    it('throws ProfileNotFoundError on 404 with profile set', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ error: 'Profile "missing" was not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.powerScrape({
+          url: 'https://example.com',
+          profile: 'missing',
+        });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+        expect((err as ProfileNotFoundError).profile).to.equal('missing');
+      }
+    });
+
+    it('throws ProfileNotFoundError even when 404 body is malformed', async () => {
+      // Locks in the deterministic behavior: a 404 with profile set is always
+      // treated as profile-not-found, regardless of body shape or parseability.
+      fetchStub.resolves(
+        new Response('not json at all', {
+          status: 404,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.powerScrape({
+          url: 'https://example.com',
+          profile: 'missing',
+        });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+        expect((err as ProfileNotFoundError).profile).to.equal('missing');
+      }
+    });
+
+    it('does not retry on ProfileNotFoundError', async () => {
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: 'Profile "missing" was not found' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+      );
+
+      const client = createApiClient({ ...mockConfig, maxRetries: 3 });
+      try {
+        await client.powerScrape({
+          url: 'https://example.com',
+          profile: 'missing',
+        });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+      }
+      expect(fetchStub.calledOnce).to.be.true;
+    });
+
+    it('isolates cache entries by profile', async () => {
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(mockSuccessResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      const first = await client.powerScrape({
+        url: 'https://example.com',
+        profile: 'user-a',
+      });
+      const second = await client.powerScrape({
+        url: 'https://example.com',
+        profile: 'user-b',
+      });
+      const third = await client.powerScrape({
+        url: 'https://example.com',
+        profile: 'user-a',
+      });
+      const fourth = await client.powerScrape({
+        url: 'https://example.com',
+      });
+
+      expect(fetchStub.callCount).to.equal(3);
+      expect(first.cacheHit).to.be.false;
+      expect(second.cacheHit).to.be.false;
+      expect(third.cacheHit).to.be.true;
+      expect(fourth.cacheHit).to.be.false;
+    });
+
     it('forwards formats array in request body', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {
@@ -166,6 +302,39 @@ describe('createApiClient', () => {
       ]);
     });
 
+    it('rejects non-profile 4xx with Server error prefix and does not cache it', async () => {
+      // First call: 401 must throw with Server error prefix (so retry
+      // suppression catches it) and must not write to the cache.
+      fetchStub.resolves(
+        new Response('Invalid token', {
+          status: 401,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.powerScrape({ url: 'https://example.com' });
+        expect.fail('expected Server error');
+      } catch (err) {
+        expect((err as Error).message).to.match(/^Server error 401:/);
+      }
+
+      // Second call: replay the same URL with a 200. If the cache had been
+      // poisoned by the 401, we'd see a cache hit and zero further fetches.
+      fetchStub.resetHistory();
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const result = await client.powerScrape({ url: 'https://example.com' });
+
+      expect(fetchStub.calledOnce).to.be.true;
+      expect(result.cacheHit).to.be.false;
+    });
+
     it('throws on 500 errors', async () => {
       fetchStub.resolves(
         new Response('Internal Server Error', {
@@ -180,6 +349,46 @@ describe('createApiClient', () => {
         expect.fail('should have thrown');
       } catch (err) {
         expect((err as Error).message).to.include('Server error 500');
+      }
+    });
+  });
+
+  describe('crawl', () => {
+    it('rejects non-profile 4xx with Server error prefix', async () => {
+      fetchStub.resolves(
+        new Response('Bad Request', {
+          status: 400,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.crawl({ url: 'https://example.com' });
+        expect.fail('expected Server error');
+      } catch (err) {
+        expect((err as Error).message).to.match(/^Server error 400:/);
+      }
+    });
+
+    it('throws ProfileNotFoundError on 404 with profile set', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ error: 'Profile "missing-c" was not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      try {
+        await client.crawl({
+          url: 'https://example.com',
+          profile: 'missing-c',
+        });
+        expect.fail('expected ProfileNotFoundError');
+      } catch (err) {
+        expect(err).to.be.instanceOf(ProfileNotFoundError);
+        expect((err as ProfileNotFoundError).profile).to.equal('missing-c');
       }
     });
   });
@@ -410,9 +619,7 @@ describe('createApiClient', () => {
     });
 
     it('returns not ok on non-200 status', async () => {
-      fetchStub.resolves(
-        new Response('Unauthorized', { status: 401 }),
-      );
+      fetchStub.resolves(new Response('Unauthorized', { status: 401 }));
 
       const client = createApiClient(mockConfig);
       const status = await client.getStatus();
@@ -438,8 +645,16 @@ describe('createApiClient', () => {
       totalResults: 2,
       data: {
         web: [
-          { title: 'Result 1', url: 'https://example.com/1', description: 'First' },
-          { title: 'Result 2', url: 'https://example.com/2', description: 'Second' },
+          {
+            title: 'Result 1',
+            url: 'https://example.com/1',
+            description: 'First',
+          },
+          {
+            title: 'Result 2',
+            url: 'https://example.com/2',
+            description: 'Second',
+          },
         ],
       },
     };

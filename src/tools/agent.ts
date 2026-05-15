@@ -9,6 +9,7 @@ import {
   destroySession,
 } from '../lib/agent-client.js';
 import type { SnapshotResult, SnapshotElement } from '../lib/agent-client.js';
+import { classifyAgentError } from '../lib/error-classifier.js';
 import type { McpConfig } from '../config.js';
 import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
 import {
@@ -22,6 +23,56 @@ import type { SkillId } from '../skills/index.js';
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
+
+const safeOrigin = (url: string): string | undefined => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Build the cross-origin notice line shown above a snapshot when the page
+ * navigated to a different origin (protocol + host + port) since the last
+ * snapshot. Returns '' when the origins match or either URL is missing or
+ * unparseable.
+ */
+export const buildCrossOriginNotice = (
+  previousUrl: string | undefined,
+  newUrl: string | undefined,
+): string => {
+  if (!previousUrl || !newUrl) return '';
+  const prevOrigin = safeOrigin(previousUrl);
+  const newOrigin = safeOrigin(newUrl);
+  if (!prevOrigin || !newOrigin) return '';
+  if (prevOrigin === newOrigin) return '';
+  return `! NOTICE: URL changed cross-origin — ${previousUrl} → ${newUrl}. Prior plan/refs likely invalid; re-plan from this snapshot.`;
+};
+
+/**
+ * Format the body of a classified error response (without skill blocks).
+ * Used by both the resp.error branch and the WS-send-catch branch so the
+ * agent always sees the same `Category:` / `[CODE]` / `Recovery:` shape.
+ */
+export const formatErrorMessage = (opts: {
+  category: string;
+  code?: string;
+  prefix: string;
+  message: string;
+  suggestion?: string;
+  recovery: string;
+  snapshotText?: string;
+}): string => {
+  const head = opts.code
+    ? `[${opts.code}] ${opts.prefix}${opts.message}`
+    : `${opts.prefix}${opts.message}`;
+  const parts: string[] = [`Category: ${opts.category}`, head];
+  if (opts.suggestion) parts.push(`Suggestion: ${opts.suggestion}`);
+  parts.push(`Recovery: ${opts.recovery}`);
+  if (opts.snapshotText) parts.push(`Updated snapshot:\n${opts.snapshotText}`);
+  return parts.join('\n\n');
+};
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
 
 ## Residential proxy (optional)
@@ -108,10 +159,18 @@ Do NOT batch across navigations or page reloads.
 After actions that trigger async loading (search, form submit, lazy modal), use a \`wait*\` method before re-snapshotting — \`waitForResponse\` is the most reliable when you know the API URL. The \`dynamic-content\` skill auto-loads on a \`wait*\` timeout and explains the choice. Never use \`evaluate\` with setTimeout to wait.
 
 ## Error Recovery
-- Selector not found → first try the **deep selector** version (\`< selector\`) in case the element is in a shadow root. If that also fails, re-snapshot
-- Timeout → re-snapshot and re-plan (do not retry blindly)
-- Unexpected page state → re-snapshot and re-plan
-- Never retry the exact same failed action without re-snapshotting first
+Errors are tagged with a category on the first line (\`Category: <NAME>\`). Use it to choose the right next step:
+- **SELECTOR_MISS** — re-snapshot; if the selector was not already a deep-ref, retry with \`< selector\` (likely shadow DOM)
+- **SESSION_LOST** — a fresh session was opened automatically; re-goto then re-snapshot (prior page state is gone)
+- **UNAUTHORIZED** / **FORBIDDEN** — auth/cookies are missing or rejected; do not retry the prior selector, pick a different path
+- **NOT_FOUND** — the URL no longer exists; choose a different navigation
+- **SERVER_ERROR** — origin returned 5xx; back off, then retry once
+- **NAVIGATION_FAILED** — DNS/network error; verify the URL
+- **TIMEOUT** — the page or wait condition didn't resolve; try a longer waitFor or a different signal
+- **INVALID_PARAMS** — fix the params (the schema is authoritative); do not blind-retry
+- **UNKNOWN** — re-snapshot and re-plan
+Snapshots may be prefixed with \`! NOTICE: URL changed cross-origin\` when navigation crossed origin — treat your prior plan and refs as invalid and re-plan from the new snapshot.
+Never retry the exact same failed action without re-snapshotting first.
 
 ## Available Methods
 Non-obvious quirks called out below. For everything else, the typed schema is authoritative.
@@ -414,6 +473,12 @@ export function registerAgentTools(
         // Execute all commands sequentially
         const results: Array<{ method: string; result?: unknown }> = [];
         let closedDuringBatch = false;
+        // Cross-origin baseline: prefer the URL persisted from the previous
+        // snapshot. If this is the first interaction in the session, fall
+        // back to the first URL observed during this batch — that way a
+        // single-batch sequence like [goto A, goto B, snapshot] still
+        // detects the cross-origin transition between A and the snapshot.
+        let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
             closeSession(mcpSessionId, token, proxy);
@@ -434,7 +499,18 @@ export function registerAgentTools(
             if (!isRetry) {
               return runCommands(true);
             }
-            throw new UserError(`${cmd.method} failed: ${sendErr.message}`);
+            const classified = classifyAgentError({
+              err: { message: sendErr.message },
+              cmd,
+            });
+            throw new UserError(
+              formatErrorMessage({
+                category: classified.category,
+                prefix: `${cmd.method} failed: `,
+                message: sendErr.message,
+                recovery: classified.recovery,
+              }),
+            );
           }
 
           if (resp.error) {
@@ -446,29 +522,36 @@ export function registerAgentTools(
               }
             }
 
+            const classified = classifyAgentError({ err, cmd });
+
             const prefix =
               commands.length > 1
                 ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
                 : `${cmd.method} failed: `;
 
-            const parts: string[] = [prefix + err.message];
-            if (err.code) parts[0] = `[${err.code}] ${parts[0]}`;
-
+            let suggestion: string | undefined;
             if (
               err.code === 'SELECTOR_NOT_FOUND' &&
               cmd.params.selector &&
               typeof cmd.params.selector === 'string' &&
               !cmd.params.selector.startsWith('< ')
             ) {
-              parts.push(
-                `Suggestion: Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`,
-              );
+              suggestion = `Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`;
             } else if (err.suggestion) {
-              parts.push(`Suggestion: ${err.suggestion}`);
+              suggestion = err.suggestion;
             }
-            if (err.snapshot) {
-              parts.push(`Updated snapshot:\n${formatSnapshot(err.snapshot)}`);
-            }
+
+            const body = formatErrorMessage({
+              category: classified.category,
+              code: err.code,
+              prefix,
+              message: err.message,
+              suggestion,
+              recovery: classified.recovery,
+              snapshotText: err.snapshot
+                ? formatSnapshot(err.snapshot)
+                : undefined,
+            });
 
             const triggered = detectSkills(
               { snapshot: err.snapshot, error: err, cmd, apiUrl },
@@ -476,7 +559,16 @@ export function registerAgentTools(
             );
             markFired(agentSession.skillState, triggered);
 
-            throw new UserError(appendSkills(parts.join('\n\n'), triggered));
+            throw new UserError(appendSkills(body, triggered));
+          }
+
+          // Capture the first URL we observe in the batch as a fallback
+          // baseline for the cross-origin notice.
+          if (!crossOriginBaseline) {
+            const r = resp.result as { url?: unknown } | undefined;
+            if (r && typeof r.url === 'string') {
+              crossOriginBaseline = r.url;
+            }
           }
 
           results.push({ method: cmd.method, result: resp.result });
@@ -526,13 +618,20 @@ export function registerAgentTools(
 
         // Snapshot: format as compact ref-based text
         if (lastSnapshot) {
+          const notice = buildCrossOriginNotice(
+            crossOriginBaseline,
+            lastSnapshot.url,
+          );
+          const noticeBlock = notice ? `${notice}\n\n` : '';
+          if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
           return {
             content: [
               {
                 type: 'text' as const,
                 text:
                   batchPrefix +
-                  formatSnapshot(lastResult as unknown as SnapshotResult) +
+                  noticeBlock +
+                  formatSnapshot(lastSnapshot) +
                   closedSuffix,
               },
             ],

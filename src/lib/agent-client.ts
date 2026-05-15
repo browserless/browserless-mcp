@@ -68,6 +68,7 @@ export interface ActiveSession {
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;
+  lastUrl?: string;
 }
 
 const sessions = new Map<string, ActiveSession>();

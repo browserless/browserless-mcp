@@ -89,9 +89,7 @@ describe('browserless_smartscraper tool', () => {
 
   it('registers the tool on the server', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
-    expect(() =>
-      registerPowerScraperTool(server, mockConfig),
-    ).to.not.throw();
+    expect(() => registerPowerScraperTool(server, mockConfig)).to.not.throw();
   });
 
   it('returns markdown content on successful scrape', async () => {
@@ -116,9 +114,7 @@ describe('browserless_smartscraper tool', () => {
     const content = (result as { content: Content[] }).content;
     expect(content).to.be.an('array');
 
-    const textBlocks = content.filter(
-      (c: Content) => c.type === 'text',
-    );
+    const textBlocks = content.filter((c: Content) => c.type === 'text');
     expect(textBlocks.length).to.be.at.least(2);
 
     const mainContent = textBlocks[0] as { type: string; text: string };
@@ -202,9 +198,7 @@ describe('browserless_smartscraper tool', () => {
     );
 
     const content = (result as { content: Content[] }).content;
-    const imageBlocks = content.filter(
-      (c: Content) => c.type === 'image',
-    );
+    const imageBlocks = content.filter((c: Content) => c.type === 'image');
     expect(imageBlocks).to.have.length(1);
     const img = imageBlocks[0] as {
       type: string;
@@ -218,9 +212,7 @@ describe('browserless_smartscraper tool', () => {
   it('includes PDF as text content block', async () => {
     fetchStub.resolves(
       new Response(
-        JSON.stringify(
-          makeSuccessResponse({ pdf: 'JVBERi0xLjQK' }),
-        ),
+        JSON.stringify(makeSuccessResponse({ pdf: 'JVBERi0xLjQK' })),
         {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -246,9 +238,7 @@ describe('browserless_smartscraper tool', () => {
         (c as { text: string }).text.includes('PDF Document'),
     );
     expect(pdfBlock).to.exist;
-    expect(
-      (pdfBlock as { text: string }).text,
-    ).to.include('JVBERi0xLjQK');
+    expect((pdfBlock as { text: string }).text).to.include('JVBERi0xLjQK');
   });
 
   it('includes links as text content block', async () => {
@@ -257,15 +247,10 @@ describe('browserless_smartscraper tool', () => {
       'https://example.com/contact',
     ];
     fetchStub.resolves(
-      new Response(
-        JSON.stringify(
-          makeSuccessResponse({ links: mockLinks }),
-        ),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
+      new Response(JSON.stringify(makeSuccessResponse({ links: mockLinks })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
@@ -282,8 +267,7 @@ describe('browserless_smartscraper tool', () => {
     const content = (result as { content: Content[] }).content;
     const linksBlock = content.find(
       (c: Content) =>
-        c.type === 'text' &&
-        (c as { text: string }).text.includes('Links (2)'),
+        c.type === 'text' && (c as { text: string }).text.includes('Links (2)'),
     );
     expect(linksBlock).to.exist;
     const text = (linksBlock as { text: string }).text;
@@ -293,15 +277,10 @@ describe('browserless_smartscraper tool', () => {
 
   it('falls back to raw HTML when markdown is null', async () => {
     fetchStub.resolves(
-      new Response(
-        JSON.stringify(
-          makeSuccessResponse({ markdown: null }),
-        ),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
+      new Response(JSON.stringify(makeSuccessResponse({ markdown: null })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
@@ -388,6 +367,108 @@ describe('browserless_smartscraper tool', () => {
     expect(mainContent.text).to.include('http-fetch');
   });
 
+  it('does not include profile in the outbound URL when omitted', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown'],
+      },
+      mockContext,
+    );
+
+    expect(fetchStub.calledOnce).to.be.true;
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.not.include('profile=');
+  });
+
+  it('forwards profile as a query parameter to /smart-scrape', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown'],
+        profile: 'my-login',
+      },
+      mockContext,
+    );
+
+    expect(fetchStub.calledOnce).to.be.true;
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.include('profile=my-login');
+  });
+
+  it('URL-encodes the profile name', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown'],
+        profile: 'profile with spaces',
+      },
+      mockContext,
+    );
+
+    const [url] = fetchStub.firstCall.args;
+    expect(url).to.include('profile=profile+with+spaces');
+  });
+
+  it('throws UserError (not a property-access crash) when the profile does not exist', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({ error: 'Profile "missing" was not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    try {
+      await execute(
+        {
+          url: 'https://example.com',
+          formats: ['markdown'],
+          profile: 'missing',
+        },
+        mockContext,
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.include('Profile "missing"');
+      expect((err as Error).message).to.not.include('attempted');
+      expect((err as Error).message).to.not.include('Cannot read properties');
+    }
+  });
+
   it('reports progress during execution', async () => {
     fetchStub.resolves(
       new Response(JSON.stringify(makeSuccessResponse()), {
@@ -412,9 +493,10 @@ describe('browserless_smartscraper tool', () => {
       progress: 0,
       total: 100,
     });
-    expect(mockContext.reportProgress.secondCall.args[0]).to.deep.equal(
-      { progress: 100, total: 100 },
-    );
+    expect(mockContext.reportProgress.secondCall.args[0]).to.deep.equal({
+      progress: 100,
+      total: 100,
+    });
   });
 });
 

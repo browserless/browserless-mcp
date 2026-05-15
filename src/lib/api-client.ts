@@ -24,6 +24,55 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
+/**
+ * Thrown when an API call references a profile that does not exist for the
+ * current API token. Tools catch this and re-throw as a UserError so the LLM
+ * sees a clean explanation instead of a downstream property-access crash on
+ * the 404 body shape `{ error: '...' }`.
+ */
+export class ProfileNotFoundError extends Error {
+  constructor(
+    public readonly profile: string,
+    serverMessage?: string,
+  ) {
+    super(
+      serverMessage ??
+        `Profile "${profile}" was not found for the configured token.`,
+    );
+    this.name = 'ProfileNotFoundError';
+  }
+}
+
+/**
+ * If the response is a 404 from /smart-scrape or /crawl with a profile set,
+ * throw a typed ProfileNotFoundError so the caller can surface it as a
+ * UserError. We treat any 404 + profile as profile-not-found regardless of
+ * body shape — the error body varies (`error` / `message` / `detail` /
+ * malformed JSON) and the downstream `await res.json()` would crash anyway.
+ */
+async function throwIfProfileMissing(
+  res: Response,
+  profile: string | undefined,
+): Promise<void> {
+  if (!profile || res.status !== 404) return;
+  const body = await res
+    .clone()
+    .json()
+    .catch(() => null);
+  let serverMessage: string | undefined;
+  if (body && typeof body === 'object') {
+    const b = body as Record<string, unknown>;
+    const candidates = [
+      b.error,
+      b.message,
+      b.detail,
+      Array.isArray(b.errors) ? b.errors[0] : undefined,
+    ];
+    serverMessage = candidates.find((v): v is string => typeof v === 'string');
+  }
+  throw new ProfileNotFoundError(profile, serverMessage);
+}
+
 /** Content-Types that should be treated as text (not base64-encoded). */
 const TEXT_CONTENT_TYPES = [
   'text/',
@@ -43,6 +92,7 @@ export interface PowerScrapeRequest {
   url: string;
   formats?: ScrapeFormat[];
   timeout?: number;
+  profile?: string;
 }
 
 export type PowerScrapeResult = PowerScraperResponse & { cacheHit: boolean };
@@ -124,6 +174,7 @@ export interface CrawlRequest {
     timeout?: number;
   };
   timeout?: number;
+  profile?: string;
 }
 
 export interface CrawlCancelResponse {
@@ -170,10 +221,7 @@ export function createApiClient(
     return retryWithBackoff(
       async () => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(
-          () => controller.abort(),
-          timeout + 5000,
-        );
+        const timeoutId = setTimeout(() => controller.abort(), timeout + 5000);
 
         try {
           const res = await fetch(apiUrl, {
@@ -184,9 +232,7 @@ export function createApiClient(
           });
 
           if (!res.ok && res.status >= 500) {
-            throw new Error(
-              `Server error ${res.status}: ${res.statusText}`,
-            );
+            throw new Error(`Server error ${res.status}: ${res.statusText}`);
           }
 
           const respContentType =
@@ -234,15 +280,19 @@ export function createApiClient(
 
   return {
     /* ---- powerScrape (existing) ---------------------------------- */
-    async powerScrape(
-      params: PowerScrapeRequest,
-    ): Promise<PowerScrapeResult> {
+    async powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult> {
       const formats = params.formats ?? ['markdown'];
       const tokenHash = hashToken(config.browserlessToken!);
       const cacheKey = JSON.stringify({
         t: tokenHash,
+        // The api URL can be overridden per-session, so two backends sharing
+        // the same token must not share cache entries.
+        api: config.browserlessApiUrl,
         url: params.url,
         formats: [...formats].sort(),
+        // Profiles inject auth state — a cache hit across profiles would
+        // leak one user's session into another's response.
+        profile: params.profile ?? null,
       });
 
       const cached = _cache.get<PowerScraperResponse>(cacheKey);
@@ -255,6 +305,9 @@ export function createApiClient(
         token: config.browserlessToken!,
         timeout: String(timeout),
       });
+      if (params.profile) {
+        queryParams.set('profile', params.profile);
+      }
 
       const apiUrl = `${config.browserlessApiUrl}/smart-scrape?${queryParams.toString()}`;
 
@@ -280,9 +333,19 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
+            }
+
+            await throwIfProfileMissing(res, params.profile);
+
+            // Reject any remaining 4xx before parsing or caching — a 400/401/403
+            // body must not be returned as a valid PowerScraperResponse, and
+            // must not poison the cache. The `Server error` prefix also lets
+            // the existing retry-suppression predicate skip these.
+            if (!res.ok) {
+              const errorBody = await res.text().catch(() => res.statusText);
+              const message = errorBody.trim() || res.statusText;
+              throw new Error(`Server error ${res.status}: ${message}`);
             }
 
             return (await res.json()) as PowerScraperResponse;
@@ -294,6 +357,7 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
+            if (error instanceof ProfileNotFoundError) return false;
             return !error.message.startsWith('Server error 4');
           },
         },
@@ -386,7 +450,8 @@ export function createApiClient(
       if (params.tbs !== undefined) body.tbs = params.tbs;
       if (params.sources !== undefined) body.sources = params.sources;
       if (params.categories !== undefined) body.categories = params.categories;
-      if (params.scrapeOptions !== undefined) body.scrapeOptions = params.scrapeOptions;
+      if (params.scrapeOptions !== undefined)
+        body.scrapeOptions = params.scrapeOptions;
 
       return retryWithBackoff(
         async () => {
@@ -426,7 +491,9 @@ export function createApiClient(
     },
 
     /* ---- performance (/performance) ------------------------------ */
-    async performance(params: PerformanceRequest): Promise<PerformanceResponse> {
+    async performance(
+      params: PerformanceRequest,
+    ): Promise<PerformanceResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
       const queryParams = new URLSearchParams({
         token: config.browserlessToken!,
@@ -469,9 +536,7 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
             if (!res.ok) {
@@ -512,8 +577,10 @@ export function createApiClient(
       if (params.search !== undefined) body.search = params.search;
       if (params.limit !== undefined) body.limit = params.limit;
       if (params.sitemap !== undefined) body.sitemap = params.sitemap;
-      if (params.includeSubdomains !== undefined) body.includeSubdomains = params.includeSubdomains;
-      if (params.ignoreQueryParameters !== undefined) body.ignoreQueryParameters = params.ignoreQueryParameters;
+      if (params.includeSubdomains !== undefined)
+        body.includeSubdomains = params.includeSubdomains;
+      if (params.ignoreQueryParameters !== undefined)
+        body.ignoreQueryParameters = params.ignoreQueryParameters;
 
       return retryWithBackoff(
         async () => {
@@ -532,9 +599,7 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
 
             return (await res.json()) as MapResponse;
@@ -555,10 +620,13 @@ export function createApiClient(
     /* ---- crawl (POST /crawl) ------------------------------------- */
     async crawl(params: CrawlRequest): Promise<CrawlStartResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
-      // Note: /crawl endpoint only accepts 'token' as query param
+      // Note: /crawl endpoint accepts 'token' and 'profile' as query params
       const queryParams = new URLSearchParams({
         token: config.browserlessToken!,
       });
+      if (params.profile) {
+        queryParams.set('profile', params.profile);
+      }
 
       const apiUrl = `${config.browserlessApiUrl}/crawl?${queryParams.toString()}`;
 
@@ -568,13 +636,18 @@ export function createApiClient(
       if (params.limit !== undefined) body.limit = params.limit;
       if (params.maxDepth !== undefined) body.maxDepth = params.maxDepth;
       if (params.maxRetries !== undefined) body.maxRetries = params.maxRetries;
-      if (params.allowExternalLinks !== undefined) body.allowExternalLinks = params.allowExternalLinks;
-      if (params.allowSubdomains !== undefined) body.allowSubdomains = params.allowSubdomains;
+      if (params.allowExternalLinks !== undefined)
+        body.allowExternalLinks = params.allowExternalLinks;
+      if (params.allowSubdomains !== undefined)
+        body.allowSubdomains = params.allowSubdomains;
       if (params.sitemap !== undefined) body.sitemap = params.sitemap;
-      if (params.includePaths !== undefined) body.includePaths = params.includePaths;
-      if (params.excludePaths !== undefined) body.excludePaths = params.excludePaths;
+      if (params.includePaths !== undefined)
+        body.includePaths = params.includePaths;
+      if (params.excludePaths !== undefined)
+        body.excludePaths = params.excludePaths;
       if (params.delay !== undefined) body.delay = params.delay;
-      if (params.scrapeOptions !== undefined) body.scrapeOptions = params.scrapeOptions;
+      if (params.scrapeOptions !== undefined)
+        body.scrapeOptions = params.scrapeOptions;
 
       return retryWithBackoff(
         async () => {
@@ -593,9 +666,32 @@ export function createApiClient(
             });
 
             if (!res.ok && res.status >= 500) {
-              throw new Error(
-                `Server error ${res.status}: ${res.statusText}`,
-              );
+              throw new Error(`Server error ${res.status}: ${res.statusText}`);
+            }
+
+            await throwIfProfileMissing(res, params.profile);
+
+            // The /crawl endpoint returns a structured
+            // `{ success: false, error: string }` body on some 4xx responses
+            // (e.g. 429 rate limit). Forward those so the tool can surface
+            // them as a clean UserError. Non-JSON 4xx bodies surface as a
+            // Server error so retry suppression catches them.
+            if (!res.ok) {
+              const text = await res.text().catch(() => '');
+              try {
+                const parsed = JSON.parse(text);
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  (parsed as { success?: unknown }).success === false
+                ) {
+                  return parsed as CrawlStartResponse;
+                }
+              } catch {
+                // Non-JSON body — fall through.
+              }
+              const message = text.trim() || res.statusText;
+              throw new Error(`Server error ${res.status}: ${message}`);
             }
 
             return (await res.json()) as CrawlStartResponse;
@@ -607,6 +703,7 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
+            if (error instanceof ProfileNotFoundError) return false;
             return !error.message.startsWith('Server error 4');
           },
         },
@@ -614,7 +711,10 @@ export function createApiClient(
     },
 
     /* ---- getCrawl (GET /crawl/{id}) ------------------------------ */
-    async getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse> {
+    async getCrawl(
+      crawlId: string,
+      skip?: number,
+    ): Promise<CrawlStatusResponse> {
       const queryParams = new URLSearchParams({
         token: config.browserlessToken!,
       });
@@ -646,9 +746,7 @@ export function createApiClient(
             // Reject all non-OK responses to avoid treating error bodies as valid data
             if (!res.ok) {
               const errorBody = await res.text().catch(() => res.statusText);
-              throw new Error(
-                `API error ${res.status}: ${errorBody}`,
-              );
+              throw new Error(`API error ${res.status}: ${errorBody}`);
             }
 
             return (await res.json()) as CrawlStatusResponse;
@@ -660,8 +758,10 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
-            return !error.message.startsWith('Server error 4') &&
-                   !error.message.includes('not found');
+            return (
+              !error.message.startsWith('Server error 4') &&
+              !error.message.includes('not found')
+            );
           },
         },
       );
@@ -696,15 +796,15 @@ export function createApiClient(
 
             if (res.status === 409) {
               const body = (await res.json()) as { message?: string };
-              throw new Error(body.message ?? 'Crawl is already in terminal state');
+              throw new Error(
+                body.message ?? 'Crawl is already in terminal state',
+              );
             }
 
             // Reject all non-OK responses to avoid treating error bodies as valid data
             if (!res.ok) {
               const errorBody = await res.text().catch(() => res.statusText);
-              throw new Error(
-                `API error ${res.status}: ${errorBody}`,
-              );
+              throw new Error(`API error ${res.status}: ${errorBody}`);
             }
 
             return (await res.json()) as CrawlCancelResponse;
