@@ -346,16 +346,12 @@ describe('agent-client connect (upgrade error handling)', () => {
   });
 
   it('surfaces a 429 with the verbatim concurrency-limit message', async () => {
-    const err = await expectUpgradeReject(
-      429,
-      SERVER_BODIES.concurrencyLimit,
-      { mcpSessionId: 'mcp-429' },
-    );
+    const err = await expectUpgradeReject(429, SERVER_BODIES.concurrencyLimit, {
+      mcpSessionId: 'mcp-429',
+    });
     expect(err).to.be.instanceOf(UpgradeError);
     expect((err as UpgradeError).statusCode).to.equal(429);
-    expect((err as UpgradeError).body).to.equal(
-      SERVER_BODIES.concurrencyLimit,
-    );
+    expect((err as UpgradeError).body).to.equal(SERVER_BODIES.concurrencyLimit);
   });
 
   it('handles a proxy-injected empty-body 401 without crashing', async () => {
@@ -427,7 +423,9 @@ describe('agent-client connect (upgrade error handling)', () => {
     expect(err).to.be.instanceOf(UpgradeError);
     expect((err as UpgradeError).body).to.not.include('truncated');
     // After trim() strips the leading CRLF artifact, only the body remains.
-    expect((err as UpgradeError).body.length).to.equal(64 * 1024 - WIRE_OVERHEAD);
+    expect((err as UpgradeError).body.length).to.equal(
+      64 * 1024 - WIRE_OVERHEAD,
+    );
   });
 
   it('truncates a body one byte over the cap', async () => {

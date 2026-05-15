@@ -330,7 +330,9 @@ const readUpgradeError = (
       // Stream errors mid-body (TLS abort, decompression failure) would
       // otherwise vanish into an UpgradeError with a partial body. Log so
       // operators see the root cause; still settle with whatever was buffered.
-      console.error(`[agent-client] upgrade-response stream error: ${err.message}`);
+      console.error(
+        `[agent-client] upgrade-response stream error: ${err.message}`,
+      );
       finish();
     };
 

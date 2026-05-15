@@ -365,7 +365,7 @@ describe('formatConnectError', () => {
       ),
     );
     expect(out).to.match(/^Bad request \(400\)/);
-    expect(out).to.include("city-level");
+    expect(out).to.include('city-level');
   });
 
   it('renders 401 with a token-fixup hint', () => {
@@ -406,9 +406,7 @@ describe('formatConnectError', () => {
 
   it('falls back to the raw message for non-UpgradeError errors', () => {
     const out = formatConnectError(new Error('ECONNREFUSED'));
-    expect(out).to.equal(
-      'Failed to connect to browser agent: ECONNREFUSED',
-    );
+    expect(out).to.equal('Failed to connect to browser agent: ECONNREFUSED');
   });
 });
 
@@ -489,7 +487,9 @@ describe('formatConnectError with proxy-injected errors', () => {
   });
 });
 
-const getAgentExecute = (apiUrl: string): ((args: unknown, ctx: unknown) => unknown) => {
+const getAgentExecute = (
+  apiUrl: string,
+): ((args: unknown, ctx: unknown) => unknown) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
   registerAgentTools(server, { ...mockConfig, browserlessApiUrl: apiUrl });
@@ -507,7 +507,10 @@ describe('browserless_agent retry-guard (runCommands)', () => {
   afterEach(() => sinon.restore());
 
   it('does NOT retry a non-retryable upgrade failure (401)', async () => {
-    const srv = await makeRejectingServer(401, 'Bad or missing authentication.');
+    const srv = await makeRejectingServer(
+      401,
+      'Bad or missing authentication.',
+    );
     try {
       const execute = getAgentExecute(srv.url);
       try {
@@ -517,7 +520,9 @@ describe('browserless_agent retry-guard (runCommands)', () => {
         );
         expect.fail('expected UserError');
       } catch (err) {
-        expect((err as Error).message).to.include('Authentication failed (401)');
+        expect((err as Error).message).to.include(
+          'Authentication failed (401)',
+        );
       }
       expect(srv.hits()).to.equal(1);
     } finally {
@@ -526,10 +531,7 @@ describe('browserless_agent retry-guard (runCommands)', () => {
   });
 
   it('does NOT retry a 404 with a profile (ProfileNotFoundError)', async () => {
-    const srv = await makeRejectingServer(
-      404,
-      'Profile "ghost" was not found',
-    );
+    const srv = await makeRejectingServer(404, 'Profile "ghost" was not found');
     try {
       const execute = getAgentExecute(srv.url);
       try {

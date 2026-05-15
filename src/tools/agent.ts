@@ -79,8 +79,7 @@ export const formatErrorMessage = (opts: {
 
 // Anchored to known HTML root tags so plain-text bodies containing `<`
 // (e.g. URLs in angle brackets) aren't mistakenly tag-stripped.
-const HTML_BODY_PROBE =
-  /^<(?:!doctype\s+html|html|head|body|title|center)\b/i;
+const HTML_BODY_PROBE = /^<(?:!doctype\s+html|html|head|body|title|center)\b/i;
 const HTML_TAG = /<[^>]+>/g;
 const COLLAPSE_WS = /\s+/g;
 const SANITIZED_BODY_MAX_LEN = 200;
