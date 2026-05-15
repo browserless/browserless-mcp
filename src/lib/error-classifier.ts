@@ -20,9 +20,7 @@ export interface ClassifiedError {
 }
 
 export interface ClassifyInput {
-  err:
-    | AgentError
-    | { code?: string; message: string; status?: number };
+  err: AgentError | { code?: string; message: string; status?: number };
   cmd: { method: string; params: Record<string, unknown> };
 }
 
@@ -45,8 +43,7 @@ const RECOVERY: Record<ErrorCategory, string> = {
     'The page or wait condition did not resolve in time. Try a longer waitFor, a different signal (waitForResponse with a known URL), or re-snapshot to confirm current state.',
   INVALID_PARAMS:
     'The parameters were rejected. The schema is authoritative — fix the params; do not blind-retry.',
-  UNKNOWN:
-    'Re-snapshot and re-plan from the current page state.',
+  UNKNOWN: 'Re-snapshot and re-plan from the current page state.',
 };
 
 const FATAL_SESSION_CODES = new Set(['BROWSER_CRASHED']);
@@ -91,9 +88,7 @@ const INVALID_PARAMS_PATTERNS = [
   /\bFailed to deserialize\b/i,
 ];
 
-export const classifyAgentError = (
-  input: ClassifyInput,
-): ClassifiedError => {
+export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   const { err, cmd } = input;
   const code = (err as { code?: string }).code;
   const message = err.message ?? '';
@@ -107,7 +102,11 @@ export const classifyAgentError = (
   }
 
   if (code === 'SELECTOR_NOT_FOUND') {
-    return { category: 'SELECTOR_MISS', code, recovery: RECOVERY.SELECTOR_MISS };
+    return {
+      category: 'SELECTOR_MISS',
+      code,
+      recovery: RECOVERY.SELECTOR_MISS,
+    };
   }
 
   // Authoritative upstream codes win first.

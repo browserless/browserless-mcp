@@ -161,24 +161,15 @@ describe('formatScreenshotContent', () => {
   });
 
   it('returns null when base64 is missing', () => {
-    expect(
-      formatScreenshotContent({}, { params: {} }, '', ''),
-    ).to.be.null;
-    expect(
-      formatScreenshotContent(null, { params: {} }, '', ''),
-    ).to.be.null;
-    expect(
-      formatScreenshotContent(
-        { base64: '' },
-        { params: {} },
-        '',
-        '',
-      ),
-    ).to.be.null;
+    expect(formatScreenshotContent({}, { params: {} }, '', '')).to.be.null;
+    expect(formatScreenshotContent(null, { params: {} }, '', '')).to.be.null;
+    expect(formatScreenshotContent({ base64: '' }, { params: {} }, '', '')).to
+      .be.null;
   });
 
   it('appends rendered skills as a third text block when triggered', () => {
-    const skills = '--- SKILL: modals (src/skills/modals.md) ---\nbody\n--- END SKILL ---';
+    const skills =
+      '--- SKILL: modals (src/skills/modals.md) ---\nbody\n--- END SKILL ---';
     const content = formatScreenshotContent(
       { base64: FAKE_PNG },
       { params: {} },
@@ -224,9 +215,9 @@ describe('formatSnapshot', () => {
 
   it('omits the header when detectedChallenges is empty or absent', () => {
     expect(formatSnapshot(baseSnap())).to.not.include('Detected challenge');
-    expect(
-      formatSnapshot(baseSnap({ detectedChallenges: [] })),
-    ).to.not.include('Detected challenge');
+    expect(formatSnapshot(baseSnap({ detectedChallenges: [] }))).to.not.include(
+      'Detected challenge',
+    );
   });
 });
 
@@ -312,10 +303,7 @@ describe('buildCrossOriginNotice', () => {
 
   it('returns empty string when hosts match (same-origin nav)', () => {
     expect(
-      buildCrossOriginNotice(
-        'https://example.com/a',
-        'https://example.com/b',
-      ),
+      buildCrossOriginNotice('https://example.com/a', 'https://example.com/b'),
     ).to.equal('');
   });
 
@@ -336,18 +324,17 @@ describe('buildCrossOriginNotice', () => {
   });
 
   it('returns empty string when previous URL is missing', () => {
-    expect(
-      buildCrossOriginNotice(undefined, 'https://example.com'),
-    ).to.equal('');
+    expect(buildCrossOriginNotice(undefined, 'https://example.com')).to.equal(
+      '',
+    );
   });
 
   it('returns empty string when either URL is unparseable', () => {
     expect(buildCrossOriginNotice('not-a-url', 'https://example.com')).to.equal(
       '',
     );
-    expect(buildCrossOriginNotice('https://example.com', 'also-not-a-url')).to.equal(
-      '',
-    );
+    expect(
+      buildCrossOriginNotice('https://example.com', 'also-not-a-url'),
+    ).to.equal('');
   });
 });
-
