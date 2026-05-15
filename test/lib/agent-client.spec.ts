@@ -63,6 +63,31 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.has('proxySticky')).to.equal(false);
   });
 
+  it('omits locale-match when false (server uses presence-only semantics)', () => {
+    const url = new URL(
+      buildAgentWsUrl('http://localhost:3000', 'tok', {
+        proxy: 'residential',
+        proxyLocaleMatch: false,
+      }),
+    );
+    expect(url.searchParams.has('proxyLocaleMatch')).to.equal(false);
+  });
+
+  it('passes proxyPreset when set', () => {
+    const url = new URL(
+      buildAgentWsUrl('http://localhost:3000', 'tok', {
+        proxy: 'residential',
+        proxyPreset: 'px_amazon01',
+      }),
+    );
+    expect(url.searchParams.get('proxyPreset')).to.equal('px_amazon01');
+  });
+
+  it('swaps the scheme case-insensitively (HTTPS://)', () => {
+    const url = new URL(buildAgentWsUrl('HTTPS://host.example.com', 'tok'));
+    expect(url.protocol).to.equal('wss:');
+  });
+
   it('round-trips externalProxyServer with credentials', () => {
     const ext = 'http://user:pass@host.example.com:8080';
     const url = new URL(
@@ -129,5 +154,13 @@ describe('agent-client proxyFingerprint', () => {
     });
     expect(a).to.not.equal(b);
     expect(a).to.not.equal('');
+  });
+
+  it('prefixes the proxy segment with NUL so it cannot collide with an mcpSessionId', () => {
+    // Session keys are built as `${mcpSessionId}${proxyFingerprint}`. The
+    // separator must not appear in either segment, otherwise distinct
+    // configs could collide on the same key.
+    const fp = proxyFingerprint({ proxy: 'residential' });
+    expect(fp.startsWith('\u0000')).to.equal(true);
   });
 });

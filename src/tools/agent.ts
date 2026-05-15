@@ -78,10 +78,14 @@ const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent sessio
 ## Residential proxy (optional)
 Pass top-level \`proxy\` to route the session through residential IPs. Use this when target sites IP-block datacenter traffic.
 - \`proxy: "residential"\` — turn on residential routing
-- \`proxyCountry: "us"\` — ISO-2 geo target
-- \`proxySticky: true\` — same IP for the session (resets on reconnect after a WS drop)
-- \`externalProxyServer: "http://u:p@host:port"\` — bring-your-own upstream
-- \`proxyCity\` requires an enterprise license; non-enterprise tokens get a 403.
+- \`proxyCountry: "us"\` — ISO-2 geo target (lowercase preferred; auto-normalized)
+- \`proxyState: "new_york"\` — region target (paid-plan gated, 401 otherwise)
+- \`proxyCity\` — city target (paid/enterprise plan gated, 401 otherwise)
+- \`proxySticky: true\` — stable IP while the WebSocket stays open; reconnects allocate a new sticky id
+- \`proxyLocaleMatch: true\` — match navigator locale to the proxy IP country
+- \`proxyPreset: "px_amazon01"\` — named preset (plan-dependent; ask support for your list)
+- \`externalProxyServer: "http://u:p@host:port"\` — bring-your-own upstream (http(s) only)
+Geo/preset/sticky fields require \`proxy: "residential"\` or \`externalProxyServer\` to be set — otherwise the API silently ignores them. The MCP rejects this combination at validation time.
 The \`proxy\` object is read once at session creation. To change it, run \`close\` and start a new session.
 
 ## Skills (auto-injected guidance)
@@ -328,23 +332,13 @@ export const formatScreenshotContent = (
   return content;
 };
 
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-  v !== null && typeof v === 'object' && !Array.isArray(v);
-
+// Zod parses params at the tool boundary, so this only needs to provide the
+// {} default when the field was omitted. The earlier JSON.parse / non-object
+// branches were dead code — the schema (z.record(z.string(), z.unknown()))
+// never delivers a string, an array, or null here.
 const coerceParams = (
   params: Record<string, unknown> | undefined,
-): Record<string, unknown> => {
-  if (!params) return {};
-  if (typeof params === 'string') {
-    try {
-      const parsed: unknown = JSON.parse(params);
-      return isPlainObject(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-  return isPlainObject(params) ? params : {};
-};
+): Record<string, unknown> => params ?? {};
 
 const SkillIdSchema = z.enum(
   skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
@@ -501,6 +495,9 @@ export function registerAgentTools(
           } catch (sendErr: any) {
             destroySession(mcpSessionId, token, proxy);
             if (!isRetry) {
+              log.warn(
+                `agent: ${cmd.method} failed (first attempt, retrying once): ${sendErr?.message ?? sendErr}`,
+              );
               return runCommands(true);
             }
             const classified = classifyAgentError({

@@ -54,9 +54,10 @@ export interface SnapshotResult {
   detectedChallenges?: string[];
 }
 
+import { createHash } from 'node:crypto';
 import { createSkillState } from '../skills/index.js';
 import type { SkillFireState } from '../skills/index.js';
-import { djb2 } from './amplitude.js';
+import { PROXY_FIELDS } from '../tools/schemas.js';
 import type { ProxyOptions } from '../tools/schemas.js';
 
 export interface ActiveSession {
@@ -112,15 +113,15 @@ const sweepSessions = (): void => {
   }
 };
 
-const PROXY_FIELDS = [
-  'proxy',
-  'proxyCountry',
-  'proxyState',
-  'proxyCity',
-  'proxySticky',
-  'proxyLocaleMatch',
-  'externalProxyServer',
-] as const;
+// Separator between the host segment (mcpSessionId or stdio:<hash>) and
+// the proxy fingerprint in a session key. NUL is illegal in any
+// user-supplied field, so the two segments cannot ambiguously concatenate.
+const KEY_SEP = '\u0000';
+
+// 64-bit truncation of SHA-256 — wide enough to make accidental collisions
+// astronomically unlikely, unlike the 32-bit djb2 used elsewhere.
+const sha256Short = (s: string): string =>
+  createHash('sha256').update(s).digest('hex').slice(0, 16);
 
 // Hash externalProxyServer rather than serializing it raw — the session key
 // is logged on eviction (closeAndDelete), and the URL may carry user:pass
@@ -131,15 +132,21 @@ const fingerprintValue = (
   value: unknown,
 ): string =>
   field === 'externalProxyServer'
-    ? `external#${djb2(String(value)).toString(36)}`
+    ? `external#${sha256Short(String(value))}`
     : String(value);
 
+/**
+ * Build a stable, credential-free key segment for a proxy config. Two
+ * logically identical configs produce the same fingerprint regardless of
+ * key order. `externalProxyServer` is SHA-256 hashed so credentials never
+ * land in the eviction log.
+ */
 export const proxyFingerprint = (proxy?: ProxyOptions): string => {
   if (!proxy) return '';
   const parts = PROXY_FIELDS.map((k) =>
     proxy[k] === undefined ? null : `${k}=${fingerprintValue(k, proxy[k])}`,
   ).filter(Boolean);
-  return parts.length ? '|' + parts.join('&') : '';
+  return parts.length ? KEY_SEP + parts.join('&') : '';
 };
 
 const getSessionKey = (
@@ -147,15 +154,20 @@ const getSessionKey = (
   token: string,
   proxy?: ProxyOptions,
 ): string =>
-  (mcpSessionId ?? `stdio:${djb2(token).toString(36)}`) +
-  proxyFingerprint(proxy);
+  (mcpSessionId ?? `stdio:${sha256Short(token)}`) + proxyFingerprint(proxy);
 
+/**
+ * Build the WebSocket URL for `/chromium/agent`. Normalizes trailing
+ * slashes on `apiUrl`, case-insensitively swaps http(s)→ws(s), and appends
+ * `token` plus any proxy params. Boolean proxy flags follow enterprise's
+ * presence-only contract: only set when truthy.
+ */
 export const buildAgentWsUrl = (
   apiUrl: string,
   token: string,
   proxy?: ProxyOptions,
 ): string => {
-  const base = apiUrl.replace(/^http/, 'ws').replace(/\/+$/, '');
+  const base = apiUrl.replace(/^http/i, 'ws').replace(/\/+$/, '');
   const url = new URL(base + '/chromium/agent');
   url.searchParams.set('token', token);
   if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
@@ -165,9 +177,24 @@ export const buildAgentWsUrl = (
   if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
   if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
   if (proxy?.proxyLocaleMatch) url.searchParams.set('proxyLocaleMatch', 'true');
+  if (proxy?.proxyPreset)
+    url.searchParams.set('proxyPreset', proxy.proxyPreset);
   if (proxy?.externalProxyServer)
     url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
   return url.toString();
+};
+
+// Best-effort interpretation of a WebSocket close code seen *during connect*.
+// Node's built-in WebSocket reports HTTP-upgrade failures as close events with
+// code 1006 (abnormal closure) and no reason string, which is why naive
+// "unknown error" messages dominate without this mapping.
+const describeConnectCloseCode = (code: number, reason: string): string => {
+  if (reason) return `code=${code}, reason="${reason}"`;
+  if (code === 1006)
+    return 'code=1006 (abnormal close during upgrade — likely auth (401), proxy plan-gate (401/403), or a network error reaching the server)';
+  if (code === 1008) return 'code=1008 (policy violation)';
+  if (code === 1011) return 'code=1011 (server error during upgrade)';
+  return `code=${code}`;
 };
 
 const connect = (
@@ -178,22 +205,49 @@ const connect = (
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(apiUrl, token, proxy);
     const ws = new WebSocket(wsUrl);
+    let settled = false;
 
     const timeout = setTimeout(() => {
-      ws.close();
+      if (settled) return;
+      settled = true;
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
       reject(new Error('Agent WebSocket connection timed out after 30s'));
     }, 30_000);
 
     ws.addEventListener('open', () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       resolve(ws);
     });
 
     ws.addEventListener('error', (event) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      const detail = (event as Event & { message?: string }).message;
+      reject(
+        new Error(
+          `Agent WebSocket connection failed${detail ? `: ${detail}` : ''}`,
+        ),
+      );
+    });
+
+    // Capture failed-upgrade information that the 'error' event drops on
+    // the floor (Node's WebSocket doesn't expose upgrade-response status).
+    // Close-during-connect carries the only useful diagnostic the runtime
+    // offers — surface it so users can distinguish auth from network failure.
+    ws.addEventListener('close', (event) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       reject(
         new Error(
-          `Agent WebSocket connection failed: ${(event as Event & { message?: string }).message ?? 'unknown error'}`,
+          `Agent WebSocket closed during connect: ${describeConnectCloseCode(event.code, event.reason || '')}`,
         ),
       );
     });
@@ -234,6 +288,10 @@ const sendMessage = (
       try {
         response = JSON.parse(String(event.data)) as AgentResponse;
       } catch {
+        console.error(
+          '[agent-client] dropping unparseable WS frame:',
+          String(event.data).slice(0, 200),
+        );
         return;
       }
       // Only accept the response whose id matches the request we sent.
@@ -381,6 +439,9 @@ export const closeSession = (
  * Force-destroy a session. Used when the server signals the browser has
  * crashed or the session is otherwise unrecoverable, so the next tool
  * call will create a fresh connection instead of reusing a dead one.
+ * Unlike `closeSession`, this also drops any in-flight connect for the
+ * same key so a concurrent `getOrCreateSession` won't resolve to a doomed
+ * WebSocket.
  */
 export const destroySession = (
   mcpSessionId: string | undefined,
@@ -397,4 +458,5 @@ export const destroySession = (
     }
     sessions.delete(key);
   }
+  pending.delete(key);
 };

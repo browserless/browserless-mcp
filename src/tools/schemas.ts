@@ -661,7 +661,7 @@ const AgentCommandSchema = z.union([
   GenericCommandSchema,
 ]);
 
-export const ProxyOptionsSchema = z.object({
+const ProxyOptionsObjectSchema = z.object({
   proxy: z
     .enum(['residential'])
     .optional()
@@ -672,23 +672,75 @@ export const ProxyOptionsSchema = z.object({
     .transform((v) => v.toLowerCase())
     .optional()
     .describe('ISO-2 country code (e.g. "us", "de"). Normalized to lowercase.'),
-  proxyState: z.string().optional(),
+  proxyState: z
+    .string()
+    .optional()
+    .describe(
+      'US state name (whitespace replaced with underscores, e.g. "new_york"). ' +
+        'Plan-gated — non-eligible tokens get a 401.',
+    ),
   proxyCity: z
     .string()
     .optional()
-    .describe('Requires enterprise license — non-enterprise tokens get 403.'),
+    .describe(
+      'City-level targeting. Requires paid/enterprise plan — non-eligible tokens get a 401.',
+    ),
   proxySticky: z
     .boolean()
     .optional()
-    .describe('Stable IP for the lifetime of this agent session.'),
-  proxyLocaleMatch: z.boolean().optional(),
+    .describe(
+      'Stable IP while the underlying WebSocket stays open. Reconnects ' +
+        '(idle drop, network blip, browser crash) allocate a new sticky id.',
+    ),
+  proxyLocaleMatch: z
+    .boolean()
+    .optional()
+    .describe('Match navigator locale to the proxy IP country.'),
+  proxyPreset: z
+    .string()
+    .optional()
+    .describe(
+      'Named proxy preset (e.g. "px_amazon01"). Supported presets are ' +
+        'plan-dependent; ask Browserless support for the list available to your token.',
+    ),
   externalProxyServer: z
     .string()
-    .url()
+    .regex(
+      /^https?:\/\//i,
+      'externalProxyServer must start with http:// or https://',
+    )
     .optional()
     .describe('Bring-your-own upstream, e.g. http://user:pass@host:port'),
 });
+
+const DEPENDENT_PROXY_FIELDS = [
+  'proxyCountry',
+  'proxyState',
+  'proxyCity',
+  'proxySticky',
+  'proxyLocaleMatch',
+  'proxyPreset',
+] as const;
+
+export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
+  (v) => {
+    const hasDependent = DEPENDENT_PROXY_FIELDS.some(
+      (k) => v[k] !== undefined,
+    );
+    return !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer;
+  },
+  {
+    message:
+      'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
+      "require proxy: 'residential' or externalProxyServer to be set; otherwise the API silently ignores them.",
+  },
+);
+
 export type ProxyOptions = z.infer<typeof ProxyOptionsSchema>;
+
+export const PROXY_FIELDS = Object.keys(
+  ProxyOptionsObjectSchema.shape,
+) as Array<keyof ProxyOptions>;
 
 export const AgentParamsSchema = z.object({
   method: z
@@ -714,8 +766,8 @@ export const AgentParamsSchema = z.object({
         'type email + type password + click submit). Do NOT batch across navigations.',
     ),
   proxy: ProxyOptionsSchema.optional().describe(
-    'Residential / external proxy config. Set at session creation. ' +
-      'Changing requires close() + new session.',
+    'Residential / external proxy config. Read once at session creation. ' +
+      'Changing requires close() + a new session call.',
   ),
 });
 
