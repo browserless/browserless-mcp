@@ -221,4 +221,23 @@ describe('profile field (shared profileField helper)', () => {
     });
     expect(result.success).to.equal(false);
   });
+
+  it('trims surrounding whitespace from a profile name', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      profile: '  my-login  ',
+    });
+    expect(parsed.profile).to.equal('my-login');
+  });
+
+  it('rejects a whitespace-only profile name', () => {
+    // After .trim() a whitespace-only value is empty, so .min(1) rejects it.
+    const result = AgentParamsSchema.safeParse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      profile: '   ',
+    });
+    expect(result.success).to.equal(false);
+  });
 });

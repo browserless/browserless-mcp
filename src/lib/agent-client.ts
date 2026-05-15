@@ -55,18 +55,79 @@ export interface SnapshotResult {
 }
 
 import { createHash } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
+import WebSocket from 'ws';
 import { createSkillState } from '../skills/index.js';
 import type { SkillFireState } from '../skills/index.js';
 import { PROXY_FIELDS } from '../tools/schemas.js';
 import type { ProxyOptions } from '../tools/schemas.js';
 
+/**
+ * Thrown when the agent WebSocket upgrade is rejected with a non-101 HTTP
+ * response. Carries the server's status code and response body so the tool
+ * layer can render a status-specific UserError.
+ */
+export class UpgradeError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    public readonly statusMessage: string,
+    public readonly body: string,
+  ) {
+    const detail = body.trim() || statusMessage || 'no body';
+    super(`Agent WebSocket upgrade rejected: HTTP ${statusCode} — ${detail}`);
+    this.name = 'UpgradeError';
+  }
+}
+
+/**
+ * Specialization of UpgradeError for the profile-not-found case (HTTP 404 on
+ * the WS upgrade when `?profile=` was supplied). Mirrors the typed error in
+ * api-client.ts so smart-scrape, crawl, and agent all surface profile errors
+ * through the same UserError pattern.
+ */
+// Reject server bodies that are obviously not a real message — empty, just
+// whitespace, or a literal `null`/`undefined` from a misbehaving JSON layer.
+// In those cases we'd rather surface the canned fallback than echo garbage.
+const isMeaningfulBody = (s: string): boolean =>
+  s.length > 0 && !/^(?:null|undefined)$/i.test(s);
+
+export class ProfileNotFoundError extends UpgradeError {
+  constructor(
+    public readonly profile: string,
+    statusMessage: string,
+    body: string,
+  ) {
+    super(404, statusMessage, body);
+    this.name = 'ProfileNotFoundError';
+    const trimmed = body.trim();
+    this.message = isMeaningfulBody(trimmed)
+      ? trimmed
+      : `Profile "${profile}" was not found for the configured token.`;
+  }
+}
+
+// Upgrade statuses where a one-shot retry cannot help: the request is
+// structurally bad (400), auth is wrong (401), the plan or policy forbids it
+// (403), or a referenced resource is absent (404). Retrying just wastes time
+// and emits a misleading "second attempt also failed" message to the user.
+const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404]);
+
+export const isRetryableUpgradeError = (err: unknown): boolean => {
+  if (err instanceof UpgradeError) {
+    return !NON_RETRYABLE_UPGRADE_STATUSES.has(err.statusCode);
+  }
+  return true;
+};
+
 export interface ActiveSession {
   ws: WebSocket;
   msgId: number;
-  apiUrl: string;
-  token: string;
-  proxy?: ProxyOptions;
-  profile?: string;
+  // Identity fields: these feed the session-cache key (see getSessionKey).
+  // Mutating them post-creation would desync the cache, so they're readonly.
+  readonly apiUrl: string;
+  readonly token: string;
+  readonly proxy?: ProxyOptions;
+  readonly profile?: string;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;
@@ -194,18 +255,111 @@ export const buildAgentWsUrl = (
   return url.toString();
 };
 
-// Best-effort interpretation of a WebSocket close code seen *during connect*.
-// Node's built-in WebSocket reports HTTP-upgrade failures as close events with
-// code 1006 (abnormal closure) and no reason string, which is why naive
-// "unknown error" messages dominate without this mapping.
+// HTTP-status failures arrive on `unexpected-response` (typed as
+// UpgradeError), so a 1006 close here only means a transport failure or a
+// server crash before any HTTP response.
 const describeConnectCloseCode = (code: number, reason: string): string => {
   if (reason) return `code=${code}, reason="${reason}"`;
   if (code === 1006)
-    return 'code=1006 (abnormal close during upgrade — likely auth (401), proxy plan-gate (401/403), an unknown profile for the configured token, or a network error reaching the server)';
+    return 'code=1006 (abnormal close before HTTP response — likely a network failure or server crash)';
   if (code === 1008) return 'code=1008 (policy violation)';
   if (code === 1011) return 'code=1011 (server error during upgrade)';
   return `code=${code}`;
 };
+
+// Decode the Node `Error.code` field that `ws` propagates from the underlying
+// socket on transport failure (DNS, refused connection, TLS validation).
+const describeConnectErrorCode = (err: unknown): string | undefined => {
+  if (!err || typeof err !== 'object') return;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code !== 'string') return;
+  switch (code) {
+    case 'ENOTFOUND':
+      return 'DNS resolution failed (ENOTFOUND) — verify the apiUrl host';
+    case 'ECONNREFUSED':
+      return 'Connection refused (ECONNREFUSED) — server may be down or the port is blocked';
+    case 'ETIMEDOUT':
+      return 'Connection timed out (ETIMEDOUT) — network or firewall issue';
+    case 'ECONNRESET':
+      return 'Connection reset by peer (ECONNRESET)';
+    case 'CERT_HAS_EXPIRED':
+      return 'TLS certificate expired (CERT_HAS_EXPIRED)';
+    case 'UNABLE_TO_VERIFY_LEAF_SIGNATURE':
+    case 'DEPTH_ZERO_SELF_SIGNED_CERT':
+    case 'SELF_SIGNED_CERT_IN_CHAIN':
+      return `TLS verification failed (${code})`;
+    default:
+      return `network error (${code})`;
+  }
+};
+
+// Bound the body buffer so a misbehaving or malicious server can't OOM the
+// MCP process by streaming gigabytes into an error response. 64 KiB is far
+// more than any legitimate plain-text error or sanitized HTML page needs.
+const MAX_UPGRADE_BODY_BYTES = 64 * 1024;
+
+const TRUNCATION_MARKER = `\n…[response truncated at ${MAX_UPGRADE_BODY_BYTES} bytes]`;
+
+const readUpgradeError = (
+  res: IncomingMessage,
+  profile: string | undefined,
+): Promise<UpgradeError> =>
+  new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let truncated = false;
+    let settled = false;
+
+    const onData = (chunk: Buffer): void => {
+      if (settled) return;
+      total += chunk.length;
+      if (total > MAX_UPGRADE_BODY_BYTES) {
+        const overflow = total - MAX_UPGRADE_BODY_BYTES;
+        chunks.push(chunk.subarray(0, chunk.length - overflow));
+        truncated = true;
+        // Resolve eagerly with the truncated payload — `res.destroy()` may
+        // suppress the 'end' event, so don't wait for it.
+        res.destroy();
+        finish();
+        return;
+      }
+      chunks.push(chunk);
+    };
+
+    const onError = (err: Error): void => {
+      // Stream errors mid-body (TLS abort, decompression failure) would
+      // otherwise vanish into an UpgradeError with a partial body. Log so
+      // operators see the root cause; still settle with whatever was buffered.
+      console.error(`[agent-client] upgrade-response stream error: ${err.message}`);
+      finish();
+    };
+
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      res.off('data', onData);
+      res.off('end', finish);
+      res.off('error', onError);
+      res.off('close', finish);
+      // Some upstream stacks prepend an extra CRLF between the header block
+      // and the body — trim so renderers don't open with a blank line.
+      let body = Buffer.concat(chunks).toString('utf8').trim();
+      if (truncated) body += TRUNCATION_MARKER;
+      const status = res.statusCode ?? 0;
+      const statusMessage = res.statusMessage ?? '';
+      if (status === 404 && profile) {
+        resolve(new ProfileNotFoundError(profile, statusMessage, body));
+        return;
+      }
+      resolve(new UpgradeError(status, statusMessage, body));
+    };
+
+    res.on('data', onData);
+    res.on('end', finish);
+    res.on('error', onError);
+    // `res.destroy()` can fire 'close' without 'end' or 'error'; settle here too.
+    res.on('close', finish);
+  });
 
 const connect = (
   apiUrl: string,
@@ -218,47 +372,61 @@ const connect = (
     const ws = new WebSocket(wsUrl);
     let settled = false;
 
-    const timeout = setTimeout(() => {
+    const settle = (err: Error | null, value?: WebSocket): void => {
       if (settled) return;
       settled = true;
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
+      clearTimeout(timeout);
+      if (err) {
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+        reject(err);
+      } else {
+        resolve(value!);
       }
-      reject(new Error('Agent WebSocket connection timed out after 30s'));
+    };
+
+    const timeout = setTimeout(() => {
+      settle(new Error('Agent WebSocket connection timed out after 30s'));
     }, 30_000);
 
-    ws.addEventListener('open', () => {
+    ws.on('open', () => settle(null, ws));
+
+    // Claim `settled` synchronously so the close/error events that race the
+    // async body read can't overwrite the typed UpgradeError we're building.
+    ws.on('unexpected-response', (_req, res) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      resolve(ws);
+      readUpgradeError(res, profile).then((err) => {
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+        reject(err);
+      });
     });
 
-    ws.addEventListener('error', (event) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      const detail = (event as Event & { message?: string }).message;
-      reject(
+    ws.on('error', (err: Error) => {
+      const decoded = describeConnectErrorCode(err);
+      const detail = decoded ?? err.message ?? '';
+      settle(
         new Error(
           `Agent WebSocket connection failed${detail ? `: ${detail}` : ''}`,
         ),
       );
     });
 
-    // Capture failed-upgrade information that the 'error' event drops on
-    // the floor (Node's WebSocket doesn't expose upgrade-response status).
-    // Close-during-connect carries the only useful diagnostic the runtime
-    // offers — surface it so users can distinguish auth from network failure.
-    ws.addEventListener('close', (event) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(
+    // Close before settle means the transport dropped without ever producing
+    // an HTTP response; auth/proxy/profile failures are handled by the
+    // `unexpected-response` branch above.
+    ws.on('close', (code: number, reason: Buffer) => {
+      settle(
         new Error(
-          `Agent WebSocket closed during connect: ${describeConnectCloseCode(event.code, event.reason || '')}`,
+          `Agent WebSocket closed during connect: ${describeConnectCloseCode(code, reason?.toString('utf8') || '')}`,
         ),
       );
     });
@@ -272,8 +440,8 @@ const sendMessage = (
   new Promise((resolve, reject) => {
     const cleanup = () => {
       clearTimeout(timeout);
-      ws.removeEventListener('message', handler);
-      ws.removeEventListener('close', closeHandler);
+      ws.off('message', handler);
+      ws.off('close', closeHandler);
     };
 
     const timeout = setTimeout(() => {
@@ -294,14 +462,15 @@ const sendMessage = (
       );
     };
 
-    const handler = (event: MessageEvent) => {
+    const handler = (data: WebSocket.RawData) => {
       let response: AgentResponse;
+      const raw = data.toString('utf8');
       try {
-        response = JSON.parse(String(event.data)) as AgentResponse;
+        response = JSON.parse(raw) as AgentResponse;
       } catch {
         console.error(
           '[agent-client] dropping unparseable WS frame:',
-          String(event.data).slice(0, 200),
+          raw.slice(0, 200),
         );
         return;
       }
@@ -311,8 +480,8 @@ const sendMessage = (
       resolve(response);
     };
 
-    ws.addEventListener('message', handler);
-    ws.addEventListener('close', closeHandler);
+    ws.on('message', handler);
+    ws.on('close', closeHandler);
     ws.send(JSON.stringify(msg));
   });
 
@@ -360,10 +529,10 @@ export const getOrCreateSession = async (
     };
 
     // Auto-cleanup on close
-    ws.addEventListener('close', (event) => {
-      if (event.code !== 1000) {
+    ws.on('close', (code: number, reason: Buffer) => {
+      if (code !== 1000) {
         console.error(
-          `[agent-client] WebSocket closed unexpectedly: code=${event.code} reason=${event.reason || 'none'}`,
+          `[agent-client] WebSocket closed unexpectedly: code=${code} reason=${reason?.toString('utf8') || 'none'}`,
         );
       }
       const current = sessions.get(key);
@@ -413,7 +582,7 @@ export const send = async (
 
       const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
       if (key) {
-        ws.addEventListener('close', () => {
+        ws.on('close', () => {
           const current = sessions.get(key);
           if (current?.ws === ws) {
             sessions.delete(key);
