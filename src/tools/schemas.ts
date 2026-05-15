@@ -668,9 +668,10 @@ export const ProxyOptionsSchema = z.object({
     .describe('Routing tier. Only "residential" is supported today.'),
   proxyCountry: z
     .string()
-    .length(2)
+    .regex(/^[A-Za-z]{2}$/, 'Must be a 2-letter ISO-2 country code')
+    .transform((v) => v.toLowerCase())
     .optional()
-    .describe('ISO-2 country code (e.g. "us", "de"). Lowercase preferred.'),
+    .describe('ISO-2 country code (e.g. "us", "de"). Normalized to lowercase.'),
   proxyState: z.string().optional(),
   proxyCity: z
     .string()
@@ -713,7 +714,7 @@ export const AgentParamsSchema = z.object({
         'type email + type password + click submit). Do NOT batch across navigations.',
     ),
   proxy: ProxyOptionsSchema.optional().describe(
-    'Residential / external proxy config. Set at session create time. ' +
+    'Residential / external proxy config. Set at session creation. ' +
       'Changing requires close() + new session.',
   ),
 });

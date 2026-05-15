@@ -55,7 +55,7 @@ Pass a top-level `proxy` object on `browserless_agent` to route the session thro
 | `proxyLocaleMatch`    | Match browser locale to the proxy geo.                              |
 | `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`.         |
 
-The `proxy` object is read once at session create. To change it, call `close` and start a new session — the agent client keys sessions on the proxy fingerprint, so passing a different config will land on a fresh WebSocket.
+The `proxy` object is read once at session creation. To change it, call `close` and start a new session — the agent client keys sessions on the proxy fingerprint, so passing a different config will land on a fresh WebSocket.
 
 ## Configuration
 

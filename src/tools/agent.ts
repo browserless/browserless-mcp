@@ -82,7 +82,7 @@ Pass top-level \`proxy\` to route the session through residential IPs. Use this 
 - \`proxySticky: true\` — same IP for the session (resets on reconnect after a WS drop)
 - \`externalProxyServer: "http://u:p@host:port"\` — bring-your-own upstream
 - \`proxyCity\` requires an enterprise license; non-enterprise tokens get a 403.
-The \`proxy\` object is read once at session create. To change it, run \`close\` and start a new session.
+The \`proxy\` object is read once at session creation. To change it, run \`close\` and start a new session.
 
 ## Skills (auto-injected guidance)
 When the page or an error involves a non-trivial mechanic, a SKILL block will be auto-injected into your response between \`--- SKILL: <id> ---\` and \`--- END SKILL ---\` markers. Read it carefully — it contains the exact recipe.
@@ -328,18 +328,22 @@ export const formatScreenshotContent = (
   return content;
 };
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v);
+
 const coerceParams = (
   params: Record<string, unknown> | undefined,
 ): Record<string, unknown> => {
   if (!params) return {};
   if (typeof params === 'string') {
     try {
-      return JSON.parse(params);
+      const parsed: unknown = JSON.parse(params);
+      return isPlainObject(parsed) ? parsed : {};
     } catch {
       return {};
     }
   }
-  return params;
+  return isPlainObject(params) ? params : {};
 };
 
 const SkillIdSchema = z.enum(
