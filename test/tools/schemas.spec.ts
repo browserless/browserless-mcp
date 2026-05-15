@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   AgentParamsSchema,
+  FunctionParamsSchema,
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/tools/schemas.js';
@@ -174,5 +175,50 @@ describe('AgentParamsSchema.proxy', () => {
       params: { url: 'https://example.com' },
     });
     expect(parsed.proxy).to.be.undefined;
+  });
+});
+
+// The shared `profileField` helper refines profile names to reject NUL
+// characters — the session-key separator in agent-client.ts is '\u0000',
+// so a profile containing NUL could collide with another key. These tests
+// lock that refinement in across any schema that uses profileField.
+describe('profile field (shared profileField helper)', () => {
+  it('accepts a normal profile name', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      profile: 'user123',
+    });
+    expect(parsed.profile).to.equal('user123');
+  });
+
+  it('accepts a profile name omitted', () => {
+    const parsed = FunctionParamsSchema.parse({ code: 'x' });
+    expect(parsed.profile).to.be.undefined;
+  });
+
+  it('rejects a profile name containing NUL (agent schema)', () => {
+    const result = AgentParamsSchema.safeParse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      profile: 'bad\u0000name',
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('rejects a profile name containing NUL (function schema)', () => {
+    const result = FunctionParamsSchema.safeParse({
+      code: 'x',
+      profile: 'bad\u0000name',
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('rejects an empty profile name', () => {
+    const result = FunctionParamsSchema.safeParse({
+      code: 'x',
+      profile: '',
+    });
+    expect(result.success).to.equal(false);
   });
 });

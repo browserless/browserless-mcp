@@ -14,12 +14,25 @@ export const ScrapeFormatSchema = z.enum([
 
 export type ScrapeFormat = z.infer<typeof ScrapeFormatSchema>;
 
-function profileDescription(whenLoaded: string): string {
-  return (
+/**
+ * Build the schema for an optional profile field. The NUL refinement protects
+ * the session-key separator used in agent-client.ts (KEY_SEP = '\u0000') —
+ * a profile name containing NUL could otherwise collide with another key.
+ */
+function profileField(whenLoaded: string, extra = '') {
+  const description =
     `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
-    "The profile's cookies, localStorage, and IndexedDB are loaded into the session before navigation. " +
-    'The profile must already exist for the API token in use.'
-  );
+    "The profile's cookies, localStorage, and IndexedDB are restored into the session before the request runs. " +
+    'The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session first.' +
+    extra;
+  return z
+    .string()
+    .min(1)
+    .refine((v) => !v.includes('\u0000'), {
+      message: 'profile must not contain NUL characters',
+    })
+    .optional()
+    .describe(description);
 }
 
 export const PowerScraperParamsSchema = z.object({
@@ -37,11 +50,7 @@ export const PowerScraperParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds'),
-  profile: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(profileDescription('before scraping')),
+  profile: profileField('before scraping'),
 });
 
 export type PowerScraperParams = z.infer<typeof PowerScraperParamsSchema>;
@@ -87,6 +96,7 @@ export const FunctionParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds'),
+  profile: profileField('before the function executes'),
 });
 
 export type FunctionParams = z.infer<typeof FunctionParamsSchema>;
@@ -113,6 +123,7 @@ export const DownloadParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds'),
+  profile: profileField('before the download script runs'),
 });
 
 export type DownloadParams = z.infer<typeof DownloadParamsSchema>;
@@ -169,6 +180,7 @@ export const ExportParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds'),
+  profile: profileField('before the page is exported'),
 });
 
 export type ExportParams = z.infer<typeof ExportParamsSchema>;
@@ -769,6 +781,11 @@ export const AgentParamsSchema = z.object({
     'Residential / external proxy config. Read once at session creation. ' +
       'Changing requires close() + a new session call.',
   ),
+  profile: profileField(
+    'when the agent session connects',
+    ' The profile is fixed for the lifetime of the agent session; ' +
+      'passing a different profile value opens a separate browser session.',
+  ),
 });
 
 /* ------------------------------------------------------------------ */
@@ -1014,6 +1031,7 @@ export const PerformanceParamsSchema = z.object({
     .positive()
     .optional()
     .describe('Request timeout in milliseconds (audits can take 30s–120s)'),
+  profile: profileField('before the Lighthouse audit runs'),
 });
 
 export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
@@ -1176,11 +1194,7 @@ export const CrawlParamsSchema = z.object({
     .describe(
       'HTTP request timeout in milliseconds for API calls (default: 30000)',
     ),
-  profile: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(profileDescription('before each page is scraped')),
+  profile: profileField('before each page is scraped'),
 });
 
 export type CrawlParams = z.infer<typeof CrawlParamsSchema>;

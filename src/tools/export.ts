@@ -1,7 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { ExportParamsSchema } from './schemas.js';
-import { createApiClient } from '../lib/api-client.js';
+import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
 import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
 import type { McpConfig } from '../config.js';
 
@@ -51,14 +51,28 @@ export function registerExportTool(
         browserlessApiUrl: apiUrl,
       });
 
-      const response = await client.exportPage({
-        url: args.url,
-        gotoOptions: args.gotoOptions,
-        bestAttempt: args.bestAttempt,
-        includeResources: args.includeResources,
-        waitForTimeout: args.waitForTimeout,
-        timeout: args.timeout,
-      });
+      let response;
+      try {
+        response = await client.exportPage({
+          url: args.url,
+          gotoOptions: args.gotoOptions,
+          bestAttempt: args.bestAttempt,
+          includeResources: args.includeResources,
+          waitForTimeout: args.waitForTimeout,
+          timeout: args.timeout,
+          profile: args.profile,
+        });
+      } catch (err) {
+        if (err instanceof ProfileNotFoundError) {
+          throw new UserError(
+            `Profile "${err.profile}" was not found for the configured API ` +
+              `token. Create the profile with Browserless.saveProfile in a ` +
+              `live session first, or omit the profile parameter to export ` +
+              `the page anonymously.`,
+          );
+        }
+        throw err;
+      }
 
       await reportProgress({ progress: 100, total: 100 });
 
@@ -73,6 +87,7 @@ export function registerExportTool(
         content_type: response.contentType,
         size: response.size,
         include_resources: args.includeResources ?? false,
+        profile_used: !!args.profile,
       }).catch(() => {});
 
       if (!response.ok) {

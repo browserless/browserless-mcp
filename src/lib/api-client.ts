@@ -44,7 +44,7 @@ export class ProfileNotFoundError extends Error {
 }
 
 /**
- * If the response is a 404 from /smart-scrape or /crawl with a profile set,
+ * If the response is a 404 from a profile-aware endpoint with a profile set,
  * throw a typed ProfileNotFoundError so the caller can surface it as a
  * UserError. We treat any 404 + profile as profile-not-found regardless of
  * body shape — the error body varies (`error` / `message` / `detail` /
@@ -101,12 +101,14 @@ export interface FunctionRequest {
   code: string;
   context?: Record<string, unknown>;
   timeout?: number;
+  profile?: string;
 }
 
 export interface DownloadRequest {
   code: string;
   context?: Record<string, unknown>;
   timeout?: number;
+  profile?: string;
 }
 
 export interface ExportRequest {
@@ -116,6 +118,7 @@ export interface ExportRequest {
   includeResources?: boolean;
   waitForTimeout?: number;
   timeout?: number;
+  profile?: string;
 }
 
 export interface SearchRequest {
@@ -151,6 +154,7 @@ export interface PerformanceRequest {
   categories?: LighthouseCategory[];
   budgets?: Array<Record<string, unknown>>;
   timeout?: number;
+  profile?: string;
 }
 
 export interface CrawlRequest {
@@ -210,11 +214,15 @@ export function createApiClient(
     body: Record<string, unknown>,
     contentType: string,
     timeout: number,
+    profile?: string,
   ): Promise<GenericApiResult> {
     const queryParams = new URLSearchParams({
       token: config.browserlessToken!,
       timeout: String(timeout),
     });
+    if (profile) {
+      queryParams.set('profile', profile);
+    }
 
     const apiUrl = `${config.browserlessApiUrl}${path}?${queryParams.toString()}`;
 
@@ -230,6 +238,8 @@ export function createApiClient(
             body: JSON.stringify(body),
             signal: controller.signal,
           });
+
+          await throwIfProfileMissing(res, profile);
 
           if (!res.ok && res.status >= 500) {
             throw new Error(`Server error ${res.status}: ${res.statusText}`);
@@ -272,6 +282,7 @@ export function createApiClient(
         maxRetries: config.maxRetries,
         baseDelayMs: 1000,
         shouldRetry: (error: Error) => {
+          if (error instanceof ProfileNotFoundError) return false;
           return !error.message.startsWith('Server error 4');
         },
       },
@@ -332,11 +343,11 @@ export function createApiClient(
               signal: controller.signal,
             });
 
+            await throwIfProfileMissing(res, params.profile);
+
             if (!res.ok && res.status >= 500) {
               throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
-
-            await throwIfProfileMissing(res, params.profile);
 
             // Reject any remaining 4xx before parsing or caching — a 400/401/403
             // body must not be returned as a valid PowerScraperResponse, and
@@ -374,7 +385,13 @@ export function createApiClient(
       if (params.context !== undefined) {
         body.context = params.context;
       }
-      return postGeneric('/function', body, 'application/json', timeout);
+      return postGeneric(
+        '/function',
+        body,
+        'application/json',
+        timeout,
+        params.profile,
+      );
     },
 
     /* ---- download (/download) ------------------------------------ */
@@ -384,7 +401,13 @@ export function createApiClient(
       if (params.context !== undefined) {
         body.context = params.context;
       }
-      return postGeneric('/download', body, 'application/json', timeout);
+      return postGeneric(
+        '/download',
+        body,
+        'application/json',
+        timeout,
+        params.profile,
+      );
     },
 
     /* ---- exportPage (/export) ------------------------------------ */
@@ -403,7 +426,13 @@ export function createApiClient(
       if (params.waitForTimeout !== undefined) {
         body.waitForTimeout = params.waitForTimeout;
       }
-      return postGeneric('/export', body, 'application/json', timeout);
+      return postGeneric(
+        '/export',
+        body,
+        'application/json',
+        timeout,
+        params.profile,
+      );
     },
 
     /* ---- getStatus (existing) ------------------------------------ */
@@ -499,6 +528,9 @@ export function createApiClient(
         token: config.browserlessToken!,
         timeout: String(timeout),
       });
+      if (params.profile) {
+        queryParams.set('profile', params.profile);
+      }
 
       const apiUrl = `${config.browserlessApiUrl}/performance?${queryParams.toString()}`;
 
@@ -535,6 +567,8 @@ export function createApiClient(
               signal: controller.signal,
             });
 
+            await throwIfProfileMissing(res, params.profile);
+
             if (!res.ok && res.status >= 500) {
               throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
@@ -555,6 +589,7 @@ export function createApiClient(
           maxRetries: config.maxRetries,
           baseDelayMs: 1000,
           shouldRetry: (error: Error) => {
+            if (error instanceof ProfileNotFoundError) return false;
             return !error.message.startsWith('Server error 4');
           },
         },
@@ -665,11 +700,11 @@ export function createApiClient(
               signal: controller.signal,
             });
 
+            await throwIfProfileMissing(res, params.profile);
+
             if (!res.ok && res.status >= 500) {
               throw new Error(`Server error ${res.status}: ${res.statusText}`);
             }
-
-            await throwIfProfileMissing(res, params.profile);
 
             // The /crawl endpoint returns a structured
             // `{ success: false, error: string }` body on some 4xx responses
