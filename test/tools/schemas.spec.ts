@@ -53,18 +53,14 @@ describe('ProxyOptionsSchema', () => {
       const parsed = ProxyOptionsSchema.parse({
         externalProxyServer: 'http://user:pass@host:8080',
       });
-      expect(parsed.externalProxyServer).to.equal(
-        'http://user:pass@host:8080',
-      );
+      expect(parsed.externalProxyServer).to.equal('http://user:pass@host:8080');
     });
 
     it('accepts https:// upstreams', () => {
       const parsed = ProxyOptionsSchema.parse({
         externalProxyServer: 'https://proxy.example.com',
       });
-      expect(parsed.externalProxyServer).to.equal(
-        'https://proxy.example.com',
-      );
+      expect(parsed.externalProxyServer).to.equal('https://proxy.example.com');
     });
 
     it('rejects non-http schemes', () => {
@@ -121,18 +117,14 @@ describe('ProxyOptionsSchema', () => {
     });
 
     it('rejects geo field without proxy or externalProxyServer', () => {
-      expect(() =>
-        ProxyOptionsSchema.parse({ proxyCountry: 'us' }),
-      ).to.throw();
+      expect(() => ProxyOptionsSchema.parse({ proxyCountry: 'us' })).to.throw();
       expect(() =>
         ProxyOptionsSchema.parse({ proxyState: 'new_york' }),
       ).to.throw();
       expect(() =>
         ProxyOptionsSchema.parse({ proxyCity: 'denver' }),
       ).to.throw();
-      expect(() =>
-        ProxyOptionsSchema.parse({ proxySticky: true }),
-      ).to.throw();
+      expect(() => ProxyOptionsSchema.parse({ proxySticky: true })).to.throw();
       expect(() =>
         ProxyOptionsSchema.parse({ proxyLocaleMatch: true }),
       ).to.throw();

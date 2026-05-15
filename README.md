@@ -45,16 +45,16 @@ Pass a top-level `proxy` object on `browserless_agent` to route the session thro
 }
 ```
 
-| Field                 | Notes                                                                                                                                          |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `proxy`               | `"residential"` — only value supported today.                                                                                                  |
-| `proxyCountry`        | ISO-2 country code (`"us"`, `"de"`). Auto-normalized to lowercase. Non-letter values are rejected.                                             |
-| `proxyState`          | US state name with whitespace replaced by underscores (`"new_york"`). Paid-plan gated — non-eligible tokens get a 401.                         |
-| `proxyCity`           | City target. Paid/enterprise plan gated — non-eligible tokens get a 401.                                                                       |
-| `proxySticky`         | Stable IP while the underlying WebSocket stays open. Reconnects (idle drop, network blip, browser crash) allocate a new sticky id and new IP.  |
-| `proxyLocaleMatch`    | Match `navigator` locale to the proxy IP country.                                                                                              |
-| `proxyPreset`         | Named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.                             |
-| `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`. Must be `http://` or `https://`.                                                   |
+| Field                 | Notes                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proxy`               | `"residential"` — only value supported today.                                                                                                 |
+| `proxyCountry`        | ISO-2 country code (`"us"`, `"de"`). Auto-normalized to lowercase. Non-letter values are rejected.                                            |
+| `proxyState`          | US state name with whitespace replaced by underscores (`"new_york"`). Paid-plan gated — non-eligible tokens get a 401.                        |
+| `proxyCity`           | City target. Paid/enterprise plan gated — non-eligible tokens get a 401.                                                                      |
+| `proxySticky`         | Stable IP while the underlying WebSocket stays open. Reconnects (idle drop, network blip, browser crash) allocate a new sticky id and new IP. |
+| `proxyLocaleMatch`    | Match `navigator` locale to the proxy IP country.                                                                                             |
+| `proxyPreset`         | Named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.                            |
+| `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`. Must be `http://` or `https://`.                                                  |
 
 > **Note:** `proxyCountry` / `proxyState` / `proxyCity` / `proxySticky` / `proxyLocaleMatch` / `proxyPreset` require either `proxy: "residential"` or `externalProxyServer` to be set. The MCP rejects this combination at validation time; without it, the API would silently ignore them.
 

@@ -724,10 +724,10 @@ const DEPENDENT_PROXY_FIELDS = [
 
 export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   (v) => {
-    const hasDependent = DEPENDENT_PROXY_FIELDS.some(
-      (k) => v[k] !== undefined,
+    const hasDependent = DEPENDENT_PROXY_FIELDS.some((k) => v[k] !== undefined);
+    return (
+      !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer
     );
-    return !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer;
   },
   {
     message:
