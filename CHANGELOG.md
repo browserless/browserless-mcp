@@ -1,6 +1,13 @@
 # Latest
 - Emit Amplitude `MCP Tool Request` events for the `browserless_agent` and `browserless_skill` tools
 
+# 1.3.4
+- Add profile parameter to agent, function, download, export, and performance tools
+
+# 1.3.3
+- Add profile parameter to smartscraper and crawl tools
+- Implement error classification and cross-origin notice handling
+
 # 1.3.2
 - Anable Devin domains for OAuth
 
