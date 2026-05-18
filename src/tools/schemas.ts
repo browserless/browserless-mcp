@@ -27,6 +27,7 @@ function profileField(whenLoaded: string, extra = '') {
     extra;
   return z
     .string()
+    .trim()
     .min(1)
     .refine((v) => !v.includes('\u0000'), {
       message: 'profile must not contain NUL characters',

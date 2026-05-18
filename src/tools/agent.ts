@@ -7,6 +7,9 @@ import {
   send,
   closeSession,
   destroySession,
+  isRetryableUpgradeError,
+  ProfileNotFoundError,
+  UpgradeError,
 } from '../lib/agent-client.js';
 import type { SnapshotResult, SnapshotElement } from '../lib/agent-client.js';
 import { classifyAgentError } from '../lib/error-classifier.js';
@@ -72,6 +75,75 @@ export const formatErrorMessage = (opts: {
   parts.push(`Recovery: ${opts.recovery}`);
   if (opts.snapshotText) parts.push(`Updated snapshot:\n${opts.snapshotText}`);
   return parts.join('\n\n');
+};
+
+// Anchored to known HTML root tags so plain-text bodies containing `<`
+// (e.g. URLs in angle brackets) aren't mistakenly tag-stripped.
+const HTML_BODY_PROBE = /^<(?:!doctype\s+html|html|head|body|title|center)\b/i;
+const HTML_TAG = /<[^>]+>/g;
+const COLLAPSE_WS = /\s+/g;
+const SANITIZED_BODY_MAX_LEN = 200;
+
+/**
+ * Sanitize a server-returned error body for inclusion in a UserError. Nginx
+ * default error pages (502/503/504 when upstream is down) come back as full
+ * HTML documents that bloat the message and confuse the LLM. Strip tags and
+ * cap the length so the UserError stays readable.
+ */
+export const sanitizeUpgradeBody = (body: string): string => {
+  const trimmed = body.trim();
+  if (!trimmed) return '';
+  const cleaned = HTML_BODY_PROBE.test(trimmed)
+    ? trimmed.replace(HTML_TAG, ' ').replace(COLLAPSE_WS, ' ').trim()
+    : trimmed;
+  return cleaned.length > SANITIZED_BODY_MAX_LEN
+    ? `${cleaned.slice(0, SANITIZED_BODY_MAX_LEN)}…`
+    : cleaned;
+};
+
+/**
+ * Translate a connect-time error into UserError-ready text. Typed
+ * UpgradeErrors carry the server's HTTP response so we can give status-aware
+ * guidance instead of the generic "Failed to connect" line. Anything else
+ * (network, timeout, post-upgrade) falls through to the plain message.
+ */
+export const formatConnectError = (err: unknown): string => {
+  if (err instanceof ProfileNotFoundError) {
+    return (
+      `Profile "${err.profile}" was not found for the configured API ` +
+      `token. Create the profile with Browserless.saveProfile in a live ` +
+      `session first, or omit the profile parameter to run the agent ` +
+      `anonymously.`
+    );
+  }
+  if (err instanceof UpgradeError) {
+    // Both LB-injected (ngx.exit(N) with empty body, or nginx default HTML
+    // for 502/503/504) and enterprise responses pass through this branch.
+    // sanitizeUpgradeBody handles the HTML bloat case. For named statuses we
+    // only render the body when present — the reason phrase ("Unauthorized")
+    // is already implied by the status code and would just add noise.
+    const detail = sanitizeUpgradeBody(err.body);
+    switch (err.statusCode) {
+      case 400:
+        return `Bad request (400) — the server rejected the agent connection parameters${detail ? `: ${detail}` : ''}. Common causes: invalid proxy preset, malformed externalProxyServer URL, or unsupported combination of options.`;
+      case 401:
+        return `Authentication failed (401) — verify the Browserless API token (BROWSERLESS_TOKEN env var or per-request Authorization header) is set correctly${detail ? ` (server says: ${detail})` : ''}.`;
+      case 403:
+        return `Forbidden (403) — your plan does not include this feature${detail ? ` (server says: ${detail})` : ''}.`;
+      case 429:
+        return `Concurrency limit reached (429)${detail ? `: ${detail}` : ''}. Wait for in-flight sessions to finish, or upgrade the plan.`;
+      default: {
+        // Unknown statuses (502/503/504 etc.) are rarer — the reason phrase
+        // adds context for the LLM here, so we use it when body is empty.
+        const fallback = detail || err.statusMessage || '';
+        return `Failed to connect to browser agent (HTTP ${err.statusCode})${fallback ? `: ${fallback}` : ''}.`;
+      }
+    }
+  }
+  if (err instanceof Error) {
+    return `Failed to connect to browser agent: ${err.message}`;
+  }
+  return `Failed to connect to browser agent: ${String(err)}`;
 };
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
 
@@ -462,10 +534,11 @@ export function registerAgentTools(
             profile,
           );
         } catch (connErr: any) {
-          if (isRetry) {
-            throw new UserError(
-              `Failed to connect to browser agent: ${connErr.message}`,
-            );
+          // No retry when the server gave a definitive 4xx — re-attempting
+          // with the same (bad token / wrong profile / unsupported params)
+          // will just produce the same response and waste time.
+          if (isRetry || !isRetryableUpgradeError(connErr)) {
+            throw new UserError(formatConnectError(connErr));
           }
           destroySession(mcpSessionId, token, proxy, profile);
           return runCommands(true);

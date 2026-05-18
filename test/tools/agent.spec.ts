@@ -4,13 +4,20 @@ import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
+  formatConnectError,
   formatErrorMessage,
   formatScreenshotContent,
   formatSnapshot,
   registerAgentTools,
+  sanitizeUpgradeBody,
 } from '../../src/tools/agent.js';
+import {
+  ProfileNotFoundError,
+  UpgradeError,
+} from '../../src/lib/agent-client.js';
 import type { SnapshotResult } from '../../src/lib/agent-client.js';
 import type { McpConfig } from '../../src/config.js';
+import { makeRejectingServer } from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -336,5 +343,234 @@ describe('buildCrossOriginNotice', () => {
     expect(
       buildCrossOriginNotice('https://example.com', 'also-not-a-url'),
     ).to.equal('');
+  });
+});
+
+describe('formatConnectError', () => {
+  it('uses profile-aware wording for ProfileNotFoundError', () => {
+    const out = formatConnectError(
+      new ProfileNotFoundError('my-login', 'Not Found', ''),
+    );
+    expect(out).to.include('Profile "my-login" was not found');
+    expect(out).to.include('Browserless.saveProfile');
+    expect(out).to.include('omit the profile');
+  });
+
+  it('renders 400 with the server body', () => {
+    const out = formatConnectError(
+      new UpgradeError(
+        400,
+        'Bad Request',
+        "Your plan doesn't support city-level proxying.",
+      ),
+    );
+    expect(out).to.match(/^Bad request \(400\)/);
+    expect(out).to.include('city-level');
+  });
+
+  it('renders 401 with a transport-agnostic auth-fixup hint', () => {
+    const out = formatConnectError(
+      new UpgradeError(401, 'Unauthorized', 'Bad or missing authentication'),
+    );
+    expect(out).to.match(/^Authentication failed \(401\)/);
+    expect(out).to.include('BROWSERLESS_TOKEN');
+    expect(out).to.include('Authorization header');
+  });
+
+  it('renders 403 as a plan-gate message', () => {
+    const out = formatConnectError(
+      new UpgradeError(403, 'Forbidden', 'Plan does not allow residential'),
+    );
+    expect(out).to.match(/^Forbidden \(403\)/);
+    expect(out).to.include('plan');
+  });
+
+  it('renders 429 with a concurrency / wait hint', () => {
+    const out = formatConnectError(
+      new UpgradeError(
+        429,
+        'Too Many Requests',
+        'Your plan allows 1 concurrent session',
+      ),
+    );
+    expect(out).to.match(/^Concurrency limit reached \(429\)/);
+    expect(out).to.include('Wait for');
+  });
+
+  it('falls back to a generic upgrade message for unrecognized statuses', () => {
+    const out = formatConnectError(
+      new UpgradeError(502, 'Bad Gateway', 'upstream timeout'),
+    );
+    expect(out).to.include('HTTP 502');
+    expect(out).to.include('upstream timeout');
+  });
+
+  it('falls back to the raw message for non-UpgradeError errors', () => {
+    const out = formatConnectError(new Error('ECONNREFUSED'));
+    expect(out).to.equal('Failed to connect to browser agent: ECONNREFUSED');
+  });
+});
+
+describe('sanitizeUpgradeBody', () => {
+  it('returns empty string for an empty body', () => {
+    expect(sanitizeUpgradeBody('')).to.equal('');
+    expect(sanitizeUpgradeBody('   ')).to.equal('');
+  });
+
+  it('passes a short plain-text body through unchanged', () => {
+    expect(sanitizeUpgradeBody('Profile "x" was not found')).to.equal(
+      'Profile "x" was not found',
+    );
+  });
+
+  it('strips tags from an nginx HTML error page', () => {
+    const html =
+      '<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n' +
+      '<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n' +
+      '<hr><center>nginx</center>\r\n</body>\r\n</html>';
+    const out = sanitizeUpgradeBody(html);
+    expect(out).to.not.include('<');
+    expect(out).to.not.include('>');
+    expect(out).to.include('502 Bad Gateway');
+    expect(out).to.include('nginx');
+  });
+
+  it('truncates an oversized plain-text body with an ellipsis', () => {
+    const long = 'a'.repeat(500);
+    const out = sanitizeUpgradeBody(long);
+    expect(out.length).to.be.lessThanOrEqual(201);
+    expect(out.endsWith('…')).to.equal(true);
+  });
+
+  it('does not strip tags from a non-HTML body that happens to contain <', () => {
+    // Plain-text bodies that have `<` or `>` (e.g. URLs in brackets) should
+    // not be tag-stripped. The probe is anchored to known HTML element tags.
+    const text = 'Use <https://example.com> for details';
+    expect(sanitizeUpgradeBody(text)).to.equal(text);
+  });
+});
+
+describe('formatConnectError with proxy-injected errors', () => {
+  it('renders empty-body 401 without a "server says" clause', () => {
+    const out = formatConnectError(new UpgradeError(401, 'Unauthorized', ''));
+    expect(out).to.include('Authentication failed (401)');
+    expect(out).to.not.include('server says');
+  });
+
+  it('renders empty-body 429 without a body clause', () => {
+    const out = formatConnectError(
+      new UpgradeError(429, 'Too Many Requests', ''),
+    );
+    expect(out).to.match(/^Concurrency limit reached \(429\)\. Wait for/);
+  });
+
+  it('renders nginx HTML 502 body as cleaned text', () => {
+    const html =
+      '<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n' +
+      '<center><h1>502 Bad Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>';
+    const out = formatConnectError(new UpgradeError(502, 'Bad Gateway', html));
+    expect(out).to.include('HTTP 502');
+    expect(out).to.not.include('<html>');
+    expect(out).to.include('502 Bad Gateway');
+  });
+
+  it('renders the legacy-endpoint 403 with the redirect message', () => {
+    const out = formatConnectError(
+      new UpgradeError(
+        403,
+        'Forbidden',
+        'This URL is a legacy endpoint, please use https://production-sfo.browserless.io...',
+      ),
+    );
+    expect(out).to.match(/^Forbidden \(403\)/);
+    expect(out).to.include('legacy endpoint');
+    expect(out).to.include('production-sfo');
+  });
+});
+
+const getAgentExecute = (
+  apiUrl: string,
+): ((args: unknown, ctx: unknown) => unknown) => {
+  const server = new FastMCP({ name: 'test', version: '0.1.0' });
+  const addToolSpy = sinon.spy(server, 'addTool');
+  registerAgentTools(server, { ...mockConfig, browserlessApiUrl: apiUrl });
+  const agentCall = addToolSpy
+    .getCalls()
+    .find((c) => c.args[0].name === 'browserless_agent');
+  return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
+};
+
+describe('browserless_agent retry-guard (runCommands)', () => {
+  // Each test uses a distinct mcpSessionId so the module-level session
+  // cache can't return a stale entry from a prior case.
+  const ctx = (sessionId: string) => ({ ...mockContext, sessionId });
+
+  afterEach(() => sinon.restore());
+
+  it('does NOT retry a non-retryable upgrade failure (401)', async () => {
+    const srv = await makeRejectingServer(
+      401,
+      'Bad or missing authentication.',
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          ctx('retry-guard-401'),
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'Authentication failed (401)',
+        );
+      }
+      expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('does NOT retry a 404 with a profile (ProfileNotFoundError)', async () => {
+    const srv = await makeRejectingServer(404, 'Profile "ghost" was not found');
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          {
+            method: 'goto',
+            params: { url: 'https://example.com' },
+            profile: 'ghost',
+          },
+          ctx('retry-guard-404'),
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include('Profile "ghost"');
+      }
+      expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('DOES retry once on a retryable upgrade failure (503)', async () => {
+    const srv = await makeRejectingServer(503, 'Service Unavailable');
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          ctx('retry-guard-503'),
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        // Second attempt also failed; surface the typed error.
+        expect((err as Error).message).to.include('HTTP 503');
+      }
+      expect(srv.hits()).to.equal(2);
+    } finally {
+      await srv.close();
+    }
   });
 });
