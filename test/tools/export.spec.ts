@@ -3,7 +3,7 @@ import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerExportTool } from '../../src/tools/export.js';
-import type { McpConfig } from '../../src/config.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ProxyOptions } from '../@types/types.js';
 
 /**
  * Output formats that can be requested.
@@ -12,7 +13,6 @@ export const ScrapeFormatSchema = z.enum([
   'links',
 ]);
 
-export type ScrapeFormat = z.infer<typeof ScrapeFormatSchema>;
 
 /**
  * Build the schema for an optional profile field. The NUL refinement protects
@@ -54,7 +54,6 @@ export const SmartScraperParamsSchema = z.object({
   profile: profileField('before scraping'),
 });
 
-export type SmartScraperParams = z.infer<typeof SmartScraperParamsSchema>;
 
 export const SmartScraperResponseSchema = z.object({
   ok: z.boolean(),
@@ -71,7 +70,6 @@ export const SmartScraperResponseSchema = z.object({
   links: z.array(z.string()).nullable(),
 });
 
-export type SmartScraperResponse = z.infer<typeof SmartScraperResponseSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  /function API – execute custom Puppeteer code server-side          */
@@ -100,7 +98,6 @@ export const FunctionParamsSchema = z.object({
   profile: profileField('before the function executes'),
 });
 
-export type FunctionParams = z.infer<typeof FunctionParamsSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  /download API – run code and return the file Chrome downloads      */
@@ -127,7 +124,6 @@ export const DownloadParamsSchema = z.object({
   profile: profileField('before the download script runs'),
 });
 
-export type DownloadParams = z.infer<typeof DownloadParamsSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  /export API – fetch a URL and stream its native content type       */
@@ -184,7 +180,6 @@ export const ExportParamsSchema = z.object({
   profile: profileField('before the page is exported'),
 });
 
-export type ExportParams = z.infer<typeof ExportParamsSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  Agent Browsing Protocol – typed command schemas                     */
@@ -749,7 +744,6 @@ export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   },
 );
 
-export type ProxyOptions = z.infer<typeof ProxyOptionsSchema>;
 
 export const PROXY_FIELDS = Object.keys(
   ProxyOptionsObjectSchema.shape,
@@ -790,38 +784,14 @@ export const AgentParamsSchema = z.object({
 });
 
 /* ------------------------------------------------------------------ */
-/*  Generic HTTP response wrapper used by function / download / export */
-/* ------------------------------------------------------------------ */
-
-export interface GenericApiResult {
-  /** Response body as text (may be base64-encoded for binary) */
-  data: string;
-  /** Content-Type header value */
-  contentType: string;
-  /** Content-Disposition header value, if any */
-  contentDisposition: string | null;
-  /** HTTP status code */
-  statusCode: number;
-  /** Whether the request succeeded (2xx) */
-  ok: boolean;
-  /** Size in bytes of the response body */
-  size: number;
-  /** Whether the data field is base64-encoded binary */
-  isBinary: boolean;
-}
-
-/* ------------------------------------------------------------------ */
 /*  /search API – web search with optional scraping                    */
 /* ------------------------------------------------------------------ */
 
 export const SearchSourceSchema = z.enum(['web', 'news', 'images']);
-export type SearchSource = z.infer<typeof SearchSourceSchema>;
 
 export const SearchCategorySchema = z.enum(['github', 'research', 'pdf']);
-export type SearchCategory = z.infer<typeof SearchCategorySchema>;
 
 export const TimeBasedOptionsSchema = z.enum(['day', 'week', 'month', 'year']);
-export type TimeBasedOptions = z.infer<typeof TimeBasedOptionsSchema>;
 
 export const SearchScrapeOptionsSchema = z.object({
   formats: z
@@ -888,62 +858,12 @@ export const SearchParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
-export type SearchParams = z.infer<typeof SearchParamsSchema>;
-
-export interface SearchResultBase {
-  title: string;
-  url: string;
-  description: string;
-  position?: number;
-}
-
-export interface ScrapedContent {
-  markdown?: string;
-  html?: string;
-  links?: string[];
-  screenshot?: string;
-  metadata?: {
-    statusCode: number | null;
-    strategy?: string;
-    error?: string;
-  };
-}
-
-export interface WebSearchResult extends SearchResultBase, ScrapedContent {}
-
-export interface NewsSearchResult extends WebSearchResult {
-  date?: string;
-  imageUrl?: string;
-}
-
-export interface ImageSearchResult {
-  title?: string;
-  imageUrl?: string;
-  imageWidth?: number;
-  imageHeight?: number;
-  url?: string;
-  position?: number;
-}
-
-export interface SearchResponseData {
-  web?: WebSearchResult[];
-  news?: NewsSearchResult[];
-  images?: ImageSearchResult[];
-}
-
-export interface SearchResponse {
-  success: boolean;
-  data: SearchResponseData;
-  totalResults: number;
-  error?: string;
-}
 
 /* ------------------------------------------------------------------ */
 /*  /map API – site mapping / URL discovery                            */
 /* ------------------------------------------------------------------ */
 
 export const SitemapModeSchema = z.enum(['include', 'skip', 'only']);
-export type SitemapMode = z.infer<typeof SitemapModeSchema>;
 
 export const MapParamsSchema = z.object({
   url: z
@@ -982,19 +902,6 @@ export const MapParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
-export type MapParams = z.infer<typeof MapParamsSchema>;
-
-export interface MapLink {
-  url: string;
-  title?: string;
-  description?: string;
-}
-
-export interface MapResponse {
-  success: boolean;
-  links?: MapLink[];
-  error?: string;
-}
 
 /* ------------------------------------------------------------------ */
 /*  /performance API – run Lighthouse audits                           */
@@ -1008,7 +915,6 @@ export const LighthouseCategorySchema = z.enum([
   'seo',
 ]);
 
-export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
 
 export const PerformanceParamsSchema = z.object({
   url: z.url().describe('The URL to audit (must be http or https)'),
@@ -1035,12 +941,6 @@ export const PerformanceParamsSchema = z.object({
   profile: profileField('before the Lighthouse audit runs'),
 });
 
-export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
-
-export interface PerformanceResponse {
-  data: Record<string, unknown>;
-  type: string;
-}
 
 /* ------------------------------------------------------------------ */
 /*  /crawl API – asynchronous web crawling                             */
@@ -1052,7 +952,6 @@ export const CrawlStatusSchema = z.enum([
   'failed',
   'cancelled',
 ]);
-export type CrawlStatus = z.infer<typeof CrawlStatusSchema>;
 
 export const PageStatusSchema = z.enum([
   'queued',
@@ -1061,13 +960,10 @@ export const PageStatusSchema = z.enum([
   'failed',
   'cancelled',
 ]);
-export type PageStatus = z.infer<typeof PageStatusSchema>;
 
 export const CrawlSitemapModeSchema = z.enum(['auto', 'force', 'skip']);
-export type CrawlSitemapMode = z.infer<typeof CrawlSitemapModeSchema>;
 
 export const CrawlFormatSchema = z.enum(['markdown', 'html', 'rawText']);
-export type CrawlFormat = z.infer<typeof CrawlFormatSchema>;
 
 export const CrawlScrapeOptionsSchema = z.object({
   formats: z
@@ -1198,37 +1094,4 @@ export const CrawlParamsSchema = z.object({
   profile: profileField('before each page is scraped'),
 });
 
-export type CrawlParams = z.infer<typeof CrawlParamsSchema>;
 
-export interface CrawlStartResponse {
-  success: boolean;
-  id: string;
-  url: string;
-  error?: string;
-}
-
-export interface CrawlPageMetadata {
-  title: string | null;
-  description: string | null;
-  language: string | null;
-  scrapedAt: string | null;
-  sourceURL: string;
-  statusCode: number | null;
-  error: string | null;
-}
-
-export interface CrawlPageResult {
-  status: PageStatus;
-  contentUrl: string | null;
-  metadata: CrawlPageMetadata;
-}
-
-export interface CrawlStatusResponse {
-  status: CrawlStatus;
-  total: number;
-  completed: number;
-  failed: number;
-  expiresAt: string | null;
-  next: string | null;
-  data: CrawlPageResult[];
-}

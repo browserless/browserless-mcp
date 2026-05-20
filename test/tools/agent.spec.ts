@@ -15,8 +15,8 @@ import {
   ProfileNotFoundError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
-import type { SnapshotResult } from '../../src/lib/agent-client.js';
-import type { McpConfig } from '../../src/config.js';
+import type { SnapshotResult } from '../../src/@types/types.js';
+import type { McpConfig } from '../../src/@types/types.js';
 import { makeRejectingServer } from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {

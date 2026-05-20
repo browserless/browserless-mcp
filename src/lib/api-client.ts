@@ -1,28 +1,27 @@
-import { createHash } from 'node:crypto';
-import type { McpConfig } from '../config.js';
+import { compact, hashToken, isTextContentType } from './utils.js';
 import type {
-  SmartScraperResponse,
-  ScrapeFormat,
-  GenericApiResult,
-  SearchResponse,
-  SearchSource,
-  SearchCategory,
-  TimeBasedOptions,
-  MapResponse,
-  SitemapMode,
-  LighthouseCategory,
-  PerformanceResponse,
+  ApiClient,
+  CrawlCancelResponse,
+  CrawlRequest,
   CrawlStartResponse,
   CrawlStatusResponse,
-  CrawlSitemapMode,
-  CrawlFormat,
-} from '../tools/schemas.js';
+  DownloadRequest,
+  ExportRequest,
+  FunctionRequest,
+  GenericApiResult,
+  MapRequest,
+  MapResponse,
+  McpConfig,
+  PerformanceRequest,
+  PerformanceResponse,
+  SearchRequest,
+  SearchResponse,
+  SmartScrapeRequest,
+  SmartScrapeResult,
+  SmartScraperResponse,
+} from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 16);
-}
 
 /**
  * Thrown when an API call references a profile that does not exist for the
@@ -73,130 +72,118 @@ async function throwIfProfileMissing(
   throw new ProfileNotFoundError(profile, serverMessage);
 }
 
-/** Content-Types that should be treated as text (not base64-encoded). */
-const TEXT_CONTENT_TYPES = [
-  'text/',
-  'application/json',
-  'application/javascript',
-  'application/xml',
-  'application/xhtml+xml',
-  'application/ld+json',
-];
-
-function isTextContentType(ct: string): boolean {
-  const lower = ct.toLowerCase();
-  return TEXT_CONTENT_TYPES.some((prefix) => lower.includes(prefix));
-}
-
-export interface SmartScrapeRequest {
-  url: string;
-  formats?: ScrapeFormat[];
-  timeout?: number;
+interface ApiFetchOptions<T> {
+  path: string;
+  method?: 'GET' | 'POST' | 'DELETE';
+  /** Query params. `token` is always added; undefined values are dropped. */
+  query?: Record<string, string | number | boolean | undefined>;
+  body?: Record<string, unknown>;
+  /** Defaults to 'application/json' (only relevant when `body` is set). */
+  contentType?: string;
+  timeout: number;
+  /** If set, a 404 response throws ProfileNotFoundError. */
   profile?: string;
-}
-
-export type SmartScrapeResult = SmartScraperResponse & { cacheHit: boolean };
-
-export interface FunctionRequest {
-  code: string;
-  context?: Record<string, unknown>;
-  timeout?: number;
-  profile?: string;
-}
-
-export interface DownloadRequest {
-  code: string;
-  context?: Record<string, unknown>;
-  timeout?: number;
-  profile?: string;
-}
-
-export interface ExportRequest {
-  url: string;
-  gotoOptions?: Record<string, unknown>;
-  bestAttempt?: boolean;
-  includeResources?: boolean;
-  waitForTimeout?: number;
-  timeout?: number;
-  profile?: string;
-}
-
-export interface SearchRequest {
-  query: string;
-  limit?: number;
-  lang?: string;
-  country?: string;
-  location?: string;
-  tbs?: TimeBasedOptions;
-  sources?: SearchSource[];
-  categories?: SearchCategory[];
-  scrapeOptions?: {
-    formats?: string[];
-    onlyMainContent?: boolean;
-    includeTags?: string[];
-    excludeTags?: string[];
-  };
-  timeout?: number;
-}
-
-export interface MapRequest {
-  url: string;
-  search?: string;
-  limit?: number;
-  sitemap?: SitemapMode;
-  includeSubdomains?: boolean;
-  ignoreQueryParameters?: boolean;
-  timeout?: number;
-}
-
-export interface PerformanceRequest {
-  url: string;
-  categories?: LighthouseCategory[];
-  budgets?: Array<Record<string, unknown>>;
-  timeout?: number;
-  profile?: string;
-}
-
-export interface CrawlRequest {
-  url: string;
-  limit?: number;
-  maxDepth?: number;
+  /**
+   * Custom response handler invoked AFTER throwIfProfileMissing.
+   * If omitted, the default behavior is:
+   *   - res.status >= 500 → throw `Server error ${status}: ${statusText}`
+   *   - !res.ok → throw `Server error ${status}: ${body || statusText}`
+   *   - else → return res.json() as T
+   */
+  handleResponse?: (res: Response) => Promise<T>;
   maxRetries?: number;
-  allowExternalLinks?: boolean;
-  allowSubdomains?: boolean;
-  sitemap?: CrawlSitemapMode;
-  includePaths?: string[];
-  excludePaths?: string[];
-  delay?: number;
-  scrapeOptions?: {
-    formats?: CrawlFormat[];
-    onlyMainContent?: boolean;
-    includeTags?: string[];
-    excludeTags?: string[];
-    waitFor?: number;
-    headers?: Record<string, string>;
-    timeout?: number;
+  /**
+   * Retry predicate. Defaults to: never retry ProfileNotFoundError, and never
+   * retry errors whose message starts with "Server error 4" (i.e. 4xx).
+   */
+  shouldRetry?: (error: Error) => boolean;
+}
+
+const defaultShouldRetry = (error: Error): boolean => {
+  if (error instanceof ProfileNotFoundError) return false;
+  return !error.message.startsWith('Server error 4');
+};
+
+async function defaultHandleResponse<T>(res: Response): Promise<T> {
+  if (!res.ok && res.status >= 500) {
+    throw new Error(`Server error ${res.status}: ${res.statusText}`);
+  }
+  if (!res.ok) {
+    const errorBody = await res.text().catch(() => res.statusText);
+    const message = errorBody.trim() || res.statusText;
+    throw new Error(`Server error ${res.status}: ${message}`);
+  }
+  return (await res.json()) as T;
+}
+
+function apiFetch<T>(
+  config: McpConfig,
+  opts: ApiFetchOptions<T>,
+): Promise<T> {
+  const query = new URLSearchParams({ token: config.browserlessToken! });
+  for (const [k, v] of Object.entries(opts.query ?? {})) {
+    if (v !== undefined) query.set(k, String(v));
+  }
+  const url = `${config.browserlessApiUrl}${opts.path}?${query.toString()}`;
+  const method = opts.method ?? 'POST';
+  const init: RequestInit = { method };
+  if (opts.body !== undefined) {
+    init.headers = { 'Content-Type': opts.contentType ?? 'application/json' };
+    init.body = JSON.stringify(opts.body);
+  }
+  const handle = opts.handleResponse ?? defaultHandleResponse<T>;
+
+  return retryWithBackoff(
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        opts.timeout + 5000,
+      );
+      try {
+        const res = await fetch(url, { ...init, signal: controller.signal });
+        await throwIfProfileMissing(res, opts.profile);
+        return await handle(res);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+    {
+      maxRetries: opts.maxRetries ?? config.maxRetries,
+      baseDelayMs: 1000,
+      shouldRetry: opts.shouldRetry ?? defaultShouldRetry,
+    },
+  );
+}
+
+/** Read a Response as text or base64-encoded binary based on its content type. */
+async function readGeneric(res: Response): Promise<GenericApiResult> {
+  if (!res.ok && res.status >= 500) {
+    throw new Error(`Server error ${res.status}: ${res.statusText}`);
+  }
+  const respContentType =
+    res.headers.get('content-type') ?? 'application/octet-stream';
+  const contentDisposition = res.headers.get('content-disposition') ?? null;
+  const isBinary = !isTextContentType(respContentType);
+  let data: string;
+  let size: number;
+  if (isBinary) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    size = buf.byteLength;
+    data = buf.toString('base64');
+  } else {
+    data = await res.text();
+    size = Buffer.byteLength(data, 'utf-8');
+  }
+  return {
+    data,
+    contentType: respContentType,
+    contentDisposition,
+    statusCode: res.status,
+    ok: res.ok,
+    size,
+    isBinary,
   };
-  timeout?: number;
-  profile?: string;
-}
-
-export interface CrawlCancelResponse {
-  status: 'cancelled';
-}
-
-export interface ApiClient {
-  smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
-  runFunction(params: FunctionRequest): Promise<GenericApiResult>;
-  download(params: DownloadRequest): Promise<GenericApiResult>;
-  exportPage(params: ExportRequest): Promise<GenericApiResult>;
-  search(params: SearchRequest): Promise<SearchResponse>;
-  map(params: MapRequest): Promise<MapResponse>;
-  performance(params: PerformanceRequest): Promise<PerformanceResponse>;
-  crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
-  getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
-  cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
-  getStatus(): Promise<{ ok: boolean; message: string }>;
 }
 
 export function createApiClient(
@@ -204,90 +191,6 @@ export function createApiClient(
   cache?: ResponseCache,
 ): ApiClient {
   const _cache = cache ?? new ResponseCache(config.cacheTtlMs);
-
-  /**
-   * Shared helper: POST to a Browserless endpoint and return a
-   * GenericApiResult that works for /function, /download, and /export.
-   */
-  async function postGeneric(
-    path: string,
-    body: Record<string, unknown>,
-    contentType: string,
-    timeout: number,
-    profile?: string,
-  ): Promise<GenericApiResult> {
-    const queryParams = new URLSearchParams({
-      token: config.browserlessToken!,
-      timeout: String(timeout),
-    });
-    if (profile) {
-      queryParams.set('profile', profile);
-    }
-
-    const apiUrl = `${config.browserlessApiUrl}${path}?${queryParams.toString()}`;
-
-    return retryWithBackoff(
-      async () => {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout + 5000);
-
-        try {
-          const res = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': contentType },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-          });
-
-          await throwIfProfileMissing(res, profile);
-
-          if (!res.ok && res.status >= 500) {
-            throw new Error(`Server error ${res.status}: ${res.statusText}`);
-          }
-
-          const respContentType =
-            res.headers.get('content-type') ?? 'application/octet-stream';
-          const contentDisposition =
-            res.headers.get('content-disposition') ?? null;
-
-          const isBinary = !isTextContentType(respContentType);
-
-          let data: string;
-          let size: number;
-
-          if (isBinary) {
-            const arrayBuffer = await res.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            size = buffer.byteLength;
-            data = buffer.toString('base64');
-          } else {
-            data = await res.text();
-            size = Buffer.byteLength(data, 'utf-8');
-          }
-
-          return {
-            data,
-            contentType: respContentType,
-            contentDisposition,
-            statusCode: res.status,
-            ok: res.ok,
-            size,
-            isBinary,
-          };
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      },
-      {
-        maxRetries: config.maxRetries,
-        baseDelayMs: 1000,
-        shouldRetry: (error: Error) => {
-          if (error instanceof ProfileNotFoundError) return false;
-          return !error.message.startsWith('Server error 4');
-        },
-      },
-    );
-  }
 
   return {
     async smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult> {
@@ -311,130 +214,59 @@ export function createApiClient(
       }
 
       const timeout = params.timeout ?? config.requestTimeout;
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-        timeout: String(timeout),
+      const result = await apiFetch<SmartScraperResponse>(config, {
+        path: '/smart-scrape',
+        query: { timeout, profile: params.profile },
+        body: { url: params.url, formats },
+        timeout,
+        profile: params.profile,
       });
-      if (params.profile) {
-        queryParams.set('profile', params.profile);
-      }
-
-      const apiUrl = `${config.browserlessApiUrl}/smart-scrape?${queryParams.toString()}`;
-
-      const body = {
-        url: params.url,
-        formats,
-      };
-
-      const result = await retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            timeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-              signal: controller.signal,
-            });
-
-            await throwIfProfileMissing(res, params.profile);
-
-            if (!res.ok && res.status >= 500) {
-              throw new Error(`Server error ${res.status}: ${res.statusText}`);
-            }
-
-            // Reject any remaining 4xx before parsing or caching — a 400/401/403
-            // body must not be returned as a valid SmartScraperResponse, and
-            // must not poison the cache. The `Server error` prefix also lets
-            // the existing retry-suppression predicate skip these.
-            if (!res.ok) {
-              const errorBody = await res.text().catch(() => res.statusText);
-              const message = errorBody.trim() || res.statusText;
-              throw new Error(`Server error ${res.status}: ${message}`);
-            }
-
-            return (await res.json()) as SmartScraperResponse;
-          } finally {
-            clearTimeout(timeoutId);
-          }
-        },
-        {
-          maxRetries: config.maxRetries,
-          baseDelayMs: 1000,
-          shouldRetry: (error: Error) => {
-            if (error instanceof ProfileNotFoundError) return false;
-            return !error.message.startsWith('Server error 4');
-          },
-        },
-      );
-
       _cache.set(cacheKey, result);
       return { ...result, cacheHit: false };
     },
 
-    /* ---- runFunction (/function) --------------------------------- */
     async runFunction(params: FunctionRequest): Promise<GenericApiResult> {
       const timeout = params.timeout ?? config.requestTimeout;
-      const body: Record<string, unknown> = { code: params.code };
-      if (params.context !== undefined) {
-        body.context = params.context;
-      }
-      return postGeneric(
-        '/function',
-        body,
-        'application/json',
+      return apiFetch<GenericApiResult>(config, {
+        path: '/function',
+        query: { timeout, profile: params.profile },
+        body: compact({ code: params.code, context: params.context }),
         timeout,
-        params.profile,
-      );
+        profile: params.profile,
+        handleResponse: readGeneric,
+      });
     },
 
-    /* ---- download (/download) ------------------------------------ */
     async download(params: DownloadRequest): Promise<GenericApiResult> {
       const timeout = params.timeout ?? config.requestTimeout;
-      const body: Record<string, unknown> = { code: params.code };
-      if (params.context !== undefined) {
-        body.context = params.context;
-      }
-      return postGeneric(
-        '/download',
-        body,
-        'application/json',
+      return apiFetch<GenericApiResult>(config, {
+        path: '/download',
+        query: { timeout, profile: params.profile },
+        body: compact({ code: params.code, context: params.context }),
         timeout,
-        params.profile,
-      );
+        profile: params.profile,
+        handleResponse: readGeneric,
+      });
     },
 
-    /* ---- exportPage (/export) ------------------------------------ */
     async exportPage(params: ExportRequest): Promise<GenericApiResult> {
       const timeout = params.timeout ?? config.requestTimeout;
-      const body: Record<string, unknown> = { url: params.url };
-      if (params.gotoOptions !== undefined) {
-        body.gotoOptions = params.gotoOptions;
-      }
-      if (params.bestAttempt !== undefined) {
-        body.bestAttempt = params.bestAttempt;
-      }
-      if (params.includeResources !== undefined) {
-        body.includeResources = params.includeResources;
-      }
-      if (params.waitForTimeout !== undefined) {
-        body.waitForTimeout = params.waitForTimeout;
-      }
-      return postGeneric(
-        '/export',
-        body,
-        'application/json',
+      return apiFetch<GenericApiResult>(config, {
+        path: '/export',
+        query: { timeout, profile: params.profile },
+        body: compact({
+          url: params.url,
+          gotoOptions: params.gotoOptions,
+          bestAttempt: params.bestAttempt,
+          includeResources: params.includeResources,
+          waitForTimeout: params.waitForTimeout,
+        }),
         timeout,
-        params.profile,
-      );
+        profile: params.profile,
+        handleResponse: readGeneric,
+      });
     },
 
-    /* ---- getStatus (existing) ------------------------------------ */
     async getStatus(): Promise<{ ok: boolean; message: string }> {
       try {
         const queryParams = new URLSearchParams({
@@ -446,10 +278,7 @@ export function createApiClient(
         if (res.ok) {
           return { ok: true, message: 'Browserless API is reachable' };
         }
-        return {
-          ok: false,
-          message: `API returned status ${res.status}`,
-        };
+        return { ok: false, message: `API returned status ${res.status}` };
       } catch (err) {
         return {
           ok: false,
@@ -458,400 +287,161 @@ export function createApiClient(
       }
     },
 
-    /* ---- search (/search) ---------------------------------------- */
     async search(params: SearchRequest): Promise<SearchResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-        timeout: String(timeout),
+      return apiFetch<SearchResponse>(config, {
+        path: '/search',
+        query: { timeout },
+        body: compact({
+          query: params.query,
+          limit: params.limit,
+          lang: params.lang,
+          country: params.country,
+          location: params.location,
+          tbs: params.tbs,
+          sources: params.sources,
+          categories: params.categories,
+          scrapeOptions: params.scrapeOptions,
+        }),
+        timeout,
       });
-
-      const apiUrl = `${config.browserlessApiUrl}/search?${queryParams.toString()}`;
-
-      const body: Record<string, unknown> = {
-        query: params.query,
-      };
-      if (params.limit !== undefined) body.limit = params.limit;
-      if (params.lang !== undefined) body.lang = params.lang;
-      if (params.country !== undefined) body.country = params.country;
-      if (params.location !== undefined) body.location = params.location;
-      if (params.tbs !== undefined) body.tbs = params.tbs;
-      if (params.sources !== undefined) body.sources = params.sources;
-      if (params.categories !== undefined) body.categories = params.categories;
-      if (params.scrapeOptions !== undefined)
-        body.scrapeOptions = params.scrapeOptions;
-
-      return retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            timeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-              signal: controller.signal,
-            });
-
-            if (!res.ok) {
-              const errorBody = await res.text();
-              const message = errorBody.trim() || res.statusText;
-              throw new Error(`Server error ${res.status}: ${message}`);
-            }
-
-            return (await res.json()) as SearchResponse;
-          } finally {
-            clearTimeout(timeoutId);
-          }
-        },
-        {
-          maxRetries: config.maxRetries,
-          baseDelayMs: 1000,
-          shouldRetry: (error: Error) => {
-            return !error.message.startsWith('Server error 4');
-          },
-        },
-      );
     },
 
-    /* ---- performance (/performance) ------------------------------ */
     async performance(
       params: PerformanceRequest,
     ): Promise<PerformanceResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-        timeout: String(timeout),
-      });
-      if (params.profile) {
-        queryParams.set('profile', params.profile);
-      }
-
-      const apiUrl = `${config.browserlessApiUrl}/performance?${queryParams.toString()}`;
-
-      const body: Record<string, unknown> = {
-        url: params.url,
-      };
-
+      const body: Record<string, unknown> = { url: params.url };
       if (params.categories) {
         body.config = {
           extends: 'lighthouse:default',
-          settings: {
-            onlyCategories: params.categories,
-          },
+          settings: { onlyCategories: params.categories },
         };
       }
-
-      if (params.budgets) {
-        body.budgets = params.budgets;
-      }
-
-      return retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            timeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-              signal: controller.signal,
-            });
-
-            await throwIfProfileMissing(res, params.profile);
-
-            if (!res.ok && res.status >= 500) {
-              throw new Error(`Server error ${res.status}: ${res.statusText}`);
-            }
-
-            if (!res.ok) {
-              const text = await res.text();
-              throw new Error(
-                `Server error ${res.status}: ${text.slice(0, 500)}`,
-              );
-            }
-
-            return (await res.json()) as PerformanceResponse;
-          } finally {
-            clearTimeout(timeoutId);
-          }
-        },
-        {
-          maxRetries: config.maxRetries,
-          baseDelayMs: 1000,
-          shouldRetry: (error: Error) => {
-            if (error instanceof ProfileNotFoundError) return false;
-            return !error.message.startsWith('Server error 4');
-          },
-        },
-      );
+      if (params.budgets) body.budgets = params.budgets;
+      return apiFetch<PerformanceResponse>(config, {
+        path: '/performance',
+        query: { timeout, profile: params.profile },
+        body,
+        timeout,
+        profile: params.profile,
+      });
     },
 
-    /* ---- map (/map) ---------------------------------------------- */
     async map(params: MapRequest): Promise<MapResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-        timeout: String(timeout),
+      return apiFetch<MapResponse>(config, {
+        path: '/map',
+        query: { timeout },
+        body: compact({
+          url: params.url,
+          search: params.search,
+          limit: params.limit,
+          sitemap: params.sitemap,
+          includeSubdomains: params.includeSubdomains,
+          ignoreQueryParameters: params.ignoreQueryParameters,
+        }),
+        timeout,
       });
-
-      const apiUrl = `${config.browserlessApiUrl}/map?${queryParams.toString()}`;
-
-      const body: Record<string, unknown> = {
-        url: params.url,
-      };
-      if (params.search !== undefined) body.search = params.search;
-      if (params.limit !== undefined) body.limit = params.limit;
-      if (params.sitemap !== undefined) body.sitemap = params.sitemap;
-      if (params.includeSubdomains !== undefined)
-        body.includeSubdomains = params.includeSubdomains;
-      if (params.ignoreQueryParameters !== undefined)
-        body.ignoreQueryParameters = params.ignoreQueryParameters;
-
-      return retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            timeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-              signal: controller.signal,
-            });
-
-            if (!res.ok && res.status >= 500) {
-              throw new Error(`Server error ${res.status}: ${res.statusText}`);
-            }
-
-            return (await res.json()) as MapResponse;
-          } finally {
-            clearTimeout(timeoutId);
-          }
-        },
-        {
-          maxRetries: config.maxRetries,
-          baseDelayMs: 1000,
-          shouldRetry: (error: Error) => {
-            return !error.message.startsWith('Server error 4');
-          },
-        },
-      );
     },
 
-    /* ---- crawl (POST /crawl) ------------------------------------- */
     async crawl(params: CrawlRequest): Promise<CrawlStartResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
-      // Note: /crawl endpoint accepts 'token' and 'profile' as query params
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-      });
-      if (params.profile) {
-        queryParams.set('profile', params.profile);
-      }
-
-      const apiUrl = `${config.browserlessApiUrl}/crawl?${queryParams.toString()}`;
-
-      const body: Record<string, unknown> = {
-        url: params.url,
-      };
-      if (params.limit !== undefined) body.limit = params.limit;
-      if (params.maxDepth !== undefined) body.maxDepth = params.maxDepth;
-      if (params.maxRetries !== undefined) body.maxRetries = params.maxRetries;
-      if (params.allowExternalLinks !== undefined)
-        body.allowExternalLinks = params.allowExternalLinks;
-      if (params.allowSubdomains !== undefined)
-        body.allowSubdomains = params.allowSubdomains;
-      if (params.sitemap !== undefined) body.sitemap = params.sitemap;
-      if (params.includePaths !== undefined)
-        body.includePaths = params.includePaths;
-      if (params.excludePaths !== undefined)
-        body.excludePaths = params.excludePaths;
-      if (params.delay !== undefined) body.delay = params.delay;
-      if (params.scrapeOptions !== undefined)
-        body.scrapeOptions = params.scrapeOptions;
-
-      return retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            timeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-              signal: controller.signal,
-            });
-
-            await throwIfProfileMissing(res, params.profile);
-
-            if (!res.ok && res.status >= 500) {
-              throw new Error(`Server error ${res.status}: ${res.statusText}`);
-            }
-
-            // The /crawl endpoint returns a structured
-            // `{ success: false, error: string }` body on some 4xx responses
-            // (e.g. 429 rate limit). Forward those so the tool can surface
-            // them as a clean UserError. Non-JSON 4xx bodies surface as a
-            // Server error so retry suppression catches them.
-            if (!res.ok) {
-              const text = await res.text().catch(() => '');
-              try {
-                const parsed = JSON.parse(text);
-                if (
-                  parsed &&
-                  typeof parsed === 'object' &&
-                  (parsed as { success?: unknown }).success === false
-                ) {
-                  return parsed as CrawlStartResponse;
-                }
-              } catch {
-                // Non-JSON body — fall through.
-              }
-              const message = text.trim() || res.statusText;
-              throw new Error(`Server error ${res.status}: ${message}`);
-            }
-
-            return (await res.json()) as CrawlStartResponse;
-          } finally {
-            clearTimeout(timeoutId);
+      return apiFetch<CrawlStartResponse>(config, {
+        // /crawl accepts token + profile as query params; no `timeout` query.
+        path: '/crawl',
+        query: { profile: params.profile },
+        body: compact({
+          url: params.url,
+          limit: params.limit,
+          maxDepth: params.maxDepth,
+          maxRetries: params.maxRetries,
+          allowExternalLinks: params.allowExternalLinks,
+          allowSubdomains: params.allowSubdomains,
+          sitemap: params.sitemap,
+          includePaths: params.includePaths,
+          excludePaths: params.excludePaths,
+          delay: params.delay,
+          scrapeOptions: params.scrapeOptions,
+        }),
+        timeout,
+        profile: params.profile,
+        handleResponse: async (res) => {
+          if (!res.ok && res.status >= 500) {
+            throw new Error(`Server error ${res.status}: ${res.statusText}`);
           }
+          // The /crawl endpoint returns a structured
+          // `{ success: false, error: string }` body on some 4xx responses
+          // (e.g. 429 rate limit). Forward those so the tool can surface
+          // them as a clean UserError. Non-JSON 4xx bodies surface as a
+          // Server error so retry suppression catches them.
+          if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            try {
+              const parsed = JSON.parse(text);
+              if (
+                parsed &&
+                typeof parsed === 'object' &&
+                (parsed as { success?: unknown }).success === false
+              ) {
+                return parsed as CrawlStartResponse;
+              }
+            } catch {
+              // Non-JSON body — fall through.
+            }
+            const message = text.trim() || res.statusText;
+            throw new Error(`Server error ${res.status}: ${message}`);
+          }
+          return (await res.json()) as CrawlStartResponse;
         },
-        {
-          maxRetries: config.maxRetries,
-          baseDelayMs: 1000,
-          shouldRetry: (error: Error) => {
-            if (error instanceof ProfileNotFoundError) return false;
-            return !error.message.startsWith('Server error 4');
-          },
-        },
-      );
+      });
     },
 
-    /* ---- getCrawl (GET /crawl/{id}) ------------------------------ */
     async getCrawl(
       crawlId: string,
       skip?: number,
     ): Promise<CrawlStatusResponse> {
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-      });
-      if (skip !== undefined && skip > 0) {
-        queryParams.set('skip', String(skip));
-      }
-
-      const apiUrl = `${config.browserlessApiUrl}/crawl/${crawlId}?${queryParams.toString()}`;
-
-      return retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            config.requestTimeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'GET',
-              signal: controller.signal,
-            });
-
-            // Handle specific error codes first
-            if (res.status === 404) {
-              throw new Error('Crawl not found');
-            }
-
-            // Reject all non-OK responses to avoid treating error bodies as valid data
-            if (!res.ok) {
-              const errorBody = await res.text().catch(() => res.statusText);
-              throw new Error(`API error ${res.status}: ${errorBody}`);
-            }
-
-            return (await res.json()) as CrawlStatusResponse;
-          } finally {
-            clearTimeout(timeoutId);
+      return apiFetch<CrawlStatusResponse>(config, {
+        path: `/crawl/${crawlId}`,
+        method: 'GET',
+        query: { skip: skip !== undefined && skip > 0 ? skip : undefined },
+        timeout: config.requestTimeout,
+        shouldRetry: (error) =>
+          !error.message.startsWith('Server error 4') &&
+          !error.message.includes('not found'),
+        handleResponse: async (res) => {
+          if (res.status === 404) throw new Error('Crawl not found');
+          if (!res.ok) {
+            const errorBody = await res.text().catch(() => res.statusText);
+            throw new Error(`API error ${res.status}: ${errorBody}`);
           }
+          return (await res.json()) as CrawlStatusResponse;
         },
-        {
-          maxRetries: config.maxRetries,
-          baseDelayMs: 1000,
-          shouldRetry: (error: Error) => {
-            return (
-              !error.message.startsWith('Server error 4') &&
-              !error.message.includes('not found')
-            );
-          },
-        },
-      );
+      });
     },
 
-    /* ---- cancelCrawl (DELETE /crawl/{id}) ------------------------ */
     async cancelCrawl(crawlId: string): Promise<CrawlCancelResponse> {
-      const queryParams = new URLSearchParams({
-        token: config.browserlessToken!,
-      });
-
-      const apiUrl = `${config.browserlessApiUrl}/crawl/${crawlId}?${queryParams.toString()}`;
-
-      return retryWithBackoff(
-        async () => {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(
-            () => controller.abort(),
-            config.requestTimeout + 5000,
-          );
-
-          try {
-            const res = await fetch(apiUrl, {
-              method: 'DELETE',
-              signal: controller.signal,
-            });
-
-            // Handle specific error codes first
-            if (res.status === 404) {
-              throw new Error('Crawl not found');
-            }
-
-            if (res.status === 409) {
-              const body = (await res.json()) as { message?: string };
-              throw new Error(
-                body.message ?? 'Crawl is already in terminal state',
-              );
-            }
-
-            // Reject all non-OK responses to avoid treating error bodies as valid data
-            if (!res.ok) {
-              const errorBody = await res.text().catch(() => res.statusText);
-              throw new Error(`API error ${res.status}: ${errorBody}`);
-            }
-
-            return (await res.json()) as CrawlCancelResponse;
-          } finally {
-            clearTimeout(timeoutId);
+      return apiFetch<CrawlCancelResponse>(config, {
+        path: `/crawl/${crawlId}`,
+        method: 'DELETE',
+        timeout: config.requestTimeout,
+        maxRetries: 0,
+        shouldRetry: () => false,
+        handleResponse: async (res) => {
+          if (res.status === 404) throw new Error('Crawl not found');
+          if (res.status === 409) {
+            const body = (await res.json()) as { message?: string };
+            throw new Error(
+              body.message ?? 'Crawl is already in terminal state',
+            );
           }
+          if (!res.ok) {
+            const errorBody = await res.text().catch(() => res.statusText);
+            throw new Error(`API error ${res.status}: ${errorBody}`);
+          }
+          return (await res.json()) as CrawlCancelResponse;
         },
-        {
-          maxRetries: 0, // Don't retry DELETE operations
-          baseDelayMs: 1000,
-          shouldRetry: () => false,
-        },
-      );
+      });
     },
   };
 }

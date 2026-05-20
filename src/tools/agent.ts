@@ -11,10 +11,11 @@ import {
   ProfileNotFoundError,
   UpgradeError,
 } from '../lib/agent-client.js';
-import type { SnapshotResult, SnapshotElement } from '../lib/agent-client.js';
+import type { SnapshotResult, SnapshotElement } from '../@types/types.js';
 import { classifyAgentError } from '../lib/error-classifier.js';
-import type { McpConfig } from '../config.js';
-import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
+import type { McpConfig } from '../@types/types.js';
+import { AmplitudeHelper } from '../lib/amplitude.js';
+import { djb2 } from '../lib/utils.js';
 import {
   detectSkills,
   markFired,
@@ -22,7 +23,7 @@ import {
   renderSkills,
   skillsRegistry,
 } from '../skills/index.js';
-import type { SkillId } from '../skills/index.js';
+import type { SkillId } from '../@types/types.js';
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);

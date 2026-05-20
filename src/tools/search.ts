@@ -2,8 +2,9 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { SearchParamsSchema } from './schemas.js';
 import { createApiClient } from '../lib/api-client.js';
-import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
-import type { McpConfig } from '../config.js';
+import { AmplitudeHelper } from '../lib/amplitude.js';
+import { djb2 } from '../lib/utils.js';
+import type { McpConfig } from '../@types/types.js';
 
 export function registerSearchTool(
   server: FastMCP,

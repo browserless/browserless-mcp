@@ -4,24 +4,7 @@ import {
   type SendMessageBatchRequestEntry,
 } from '@aws-sdk/client-sqs';
 import { randomUUID } from 'node:crypto';
-
-export interface AmplitudeEvent {
-  event_type: string;
-  time: number;
-  session_id?: number;
-  event_properties: Record<string, unknown> & { token: string };
-}
-
-/**
- * Simple djb2 hash — matches the enterprise repo's session ID hashing.
- */
-export function djb2(str: string): number {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 33) ^ str.charCodeAt(i);
-  }
-  return hash >>> 0;
-}
+import type { AmplitudeEvent } from '../@types/types.js';
 
 export class AmplitudeHelper {
   private sqsClient?: SQSClient;

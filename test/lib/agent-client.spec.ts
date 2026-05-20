@@ -8,7 +8,7 @@ import {
   proxyFingerprint,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
-import type { ProxyOptions } from '../../src/tools/schemas.js';
+import type { ProxyOptions } from '../../src/@types/types.js';
 import {
   makeAcceptingServer,
   makeRejectingServer,

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { FastMCP, OAuthProvider } from 'fastmcp';
 import { OAuthProxy } from 'fastmcp/auth';
 import { getConfig } from './config.js';
-import type { BrowserlessSession } from './config.js';
+import type { BrowserlessSession } from './@types/types.js';
 import { registerSmartScraperTool } from './tools/smartscraper.js';
 import { registerFunctionTool } from './tools/function.js';
 import { registerDownloadTool } from './tools/download.js';

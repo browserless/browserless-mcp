@@ -1,5 +1,5 @@
 import type { FastMCP } from 'fastmcp';
-import type { McpConfig } from '../config.js';
+import type { McpConfig } from '../@types/types.js';
 import { createApiClient } from '../lib/api-client.js';
 
 export function registerStatusResource(

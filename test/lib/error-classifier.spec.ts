@@ -1,8 +1,6 @@
 import { expect } from 'chai';
-import {
-  classifyAgentError,
-  type ErrorCategory,
-} from '../../src/lib/error-classifier.js';
+import { classifyAgentError } from '../../src/lib/error-classifier.js';
+import type { ErrorCategory } from '../../src/@types/types.js';
 
 interface Row {
   name: string;

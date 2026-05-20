@@ -11,7 +11,7 @@ import {
 import type {
   SnapshotElement,
   SnapshotResult,
-} from '../../src/lib/agent-client.js';
+} from '../../src/@types/types.js';
 
 const el = (overrides: Partial<SnapshotElement>): SnapshotElement => ({
   ref: 1,

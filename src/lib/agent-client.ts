@@ -1,66 +1,14 @@
-export interface AgentMessage {
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface AgentError {
-  code?: string;
-  message: string;
-  retryable?: boolean;
-  suggestion?: string;
-  snapshot?: SnapshotResult;
-}
-
-export interface AgentResponse {
-  id: number;
-  result?: unknown;
-  error?: AgentError;
-}
-
-export interface SnapshotElement {
-  ref: number;
-  role: string;
-  name: string;
-  selector: string;
-  tag: string;
-  text?: string;
-  value?: string;
-  type?: string;
-  placeholder?: string;
-  id?: string;
-  href?: string;
-  disabled?: boolean;
-  checked?: boolean;
-  focused?: boolean;
-  required?: boolean;
-  ariaLabel?: string;
-}
-
-export interface TabInfo {
-  targetId: string;
-  url: string;
-  title: string;
-  active: boolean;
-}
-
-export interface SnapshotResult {
-  url: string;
-  title: string;
-  elements: SnapshotElement[];
-  time: number;
-  tabs?: TabInfo[];
-  activeTargetId?: string | null;
-  detectedChallenges?: string[];
-}
-
-import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
 import { createSkillState } from '../skills/index.js';
-import type { SkillFireState } from '../skills/index.js';
 import { PROXY_FIELDS } from '../tools/schemas.js';
-import type { ProxyOptions } from '../tools/schemas.js';
+import { hashToken, isMeaningfulBody } from './utils.js';
+import type {
+  ActiveSession,
+  AgentMessage,
+  AgentResponse,
+  ProxyOptions,
+} from '../@types/types.js';
 
 /**
  * Thrown when the agent WebSocket upgrade is rejected with a non-101 HTTP
@@ -85,12 +33,6 @@ export class UpgradeError extends Error {
  * api-client.ts so smart-scrape, crawl, and agent all surface profile errors
  * through the same UserError pattern.
  */
-// Reject server bodies that are obviously not a real message — empty, just
-// whitespace, or a literal `null`/`undefined` from a misbehaving JSON layer.
-// In those cases we'd rather surface the canned fallback than echo garbage.
-const isMeaningfulBody = (s: string): boolean =>
-  s.length > 0 && !/^(?:null|undefined)$/i.test(s);
-
 export class ProfileNotFoundError extends UpgradeError {
   constructor(
     public readonly profile: string,
@@ -118,21 +60,6 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
   }
   return true;
 };
-
-export interface ActiveSession {
-  ws: WebSocket;
-  msgId: number;
-  // Identity fields: these feed the session-cache key (see getSessionKey).
-  // Mutating them post-creation would desync the cache, so they're readonly.
-  readonly apiUrl: string;
-  readonly token: string;
-  readonly proxy?: ProxyOptions;
-  readonly profile?: string;
-  reconnecting?: Promise<WebSocket>;
-  skillState: SkillFireState;
-  lastUsedAt: number;
-  lastUrl?: string;
-}
 
 const sessions = new Map<string, ActiveSession>();
 // In-flight session creations keyed by session key. Concurrent
@@ -180,11 +107,6 @@ const sweepSessions = (): void => {
 // user-supplied field, so the two segments cannot ambiguously concatenate.
 const KEY_SEP = '\u0000';
 
-// 64-bit truncation of SHA-256 — wide enough to make accidental collisions
-// astronomically unlikely, unlike the 32-bit djb2 used elsewhere.
-const sha256Short = (s: string): string =>
-  createHash('sha256').update(s).digest('hex').slice(0, 16);
-
 // Hash externalProxyServer rather than serializing it raw — the session key
 // is logged on eviction (closeAndDelete), and the URL may carry user:pass
 // credentials. Hashing preserves per-upstream session distinctness without
@@ -194,7 +116,7 @@ const fingerprintValue = (
   value: unknown,
 ): string =>
   field === 'externalProxyServer'
-    ? `external#${sha256Short(String(value))}`
+    ? `external#${hashToken(String(value))}`
     : String(value);
 
 /**
@@ -221,9 +143,9 @@ const getSessionKey = (
   proxy?: ProxyOptions,
   profile?: string,
 ): string =>
-  (mcpSessionId ?? `stdio:${sha256Short(token)}`) +
+  (mcpSessionId ?? `stdio:${hashToken(token)}`) +
   proxyFingerprint(proxy) +
-  (profile ? KEY_SEP + 'profile#' + sha256Short(profile) : '');
+  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '');
 
 /**
  * Build the WebSocket URL for `/chromium/agent`. Normalizes trailing

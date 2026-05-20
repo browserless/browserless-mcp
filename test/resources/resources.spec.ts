@@ -3,7 +3,7 @@ import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
-import type { McpConfig } from '../../src/config.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',

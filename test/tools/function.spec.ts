@@ -7,8 +7,8 @@ import {
   formatFunctionContent,
   registerFunctionTool,
 } from '../../src/tools/function.js';
-import type { GenericApiResult } from '../../src/tools/schemas.js';
-import type { McpConfig } from '../../src/config.js';
+import type { GenericApiResult } from '../../src/@types/types.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',

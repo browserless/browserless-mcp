@@ -1,17 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AgentError, SnapshotResult } from '../lib/agent-client.js';
-
-export type SkillId =
-  | 'shadow-dom'
-  | 'cookie-consent'
-  | 'modals'
-  | 'captchas'
-  | 'snapshot-misses'
-  | 'dynamic-content'
-  | 'screenshots'
-  | 'tabs';
+import type {
+  DetectContext,
+  SkillFireState,
+  SkillId,
+} from '../@types/types.js';
 
 const DEFAULT_MAX_ELEMENTS = 500;
 const TAB_ERROR_CODES = new Set([
@@ -25,19 +19,6 @@ const TAB_COMMAND_METHODS = new Set([
   'createTab',
   'closeTab',
 ]);
-
-export interface DetectContext {
-  snapshot?: SnapshotResult;
-  error?: AgentError;
-  cmd?: { method: string; params: Record<string, unknown> };
-  resp?: unknown;
-  apiUrl?: string;
-}
-
-export interface SkillFireState {
-  fired: Map<SkillId, number>;
-  cmdIndex: number;
-}
 
 interface Skill {
   id: SkillId;

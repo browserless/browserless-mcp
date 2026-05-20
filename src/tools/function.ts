@@ -1,9 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { FunctionParamsSchema, type GenericApiResult } from './schemas.js';
+import { FunctionParamsSchema } from './schemas.js';
+import type { GenericApiResult } from '../@types/types.js';
 import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
-import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
-import type { McpConfig } from '../config.js';
+import { AmplitudeHelper } from '../lib/amplitude.js';
+import { djb2 } from '../lib/utils.js';
+import type { McpConfig } from '../@types/types.js';
 
 /**
  * Hard cap for text responses. Larger payloads are rejected with a clear

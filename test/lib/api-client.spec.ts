@@ -5,7 +5,7 @@ import {
   ProfileNotFoundError,
 } from '../../src/lib/api-client.js';
 import { ResponseCache } from '../../src/lib/cache.js';
-import type { McpConfig } from '../../src/config.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',

@@ -1,7 +1,8 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
-import { AmplitudeHelper, djb2 } from '../../src/lib/amplitude.js';
+import { AmplitudeHelper } from '../../src/lib/amplitude.js';
+import { djb2 } from '../../src/lib/utils.js';
 
 describe('AmplitudeHelper', () => {
   let sqsSendStub: sinon.SinonStub;

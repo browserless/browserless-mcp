@@ -1,10 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { CrawlParamsSchema } from './schemas.js';
-import type { CrawlStatusResponse, CrawlPageResult } from './schemas.js';
+import type { CrawlStatusResponse, CrawlPageResult } from '../@types/types.js';
 import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
-import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
-import type { McpConfig } from '../config.js';
+import { AmplitudeHelper } from '../lib/amplitude.js';
+import { djb2 } from '../lib/utils.js';
+import type { McpConfig } from '../@types/types.js';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
