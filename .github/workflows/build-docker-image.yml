@@ -8,6 +8,7 @@ on:
 
 jobs:
   push_to_registry:
+    if: github.repository == 'browserless/browserless-mcp'
     runs-on: ubuntu-latest
     permissions:
       packages: write

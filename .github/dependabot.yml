@@ -34,6 +34,9 @@ updates:
       typescript:
         patterns:
           - "typescript"
+      fastmcp:
+        patterns:
+          - "fastmcp"
 
   - package-ecosystem: github-actions
     directory: /
