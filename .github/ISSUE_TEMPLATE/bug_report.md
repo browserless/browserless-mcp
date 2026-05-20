@@ -38,6 +38,7 @@ Include the MCP tool name and parameters you called, if relevant.
 <!-- Paste any relevant error output. Redact your API token. -->
 
 ```
+
 ```
 
 ## Additional context
