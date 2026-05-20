@@ -1,4 +1,7 @@
 import type { IncomingMessage } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { FastMCP, OAuthProvider } from 'fastmcp';
 import { OAuthProxy } from 'fastmcp/auth';
 import { getConfig } from './config.js';
@@ -21,6 +24,13 @@ import { resolveApiKey } from './lib/account-resolver.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
 import { Redis } from 'ioredis';
+
+const pkg = JSON.parse(
+  readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'),
+    'utf-8',
+  ),
+) as { version: `${number}.${number}.${number}` };
 
 const config = getConfig();
 
@@ -166,7 +176,7 @@ const hybridAuthenticate =
 
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
-  version: '0.1.0',
+  version: pkg.version,
   ...(oauthProvider ? { auth: oauthProvider } : {}),
   authenticate: hybridAuthenticate,
 });
@@ -193,12 +203,6 @@ server.on('connect', (event) => {
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
-});
-
-// OpenAI Apps Challenge verification endpoint
-const app = server.getApp();
-app.get('/.well-known/openai-apps-challenge', (c) => {
-  return c.text('aaf7cYxvDaXPvZ2Vg40MCTvYzhCO0KW5mlqmvVIyh5o');
 });
 
 if (config.transport === 'httpStream') {
