@@ -4,15 +4,15 @@ You're about to capture or just captured a screenshot. The image arrives as a vi
 
 ## Snapshot vs. screenshot — pick the right tool
 
-| Need | Use |
-|---|---|
-| Element identity, text, structure, interactability | `snapshot` (cheap, structured) |
-| Visual layout, colors, rendered output, deliverable for the user | `screenshot` (vision input) |
-| Extract text from the page | `snapshot` then read names, or `text { selector }` — **never** screenshot then OCR |
-| Capture a chart, map, image-rendered formula | `screenshot` with a tight `selector` |
-| Verify "does this look right?" | `screenshot` |
+| Need                                                             | Use                                                                                |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Element identity, text, structure, interactability               | `snapshot` (cheap, structured)                                                     |
+| Visual layout, colors, rendered output, deliverable for the user | `screenshot` (vision input)                                                        |
+| Extract text from the page                                       | `snapshot` then read names, or `text { selector }` — **never** screenshot then OCR |
+| Capture a chart, map, image-rendered formula                     | `screenshot` with a tight `selector`                                               |
+| Verify "does this look right?"                                   | `screenshot`                                                                       |
 
-A snapshot is roughly free (one-liner per element). A screenshot's token cost is image- and model-dependent — varying with size and the consuming model rather than a fixed number — and is typically higher than a snapshot, but it's also the *only* way to see actual rendering. Use it when visual fidelity is the point, not as a substitute for inspecting the DOM.
+A snapshot is roughly free (one-liner per element). A screenshot's token cost is image- and model-dependent — varying with size and the consuming model rather than a fixed number — and is typically higher than a snapshot, but it's also the _only_ way to see actual rendering. Use it when visual fidelity is the point, not as a substitute for inspecting the DOM.
 
 ## Scope: smallest region that answers the question
 
@@ -44,11 +44,16 @@ If you only need to verify a single component (a button, a header, a price), use
 For visual verification of something you just did, batch the action and the screenshot:
 
 ```json
-{ "commands": [
-  { "method": "click", "params": { "selector": "button#open-modal" } },
-  { "method": "waitForSelector", "params": { "selector": "[role='dialog']", "timeout": 5000 } },
-  { "method": "screenshot", "params": { "selector": "[role='dialog']" } }
-]}
+{
+  "commands": [
+    { "method": "click", "params": { "selector": "button#open-modal" } },
+    {
+      "method": "waitForSelector",
+      "params": { "selector": "[role='dialog']", "timeout": 5000 }
+    },
+    { "method": "screenshot", "params": { "selector": "[role='dialog']" } }
+  ]
+}
 ```
 
 The `waitForSelector` ensures the modal has actually rendered before the camera fires — without it, you may capture an empty viewport.

@@ -20,37 +20,48 @@ The snapshot you just received is either at the element limit (likely truncated)
 2. **If the element you need has no accessible name**, fall back to `evaluate` to read it directly:
 
    ```json
-   { "method": "evaluate", "params": {
-     "content": "(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt))()"
-   }}
+   {
+     "method": "evaluate",
+     "params": {
+       "content": "(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt))()"
+     }
+   }
    ```
 
    Or to get text from an icon-only button:
 
    ```json
-   { "method": "evaluate", "params": {
-     "content": "(() => document.querySelector('[data-testid=\"close\"]')?.getAttribute('aria-label'))()"
-   }}
+   {
+     "method": "evaluate",
+     "params": {
+       "content": "(() => document.querySelector('[data-testid=\"close\"]')?.getAttribute('aria-label'))()"
+     }
+   }
    ```
 
 3. **For image-rendered results** (WolframAlpha, LaTeX renderers), the `alt` attribute usually carries the answer:
 
    ```json
-   { "method": "evaluate", "params": {
-     "content": "(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt).filter(Boolean))()"
-   }}
+   {
+     "method": "evaluate",
+     "params": {
+       "content": "(() => [...document.querySelectorAll('img[alt]')].map(i => i.alt).filter(Boolean))()"
+     }
+   }
    ```
 
 4. **For very long lists**, scroll and re-snapshot rather than blowing up `maxElements` — pagination of the snapshot is more reliable than one giant pull:
 
    ```json
-   { "commands": [
-     { "method": "scroll", "params": { "direction": "down" } },
-     { "method": "snapshot" }
-   ]}
+   {
+     "commands": [
+       { "method": "scroll", "params": { "direction": "down" } },
+       { "method": "snapshot" }
+     ]
+   }
    ```
 
 ## Don't
 
 - Don't keep raising `maxElements` past ~2000 — past that, the model spends more on snapshot reading than the task gains. Scroll and paginate instead.
-- Don't `evaluate` to crawl `document.body.innerHTML` for general extraction. The snapshot is structured; raw HTML floods context with markup. Use `evaluate` only for *specific* attributes the snapshot can't surface.
+- Don't `evaluate` to crawl `document.body.innerHTML` for general extraction. The snapshot is structured; raw HTML floods context with markup. Use `evaluate` only for _specific_ attributes the snapshot can't surface.

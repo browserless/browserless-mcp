@@ -38,17 +38,23 @@ DOM-read actions do **not** work and will fail or return null: **`text`, `html`,
 To read content from a shadow root or iframe, use `evaluate` with explicit traversal:
 
 ```json
-{ "method": "evaluate", "params": {
-  "content": "(() => { const f = document.querySelector('iframe#myFrame'); return f?.contentDocument?.body?.textContent; })()"
-}}
+{
+  "method": "evaluate",
+  "params": {
+    "content": "(() => { const f = document.querySelector('iframe#myFrame'); return f?.contentDocument?.body?.textContent; })()"
+  }
+}
 ```
 
 For shadow DOM:
 
 ```json
-{ "method": "evaluate", "params": {
-  "content": "(() => document.querySelector('my-component')?.shadowRoot?.querySelector('button')?.textContent)()"
-}}
+{
+  "method": "evaluate",
+  "params": {
+    "content": "(() => document.querySelector('my-component')?.shadowRoot?.querySelector('button')?.textContent)()"
+  }
+}
 ```
 
 ## Recovery recipe when a regular selector fails
