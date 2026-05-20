@@ -11,11 +11,17 @@ import {
   ProfileNotFoundError,
   UpgradeError,
 } from '../lib/agent-client.js';
-import type { SnapshotResult, SnapshotElement } from '../@types/types.js';
+import type {
+  AgentParams,
+  McpConfig,
+  SkillId,
+  SnapshotElement,
+  SnapshotResult,
+} from '../@types/types.js';
 import { classifyAgentError } from '../lib/error-classifier.js';
-import type { McpConfig } from '../@types/types.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import { djb2 } from '../lib/utils.js';
+import { defineTool } from '../lib/define-tool.js';
 import {
   detectSkills,
   markFired,
@@ -23,7 +29,6 @@ import {
   renderSkills,
   skillsRegistry,
 } from '../skills/index.js';
-import type { SkillId } from '../@types/types.js';
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
@@ -118,11 +123,6 @@ export const formatConnectError = (err: unknown): string => {
     );
   }
   if (err instanceof UpgradeError) {
-    // Both LB-injected (ngx.exit(N) with empty body, or nginx default HTML
-    // for 502/503/504) and enterprise responses pass through this branch.
-    // sanitizeUpgradeBody handles the HTML bloat case. For named statuses we
-    // only render the body when present — the reason phrase ("Unauthorized")
-    // is already implied by the status code and would just add noise.
     const detail = sanitizeUpgradeBody(err.body);
     switch (err.statusCode) {
       case 400:
@@ -134,8 +134,6 @@ export const formatConnectError = (err: unknown): string => {
       case 429:
         return `Concurrency limit reached (429)${detail ? `: ${detail}` : ''}. Wait for in-flight sessions to finish, or upgrade the plan.`;
       default: {
-        // Unknown statuses (502/503/504 etc.) are rarer — the reason phrase
-        // adds context for the LLM here, so we use it when body is empty.
         const fallback = detail || err.statusMessage || '';
         return `Failed to connect to browser agent (HTTP ${err.statusCode})${fallback ? `: ${fallback}` : ''}.`;
       }
@@ -146,6 +144,7 @@ export const formatConnectError = (err: unknown): string => {
   }
   return `Failed to connect to browser agent: ${String(err)}`;
 };
+
 const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
 
 ## Residential proxy (optional)
@@ -262,24 +261,6 @@ Non-obvious quirks called out below. For everything else, the typed schema is au
 
 `;
 
-const getAuth = (
-  session: Record<string, unknown> | undefined,
-  config: McpConfig,
-): { token: string; apiUrl: string } => {
-  const token =
-    (session?.token as string | undefined) ?? config.browserlessToken;
-  if (!token) {
-    throw new UserError(
-      'No Browserless API token provided. ' +
-        'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
-        'For HTTP: pass Authorization: Bearer <token> header.',
-    );
-  }
-  const apiUrl =
-    (session?.apiUrl as string | undefined) ?? config.browserlessApiUrl;
-  return { token, apiUrl };
-};
-
 /**
  * Format a single snapshot element as a compact one-liner.
  *
@@ -296,7 +277,6 @@ const formatElement = (el: SnapshotElement): string => {
   const name = el.name || el.text || '';
   if (name) parts.push(`"${name}"`);
 
-  // The selector the agent should use in commands
   if (el.selector.startsWith('< ')) {
     parts.push(`deep-ref=${el.selector}`);
   } else {
@@ -382,8 +362,6 @@ export const formatScreenshotContent = (
     typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
   const mimeType = SCREENSHOT_MIME[requestedType] ?? 'image/png';
 
-  // Decoded byte size, not base64 char count — avoids implying the bytes are
-  // in-band as text for clients that don't render image content blocks.
   const decodedBytes = Math.floor(base64.length * 0.75);
   const sizeLabel =
     decodedBytes >= 1_048_576
@@ -438,7 +416,7 @@ export function registerAgentTools(
   config: McpConfig,
   amplitude?: AmplitudeHelper,
 ): void {
-  server.addTool({
+  defineTool<{ id: SkillId }, string>(server, config, amplitude, {
     name: 'browserless_skill',
     description: SKILL_TOOL_DESCRIPTION,
     parameters: SkillToolParamsSchema,
@@ -447,29 +425,23 @@ export function registerAgentTools(
       readOnlyHint: true,
       openWorldHint: false,
     },
-    execute: async (args, { session }) => {
-      const { token, apiUrl } = getAuth(session, config);
-      const body = renderSkill(args.id);
-      const success = !!body;
-
-      amplitude
-        ?.send('MCP Tool Request', djb2(token), {
-          token,
-          tool: 'browserless_skill',
-          skill: args.id,
-          api_url: apiUrl,
-          success,
-        })
-        .catch(() => {});
-
-      if (!body) {
-        throw new UserError(`Unknown skill id: ${args.id}`);
-      }
-      return { content: [{ type: 'text' as const, text: body }] };
+    run: async ({ params }) => renderSkill(params.id),
+    analyticsProps: (params, body) => ({
+      skill: params.id,
+      success: !!body,
+    }),
+    format: (body, params) => {
+      if (!body) throw new UserError(`Unknown skill id: ${params.id}`);
+      return [{ type: 'text' as const, text: body }];
     },
   });
 
-  server.addTool({
+  // browserless_agent is more involved than the other tools — it manages
+  // long-lived WebSocket sessions with one-shot retry on transient failures,
+  // and fires analytics on BOTH success and failure paths. defineTool gives
+  // us the auth/token scaffolding; `run` does the rest and `format` is a
+  // passthrough.
+  defineTool<AgentParams, Content[]>(server, config, amplitude, {
     name: 'browserless_agent',
     description: TOOL_DESCRIPTION,
     parameters: AgentParamsSchema,
@@ -478,23 +450,27 @@ export function registerAgentTools(
       readOnlyHint: false,
       openWorldHint: true,
     },
-    execute: async (args, { session, sessionId, log }) => {
-      const { token, apiUrl } = getAuth(session, config);
-      const mcpSessionId = sessionId;
-
+    run: async ({
+      params,
+      log,
+      amplitude,
+      token,
+      apiUrl,
+      sessionId: mcpSessionId,
+    }) => {
       const commands: Array<{
         method: string;
         params: Record<string, unknown>;
       }> =
-        args.commands && args.commands.length > 0
-          ? args.commands.map((c) => ({
+        params.commands && params.commands.length > 0
+          ? params.commands.map((c) => ({
               method: c.method,
               params: coerceParams(c.params),
             }))
-          : [{ method: args.method, params: coerceParams(args.params) }];
+          : [{ method: params.method, params: coerceParams(params.params) }];
 
-      const proxy = args.proxy;
-      const profile = args.profile;
+      const proxy = params.proxy;
+      const profile = params.profile;
 
       const sendAnalytics = (success: boolean) => {
         amplitude
@@ -517,14 +493,10 @@ export function registerAgentTools(
       if (commands.length === 1 && commands[0].method === 'close') {
         closeSession(mcpSessionId, token, proxy, profile);
         sendAnalytics(true);
-        return {
-          content: [{ type: 'text' as const, text: 'Browser session closed.' }],
-        };
+        return [{ type: 'text' as const, text: 'Browser session closed.' }];
       }
 
-      const runCommands = async (
-        isRetry: boolean,
-      ): Promise<{ content: Content[] }> => {
+      const runCommands = async (isRetry: boolean): Promise<Content[]> => {
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
@@ -534,7 +506,7 @@ export function registerAgentTools(
             proxy,
             profile,
           );
-        } catch (connErr: any) {
+        } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
           // with the same (bad token / wrong profile / unsupported params)
           // will just produce the same response and waste time.
@@ -569,23 +541,25 @@ export function registerAgentTools(
           let resp;
           try {
             resp = await send(agentSession, cmd.method, cmd.params);
-          } catch (sendErr: any) {
+          } catch (sendErr: unknown) {
             destroySession(mcpSessionId, token, proxy, profile);
+            const errMessage =
+              sendErr instanceof Error ? sendErr.message : String(sendErr);
             if (!isRetry) {
               log.warn(
-                `agent: ${cmd.method} failed (first attempt, retrying once): ${sendErr?.message ?? sendErr}`,
+                `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
               );
               return runCommands(true);
             }
             const classified = classifyAgentError({
-              err: { message: sendErr.message },
+              err: { message: errMessage },
               cmd,
             });
             throw new UserError(
               formatErrorMessage({
                 category: classified.category,
                 prefix: `${cmd.method} failed: `,
-                message: sendErr.message,
+                message: errMessage,
                 recovery: classified.recovery,
               }),
             );
@@ -663,7 +637,6 @@ export function registerAgentTools(
           ? '\n\nBrowser session closed.'
           : '';
 
-        // Batch summary prefix (only if >1 command)
         const batchPrefix =
           commands.length > 1
             ? `Executed: ${results.map((r) => r.method).join(' → ')}\n\n`
@@ -684,14 +657,11 @@ export function registerAgentTools(
           agentSession.skillState,
         );
         markFired(agentSession.skillState, triggered);
+
         // The whole batch was just `close` (or close-only after a no-op
         // prefix that produced nothing reportable).
         if (!last) {
-          return {
-            content: [
-              { type: 'text' as const, text: 'Browser session closed.' },
-            ],
-          };
+          return [{ type: 'text' as const, text: 'Browser session closed.' }];
         }
 
         // Snapshot: format as compact ref-based text
@@ -702,18 +672,16 @@ export function registerAgentTools(
           );
           const noticeBlock = notice ? `${notice}\n\n` : '';
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text:
-                  batchPrefix +
-                  noticeBlock +
-                  formatSnapshot(lastSnapshot) +
-                  closedSuffix,
-              },
-            ],
-          };
+          return [
+            {
+              type: 'text' as const,
+              text:
+                batchPrefix +
+                noticeBlock +
+                formatSnapshot(lastSnapshot) +
+                closedSuffix,
+            },
+          ];
         }
 
         // Screenshot: return as image content block (vision input ≈ 1.5K tokens
@@ -725,21 +693,19 @@ export function registerAgentTools(
             batchPrefix,
             triggered.length > 0 ? renderSkills(triggered) : '',
           );
-          if (content) return { content };
+          if (content) return content;
         }
 
         // Everything else: return as JSON text
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: appendSkills(
-                batchPrefix + JSON.stringify(lastResult, null, 2),
-                triggered,
-              ),
-            },
-          ],
-        };
+        return [
+          {
+            type: 'text' as const,
+            text: appendSkills(
+              batchPrefix + JSON.stringify(lastResult, null, 2),
+              triggered,
+            ),
+          },
+        ];
       };
 
       try {
@@ -751,5 +717,6 @@ export function registerAgentTools(
         throw err;
       }
     },
+    format: (content) => content,
   });
 }

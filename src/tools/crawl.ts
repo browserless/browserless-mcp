@@ -1,11 +1,16 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { CrawlParamsSchema } from './schemas.js';
-import type { CrawlStatusResponse, CrawlPageResult } from '../@types/types.js';
-import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
+import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import { djb2 } from '../lib/utils.js';
-import type { McpConfig } from '../@types/types.js';
+import type {
+  CrawlPageResult,
+  CrawlParams,
+  CrawlStartResponse,
+  CrawlStatusResponse,
+  McpConfig,
+} from '../@types/types.js';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -50,12 +55,26 @@ async function fetchPageContent(
   }
 }
 
+/**
+ * Discriminated result of a crawl execution. `started` fires when
+ * `waitForCompletion=false` so the tool returns the crawl ID immediately;
+ * `completed` fires after polling reaches a terminal status.
+ */
+type CrawlRunResult =
+  | { kind: 'started'; crawlId: string; startResponse: CrawlStartResponse }
+  | {
+      kind: 'completed';
+      crawlId: string;
+      statusResponse: CrawlStatusResponse;
+      pages: Array<{ page: CrawlPageResult; content: PageContent | null }>;
+    };
+
 export function registerCrawlTool(
   server: FastMCP,
   config: McpConfig,
   amplitude?: AmplitudeHelper,
 ): void {
-  server.addTool({
+  defineTool<CrawlParams, CrawlRunResult>(server, config, amplitude, {
     name: 'browserless_crawl',
     description:
       'Crawl a website and scrape every discovered page using Browserless. ' +
@@ -69,76 +88,50 @@ export function registerCrawlTool(
       readOnlyHint: true,
       openWorldHint: true,
     },
-    execute: async (args, { reportProgress, session, log }) => {
-      const token =
-        (session?.token as string | undefined) ?? config.browserlessToken;
-      if (!token) {
-        throw new UserError(
-          'No Browserless API token provided. ' +
-            'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
-            'For HTTP: pass Authorization: Bearer <token> header.',
-        );
-      }
-
-      const apiUrl =
-        (session?.apiUrl as string | undefined) ?? config.browserlessApiUrl;
-
-      const urlObj = new URL(args.url);
-      if (!['http:', 'https:'].includes(urlObj.protocol)) {
-        throw new UserError(
-          `Invalid URL protocol "${urlObj.protocol}". Only http and https are supported.`,
-        );
-      }
-
-      await reportProgress({ progress: 0, total: 100 });
-
-      const client = createApiClient({
-        ...config,
-        browserlessToken: token,
-        browserlessApiUrl: apiUrl,
-      });
-
-      // Start the crawl
-      let startResponse;
-      try {
-        startResponse = await client.crawl({
-          url: args.url,
-          limit: args.limit,
-          maxDepth: args.maxDepth,
-          maxRetries: args.maxRetries,
-          allowExternalLinks: args.allowExternalLinks,
-          allowSubdomains: args.allowSubdomains,
-          sitemap: args.sitemap,
-          includePaths: args.includePaths,
-          excludePaths: args.excludePaths,
-          delay: args.delay,
-          scrapeOptions: args.scrapeOptions,
-          timeout: args.timeout,
-          profile: args.profile,
-        });
-      } catch (err) {
-        if (err instanceof ProfileNotFoundError) {
-          throw new UserError(
-            `Profile "${err.profile}" was not found for the configured API ` +
-              `token. Create the profile with Browserless.saveProfile in a ` +
-              `live session first, or omit the profile parameter to crawl ` +
-              `anonymously.`,
-          );
-        }
-        throw err;
-      }
-
+    validateUrl: (p) => validateHttpUrl(p.url),
+    profileNotFoundMessage: (profile) =>
+      `Profile "${profile}" was not found for the configured API ` +
+      `token. Create the profile with Browserless.saveProfile in a ` +
+      `live session first, or omit the profile parameter to crawl ` +
+      `anonymously.`,
+    // crawl fires its own analytics events at multiple points (start failure,
+    // timeout, async-return, success), so we skip defineTool's end-of-run fire.
+    run: async ({
+      client,
+      params,
+      log,
+      amplitude,
+      token,
+      apiUrl,
+      reportProgress,
+    }) => {
       const analyticsBase = {
         token,
         tool: 'browserless_crawl',
-        url: args.url,
-        limit: args.limit ?? 100,
+        url: params.url,
+        limit: params.limit ?? 100,
         api_url: apiUrl,
-        profile_used: !!args.profile,
+        profile_used: !!params.profile,
       };
 
+      // Start the crawl (ProfileNotFoundError propagates to defineTool)
+      const startResponse = await client.crawl({
+        url: params.url,
+        limit: params.limit,
+        maxDepth: params.maxDepth,
+        maxRetries: params.maxRetries,
+        allowExternalLinks: params.allowExternalLinks,
+        allowSubdomains: params.allowSubdomains,
+        sitemap: params.sitemap,
+        includePaths: params.includePaths,
+        excludePaths: params.excludePaths,
+        delay: params.delay,
+        scrapeOptions: params.scrapeOptions,
+        timeout: params.timeout,
+        profile: params.profile,
+      });
+
       if (!startResponse.success) {
-        // Fire-and-forget analytics for failed start
         amplitude
           ?.send('MCP Tool Request', djb2(token), {
             ...analyticsBase,
@@ -146,20 +139,16 @@ export function registerCrawlTool(
             error: startResponse.error ?? 'Unknown error',
           })
           .catch(() => {});
-
         throw new UserError(
           `Failed to start crawl: ${startResponse.error ?? 'Unknown error'}`,
         );
       }
 
       const crawlId = startResponse.id;
+      log.debug(`Crawl started: id=${crawlId}, url=${params.url}`);
 
-      log.debug(`Crawl started: id=${crawlId}, url=${args.url}`);
-
-      // If not waiting for completion, return immediately with the crawl ID
-      if (args.waitForCompletion === false) {
-        await reportProgress({ progress: 100, total: 100 });
-
+      // Async return — caller polls externally
+      if (params.waitForCompletion === false) {
         amplitude
           ?.send('MCP Tool Request', djb2(token), {
             ...analyticsBase,
@@ -168,37 +157,18 @@ export function registerCrawlTool(
             wait_for_completion: false,
           })
           .catch(() => {});
-
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: [
-                '## Crawl Started',
-                '',
-                `**Crawl ID:** ${crawlId}`,
-                `**Status URL:** ${startResponse.url}`,
-                `**Target URL:** ${args.url}`,
-                '',
-                'The crawl is running asynchronously. Use the crawl ID to check status.',
-              ].join('\n'),
-            },
-          ],
-        };
+        return { kind: 'started', crawlId, startResponse };
       }
 
       // Poll for completion
-      const pollInterval = args.pollInterval ?? 5000;
-      const maxWaitTime = args.maxWaitTime ?? 300000; // Default 5 minutes
+      const pollInterval = params.pollInterval ?? 5000;
+      const maxWaitTime = params.maxWaitTime ?? 300000;
       const startTime = Date.now();
-
       let statusResponse: CrawlStatusResponse;
       let isFirstPoll = true;
 
       do {
-        // Check if we've exceeded max wait time
         if (Date.now() - startTime > maxWaitTime) {
-          // Return partial results on timeout
           amplitude
             ?.send('MCP Tool Request', djb2(token), {
               ...analyticsBase,
@@ -207,14 +177,11 @@ export function registerCrawlTool(
               timeout: true,
             })
             .catch(() => {});
-
           throw new UserError(
             `Crawl exceeded max wait time of ${maxWaitTime}ms. Crawl ID: ${crawlId}. ` +
               'The crawl may still be running. You can check its status later using the crawl ID.',
           );
         }
-
-        // Always wait between polls (skip only first iteration)
         if (!isFirstPoll) {
           await new Promise((resolve) => setTimeout(resolve, pollInterval));
         }
@@ -222,7 +189,6 @@ export function registerCrawlTool(
 
         statusResponse = await client.getCrawl(crawlId);
 
-        // Update progress based on completed pages
         if (statusResponse.total > 0) {
           const progress = Math.min(
             Math.floor((statusResponse.completed / statusResponse.total) * 95),
@@ -238,13 +204,10 @@ export function registerCrawlTool(
         );
       } while (!TERMINAL_STATUSES.has(statusResponse.status));
 
-      await reportProgress({ progress: 100, total: 100 });
-
-      // Fetch all pages (handle pagination)
+      // Fetch all pages (paginated)
       const allPages: CrawlPageResult[] = [...statusResponse.data];
       let nextUrl = statusResponse.next;
       let skip = allPages.length;
-
       while (nextUrl && allPages.length < statusResponse.total) {
         const nextResponse = await client.getCrawl(crawlId, skip);
         allPages.push(...nextResponse.data);
@@ -252,7 +215,6 @@ export function registerCrawlTool(
         nextUrl = nextResponse.next;
       }
 
-      // Fire-and-forget analytics
       amplitude
         ?.send('MCP Tool Request', djb2(token), {
           ...analyticsBase,
@@ -265,13 +227,56 @@ export function registerCrawlTool(
         })
         .catch(() => {});
 
+      // Fetch page content for completed pages (so format() stays sync)
+      const completedPages = allPages.filter((p) => p.status === 'completed');
+      const pagesToFetch = completedPages.slice(0, MAX_CONTENT_PAGES);
+      log.debug(`Fetching content for ${pagesToFetch.length} pages...`);
+      const fetched = await Promise.all(
+        pagesToFetch.map(async (page) => ({
+          page,
+          content: page.contentUrl
+            ? await fetchPageContent(page.contentUrl)
+            : null,
+        })),
+      );
+      // Re-pair: keep order with allPages so failed pages render too
+      const fetchedByUrl = new Map(
+        fetched.map(({ page, content }) => [page, content] as const),
+      );
+      const pages = allPages.map((page) => ({
+        page,
+        content: fetchedByUrl.get(page) ?? null,
+      }));
+
+      log.debug(`Crawl completed: id=${crawlId}, pages=${allPages.length}`);
+      return { kind: 'completed', crawlId, statusResponse, pages };
+    },
+    format: (result, params) => {
+      if (result.kind === 'started') {
+        return [
+          {
+            type: 'text' as const,
+            text: [
+              '## Crawl Started',
+              '',
+              `**Crawl ID:** ${result.crawlId}`,
+              `**Status URL:** ${result.startResponse.url}`,
+              `**Target URL:** ${params.url}`,
+              '',
+              'The crawl is running asynchronously. Use the crawl ID to check status.',
+            ].join('\n'),
+          },
+        ];
+      }
+
+      const { crawlId, statusResponse, pages } = result;
+
       if (statusResponse.status === 'failed') {
         throw new UserError(
           `Crawl failed. Crawl ID: ${crawlId}. ` +
             `Completed: ${statusResponse.completed}/${statusResponse.total} pages.`,
         );
       }
-
       if (statusResponse.status === 'cancelled') {
         throw new UserError(
           `Crawl was cancelled. Crawl ID: ${crawlId}. ` +
@@ -279,16 +284,12 @@ export function registerCrawlTool(
         );
       }
 
-      log.debug(`Crawl completed: id=${crawlId}, pages=${allPages.length}`);
+      const blocks: Content[] = [];
 
-      // Format results
-      const contentBlocks: Content[] = [];
-
-      // Summary block
-      contentBlocks.push({
+      blocks.push({
         type: 'text' as const,
         text: [
-          `## Crawl Results for ${args.url}`,
+          `## Crawl Results for ${params.url}`,
           '',
           `**Status:** ${statusResponse.status}`,
           `**Total Pages:** ${statusResponse.total}`,
@@ -302,130 +303,103 @@ export function registerCrawlTool(
           .join('\n'),
       });
 
-      // Page results with actual content
-      if (allPages.length > 0) {
-        const completedPages = allPages.filter((p) => p.status === 'completed');
-        const failedPages = allPages.filter((p) => p.status === 'failed');
+      const completedPages = pages.filter((p) => p.page.status === 'completed');
+      const failedPages = pages.filter((p) => p.page.status === 'failed');
 
-        if (completedPages.length > 0) {
-          // Fetch actual content for completed pages (up to MAX_CONTENT_PAGES)
-          const pagesToFetch = completedPages.slice(0, MAX_CONTENT_PAGES);
-
-          log.debug(`Fetching content for ${pagesToFetch.length} pages...`);
-
-          const contentResults = await Promise.all(
-            pagesToFetch.map(async (page) => {
-              if (!page.contentUrl) return { page, content: null };
-              const content = await fetchPageContent(page.contentUrl);
-              return { page, content };
-            }),
-          );
-
-          // Format pages with their actual content
-          const pageList = contentResults
-            .map(({ page, content }, index) => {
-              const lines = [`### ${index + 1}. ${page.metadata.sourceURL}`];
-
-              if (page.metadata.title) {
-                lines.push(`**Title:** ${page.metadata.title}`);
-              }
-              if (page.metadata.statusCode) {
-                lines.push(`**Status Code:** ${page.metadata.statusCode}`);
-              }
-
-              // Include the actual scraped content
-              if (content) {
-                // Prefer markdown, then rawText, then html
-                let textContent =
-                  content.markdown ?? content.rawText ?? content.html;
-                if (textContent) {
-                  // Truncate if too long
-                  if (textContent.length > MAX_CONTENT_LENGTH) {
-                    textContent =
-                      textContent.slice(0, MAX_CONTENT_LENGTH) +
-                      `\n\n... [Content truncated at ${MAX_CONTENT_LENGTH} characters]`;
-                  }
-                  lines.push('');
-                  lines.push('**Content:**');
-                  lines.push('```');
-                  lines.push(textContent);
-                  lines.push('```');
+      if (completedPages.length > 0) {
+        const renderable = completedPages.slice(0, MAX_CONTENT_PAGES);
+        const pageList = renderable
+          .map(({ page, content }, index) => {
+            const lines = [`### ${index + 1}. ${page.metadata.sourceURL}`];
+            if (page.metadata.title)
+              lines.push(`**Title:** ${page.metadata.title}`);
+            if (page.metadata.statusCode)
+              lines.push(`**Status Code:** ${page.metadata.statusCode}`);
+            if (content) {
+              let textContent =
+                content.markdown ?? content.rawText ?? content.html;
+              if (textContent) {
+                if (textContent.length > MAX_CONTENT_LENGTH) {
+                  textContent =
+                    textContent.slice(0, MAX_CONTENT_LENGTH) +
+                    `\n\n... [Content truncated at ${MAX_CONTENT_LENGTH} characters]`;
                 }
-              } else if (page.contentUrl) {
-                // Content fetch failed - note this but don't fail the whole operation
                 lines.push('');
-                lines.push(
-                  '*[Content could not be fetched - URL may have expired]*',
-                );
+                lines.push('**Content:**');
+                lines.push('```');
+                lines.push(textContent);
+                lines.push('```');
               }
-
-              return lines.join('\n');
-            })
-            .join('\n\n---\n\n');
-
-          contentBlocks.push({
+            } else if (page.contentUrl) {
+              lines.push('');
+              lines.push(
+                '*[Content could not be fetched - URL may have expired]*',
+              );
+            }
+            return lines.join('\n');
+          })
+          .join('\n\n---\n\n');
+        blocks.push({
+          type: 'text' as const,
+          text: `## Scraped Pages (${completedPages.length})\n\n${pageList}`,
+        });
+        if (completedPages.length > MAX_CONTENT_PAGES) {
+          blocks.push({
             type: 'text' as const,
-            text: `## Scraped Pages (${completedPages.length})\n\n${pageList}`,
-          });
-
-          // Note if there are more pages than we fetched content for
-          if (completedPages.length > MAX_CONTENT_PAGES) {
-            contentBlocks.push({
-              type: 'text' as const,
-              text:
-                `\n*Note: Content shown for first ${MAX_CONTENT_PAGES} pages. ` +
-                `${completedPages.length - MAX_CONTENT_PAGES} additional pages were crawled but content not included to avoid response size limits.*`,
-            });
-          }
-        }
-
-        if (failedPages.length > 0) {
-          const failedList = failedPages
-            .slice(0, 20)
-            .map((page, index) => {
-              return `${index + 1}. ${page.metadata.sourceURL}\n   Error: ${page.metadata.error ?? 'Unknown error'}`;
-            })
-            .join('\n');
-
-          contentBlocks.push({
-            type: 'text' as const,
-            text: `## Failed Pages (${failedPages.length})\n\n${failedList}${failedPages.length > 20 ? `\n... and ${failedPages.length - 20} more` : ''}`,
+            text:
+              `\n*Note: Content shown for first ${MAX_CONTENT_PAGES} pages. ` +
+              `${completedPages.length - MAX_CONTENT_PAGES} additional pages were crawled but content not included to avoid response size limits.*`,
           });
         }
+      }
 
-        // URL list for easy reference (capped to avoid huge responses)
+      if (failedPages.length > 0) {
+        const failedList = failedPages
+          .slice(0, 20)
+          .map(({ page }, index) => {
+            return `${index + 1}. ${page.metadata.sourceURL}\n   Error: ${page.metadata.error ?? 'Unknown error'}`;
+          })
+          .join('\n');
+        blocks.push({
+          type: 'text' as const,
+          text: `## Failed Pages (${failedPages.length})\n\n${failedList}${failedPages.length > 20 ? `\n... and ${failedPages.length - 20} more` : ''}`,
+        });
+      }
+
+      if (completedPages.length === 0 && failedPages.length === 0) {
+        blocks.push({
+          type: 'text' as const,
+          text: 'No pages were successfully crawled.',
+        });
+      } else {
         const urlsToShow = completedPages.slice(0, MAX_URL_LIST);
-        const urlList = urlsToShow.map((p) => p.metadata.sourceURL).join('\n');
+        const urlList = urlsToShow
+          .map(({ page }) => page.metadata.sourceURL)
+          .join('\n');
         const urlListSuffix =
           completedPages.length > MAX_URL_LIST
             ? `\n\n... and ${completedPages.length - MAX_URL_LIST} more URLs`
             : '';
-        contentBlocks.push({
+        blocks.push({
           type: 'text' as const,
           text: `## All Crawled URLs\n\n${urlList}${urlListSuffix}`,
         });
-      } else {
-        contentBlocks.push({
-          type: 'text' as const,
-          text: 'No pages were successfully crawled.',
-        });
       }
 
-      // Metadata block
-      contentBlocks.push({
+      blocks.push({
         type: 'text' as const,
         text: [
           '---',
           `Crawl ID: ${crawlId}`,
-          `Target URL: ${args.url}`,
-          `Max Depth: ${args.maxDepth ?? 5}`,
-          `Page Limit: ${args.limit ?? 100}`,
-          `Sitemap Mode: ${args.sitemap ?? 'auto'}`,
+          `Target URL: ${params.url}`,
+          `Max Depth: ${params.maxDepth ?? 5}`,
+          `Page Limit: ${params.limit ?? 100}`,
+          `Sitemap Mode: ${params.sitemap ?? 'auto'}`,
           '---',
         ].join('\n'),
       });
 
-      return { content: contentBlocks };
+      return blocks;
     },
   });
 }

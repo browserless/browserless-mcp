@@ -1,17 +1,16 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { MapParamsSchema } from './schemas.js';
-import { createApiClient } from '../lib/api-client.js';
+import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
-import { djb2 } from '../lib/utils.js';
-import type { McpConfig } from '../@types/types.js';
+import type { MapParams, MapResponse, McpConfig } from '../@types/types.js';
 
 export function registerMapTool(
   server: FastMCP,
   config: McpConfig,
   amplitude?: AmplitudeHelper,
 ): void {
-  server.addTool({
+  defineTool<MapParams, MapResponse>(server, config, amplitude, {
     name: 'browserless_map',
     description:
       'Discover and map all URLs on a website using Browserless. ' +
@@ -25,120 +24,78 @@ export function registerMapTool(
       readOnlyHint: true,
       openWorldHint: true,
     },
-    execute: async (args, { reportProgress, session, log }) => {
-      const token =
-        (session?.token as string | undefined) ?? config.browserlessToken;
-      if (!token) {
-        throw new UserError(
-          'No Browserless API token provided. ' +
-            'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
-            'For HTTP: pass Authorization: Bearer <token> header.',
-        );
-      }
-
-      const apiUrl =
-        (session?.apiUrl as string | undefined) ?? config.browserlessApiUrl;
-
-      const urlObj = new URL(args.url);
-      if (!['http:', 'https:'].includes(urlObj.protocol)) {
-        throw new UserError(
-          `Invalid URL protocol "${urlObj.protocol}". Only http and https are supported.`,
-        );
-      }
-
-      await reportProgress({ progress: 0, total: 100 });
-
-      const client = createApiClient({
-        ...config,
-        browserlessToken: token,
-        browserlessApiUrl: apiUrl,
-      });
-
+    validateUrl: (p) => validateHttpUrl(p.url),
+    run: async ({ client, params, log }) => {
       const response = await client.map({
-        url: args.url,
-        search: args.search,
-        limit: args.limit,
-        sitemap: args.sitemap,
-        includeSubdomains: args.includeSubdomains,
-        ignoreQueryParameters: args.ignoreQueryParameters,
-        timeout: args.timeout,
+        url: params.url,
+        search: params.search,
+        limit: params.limit,
+        sitemap: params.sitemap,
+        includeSubdomains: params.includeSubdomains,
+        ignoreQueryParameters: params.ignoreQueryParameters,
+        timeout: params.timeout,
       });
-
-      await reportProgress({ progress: 100, total: 100 });
-
-      // Fire-and-forget analytics
-      amplitude
-        ?.send('MCP Tool Request', djb2(token), {
-          token,
-          tool: 'browserless_map',
-          url: args.url,
-          limit: args.limit ?? 100,
-          sitemap_mode: args.sitemap ?? 'include',
-          api_url: apiUrl,
-          success: response.success,
-          links_found: response.links?.length ?? 0,
-        })
-        .catch(() => {});
-
       if (!response.success) {
         throw new UserError(`Map failed: ${response.error ?? 'Unknown error'}`);
       }
-
       log.debug(
         `Map response: success=${response.success}, links=${response.links?.length ?? 0}`,
       );
-
-      const contentBlocks: Content[] = [];
-
+      return response;
+    },
+    analyticsProps: (params, result) => ({
+      url: params.url,
+      limit: params.limit ?? 100,
+      sitemap_mode: params.sitemap ?? 'include',
+      success: result.success,
+      links_found: result.links?.length ?? 0,
+    }),
+    format: (response, params) => {
+      const blocks: Content[] = [];
       if (response.links && response.links.length > 0) {
-        // Format links as a structured list
         const linksText = response.links
           .map((link, index) => {
             let text = `${index + 1}. ${link.url}`;
-            if (link.title) {
-              text += `\n   Title: ${link.title}`;
-            }
+            if (link.title) text += `\n   Title: ${link.title}`;
             if (link.description) {
-              text += `\n   Description: ${link.description.slice(0, 200)}${link.description.length > 200 ? '...' : ''}`;
+              const truncated =
+                link.description.length > 200
+                  ? `${link.description.slice(0, 200)}...`
+                  : link.description;
+              text += `\n   Description: ${truncated}`;
             }
             return text;
           })
           .join('\n\n');
-
-        contentBlocks.push({
+        blocks.push({
           type: 'text' as const,
           text: `## Site Map Results (${response.links.length} URLs)\n\n${linksText}`,
         });
-
-        // Also provide a simple URL list for easy copying
         const urlList = response.links.map((l) => l.url).join('\n');
-        contentBlocks.push({
+        blocks.push({
           type: 'text' as const,
           text: `## URL List\n\n${urlList}`,
         });
       } else {
-        contentBlocks.push({
+        blocks.push({
           type: 'text' as const,
-          text: `No URLs found for site: ${args.url}`,
+          text: `No URLs found for site: ${params.url}`,
         });
       }
-
-      // Metadata block
-      contentBlocks.push({
+      blocks.push({
         type: 'text' as const,
         text: [
           '---',
-          `Base URL: ${args.url}`,
+          `Base URL: ${params.url}`,
           `URLs Found: ${response.links?.length ?? 0}`,
-          `Sitemap Mode: ${args.sitemap ?? 'include'}`,
-          args.search ? `Search Query: ${args.search}` : '',
+          `Sitemap Mode: ${params.sitemap ?? 'include'}`,
+          params.search ? `Search Query: ${params.search}` : '',
           '---',
         ]
           .filter(Boolean)
           .join('\n'),
       });
-
-      return { content: contentBlocks };
+      return blocks;
     },
   });
 }

@@ -18,9 +18,10 @@ export function registerScrapeUrlPrompt(server: FastMCP): void {
       },
     ],
     load: async ({ url, includeScreenshot }) => {
-      const formats = includeScreenshot === 'true'
-        ? '["markdown", "screenshot"]'
-        : '["markdown"]';
+      const formats =
+        includeScreenshot === 'true'
+          ? '["markdown", "screenshot"]'
+          : '["markdown"]';
       return {
         messages: [
           {

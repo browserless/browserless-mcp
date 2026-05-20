@@ -10,14 +10,17 @@ const UPSTREAM_CLIENT_SECRET = 'upstream-client-secret';
 const LEGIT_REDIRECT = 'https://client.example.com/callback';
 const EVIL_REDIRECT = 'https://evil.attacker.com/steal';
 
-function buildConfig(overrides: Partial<OAuthProxyConfig> = {}): OAuthProxyConfig {
+function buildConfig(
+  overrides: Partial<OAuthProxyConfig> = {},
+): OAuthProxyConfig {
   return {
     allowedRedirectUriPatterns: ['https://client.example.com/*'],
     baseUrl: 'http://localhost:4200',
     consentRequired: false,
     enableTokenSwap: false,
     scopes: [],
-    upstreamAuthorizationEndpoint: 'https://provider.example.com/oauth/authorize',
+    upstreamAuthorizationEndpoint:
+      'https://provider.example.com/oauth/authorize',
     upstreamClientId: UPSTREAM_CLIENT_ID,
     upstreamClientSecret: UPSTREAM_CLIENT_SECRET,
     upstreamTokenEndpoint: 'https://provider.example.com/oauth/token',
@@ -98,8 +101,12 @@ describe('RedisOAuthProxy', () => {
         ],
       });
 
-      const a = await redis.exists('mcp:oauth:client:https://client.example.com/a');
-      const b = await redis.exists('mcp:oauth:client:https://client.example.com/b');
+      const a = await redis.exists(
+        'mcp:oauth:client:https://client.example.com/a',
+      );
+      const b = await redis.exists(
+        'mcp:oauth:client:https://client.example.com/b',
+      );
       expect(a).to.equal(1);
       expect(b).to.equal(1);
     });
@@ -303,9 +310,7 @@ describe('RedisOAuthProxy', () => {
 
   describe('registerClient Redis failure rollback', () => {
     it('does not leave any Redis state when the mirror write fails', async () => {
-      const setStub = sinon
-        .stub(redis, 'set')
-        .rejects(new Error('redis down'));
+      const setStub = sinon.stub(redis, 'set').rejects(new Error('redis down'));
 
       try {
         await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
@@ -372,9 +377,9 @@ describe('RedisOAuthProxy', () => {
       setStub.restore();
 
       // The prior registration must still be valid on both layers
-      expect(
-        await redis.exists(`mcp:oauth:client:${LEGIT_REDIRECT}`),
-      ).to.equal(1);
+      expect(await redis.exists(`mcp:oauth:client:${LEGIT_REDIRECT}`)).to.equal(
+        1,
+      );
       const authStillOk = await proxy.authorize(baseAuthorizeParams());
       expect(authStillOk.status).to.equal(302);
     });
@@ -436,7 +441,9 @@ describe('RedisOAuthProxy', () => {
 
       expect(cbResp.status).to.equal(302);
       const finalLocation = new URL(cbResp.headers.get('Location')!);
-      expect(finalLocation.origin + finalLocation.pathname).to.equal(LEGIT_REDIRECT);
+      expect(finalLocation.origin + finalLocation.pathname).to.equal(
+        LEGIT_REDIRECT,
+      );
       expect(finalLocation.searchParams.get('code')).to.be.a('string');
       expect(finalLocation.searchParams.get('state')).to.equal('client-state');
 

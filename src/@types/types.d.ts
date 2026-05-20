@@ -21,6 +21,7 @@ import type {
   CrawlSitemapModeSchema,
   CrawlFormatSchema,
   CrawlParamsSchema,
+  AgentParamsSchema,
 } from '../tools/schemas.js';
 
 /* ------------------------------------------------------------------ */
@@ -240,6 +241,7 @@ export type PageStatus = z.infer<typeof PageStatusSchema>;
 export type CrawlSitemapMode = z.infer<typeof CrawlSitemapModeSchema>;
 export type CrawlFormat = z.infer<typeof CrawlFormatSchema>;
 export type CrawlParams = z.infer<typeof CrawlParamsSchema>;
+export type AgentParams = z.infer<typeof AgentParamsSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  Generic HTTP response wrapper used by function / download / export */
