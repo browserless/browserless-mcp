@@ -409,8 +409,8 @@ export function createApiClient(
         query: { skip: skip !== undefined && skip > 0 ? skip : undefined },
         timeout: config.requestTimeout,
         shouldRetry: (error) =>
-          !error.message.startsWith('Server error 4') &&
-          !error.message.includes('not found'),
+          !/^(Server|API) error 4/.test(error.message) &&
+          !error.message.toLowerCase().includes('not found'),
         handleResponse: async (res) => {
           if (res.status === 404) throw new Error('Crawl not found');
           if (!res.ok) {
