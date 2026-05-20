@@ -216,9 +216,7 @@ export const createSkillState = (): SkillFireState => ({
 });
 
 const fires = (skill: Skill, ctx: DetectContext): boolean =>
-  skill.triggers.some((trigger) =>
-    trigger.every((p) => evalPredicate(p, ctx)),
-  );
+  skill.triggers.some((trigger) => trigger.every((p) => evalPredicate(p, ctx)));
 
 export const detectSkills = (
   ctx: DetectContext,
