@@ -1,20 +1,20 @@
 # Latest
 - Emit Amplitude `MCP Tool Request` events for the `browserless_agent` and `browserless_skill` tools
 
-# 1.3.4
+# v1.3.4 — 2026-05-15
 - Add profile parameter to agent, function, download, export, and performance tools
 
-# 1.3.3
+# v1.3.3 — 2026-05-14
 - Add profile parameter to smartscraper and crawl tools
 - Implement error classification and cross-origin notice handling
 
-# 1.3.2
-- Anable Devin domains for OAuth
+# v1.3.2 — 2026-05-06
+- Enable Devin domains for OAuth
 
-# 1.3.1
+# v1.3.1 — 2026-05-05
 - Enable stateful connections
 
-# 1.3.0
+# v1.3.0 — 2026-04-30
 - Skills
 - Screenshot support for vision engines
 - Captcha handling support
@@ -26,7 +26,7 @@
 - Fix OAuth patch
 
 # v1.2.0
-- Improve OAuth secutiry
+- Improve OAuth security
 - Improve agentic browsing
 
 # v1.1.0
@@ -54,13 +54,13 @@
 - replace power-scrape with smart-scrape endpoint
 
 # v0.2.0
-- Amplitude Events 
-- Suport token param in URL
+- Amplitude Events
+- Support token param in URL
 
 # v0.1.2
 - Fix vulnerabilities
 
 # v0.1.1
-- Support power-scrape api 
-- Cache per account 
+- Support power-scrape api
+- Cache per account
 - Git Actions to version and create docker images
