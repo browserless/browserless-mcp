@@ -23,6 +23,7 @@ import { AnalyticsHelper } from './lib/analytics.js';
 import { resolveApiKey } from './lib/account-resolver.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
+import { installSupabaseTokenTtlPatch } from './lib/supabase-token-patch.js';
 import { Redis } from 'ioredis';
 
 const pkg = JSON.parse(
@@ -34,37 +35,13 @@ const pkg = JSON.parse(
 
 const config = getConfig();
 
-// Supabase OAuth tokens have a very short TTL (60s), which causes FastMCP's
-// token-swap mode to issue equally short-lived JWTs and trigger constant refresh
-// cycles. We intercept Supabase token responses to extend the TTL to 1 hour.
-// This is safe because we only decode the JWT payload (for accountId) — we never
-// use it as a bearer token against Supabase APIs.
-const OAUTH_TOKEN_TTL_OVERRIDE = 3600; // 1 hour
-const originalFetch = globalThis.fetch;
-globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
-  const response = await originalFetch(...args);
-  const url =
-    typeof args[0] === 'string'
-      ? args[0]
-      : args[0] instanceof URL
-        ? args[0].toString()
-        : (args[0] as Request).url;
-  if (response.ok && url.includes('/oauth/token')) {
-    const body = (await response.json()) as Record<string, unknown>;
-    if (
-      typeof body.expires_in === 'number' &&
-      body.expires_in < OAUTH_TOKEN_TTL_OVERRIDE
-    ) {
-      body.expires_in = OAUTH_TOKEN_TTL_OVERRIDE;
-    }
-    return new Response(JSON.stringify(body), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  }
-  return response;
-};
+// Override Supabase's short-lived (~60s) OAuth token TTL so MCP clients don't
+// thrash refresh. Narrowly scoped to the Supabase token endpoint; see
+// supabase-token-patch.ts for the full rationale.
+if (config.oauthEnabled && config.supabaseUrl) {
+  installSupabaseTokenTtlPatch(config.supabaseUrl, 3600);
+}
+
 const analytics = new AnalyticsHelper(
   config.analyticsEnabled,
   config.sqsQueueUrl,
