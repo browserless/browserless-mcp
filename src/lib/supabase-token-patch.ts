@@ -43,10 +43,7 @@ export function installSupabaseTokenTtlPatch(
       return response;
     }
     const body = (await response.json()) as Record<string, unknown>;
-    if (
-      typeof body.expires_in === 'number' &&
-      body.expires_in < ttlSeconds
-    ) {
+    if (typeof body.expires_in === 'number' && body.expires_in < ttlSeconds) {
       body.expires_in = ttlSeconds;
     }
     return new Response(JSON.stringify(body), {
