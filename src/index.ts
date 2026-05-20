@@ -141,9 +141,7 @@ const hybridAuthenticate =
           config.browserlessApiUrl;
 
         // JWTs have 3 dot-separated base64url segments; plain API keys do not.
-        const isJwt = headerToken
-          ? headerToken.split('.').length === 3
-          : false;
+        const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
 
         // 1. Authorization header with plain API key
         if (headerToken && !isJwt) {
