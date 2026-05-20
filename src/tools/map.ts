@@ -2,7 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type { MapParams, MapResponse, McpConfig } from '../@types/types.js';
 
 export const SitemapModeSchema = z.enum(['include', 'skip', 'only']);
@@ -47,9 +47,9 @@ export const MapParamsSchema = z.object({
 export function registerMapTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<MapParams, MapResponse>(server, config, amplitude, {
+  defineTool<MapParams, MapResponse>(server, config, analytics, {
     name: 'browserless_map',
     description:
       'Discover and map all URLs on a website using Browserless. ' +

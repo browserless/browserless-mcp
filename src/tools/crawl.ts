@@ -6,8 +6,7 @@ import {
   profileField,
   validateHttpUrl,
 } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
-import { djb2 } from '../lib/utils.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   CrawlPageResult,
   CrawlParams,
@@ -224,9 +223,9 @@ type CrawlRunResult =
 export function registerCrawlTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<CrawlParams, CrawlRunResult>(server, config, amplitude, {
+  defineTool<CrawlParams, CrawlRunResult>(server, config, analytics, {
     name: 'browserless_crawl',
     description:
       'Crawl a website and scrape every discovered page using Browserless. ' +
@@ -252,14 +251,12 @@ export function registerCrawlTool(
       client,
       params,
       log,
-      amplitude,
+      analytics,
       token,
       apiUrl,
       reportProgress,
     }) => {
       const analyticsBase = {
-        token,
-        tool: 'browserless_crawl',
         url: params.url,
         limit: params.limit ?? 100,
         api_url: apiUrl,
@@ -284,13 +281,11 @@ export function registerCrawlTool(
       });
 
       if (!startResponse.success) {
-        amplitude
-          ?.send('MCP Tool Request', djb2(token), {
-            ...analyticsBase,
-            success: false,
-            error: startResponse.error ?? 'Unknown error',
-          })
-          .catch(() => {});
+        analytics?.fireToolRequest(token, 'browserless_crawl', {
+          ...analyticsBase,
+          success: false,
+          error: startResponse.error ?? 'Unknown error',
+        });
         throw new UserError(
           `Failed to start crawl: ${startResponse.error ?? 'Unknown error'}`,
         );
@@ -301,14 +296,12 @@ export function registerCrawlTool(
 
       // Async return — caller polls externally
       if (params.waitForCompletion === false) {
-        amplitude
-          ?.send('MCP Tool Request', djb2(token), {
-            ...analyticsBase,
-            success: true,
-            crawl_id: crawlId,
-            wait_for_completion: false,
-          })
-          .catch(() => {});
+        analytics?.fireToolRequest(token, 'browserless_crawl', {
+          ...analyticsBase,
+          success: true,
+          crawl_id: crawlId,
+          wait_for_completion: false,
+        });
         return { kind: 'started', crawlId, startResponse };
       }
 
@@ -321,14 +314,12 @@ export function registerCrawlTool(
 
       do {
         if (Date.now() - startTime > maxWaitTime) {
-          amplitude
-            ?.send('MCP Tool Request', djb2(token), {
-              ...analyticsBase,
-              success: false,
-              crawl_id: crawlId,
-              timeout: true,
-            })
-            .catch(() => {});
+          analytics?.fireToolRequest(token, 'browserless_crawl', {
+            ...analyticsBase,
+            success: false,
+            crawl_id: crawlId,
+            timeout: true,
+          });
           throw new UserError(
             `Crawl exceeded max wait time of ${maxWaitTime}ms. Crawl ID: ${crawlId}. ` +
               'The crawl may still be running. You can check its status later using the crawl ID.',
@@ -367,17 +358,15 @@ export function registerCrawlTool(
         nextUrl = nextResponse.next;
       }
 
-      amplitude
-        ?.send('MCP Tool Request', djb2(token), {
-          ...analyticsBase,
-          success: statusResponse.status === 'completed',
-          crawl_id: crawlId,
-          status: statusResponse.status,
-          total_pages: statusResponse.total,
-          completed_pages: statusResponse.completed,
-          failed_pages: statusResponse.failed,
-        })
-        .catch(() => {});
+      analytics?.fireToolRequest(token, 'browserless_crawl', {
+        ...analyticsBase,
+        success: statusResponse.status === 'completed',
+        crawl_id: crawlId,
+        status: statusResponse.status,
+        total_pages: statusResponse.total,
+        completed_pages: statusResponse.completed,
+        failed_pages: statusResponse.failed,
+      });
 
       // Fetch page content for completed pages (so format() stays sync)
       const completedPages = allPages.filter((p) => p.status === 'completed');

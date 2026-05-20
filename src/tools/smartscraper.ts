@@ -7,7 +7,7 @@ import {
   validateHttpUrl,
 } from '../lib/define-tool.js';
 import { ResponseCache } from '../lib/cache.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   McpConfig,
   SmartScrapeResult,
@@ -62,11 +62,11 @@ export const SmartScraperResponseSchema = z.object({
 export function registerSmartScraperTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
   const cache = new ResponseCache(config.cacheTtlMs);
 
-  defineTool<SmartScraperParams, SmartScrapeResult>(server, config, amplitude, {
+  defineTool<SmartScraperParams, SmartScrapeResult>(server, config, analytics, {
     name: 'browserless_smartscraper',
     description:
       'Scrape any webpage using the Browserless smart scraper. ' +

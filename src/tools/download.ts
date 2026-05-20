@@ -2,7 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, profileField } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   DownloadParams,
   GenericApiResult,
@@ -33,9 +33,9 @@ export const DownloadParamsSchema = z.object({
 export function registerDownloadTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<DownloadParams, GenericApiResult>(server, config, amplitude, {
+  defineTool<DownloadParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_download',
     description:
       'Run custom Puppeteer code on Browserless and return the file that ' +

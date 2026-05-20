@@ -19,7 +19,7 @@ import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
-import { AmplitudeHelper } from './lib/amplitude.js';
+import { AnalyticsHelper } from './lib/analytics.js';
 import { resolveApiKey } from './lib/account-resolver.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
@@ -65,7 +65,7 @@ globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
   }
   return response;
 };
-const amplitude = new AmplitudeHelper(
+const analytics = new AnalyticsHelper(
   config.analyticsEnabled,
   config.sqsQueueUrl,
   config.sqsRegion,
@@ -179,15 +179,15 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
-registerSmartScraperTool(server, config, amplitude);
-registerFunctionTool(server, config, amplitude);
-registerDownloadTool(server, config, amplitude);
-registerExportTool(server, config, amplitude);
-registerAgentTools(server, config, amplitude);
-registerSearchTool(server, config, amplitude);
-registerMapTool(server, config, amplitude);
-registerCrawlTool(server, config, amplitude);
-registerPerformanceTool(server, config, amplitude);
+registerSmartScraperTool(server, config, analytics);
+registerFunctionTool(server, config, analytics);
+registerDownloadTool(server, config, analytics);
+registerExportTool(server, config, analytics);
+registerAgentTools(server, config, analytics);
+registerSearchTool(server, config, analytics);
+registerMapTool(server, config, analytics);
+registerCrawlTool(server, config, analytics);
+registerPerformanceTool(server, config, analytics);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
 registerScrapeUrlPrompt(server);

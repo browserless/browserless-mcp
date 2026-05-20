@@ -6,7 +6,7 @@ import {
   profileField,
   validateHttpUrl,
 } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   ExportParams,
   GenericApiResult,
@@ -67,9 +67,9 @@ export const ExportParamsSchema = z.object({
 export function registerExportTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<ExportParams, GenericApiResult>(server, config, amplitude, {
+  defineTool<ExportParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_export',
     description:
       'Export a webpage from a URL via the Browserless /export API. ' +

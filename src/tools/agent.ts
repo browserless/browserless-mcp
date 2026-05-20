@@ -19,8 +19,7 @@ import type {
   SnapshotResult,
 } from '../@types/types.js';
 import { classifyAgentError } from '../lib/error-classifier.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
-import { djb2 } from '../lib/utils.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool, profileField } from '../lib/define-tool.js';
 import {
   detectSkills,
@@ -936,9 +935,9 @@ Available skills:
 export function registerAgentTools(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<{ id: SkillId }, string>(server, config, amplitude, {
+  defineTool<{ id: SkillId }, string>(server, config, analytics, {
     name: 'browserless_skill',
     description: SKILL_TOOL_DESCRIPTION,
     parameters: SkillToolParamsSchema,
@@ -963,7 +962,7 @@ export function registerAgentTools(
   // and fires analytics on BOTH success and failure paths. defineTool gives
   // us the auth/token scaffolding; `run` does the rest and `format` is a
   // passthrough.
-  defineTool<AgentParams, Content[]>(server, config, amplitude, {
+  defineTool<AgentParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
     description: TOOL_DESCRIPTION,
     parameters: AgentParamsSchema,
@@ -975,7 +974,7 @@ export function registerAgentTools(
     run: async ({
       params,
       log,
-      amplitude,
+      analytics,
       token,
       apiUrl,
       sessionId: mcpSessionId,
@@ -995,21 +994,17 @@ export function registerAgentTools(
       const profile = params.profile;
 
       const sendAnalytics = (success: boolean) => {
-        amplitude
-          ?.send('MCP Tool Request', djb2(token), {
-            token,
-            tool: 'browserless_agent',
-            methods: commands.map((c) => c.method).join(','),
-            command_count: commands.length,
-            api_url: apiUrl,
-            success,
-            proxy_tier: proxy?.proxy ?? null,
-            proxy_country: proxy?.proxyCountry ?? null,
-            proxy_sticky: !!proxy?.proxySticky,
-            proxy_external: !!proxy?.externalProxyServer,
-            profile_used: !!profile,
-          })
-          .catch(() => {});
+        analytics?.fireToolRequest(token, 'browserless_agent', {
+          methods: commands.map((c) => c.method).join(','),
+          command_count: commands.length,
+          api_url: apiUrl,
+          success,
+          proxy_tier: proxy?.proxy ?? null,
+          proxy_country: proxy?.proxyCountry ?? null,
+          proxy_sticky: !!proxy?.proxySticky,
+          proxy_external: !!proxy?.externalProxyServer,
+          profile_used: !!profile,
+        });
       };
 
       if (commands.length === 1 && commands[0].method === 'close') {

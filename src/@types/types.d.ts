@@ -75,7 +75,7 @@ export interface McpConfig {
 /*  Analytics                                                          */
 /* ------------------------------------------------------------------ */
 
-export interface AmplitudeEvent {
+export interface AnalyticsEvent {
   event_type: string;
   time: number;
   session_id?: number;

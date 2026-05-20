@@ -4,9 +4,10 @@ import {
   type SendMessageBatchRequestEntry,
 } from '@aws-sdk/client-sqs';
 import { randomUUID } from 'node:crypto';
-import type { AmplitudeEvent } from '../@types/types.js';
+import { djb2 } from './utils.js';
+import type { AnalyticsEvent } from '../@types/types.js';
 
-export class AmplitudeHelper {
+export class AnalyticsHelper {
   private sqsClient?: SQSClient;
   private queueUrl?: string;
   private initialized = false;
@@ -48,7 +49,7 @@ export class AmplitudeHelper {
       return false;
     }
 
-    const event: AmplitudeEvent = {
+    const event: AnalyticsEvent = {
       event_type: eventName,
       session_id: sessionId,
       time: Date.now(),
@@ -81,5 +82,23 @@ export class AmplitudeHelper {
     }
 
     return false;
+  }
+
+  /**
+   * Fire-and-forget helper used by every MCP tool. Sends an "MCP Tool Request"
+   * event with the standard `{ token, tool, ...props }` shape and discards
+   * any send failure so analytics never blocks tool execution. The `.catch`
+   * lives here so call sites stay clean.
+   */
+  public fireToolRequest(
+    token: string,
+    tool: string,
+    properties: Record<string, unknown>,
+  ): void {
+    this.send('MCP Tool Request', djb2(token), {
+      token,
+      tool,
+      ...properties,
+    }).catch(() => {});
   }
 }

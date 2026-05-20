@@ -6,7 +6,7 @@ import {
   profileField,
   validateHttpUrl,
 } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   McpConfig,
   PerformanceParams,
@@ -49,12 +49,12 @@ export const PerformanceParamsSchema = z.object({
 export function registerPerformanceTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
   defineTool<PerformanceParams, PerformanceResponse>(
     server,
     config,
-    amplitude,
+    analytics,
     {
       name: 'browserless_performance',
       description:

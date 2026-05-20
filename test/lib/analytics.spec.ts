@@ -1,10 +1,10 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
-import { AmplitudeHelper } from '../../src/lib/amplitude.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { djb2 } from '../../src/lib/utils.js';
 
-describe('AmplitudeHelper', () => {
+describe('AnalyticsHelper', () => {
   let sqsSendStub: sinon.SinonStub;
 
   beforeEach(() => {
@@ -16,7 +16,7 @@ describe('AmplitudeHelper', () => {
   });
 
   it('does not initialize when disabled', () => {
-    const helper = new AmplitudeHelper(
+    const helper = new AnalyticsHelper(
       false,
       'https://sqs.example.com/queue',
       'us-east-1',
@@ -29,7 +29,7 @@ describe('AmplitudeHelper', () => {
   });
 
   it('does not initialize when queue URL is missing', () => {
-    const helper = new AmplitudeHelper(true, undefined, 'us-east-1');
+    const helper = new AnalyticsHelper(true, undefined, 'us-east-1');
     return helper.send('Test Event', 123, { token: 'abc' }).then((result) => {
       expect(result).to.be.false;
       expect(sqsSendStub.called).to.be.false;
@@ -39,7 +39,7 @@ describe('AmplitudeHelper', () => {
   it('sends event to SQS when enabled and configured', async () => {
     sqsSendStub.resolves({ Failed: [] });
 
-    const helper = new AmplitudeHelper(
+    const helper = new AnalyticsHelper(
       true,
       'https://sqs.example.com/queue',
       'us-east-1',
@@ -74,7 +74,7 @@ describe('AmplitudeHelper', () => {
       Failed: [{ Id: 'msg-1', Code: 'InternalError', SenderFault: false }],
     });
 
-    const helper = new AmplitudeHelper(
+    const helper = new AnalyticsHelper(
       true,
       'https://sqs.example.com/queue',
       'us-east-1',
@@ -87,7 +87,7 @@ describe('AmplitudeHelper', () => {
   it('retries on SQS errors and returns false after exhausting retries', async () => {
     sqsSendStub.rejects(new Error('Network error'));
 
-    const helper = new AmplitudeHelper(
+    const helper = new AnalyticsHelper(
       true,
       'https://sqs.example.com/queue',
       'us-east-1',
@@ -106,7 +106,7 @@ describe('AmplitudeHelper', () => {
       .onSecondCall()
       .resolves({ Failed: [] });
 
-    const helper = new AmplitudeHelper(
+    const helper = new AnalyticsHelper(
       true,
       'https://sqs.example.com/queue',
       'us-east-1',
@@ -118,7 +118,7 @@ describe('AmplitudeHelper', () => {
   });
 
   it('does not re-initialize if already initialized', () => {
-    const helper = new AmplitudeHelper(
+    const helper = new AnalyticsHelper(
       true,
       'https://sqs.example.com/queue',
       'us-east-1',

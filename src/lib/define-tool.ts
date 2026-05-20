@@ -3,8 +3,7 @@ import type { Content } from 'fastmcp';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import { ResponseCache } from './cache.js';
-import { djb2 } from './utils.js';
-import { AmplitudeHelper } from './amplitude.js';
+import { AnalyticsHelper } from './analytics.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -37,7 +36,7 @@ export interface ToolRunContext<P> {
   params: P;
   log: ToolLog;
   /** For tools that fire analytics from inside their own logic (e.g. crawl polling). */
-  amplitude?: AmplitudeHelper;
+  analytics?: AnalyticsHelper;
   token: string;
   apiUrl: string;
   reportProgress: (progress: {
@@ -116,7 +115,7 @@ export function validateHttpUrl(url: string): void {
 export function defineTool<P, R>(
   server: FastMCP,
   config: McpConfig,
-  amplitude: AmplitudeHelper | undefined,
+  analytics: AnalyticsHelper | undefined,
   def: ToolDefinition<P, R>,
 ): void {
   server.addTool({
@@ -160,7 +159,7 @@ export function defineTool<P, R>(
           client,
           params,
           log,
-          amplitude,
+          analytics,
           token,
           apiUrl,
           reportProgress,
@@ -178,15 +177,11 @@ export function defineTool<P, R>(
 
       await reportProgress({ progress: 100, total: 100 });
 
-      if (amplitude && def.analyticsProps) {
-        amplitude
-          .send('MCP Tool Request', djb2(token), {
-            token,
-            tool: def.name,
-            api_url: apiUrl,
-            ...def.analyticsProps(params, result),
-          })
-          .catch(() => {});
+      if (analytics && def.analyticsProps) {
+        analytics.fireToolRequest(token, def.name, {
+          api_url: apiUrl,
+          ...def.analyticsProps(params, result),
+        });
       }
 
       return { content: def.format(result, params) };

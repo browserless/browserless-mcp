@@ -2,7 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, profileField } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   FunctionParams,
   GenericApiResult,
@@ -119,9 +119,9 @@ export const formatFunctionContent = (
 export function registerFunctionTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<FunctionParams, GenericApiResult>(server, config, amplitude, {
+  defineTool<FunctionParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_function',
     description:
       'Execute custom Puppeteer JavaScript code on the Browserless cloud. ' +

@@ -2,7 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
-import { AmplitudeHelper } from '../lib/amplitude.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   McpConfig,
   SearchParams,
@@ -83,9 +83,9 @@ export const SearchParamsSchema = z.object({
 export function registerSearchTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  defineTool<SearchParams, SearchResponse>(server, config, amplitude, {
+  defineTool<SearchParams, SearchResponse>(server, config, analytics, {
     name: 'browserless_search',
     description:
       'Search the web using Browserless and optionally scrape each result. ' +
