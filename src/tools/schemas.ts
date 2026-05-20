@@ -13,7 +13,6 @@ export const ScrapeFormatSchema = z.enum([
   'links',
 ]);
 
-
 /**
  * Build the schema for an optional profile field. The NUL refinement protects
  * the session-key separator used in agent-client.ts (KEY_SEP = '\u0000') —
@@ -54,7 +53,6 @@ export const SmartScraperParamsSchema = z.object({
   profile: profileField('before scraping'),
 });
 
-
 export const SmartScraperResponseSchema = z.object({
   ok: z.boolean(),
   statusCode: z.number().nullable(),
@@ -69,7 +67,6 @@ export const SmartScraperResponseSchema = z.object({
   markdown: z.string().nullable(),
   links: z.array(z.string()).nullable(),
 });
-
 
 /* ------------------------------------------------------------------ */
 /*  /function API – execute custom Puppeteer code server-side          */
@@ -98,7 +95,6 @@ export const FunctionParamsSchema = z.object({
   profile: profileField('before the function executes'),
 });
 
-
 /* ------------------------------------------------------------------ */
 /*  /download API – run code and return the file Chrome downloads      */
 /* ------------------------------------------------------------------ */
@@ -123,7 +119,6 @@ export const DownloadParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
   profile: profileField('before the download script runs'),
 });
-
 
 /* ------------------------------------------------------------------ */
 /*  /export API – fetch a URL and stream its native content type       */
@@ -179,7 +174,6 @@ export const ExportParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
   profile: profileField('before the page is exported'),
 });
-
 
 /* ------------------------------------------------------------------ */
 /*  Agent Browsing Protocol – typed command schemas                     */
@@ -744,7 +738,6 @@ export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   },
 );
 
-
 export const PROXY_FIELDS = Object.keys(
   ProxyOptionsObjectSchema.shape,
 ) as Array<keyof ProxyOptions>;
@@ -858,7 +851,6 @@ export const SearchParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
-
 /* ------------------------------------------------------------------ */
 /*  /map API – site mapping / URL discovery                            */
 /* ------------------------------------------------------------------ */
@@ -902,7 +894,6 @@ export const MapParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
-
 /* ------------------------------------------------------------------ */
 /*  /performance API – run Lighthouse audits                           */
 /* ------------------------------------------------------------------ */
@@ -914,7 +905,6 @@ export const LighthouseCategorySchema = z.enum([
   'pwa',
   'seo',
 ]);
-
 
 export const PerformanceParamsSchema = z.object({
   url: z.url().describe('The URL to audit (must be http or https)'),
@@ -940,7 +930,6 @@ export const PerformanceParamsSchema = z.object({
     .describe('Request timeout in milliseconds (audits can take 30s–120s)'),
   profile: profileField('before the Lighthouse audit runs'),
 });
-
 
 /* ------------------------------------------------------------------ */
 /*  /crawl API – asynchronous web crawling                             */
@@ -1093,5 +1082,3 @@ export const CrawlParamsSchema = z.object({
     ),
   profile: profileField('before each page is scraped'),
 });
-
-

@@ -91,10 +91,7 @@ describe('browserless_performance tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    const result = await execute(
-      { url: 'https://example.com/' },
-      mockContext,
-    );
+    const result = await execute({ url: 'https://example.com/' }, mockContext);
 
     const content = (result as { content: Content[] }).content;
     expect(content).to.be.an('array');
@@ -160,11 +157,10 @@ describe('browserless_performance tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    const budgets = [{ resourceSizes: [{ resourceType: 'script', budget: 300 }] }];
-    await execute(
-      { url: 'https://example.com/', budgets },
-      mockContext,
-    );
+    const budgets = [
+      { resourceSizes: [{ resourceType: 'script', budget: 300 }] },
+    ];
+    await execute({ url: 'https://example.com/', budgets }, mockContext);
 
     expect(fetchStub.calledOnce).to.be.true;
     const body = JSON.parse(fetchStub.firstCall.args[1].body);
@@ -179,10 +175,7 @@ describe('browserless_performance tool', () => {
     const execute = addToolSpy.firstCall.args[0].execute;
 
     try {
-      await execute(
-        { url: 'https://example.com/' },
-        mockContext,
-      );
+      await execute({ url: 'https://example.com/' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -195,10 +188,7 @@ describe('browserless_performance tool', () => {
     const execute = getToolExecute(server);
 
     try {
-      await execute(
-        { url: 'ftp://example.com/' },
-        mockContext,
-      );
+      await execute({ url: 'ftp://example.com/' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -217,10 +207,7 @@ describe('browserless_performance tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    await execute(
-      { url: 'https://example.com/' },
-      mockContext,
-    );
+    await execute({ url: 'https://example.com/' }, mockContext);
 
     expect(mockContext.reportProgress.calledTwice).to.be.true;
     expect(mockContext.reportProgress.firstCall.args[0]).to.deep.equal({
@@ -250,7 +237,10 @@ describe('browserless_performance tool', () => {
     );
 
     const content = (result as { content: Content[] }).content;
-    const metadata = content[content.length - 1] as { type: string; text: string };
+    const metadata = content[content.length - 1] as {
+      type: string;
+      text: string;
+    };
     expect(metadata.text).to.include('Categories: accessibility');
   });
 

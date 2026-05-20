@@ -16,7 +16,11 @@ describe('AmplitudeHelper', () => {
   });
 
   it('does not initialize when disabled', () => {
-    const helper = new AmplitudeHelper(false, 'https://sqs.example.com/queue', 'us-east-1');
+    const helper = new AmplitudeHelper(
+      false,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
     // send should return false since disabled
     return helper.send('Test Event', 123, { token: 'abc' }).then((result) => {
       expect(result).to.be.false;
@@ -35,7 +39,11 @@ describe('AmplitudeHelper', () => {
   it('sends event to SQS when enabled and configured', async () => {
     sqsSendStub.resolves({ Failed: [] });
 
-    const helper = new AmplitudeHelper(true, 'https://sqs.example.com/queue', 'us-east-1');
+    const helper = new AmplitudeHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
     const result = await helper.send('MCP Tool Request', 12345, {
       token: 'test-token',
       tool: 'browserless_smartscraper',
@@ -66,7 +74,11 @@ describe('AmplitudeHelper', () => {
       Failed: [{ Id: 'msg-1', Code: 'InternalError', SenderFault: false }],
     });
 
-    const helper = new AmplitudeHelper(true, 'https://sqs.example.com/queue', 'us-east-1');
+    const helper = new AmplitudeHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
     const result = await helper.send('Test Event', 123, { token: 'abc' });
 
     expect(result).to.be.false;
@@ -75,7 +87,11 @@ describe('AmplitudeHelper', () => {
   it('retries on SQS errors and returns false after exhausting retries', async () => {
     sqsSendStub.rejects(new Error('Network error'));
 
-    const helper = new AmplitudeHelper(true, 'https://sqs.example.com/queue', 'us-east-1');
+    const helper = new AmplitudeHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
     const result = await helper.send('Test Event', 123, { token: 'abc' });
 
     expect(result).to.be.false;
@@ -85,10 +101,16 @@ describe('AmplitudeHelper', () => {
 
   it('succeeds on retry after initial failure', async () => {
     sqsSendStub
-      .onFirstCall().rejects(new Error('Temporary failure'))
-      .onSecondCall().resolves({ Failed: [] });
+      .onFirstCall()
+      .rejects(new Error('Temporary failure'))
+      .onSecondCall()
+      .resolves({ Failed: [] });
 
-    const helper = new AmplitudeHelper(true, 'https://sqs.example.com/queue', 'us-east-1');
+    const helper = new AmplitudeHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
     const result = await helper.send('Test Event', 123, { token: 'abc' });
 
     expect(result).to.be.true;
@@ -96,7 +118,11 @@ describe('AmplitudeHelper', () => {
   });
 
   it('does not re-initialize if already initialized', () => {
-    const helper = new AmplitudeHelper(true, 'https://sqs.example.com/queue', 'us-east-1');
+    const helper = new AmplitudeHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
     // Call initialize again — should be a no-op
     helper.initialize('https://other.example.com/queue', 'eu-west-1');
 
@@ -125,6 +151,6 @@ describe('djb2', () => {
   it('returns an unsigned 32-bit integer', () => {
     const hash = djb2('any-string');
     expect(hash).to.be.at.least(0);
-    expect(hash).to.be.at.most(0xFFFFFFFF);
+    expect(hash).to.be.at.most(0xffffffff);
   });
 });

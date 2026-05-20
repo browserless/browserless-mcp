@@ -62,28 +62,36 @@ describe('browserless_search tool', () => {
 
   it('returns web search results', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        totalResults: 2,
-        data: {
-          web: [
-            { title: 'Result 1', url: 'https://example.com/1', description: 'First result' },
-            { title: 'Result 2', url: 'https://example.com/2', description: 'Second result' },
-          ],
+      new Response(
+        JSON.stringify({
+          success: true,
+          totalResults: 2,
+          data: {
+            web: [
+              {
+                title: 'Result 1',
+                url: 'https://example.com/1',
+                description: 'First result',
+              },
+              {
+                title: 'Result 2',
+                url: 'https://example.com/2',
+                description: 'Second result',
+              },
+            ],
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
         },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    const result = await execute(
-      { query: 'test query' },
-      mockContext,
-    );
+    const result = await execute({ query: 'test query' }, mockContext);
 
     const content = (result as { content: Content[] }).content;
     expect(content).to.be.an('array');
@@ -97,14 +105,17 @@ describe('browserless_search tool', () => {
 
   it('sends correct request to /search endpoint', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        totalResults: 0,
-        data: {},
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          totalResults: 0,
+          data: {},
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
@@ -133,18 +144,26 @@ describe('browserless_search tool', () => {
 
   it('handles news results', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        totalResults: 1,
-        data: {
-          news: [
-            { title: 'News Article', url: 'https://news.com/article', description: 'Breaking news', date: '2024-01-01' },
-          ],
+      new Response(
+        JSON.stringify({
+          success: true,
+          totalResults: 1,
+          data: {
+            news: [
+              {
+                title: 'News Article',
+                url: 'https://news.com/article',
+                description: 'Breaking news',
+                date: '2024-01-01',
+              },
+            ],
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
         },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
@@ -163,18 +182,27 @@ describe('browserless_search tool', () => {
 
   it('handles image results', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        totalResults: 1,
-        data: {
-          images: [
-            { title: 'Image', imageUrl: 'https://example.com/image.png', url: 'https://example.com', imageWidth: 800, imageHeight: 600 },
-          ],
+      new Response(
+        JSON.stringify({
+          success: true,
+          totalResults: 1,
+          data: {
+            images: [
+              {
+                title: 'Image',
+                imageUrl: 'https://example.com/image.png',
+                url: 'https://example.com',
+                imageWidth: 800,
+                imageHeight: 600,
+              },
+            ],
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
         },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
@@ -193,25 +221,25 @@ describe('browserless_search tool', () => {
 
   it('throws UserError when search fails', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: false,
-        totalResults: 0,
-        data: {},
-        error: 'Search service unavailable',
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: false,
+          totalResults: 0,
+          data: {},
+          error: 'Search service unavailable',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
     try {
-      await execute(
-        { query: 'test' },
-        mockContext,
-      );
+      await execute({ query: 'test' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -227,10 +255,7 @@ describe('browserless_search tool', () => {
     const execute = addToolSpy.firstCall.args[0].execute;
 
     try {
-      await execute(
-        { query: 'test' },
-        mockContext,
-      );
+      await execute({ query: 'test' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -240,23 +265,23 @@ describe('browserless_search tool', () => {
 
   it('reports progress during execution', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        totalResults: 0,
-        data: {},
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          totalResults: 0,
+          data: {},
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    await execute(
-      { query: 'test' },
-      mockContext,
-    );
+    await execute({ query: 'test' }, mockContext);
 
     expect(mockContext.reportProgress.calledTwice).to.be.true;
     expect(mockContext.reportProgress.firstCall.args[0]).to.deep.equal({

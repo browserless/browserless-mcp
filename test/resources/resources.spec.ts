@@ -32,9 +32,7 @@ describe('Resources', () => {
   describe('api-docs resource', () => {
     it('registers without error', () => {
       const server = new FastMCP({ name: 'test', version: '0.1.0' });
-      expect(() =>
-        registerApiDocsResource(server, mockConfig),
-      ).to.not.throw();
+      expect(() => registerApiDocsResource(server, mockConfig)).to.not.throw();
     });
 
     it('load returns markdown with API URL', async () => {
@@ -69,9 +67,7 @@ describe('Resources', () => {
   describe('status resource', () => {
     it('registers without error', () => {
       const server = new FastMCP({ name: 'test', version: '0.1.0' });
-      expect(() =>
-        registerStatusResource(server, mockConfig),
-      ).to.not.throw();
+      expect(() => registerStatusResource(server, mockConfig)).to.not.throw();
     });
 
     it('load returns ok when API is reachable', async () => {

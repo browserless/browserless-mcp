@@ -116,10 +116,7 @@ async function defaultHandleResponse<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-function apiFetch<T>(
-  config: McpConfig,
-  opts: ApiFetchOptions<T>,
-): Promise<T> {
+function apiFetch<T>(config: McpConfig, opts: ApiFetchOptions<T>): Promise<T> {
   const query = new URLSearchParams({ token: config.browserlessToken! });
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v !== undefined) query.set(k, String(v));

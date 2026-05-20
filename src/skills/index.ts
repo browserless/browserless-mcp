@@ -38,7 +38,8 @@ const CAPTCHA_TEXT_RE =
   /\b(verify you are human|verifying you are human|i'?m not a robot|checking your browser|are you human|complete the (captcha|challenge))\b/i;
 const CAPTCHA_HOST_RE =
   /(challenges\.cloudflare\.com|geo\.captcha-delivery\.com|hcaptcha\.com|recaptcha\.net|google\.com\/recaptcha)/i;
-const CAPTCHA_ERROR_RE = /\b(captcha|cloudflare|challenge|forbidden|429|403)\b/i;
+const CAPTCHA_ERROR_RE =
+  /\b(captcha|cloudflare|challenge|forbidden|429|403)\b/i;
 const CLOUD_API_HOSTS = ['production.browserless.io', 'chrome.browserless.io'];
 
 const skills: Skill[] = [

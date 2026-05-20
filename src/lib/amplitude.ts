@@ -39,7 +39,12 @@ export class AmplitudeHelper {
     sessionId: number,
     properties: Record<string, unknown> & { token: string },
   ): Promise<boolean> {
-    if (!this.enabled || !this.initialized || !this.sqsClient || !this.queueUrl) {
+    if (
+      !this.enabled ||
+      !this.initialized ||
+      !this.sqsClient ||
+      !this.queueUrl
+    ) {
       return false;
     }
 
