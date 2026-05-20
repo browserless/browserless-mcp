@@ -1,13 +1,68 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { ExportParamsSchema } from './schemas.js';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { z } from 'zod';
+import {
+  defineTool,
+  profileField,
+  validateHttpUrl,
+} from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import type {
   ExportParams,
   GenericApiResult,
   McpConfig,
 } from '../@types/types.js';
+
+export const ExportParamsSchema = z.object({
+  url: z.url().describe('The URL to export (must be http or https)'),
+  gotoOptions: z
+    .object({
+      waitUntil: z
+        .union([
+          z.enum(['load', 'domcontentloaded', 'networkidle0', 'networkidle2']),
+          z.array(
+            z.enum([
+              'load',
+              'domcontentloaded',
+              'networkidle0',
+              'networkidle2',
+            ]),
+          ),
+        ])
+        .optional()
+        .describe('When to consider navigation complete'),
+      timeout: z
+        .number()
+        .optional()
+        .describe('Navigation timeout in milliseconds'),
+      referer: z.string().optional().describe('Referer header value'),
+    })
+    .optional()
+    .describe('Puppeteer Page.goto() options for navigation'),
+  bestAttempt: z
+    .boolean()
+    .optional()
+    .describe('When true, proceed even if awaited events fail or timeout.'),
+  includeResources: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, bundle all linked resources (CSS, JS, images) into a ZIP file.',
+    ),
+  waitForTimeout: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe('Milliseconds to wait after page load before exporting'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+  profile: profileField('before the page is exported'),
+});
 
 export function registerExportTool(
   server: FastMCP,

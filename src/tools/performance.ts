@@ -1,13 +1,50 @@
 import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { PerformanceParamsSchema } from './schemas.js';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { z } from 'zod';
+import {
+  defineTool,
+  profileField,
+  validateHttpUrl,
+} from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import type {
   McpConfig,
   PerformanceParams,
   PerformanceResponse,
 } from '../@types/types.js';
+
+export const LighthouseCategorySchema = z.enum([
+  'accessibility',
+  'best-practices',
+  'performance',
+  'pwa',
+  'seo',
+]);
+
+export const PerformanceParamsSchema = z.object({
+  url: z.url().describe('The URL to audit (must be http or https)'),
+  categories: z
+    .array(LighthouseCategorySchema)
+    .optional()
+    .describe(
+      'Lighthouse categories to audit: "accessibility", "best-practices", ' +
+        '"performance", "pwa", "seo". Omit for all categories.',
+    ),
+  budgets: z
+    .array(z.record(z.string(), z.unknown()))
+    .optional()
+    .describe(
+      'Lighthouse performance budgets array. ' +
+        'See https://developer.chrome.com/docs/lighthouse/performance/performance-budgets',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds (audits can take 30s–120s)'),
+  profile: profileField('before the Lighthouse audit runs'),
+});
 
 export function registerPerformanceTool(
   server: FastMCP,

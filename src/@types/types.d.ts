@@ -4,25 +4,30 @@ import type {
   ScrapeFormatSchema,
   SmartScraperParamsSchema,
   SmartScraperResponseSchema,
-  FunctionParamsSchema,
-  DownloadParamsSchema,
-  ExportParamsSchema,
-  ProxyOptionsSchema,
+} from '../tools/smartscraper.js';
+import type { FunctionParamsSchema } from '../tools/function.js';
+import type { DownloadParamsSchema } from '../tools/download.js';
+import type { ExportParamsSchema } from '../tools/export.js';
+import type {
   SearchSourceSchema,
   SearchCategorySchema,
   TimeBasedOptionsSchema,
   SearchParamsSchema,
-  SitemapModeSchema,
-  MapParamsSchema,
+} from '../tools/search.js';
+import type { SitemapModeSchema, MapParamsSchema } from '../tools/map.js';
+import type {
   LighthouseCategorySchema,
   PerformanceParamsSchema,
+} from '../tools/performance.js';
+import type {
   CrawlStatusSchema,
   PageStatusSchema,
   CrawlSitemapModeSchema,
   CrawlFormatSchema,
   CrawlParamsSchema,
-  AgentParamsSchema,
-} from '../tools/schemas.js';
+} from '../tools/crawl.js';
+import type { AgentParamsSchema } from '../tools/agent.js';
+import type { ProxyOptionsSchema } from '../lib/agent-client.js';
 
 /* ------------------------------------------------------------------ */
 /*  Session & auth                                                     */

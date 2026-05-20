@@ -1,13 +1,34 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { DownloadParamsSchema } from './schemas.js';
-import { defineTool } from '../lib/define-tool.js';
+import { z } from 'zod';
+import { defineTool, profileField } from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import type {
   DownloadParams,
   GenericApiResult,
   McpConfig,
 } from '../@types/types.js';
+
+export const DownloadParamsSchema = z.object({
+  code: z
+    .string()
+    .describe(
+      'JavaScript (ESM) code to execute. The default export receives ' +
+        '{ page, context }. During execution the code should trigger a ' +
+        'file download in the browser (e.g. clicking a download link).',
+    ),
+  context: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe('Optional context object passed to the function.'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+  profile: profileField('before the download script runs'),
+});
 
 export function registerDownloadTool(
   server: FastMCP,

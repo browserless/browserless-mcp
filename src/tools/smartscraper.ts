@@ -1,7 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { SmartScraperParamsSchema } from './schemas.js';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { z } from 'zod';
+import {
+  defineTool,
+  profileField,
+  validateHttpUrl,
+} from '../lib/define-tool.js';
 import { ResponseCache } from '../lib/cache.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import type {
@@ -9,6 +13,51 @@ import type {
   SmartScrapeResult,
   SmartScraperParams,
 } from '../@types/types.js';
+
+/**
+ * Output formats that can be requested.
+ * Mirrors the Firecrawl "formats" convention used by the enterprise API.
+ */
+export const ScrapeFormatSchema = z.enum([
+  'markdown',
+  'html',
+  'screenshot',
+  'pdf',
+  'links',
+]);
+
+export const SmartScraperParamsSchema = z.object({
+  url: z.url().describe('The URL to scrape (must be http or https)'),
+  formats: z
+    .array(ScrapeFormatSchema)
+    .optional()
+    .default(['markdown'])
+    .describe(
+      'Output formats to include: "markdown", "html", "screenshot", "pdf", "links". Defaults to ["markdown"].',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+  profile: profileField('before scraping'),
+});
+
+export const SmartScraperResponseSchema = z.object({
+  ok: z.boolean(),
+  statusCode: z.number().nullable(),
+  content: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]),
+  contentType: z.string().nullable(),
+  headers: z.record(z.string(), z.string()),
+  strategy: z.string(),
+  attempted: z.array(z.string()),
+  message: z.string().nullable(),
+  screenshot: z.string().nullable(),
+  pdf: z.string().nullable(),
+  markdown: z.string().nullable(),
+  links: z.array(z.string()).nullable(),
+});
 
 export function registerSmartScraperTool(
   server: FastMCP,

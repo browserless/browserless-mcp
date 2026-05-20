@@ -1,13 +1,36 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { FunctionParamsSchema } from './schemas.js';
-import { defineTool } from '../lib/define-tool.js';
+import { z } from 'zod';
+import { defineTool, profileField } from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import type {
   FunctionParams,
   GenericApiResult,
   McpConfig,
 } from '../@types/types.js';
+
+export const FunctionParamsSchema = z.object({
+  code: z
+    .string()
+    .describe(
+      'JavaScript (ESM) code to execute. The default export receives ' +
+        '{ page, context } and should return { data, type } where data ' +
+        'is the response payload and type is the Content-Type string.',
+    ),
+  context: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Optional context object passed to the function as the second argument.',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+  profile: profileField('before the function executes'),
+});
 
 /**
  * Hard cap for text responses. Larger payloads are rejected with a clear

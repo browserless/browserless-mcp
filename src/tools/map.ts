@@ -1,9 +1,48 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { MapParamsSchema } from './schemas.js';
+import { z } from 'zod';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import type { MapParams, MapResponse, McpConfig } from '../@types/types.js';
+
+export const SitemapModeSchema = z.enum(['include', 'skip', 'only']);
+
+export const MapParamsSchema = z.object({
+  url: z
+    .url()
+    .describe('The base URL to start mapping from (must be http or https)'),
+  search: z
+    .string()
+    .optional()
+    .describe('Search query to order results by relevance'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(5000)
+    .optional()
+    .default(100)
+    .describe('Maximum number of links to return (default: 100, max: 5000)'),
+  sitemap: SitemapModeSchema.optional()
+    .default('include')
+    .describe('Sitemap handling: "include" (default), "skip", "only"'),
+  includeSubdomains: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Include URLs from subdomains (default: true)'),
+  ignoreQueryParameters: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Exclude URLs with query parameters (default: true)'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+});
 
 export function registerMapTool(
   server: FastMCP,

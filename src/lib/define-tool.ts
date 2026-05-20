@@ -1,6 +1,6 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import { ResponseCache } from './cache.js';
 import { djb2 } from './utils.js';
@@ -80,6 +80,28 @@ const defaultProfileMessage = (profile: string): string =>
   `Profile "${profile}" was not found for the configured API token. ` +
   `Create the profile with Browserless.saveProfile in a live session first, ` +
   `or omit the profile parameter.`;
+
+/**
+ * Build the schema for an optional profile field. The NUL refinement protects
+ * the session-key separator used in agent-client.ts (KEY_SEP = '\u0000') — a
+ * profile name containing NUL could otherwise collide with another key.
+ */
+export function profileField(whenLoaded: string, extra = '') {
+  const description =
+    `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
+    "The profile's cookies, localStorage, and IndexedDB are restored into the session before the request runs. " +
+    'The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session first.' +
+    extra;
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .refine((v) => !v.includes('\u0000'), {
+      message: 'profile must not contain NUL characters',
+    })
+    .optional()
+    .describe(description);
+}
 
 /** Throw a UserError if `url` is not an http/https URL. */
 export function validateHttpUrl(url: string): void {

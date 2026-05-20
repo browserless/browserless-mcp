@@ -1,7 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { CrawlParamsSchema } from './schemas.js';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { z } from 'zod';
+import {
+  defineTool,
+  profileField,
+  validateHttpUrl,
+} from '../lib/define-tool.js';
 import { AmplitudeHelper } from '../lib/amplitude.js';
 import { djb2 } from '../lib/utils.js';
 import type {
@@ -11,6 +15,154 @@ import type {
   CrawlStatusResponse,
   McpConfig,
 } from '../@types/types.js';
+
+export const CrawlStatusSchema = z.enum([
+  'in-progress',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+export const PageStatusSchema = z.enum([
+  'queued',
+  'in-progress',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+export const CrawlSitemapModeSchema = z.enum(['auto', 'force', 'skip']);
+
+export const CrawlFormatSchema = z.enum(['markdown', 'html', 'rawText']);
+
+export const CrawlScrapeOptionsSchema = z.object({
+  formats: z
+    .array(CrawlFormatSchema)
+    .optional()
+    .default(['markdown'])
+    .describe('Output formats for scraped content'),
+  onlyMainContent: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Extract only the main content using Readability'),
+  includeTags: z
+    .array(z.string())
+    .optional()
+    .describe('HTML tag selectors to include'),
+  excludeTags: z
+    .array(z.string())
+    .optional()
+    .describe('HTML tag selectors to exclude'),
+  waitFor: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(0)
+    .describe('Time in ms to wait after page load before scraping'),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Custom HTTP headers to send with each request'),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Navigation timeout in milliseconds'),
+});
+
+export const CrawlParamsSchema = z.object({
+  url: z.url().describe('The URL to crawl (must be http or https)'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(10000)
+    .optional()
+    .default(100)
+    .describe('Maximum number of pages to crawl (default: 100)'),
+  maxDepth: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(5)
+    .describe('Maximum link-follow depth from the root URL (default: 5)'),
+  maxRetries: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(1)
+    .describe('Number of retry attempts per failed page (default: 1)'),
+  allowExternalLinks: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to follow links to external domains'),
+  allowSubdomains: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to follow links to subdomains'),
+  sitemap: CrawlSitemapModeSchema.optional()
+    .default('auto')
+    .describe('Sitemap handling: "auto" (default), "force", "skip"'),
+  includePaths: z
+    .array(z.string())
+    .optional()
+    .describe('Regex patterns for URL paths to include'),
+  excludePaths: z
+    .array(z.string())
+    .optional()
+    .describe('Regex patterns for URL paths to exclude'),
+  delay: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(200)
+    .describe('Delay between requests in milliseconds (default: 200)'),
+  scrapeOptions: CrawlScrapeOptionsSchema.optional().describe(
+    'Options controlling how each page is scraped',
+  ),
+  waitForCompletion: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      'Whether to wait for crawl completion (default: true). If false, returns immediately with crawl ID.',
+    ),
+  pollInterval: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(5000)
+    .describe(
+      'Polling interval in ms when waiting for completion (default: 5000)',
+    ),
+  maxWaitTime: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(300000)
+    .describe(
+      'Maximum time in ms to wait for crawl completion when waitForCompletion is true (default: 300000 = 5 minutes)',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      'HTTP request timeout in milliseconds for API calls (default: 30000)',
+    ),
+  profile: profileField('before each page is scraped'),
+});
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
