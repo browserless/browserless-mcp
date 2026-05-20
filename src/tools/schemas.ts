@@ -36,7 +36,7 @@ function profileField(whenLoaded: string, extra = '') {
     .describe(description);
 }
 
-export const PowerScraperParamsSchema = z.object({
+export const SmartScraperParamsSchema = z.object({
   url: z.url().describe('The URL to scrape (must be http or https)'),
   formats: z
     .array(ScrapeFormatSchema)
@@ -54,9 +54,9 @@ export const PowerScraperParamsSchema = z.object({
   profile: profileField('before scraping'),
 });
 
-export type PowerScraperParams = z.infer<typeof PowerScraperParamsSchema>;
+export type SmartScraperParams = z.infer<typeof SmartScraperParamsSchema>;
 
-export const PowerScraperResponseSchema = z.object({
+export const SmartScraperResponseSchema = z.object({
   ok: z.boolean(),
   statusCode: z.number().nullable(),
   content: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]),
@@ -71,7 +71,7 @@ export const PowerScraperResponseSchema = z.object({
   links: z.array(z.string()).nullable(),
 });
 
-export type PowerScraperResponse = z.infer<typeof PowerScraperResponseSchema>;
+export type SmartScraperResponse = z.infer<typeof SmartScraperResponseSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  /function API – execute custom Puppeteer code server-side          */

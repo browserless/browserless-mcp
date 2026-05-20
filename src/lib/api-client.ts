@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { McpConfig } from '../config.js';
 import type {
-  PowerScraperResponse,
+  SmartScraperResponse,
   ScrapeFormat,
   GenericApiResult,
   SearchResponse,
@@ -88,14 +88,14 @@ function isTextContentType(ct: string): boolean {
   return TEXT_CONTENT_TYPES.some((prefix) => lower.includes(prefix));
 }
 
-export interface PowerScrapeRequest {
+export interface SmartScrapeRequest {
   url: string;
   formats?: ScrapeFormat[];
   timeout?: number;
   profile?: string;
 }
 
-export type PowerScrapeResult = PowerScraperResponse & { cacheHit: boolean };
+export type SmartScrapeResult = SmartScraperResponse & { cacheHit: boolean };
 
 export interface FunctionRequest {
   code: string;
@@ -186,7 +186,7 @@ export interface CrawlCancelResponse {
 }
 
 export interface ApiClient {
-  powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult>;
+  smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
   download(params: DownloadRequest): Promise<GenericApiResult>;
   exportPage(params: ExportRequest): Promise<GenericApiResult>;
@@ -290,8 +290,7 @@ export function createApiClient(
   }
 
   return {
-    /* ---- powerScrape (existing) ---------------------------------- */
-    async powerScrape(params: PowerScrapeRequest): Promise<PowerScrapeResult> {
+    async smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult> {
       const formats = params.formats ?? ['markdown'];
       const tokenHash = hashToken(config.browserlessToken!);
       const cacheKey = JSON.stringify({
@@ -306,7 +305,7 @@ export function createApiClient(
         profile: params.profile ?? null,
       });
 
-      const cached = _cache.get<PowerScraperResponse>(cacheKey);
+      const cached = _cache.get<SmartScraperResponse>(cacheKey);
       if (cached) {
         return { ...cached, cacheHit: true };
       }
@@ -350,7 +349,7 @@ export function createApiClient(
             }
 
             // Reject any remaining 4xx before parsing or caching — a 400/401/403
-            // body must not be returned as a valid PowerScraperResponse, and
+            // body must not be returned as a valid SmartScraperResponse, and
             // must not poison the cache. The `Server error` prefix also lets
             // the existing retry-suppression predicate skip these.
             if (!res.ok) {
@@ -359,7 +358,7 @@ export function createApiClient(
               throw new Error(`Server error ${res.status}: ${message}`);
             }
 
-            return (await res.json()) as PowerScraperResponse;
+            return (await res.json()) as SmartScraperResponse;
           } finally {
             clearTimeout(timeoutId);
           }

@@ -6,7 +6,7 @@ import { FastMCP, OAuthProvider } from 'fastmcp';
 import { OAuthProxy } from 'fastmcp/auth';
 import { getConfig } from './config.js';
 import type { BrowserlessSession } from './config.js';
-import { registerPowerScraperTool } from './tools/smartscraper.js';
+import { registerSmartScraperTool } from './tools/smartscraper.js';
 import { registerFunctionTool } from './tools/function.js';
 import { registerDownloadTool } from './tools/download.js';
 import { registerExportTool } from './tools/export.js';
@@ -179,7 +179,7 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
-registerPowerScraperTool(server, config, amplitude);
+registerSmartScraperTool(server, config, amplitude);
 registerFunctionTool(server, config, amplitude);
 registerDownloadTool(server, config, amplitude);
 registerExportTool(server, config, amplitude);

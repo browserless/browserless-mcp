@@ -1,12 +1,12 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { PowerScraperParamsSchema } from './schemas.js';
+import { SmartScraperParamsSchema } from './schemas.js';
 import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
 import { ResponseCache } from '../lib/cache.js';
 import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
 import type { McpConfig } from '../config.js';
 
-export function registerPowerScraperTool(
+export function registerSmartScraperTool(
   server: FastMCP,
   config: McpConfig,
   amplitude?: AmplitudeHelper,
@@ -19,7 +19,7 @@ export function registerPowerScraperTool(
       'Scrape any webpage using the Browserless smart scraper. ' +
       'Returns page content in requested formats (markdown, html, screenshot, pdf, links). ' +
       'Handles JavaScript-heavy pages, anti-bot measures, and multiple scraping strategies automatically.',
-    parameters: PowerScraperParamsSchema,
+    parameters: SmartScraperParamsSchema,
     annotations: {
       title: 'Browserless Smart Scraper',
       readOnlyHint: true,
@@ -61,7 +61,7 @@ export function registerPowerScraperTool(
 
       let response;
       try {
-        response = await client.powerScrape({
+        response = await client.smartScrape({
           url: args.url,
           formats: args.formats,
           timeout: args.timeout,

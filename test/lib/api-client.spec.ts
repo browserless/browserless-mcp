@@ -52,7 +52,7 @@ describe('createApiClient', () => {
     sinon.restore();
   });
 
-  describe('powerScrape', () => {
+  describe('smartScrape', () => {
     it('sends correct request to the /smart-scrape endpoint', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {
@@ -62,7 +62,7 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      await client.powerScrape({ url: 'https://example.com' });
+      await client.smartScrape({ url: 'https://example.com' });
 
       expect(fetchStub.calledOnce).to.be.true;
       const [url, options] = fetchStub.firstCall.args;
@@ -84,7 +84,7 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      const result = await client.powerScrape({
+      const result = await client.smartScrape({
         url: 'https://example.com',
       });
 
@@ -104,7 +104,7 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      await client.powerScrape({
+      await client.smartScrape({
         url: 'https://example.com',
         timeout: 5000,
       });
@@ -122,8 +122,8 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      const first = await client.powerScrape({ url: 'https://example.com' });
-      const second = await client.powerScrape({ url: 'https://example.com' });
+      const first = await client.smartScrape({ url: 'https://example.com' });
+      const second = await client.smartScrape({ url: 'https://example.com' });
 
       expect(fetchStub.calledOnce).to.be.true;
       expect(first.cacheHit).to.be.false;
@@ -141,8 +141,8 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      await client.powerScrape({ url: 'https://example.com' });
-      await client.powerScrape({ url: 'https://other.com' });
+      await client.smartScrape({ url: 'https://example.com' });
+      await client.smartScrape({ url: 'https://other.com' });
 
       expect(fetchStub.calledTwice).to.be.true;
     });
@@ -170,8 +170,8 @@ describe('createApiClient', () => {
         sharedCache,
       );
 
-      const first = await clientA.powerScrape({ url: 'https://example.com' });
-      const second = await clientB.powerScrape({ url: 'https://example.com' });
+      const first = await clientA.smartScrape({ url: 'https://example.com' });
+      const second = await clientB.smartScrape({ url: 'https://example.com' });
 
       expect(fetchStub.calledTwice).to.be.true;
       expect(first.cacheHit).to.be.false;
@@ -188,7 +188,7 @@ describe('createApiClient', () => {
 
       const client = createApiClient(mockConfig);
       try {
-        await client.powerScrape({
+        await client.smartScrape({
           url: 'https://example.com',
           profile: 'missing',
         });
@@ -211,7 +211,7 @@ describe('createApiClient', () => {
 
       const client = createApiClient(mockConfig);
       try {
-        await client.powerScrape({
+        await client.smartScrape({
           url: 'https://example.com',
           profile: 'missing',
         });
@@ -234,7 +234,7 @@ describe('createApiClient', () => {
 
       const client = createApiClient({ ...mockConfig, maxRetries: 3 });
       try {
-        await client.powerScrape({
+        await client.smartScrape({
           url: 'https://example.com',
           profile: 'missing',
         });
@@ -256,19 +256,19 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      const first = await client.powerScrape({
+      const first = await client.smartScrape({
         url: 'https://example.com',
         profile: 'user-a',
       });
-      const second = await client.powerScrape({
+      const second = await client.smartScrape({
         url: 'https://example.com',
         profile: 'user-b',
       });
-      const third = await client.powerScrape({
+      const third = await client.smartScrape({
         url: 'https://example.com',
         profile: 'user-a',
       });
-      const fourth = await client.powerScrape({
+      const fourth = await client.smartScrape({
         url: 'https://example.com',
       });
 
@@ -288,7 +288,7 @@ describe('createApiClient', () => {
       );
 
       const client = createApiClient(mockConfig);
-      await client.powerScrape({
+      await client.smartScrape({
         url: 'https://example.com',
         formats: ['markdown', 'screenshot', 'pdf', 'links'],
       });
@@ -314,7 +314,7 @@ describe('createApiClient', () => {
 
       const client = createApiClient(mockConfig);
       try {
-        await client.powerScrape({ url: 'https://example.com' });
+        await client.smartScrape({ url: 'https://example.com' });
         expect.fail('expected Server error');
       } catch (err) {
         expect((err as Error).message).to.match(/^Server error 401:/);
@@ -329,7 +329,7 @@ describe('createApiClient', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       );
-      const result = await client.powerScrape({ url: 'https://example.com' });
+      const result = await client.smartScrape({ url: 'https://example.com' });
 
       expect(fetchStub.calledOnce).to.be.true;
       expect(result.cacheHit).to.be.false;
@@ -345,7 +345,7 @@ describe('createApiClient', () => {
 
       const client = createApiClient(mockConfig);
       try {
-        await client.powerScrape({ url: 'https://example.com' });
+        await client.smartScrape({ url: 'https://example.com' });
         expect.fail('should have thrown');
       } catch (err) {
         expect((err as Error).message).to.include('Server error 500');

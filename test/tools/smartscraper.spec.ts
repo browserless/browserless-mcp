@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { registerPowerScraperTool } from '../../src/tools/smartscraper.js';
+import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import type { McpConfig } from '../../src/config.js';
 
 const mockConfig: McpConfig = {
@@ -83,13 +83,13 @@ describe('browserless_smartscraper tool', () => {
 
   function getToolExecute(server: FastMCP) {
     const addToolSpy = sinon.spy(server, 'addTool');
-    registerPowerScraperTool(server, mockConfig);
+    registerSmartScraperTool(server, mockConfig);
     return addToolSpy.firstCall.args[0].execute;
   }
 
   it('registers the tool on the server', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
-    expect(() => registerPowerScraperTool(server, mockConfig)).to.not.throw();
+    expect(() => registerSmartScraperTool(server, mockConfig)).to.not.throw();
   });
 
   it('returns markdown content on successful scrape', async () => {
