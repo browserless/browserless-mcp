@@ -116,8 +116,13 @@ async function defaultHandleResponse<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-function apiFetch<T>(config: McpConfig, opts: ApiFetchOptions<T>): Promise<T> {
-  const query = new URLSearchParams({ token: config.browserlessToken! });
+type ResolvedConfig = McpConfig & { browserlessToken: string };
+
+function apiFetch<T>(
+  config: ResolvedConfig,
+  opts: ApiFetchOptions<T>,
+): Promise<T> {
+  const query = new URLSearchParams({ token: config.browserlessToken });
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v !== undefined) query.set(k, String(v));
   }
@@ -184,7 +189,7 @@ async function readGeneric(res: Response): Promise<GenericApiResult> {
 }
 
 export function createApiClient(
-  config: McpConfig,
+  config: ResolvedConfig,
   cache?: ResponseCache,
 ): ApiClient {
   const _cache = cache ?? new ResponseCache(config.cacheTtlMs);
@@ -192,7 +197,7 @@ export function createApiClient(
   return {
     async smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult> {
       const formats = params.formats ?? ['markdown'];
-      const tokenHash = hashToken(config.browserlessToken!);
+      const tokenHash = hashToken(config.browserlessToken);
       const cacheKey = JSON.stringify({
         t: tokenHash,
         // The api URL can be overridden per-session, so two backends sharing
@@ -267,7 +272,7 @@ export function createApiClient(
     async getStatus(): Promise<{ ok: boolean; message: string }> {
       try {
         const queryParams = new URLSearchParams({
-          token: config.browserlessToken!,
+          token: config.browserlessToken,
         });
         const res = await fetch(
           `${config.browserlessApiUrl}/active?${queryParams.toString()}`,

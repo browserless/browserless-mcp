@@ -7,7 +7,7 @@ import {
 import { ResponseCache } from '../../src/lib/cache.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
-const mockConfig: McpConfig = {
+const mockConfig: McpConfig & { browserlessToken: string } = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
   transport: 'stdio',

@@ -11,7 +11,8 @@ export function registerStatusResource(
     name: 'Browserless Service Status',
     mimeType: 'application/json',
     async load() {
-      if (!config.browserlessToken) {
+      const { browserlessToken } = config;
+      if (!browserlessToken) {
         return {
           text: JSON.stringify(
             {
@@ -27,7 +28,7 @@ export function registerStatusResource(
         };
       }
 
-      const client = createApiClient(config);
+      const client = createApiClient({ ...config, browserlessToken });
       const status = await client.getStatus();
       return {
         text: JSON.stringify(

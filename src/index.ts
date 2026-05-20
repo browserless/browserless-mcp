@@ -49,17 +49,17 @@ const analytics = new AnalyticsHelper(
 );
 
 // Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
-// receives the raw Supabase JWT directly. This eliminates server-side token storage,
-// meaning server restarts don't invalidate client sessions.
-// When REDIS_URL is set, OAuth flow state is stored in Redis to support
-// multi-instance deployments behind a load balancer.
+// receives the raw Supabase JWT directly.
 const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
 if (redisClient) {
   redisClient.on('error', (err: Error) =>
     console.error('[browserless-mcp] Redis error:', err.message),
   );
+  // Redis is only configured for the hosted httpStream deployment (REDIS_URL is
+  // not set in stdio mode), so writing the "connected" line to stdout doesn't
+  // interfere with MCP-over-stdio protocol framing.
   redisClient.on('ready', () =>
-    console.error('[browserless-mcp] Redis connected for OAuth state storage'),
+    console.log('[browserless-mcp] Redis connected for OAuth state storage'),
   );
 }
 
