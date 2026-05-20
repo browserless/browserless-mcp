@@ -513,13 +513,13 @@ export function registerCrawlTool(
           text: 'No pages were successfully crawled.',
         });
       } else {
-        const urlsToShow = completedPages.slice(0, MAX_URL_LIST);
+        const urlsToShow = pages.slice(0, MAX_URL_LIST);
         const urlList = urlsToShow
           .map(({ page }) => page.metadata.sourceURL)
           .join('\n');
         const urlListSuffix =
-          completedPages.length > MAX_URL_LIST
-            ? `\n\n... and ${completedPages.length - MAX_URL_LIST} more URLs`
+          pages.length > MAX_URL_LIST
+            ? `\n\n... and ${pages.length - MAX_URL_LIST} more URLs`
             : '';
         blocks.push({
           type: 'text' as const,

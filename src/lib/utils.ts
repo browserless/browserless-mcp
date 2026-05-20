@@ -70,5 +70,6 @@ export function decodeJwtPayload(jwt: string): SupabaseJwtPayload {
  * Callers usually fall back to a canned message when this returns false.
  */
 export function isMeaningfulBody(s: string): boolean {
-  return s.length > 0 && !/^(?:null|undefined)$/i.test(s);
+  const normalized = s.trim();
+  return normalized.length > 0 && !/^(?:null|undefined)$/i.test(normalized);
 }
