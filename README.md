@@ -4,6 +4,8 @@ MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io)
 
 ## Quick Start
 
+Get an API token from [browserless.io](https://browserless.io) (free tier available), then:
+
 ```bash
 BROWSERLESS_TOKEN=your-token npx browserless-mcp
 ```

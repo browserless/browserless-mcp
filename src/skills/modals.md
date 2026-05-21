@@ -19,15 +19,23 @@ The current snapshot contains an element with `role: dialog` or `role: alertdial
 3. **Send the Escape key** via evaluate — works for most well-built dialogs that listen for it:
 
    ```json
-   { "method": "evaluate", "params": {
-     "content": "(() => { document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); })()"
-   }}
+   {
+     "method": "evaluate",
+     "params": {
+       "content": "(() => { document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); })()"
+     }
+   }
    ```
 
 4. **Click the backdrop.** Many modals close on outside-click. The backdrop is usually a sibling or parent with a class containing `backdrop`, `overlay`, or `modal-mask`:
 
    ```json
-   { "method": "click", "params": { "selector": ".modal-backdrop, [class*='overlay']:not([class*='inner'])" } }
+   {
+     "method": "click",
+     "params": {
+       "selector": ".modal-backdrop, [class*='overlay']:not([class*='inner'])"
+     }
+   }
    ```
 
 5. **Re-snapshot** to confirm the dialog is gone before doing anything else.

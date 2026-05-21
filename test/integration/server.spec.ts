@@ -1,12 +1,12 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
-import { registerPowerScraperTool } from '../../src/tools/smartscraper.js';
+import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
 import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../../src/prompts/extract-content.js';
-import type { McpConfig } from '../../src/config.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -37,7 +37,7 @@ describe('MCP Server Integration', () => {
   it('creates a fully configured server with all components', () => {
     server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
 
-    registerPowerScraperTool(server, mockConfig);
+    registerSmartScraperTool(server, mockConfig);
     registerApiDocsResource(server, mockConfig);
     registerStatusResource(server, mockConfig);
     registerScrapeUrlPrompt(server);
@@ -49,7 +49,7 @@ describe('MCP Server Integration', () => {
 
   it('starts and stops cleanly in httpStream mode', async () => {
     server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
-    registerPowerScraperTool(server, mockConfig);
+    registerSmartScraperTool(server, mockConfig);
 
     await server.start({
       transportType: 'httpStream',

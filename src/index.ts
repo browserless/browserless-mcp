@@ -1,9 +1,12 @@
 import type { IncomingMessage } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { FastMCP, OAuthProvider } from 'fastmcp';
 import { OAuthProxy } from 'fastmcp/auth';
 import { getConfig } from './config.js';
-import type { BrowserlessSession } from './config.js';
-import { registerPowerScraperTool } from './tools/smartscraper.js';
+import type { BrowserlessSession } from './@types/types.js';
+import { registerSmartScraperTool } from './tools/smartscraper.js';
 import { registerFunctionTool } from './tools/function.js';
 import { registerDownloadTool } from './tools/download.js';
 import { registerExportTool } from './tools/export.js';
@@ -16,63 +19,47 @@ import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
-import { AmplitudeHelper } from './lib/amplitude.js';
+import { AnalyticsHelper } from './lib/analytics.js';
 import { resolveApiKey } from './lib/account-resolver.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
+import { installSupabaseTokenTtlPatch } from './lib/supabase-token-patch.js';
 import { Redis } from 'ioredis';
+
+const pkg = JSON.parse(
+  readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'),
+    'utf-8',
+  ),
+) as { version: `${number}.${number}.${number}` };
 
 const config = getConfig();
 
-// Supabase OAuth tokens have a very short TTL (60s), which causes FastMCP's
-// token-swap mode to issue equally short-lived JWTs and trigger constant refresh
-// cycles. We intercept Supabase token responses to extend the TTL to 1 hour.
-// This is safe because we only decode the JWT payload (for accountId) — we never
-// use it as a bearer token against Supabase APIs.
-const OAUTH_TOKEN_TTL_OVERRIDE = 3600; // 1 hour
-const originalFetch = globalThis.fetch;
-globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
-  const response = await originalFetch(...args);
-  const url =
-    typeof args[0] === 'string'
-      ? args[0]
-      : args[0] instanceof URL
-        ? args[0].toString()
-        : (args[0] as Request).url;
-  if (response.ok && url.includes('/oauth/token')) {
-    const body = (await response.json()) as Record<string, unknown>;
-    if (
-      typeof body.expires_in === 'number' &&
-      body.expires_in < OAUTH_TOKEN_TTL_OVERRIDE
-    ) {
-      body.expires_in = OAUTH_TOKEN_TTL_OVERRIDE;
-    }
-    return new Response(JSON.stringify(body), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  }
-  return response;
-};
-const amplitude = new AmplitudeHelper(
+// Override Supabase's short-lived (~60s) OAuth token TTL so MCP clients don't
+// thrash refresh. Narrowly scoped to the Supabase token endpoint; see
+// supabase-token-patch.ts for the full rationale.
+if (config.oauthEnabled && config.supabaseUrl) {
+  installSupabaseTokenTtlPatch(config.supabaseUrl, 3600);
+}
+
+const analytics = new AnalyticsHelper(
   config.analyticsEnabled,
   config.sqsQueueUrl,
   config.sqsRegion,
 );
 
 // Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
-// receives the raw Supabase JWT directly. This eliminates server-side token storage,
-// meaning server restarts don't invalidate client sessions.
-// When REDIS_URL is set, OAuth flow state is stored in Redis to support
-// multi-instance deployments behind a load balancer.
+// receives the raw Supabase JWT directly.
 const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
 if (redisClient) {
   redisClient.on('error', (err: Error) =>
     console.error('[browserless-mcp] Redis error:', err.message),
   );
+  // Redis is only configured for the hosted httpStream deployment (REDIS_URL is
+  // not set in stdio mode), so writing the "connected" line to stdout doesn't
+  // interfere with MCP-over-stdio protocol framing.
   redisClient.on('ready', () =>
-    console.error('[browserless-mcp] Redis connected for OAuth state storage'),
+    console.log('[browserless-mcp] Redis connected for OAuth state storage'),
   );
 }
 
@@ -131,9 +118,7 @@ const hybridAuthenticate =
           config.browserlessApiUrl;
 
         // JWTs have 3 dot-separated base64url segments; plain API keys do not.
-        const isJwt = headerToken
-          ? headerToken.split('.').length === 3
-          : false;
+        const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
 
         // 1. Authorization header with plain API key
         if (headerToken && !isJwt) {
@@ -166,20 +151,20 @@ const hybridAuthenticate =
 
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
-  version: '0.1.0',
+  version: pkg.version,
   ...(oauthProvider ? { auth: oauthProvider } : {}),
   authenticate: hybridAuthenticate,
 });
 
-registerPowerScraperTool(server, config, amplitude);
-registerFunctionTool(server, config, amplitude);
-registerDownloadTool(server, config, amplitude);
-registerExportTool(server, config, amplitude);
-registerAgentTools(server, config, amplitude);
-registerSearchTool(server, config, amplitude);
-registerMapTool(server, config, amplitude);
-registerCrawlTool(server, config, amplitude);
-registerPerformanceTool(server, config, amplitude);
+registerSmartScraperTool(server, config, analytics);
+registerFunctionTool(server, config, analytics);
+registerDownloadTool(server, config, analytics);
+registerExportTool(server, config, analytics);
+registerAgentTools(server, config, analytics);
+registerSearchTool(server, config, analytics);
+registerMapTool(server, config, analytics);
+registerCrawlTool(server, config, analytics);
+registerPerformanceTool(server, config, analytics);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
 registerScrapeUrlPrompt(server);
@@ -193,12 +178,6 @@ server.on('connect', (event) => {
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
-});
-
-// OpenAI Apps Challenge verification endpoint
-const app = server.getApp();
-app.get('/.well-known/openai-apps-challenge', (c) => {
-  return c.text('aaf7cYxvDaXPvZ2Vg40MCTvYzhCO0KW5mlqmvVIyh5o');
 });
 
 if (config.transport === 'httpStream') {

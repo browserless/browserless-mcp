@@ -1,8 +1,4 @@
-export interface RetryOptions {
-  maxRetries: number;
-  baseDelayMs: number;
-  shouldRetry?: (error: Error) => boolean;
-}
+import type { RetryOptions } from '../@types/types.js';
 
 export async function retryWithBackoff<T>(
   fn: () => Promise<T>,

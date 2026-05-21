@@ -16,14 +16,14 @@ The current snapshot contains a button or link with text matching `accept all`, 
 
 The banner is rendering inside a shadow root the accessibility tree didn't pierce. Try a deep selector by host:
 
-| Vendor | Common deep selector |
-|---|---|
-| OneTrust | `< #onetrust-reject-all-handler` or `< #onetrust-accept-btn-handler` |
-| Cookiebot | `< #CybotCookiebotDialogBodyButtonDecline` |
-| Didomi | `< #didomi-notice-disagree-button` |
-| Quantcast | `< button.css-47sehv` (reject) — class names rotate, snapshot first |
-| TrustArc | `< *consent.trustarc.com* #decline_btn_text` (iframe-hosted) |
-| Cookieyes | `< .cky-btn-reject` |
+| Vendor    | Common deep selector                                                 |
+| --------- | -------------------------------------------------------------------- |
+| OneTrust  | `< #onetrust-reject-all-handler` or `< #onetrust-accept-btn-handler` |
+| Cookiebot | `< #CybotCookiebotDialogBodyButtonDecline`                           |
+| Didomi    | `< #didomi-notice-disagree-button`                                   |
+| Quantcast | `< button.css-47sehv` (reject) — class names rotate, snapshot first  |
+| TrustArc  | `< *consent.trustarc.com* #decline_btn_text` (iframe-hosted)         |
+| Cookieyes | `< .cky-btn-reject`                                                  |
 
 If none match, fall back to attribute-based deep selectors: `< button[aria-label*="Reject" i]`, `< button[id*="reject" i]`. See the shadow-dom skill for full deep-selector syntax.
 
@@ -38,8 +38,13 @@ If none match, fall back to attribute-based deep selectors: `< button[aria-label
 This is one of the few places batching helps even with a click: combine the dismiss click with a re-snapshot in the next call.
 
 ```json
-{ "commands": [
-  { "method": "click", "params": { "selector": "< #onetrust-reject-all-handler" } },
-  { "method": "snapshot" }
-]}
+{
+  "commands": [
+    {
+      "method": "click",
+      "params": { "selector": "< #onetrust-reject-all-handler" }
+    },
+    { "method": "snapshot" }
+  ]
+}
 ```

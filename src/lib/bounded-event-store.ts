@@ -9,7 +9,10 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
  * causing a steady memory leak in long-running servers.
  */
 export class BoundedEventStore implements EventStore {
-  private events = new Map<string, { message: JSONRPCMessage; streamId: string }>();
+  private events = new Map<
+    string,
+    { message: JSONRPCMessage; streamId: string }
+  >();
   private lastTimestamp = 0;
   private lastTimestampCounter = 0;
   private readonly maxEvents: number;
@@ -38,7 +41,9 @@ export class BoundedEventStore implements EventStore {
 
   async replayEventsAfter(
     lastEventId: string,
-    { send }: { send: (eventId: string, message: JSONRPCMessage) => Promise<void> },
+    {
+      send,
+    }: { send: (eventId: string, message: JSONRPCMessage) => Promise<void> },
   ): Promise<string> {
     if (!lastEventId || !this.events.has(lastEventId)) {
       return '';

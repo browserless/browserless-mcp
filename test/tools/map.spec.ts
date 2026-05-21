@@ -3,7 +3,7 @@ import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerMapTool } from '../../src/tools/map.js';
-import type { McpConfig } from '../../src/config.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -62,26 +62,26 @@ describe('browserless_map tool', () => {
 
   it('returns discovered URLs', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        links: [
-          { url: 'https://example.com/', title: 'Home' },
-          { url: 'https://example.com/about', title: 'About Us' },
-          { url: 'https://example.com/contact', title: 'Contact' },
-        ],
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          links: [
+            { url: 'https://example.com/', title: 'Home' },
+            { url: 'https://example.com/about', title: 'About Us' },
+            { url: 'https://example.com/contact', title: 'Contact' },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    const result = await execute(
-      { url: 'https://example.com' },
-      mockContext,
-    );
+    const result = await execute({ url: 'https://example.com' }, mockContext);
 
     const content = (result as { content: Content[] }).content;
     expect(content).to.be.an('array');
@@ -96,13 +96,16 @@ describe('browserless_map tool', () => {
 
   it('sends correct request to /map endpoint', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        links: [],
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          links: [],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
@@ -133,31 +136,33 @@ describe('browserless_map tool', () => {
 
   it('includes URL list in output', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        links: [
-          { url: 'https://example.com/page1' },
-          { url: 'https://example.com/page2' },
-        ],
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          links: [
+            { url: 'https://example.com/page1' },
+            { url: 'https://example.com/page2' },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    const result = await execute(
-      { url: 'https://example.com' },
-      mockContext,
-    );
+    const result = await execute({ url: 'https://example.com' }, mockContext);
 
     const content = (result as { content: Content[] }).content;
-    const urlListBlock = content.find((c: Content) => 
-      c.type === 'text' && (c as { text: string }).text.includes('## URL List')
+    const urlListBlock = content.find(
+      (c: Content) =>
+        c.type === 'text' &&
+        (c as { text: string }).text.includes('## URL List'),
     ) as { type: string; text: string } | undefined;
-    
+
     expect(urlListBlock).to.exist;
     expect(urlListBlock!.text).to.include('https://example.com/page1');
     expect(urlListBlock!.text).to.include('https://example.com/page2');
@@ -165,23 +170,23 @@ describe('browserless_map tool', () => {
 
   it('throws UserError when map fails', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: false,
-        error: 'Unable to access site',
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Unable to access site',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
     try {
-      await execute(
-        { url: 'https://example.com' },
-        mockContext,
-      );
+      await execute({ url: 'https://example.com' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -194,10 +199,7 @@ describe('browserless_map tool', () => {
     const execute = getToolExecute(server);
 
     try {
-      await execute(
-        { url: 'ftp://example.com' },
-        mockContext,
-      );
+      await execute({ url: 'ftp://example.com' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -213,10 +215,7 @@ describe('browserless_map tool', () => {
     const execute = addToolSpy.firstCall.args[0].execute;
 
     try {
-      await execute(
-        { url: 'https://example.com' },
-        mockContext,
-      );
+      await execute({ url: 'https://example.com' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -226,22 +225,22 @@ describe('browserless_map tool', () => {
 
   it('handles empty results', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        links: [],
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          links: [],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    const result = await execute(
-      { url: 'https://example.com' },
-      mockContext,
-    );
+    const result = await execute({ url: 'https://example.com' }, mockContext);
 
     const content = (result as { content: Content[] }).content;
     const mainContent = content[0] as { type: string; text: string };
@@ -250,22 +249,22 @@ describe('browserless_map tool', () => {
 
   it('reports progress during execution', async () => {
     fetchStub.resolves(
-      new Response(JSON.stringify({
-        success: true,
-        links: [],
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          success: true,
+          links: [],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    await execute(
-      { url: 'https://example.com' },
-      mockContext,
-    );
+    await execute({ url: 'https://example.com' }, mockContext);
 
     expect(mockContext.reportProgress.calledTwice).to.be.true;
     expect(mockContext.reportProgress.firstCall.args[0]).to.deep.equal({

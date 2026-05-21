@@ -1,15 +1,15 @@
 # Waiting for Dynamic Content
 
-A `wait*` call just timed out, or the page is loading content asynchronously and your last snapshot missed it. Choosing the right wait method matters — wait for the *signal that the work is done*, not for an arbitrary delay.
+A `wait*` call just timed out, or the page is loading content asynchronously and your last snapshot missed it. Choosing the right wait method matters — wait for the _signal that the work is done_, not for an arbitrary delay.
 
 ## Decision tree
 
-| Situation | Use |
-|---|---|
-| You know the API endpoint that returns the data | `waitForResponse { url, statuses?: [200] }` |
+| Situation                                           | Use                                           |
+| --------------------------------------------------- | --------------------------------------------- |
+| You know the API endpoint that returns the data     | `waitForResponse { url, statuses?: [200] }`   |
 | You know a CSS selector that will appear when ready | `waitForSelector { selector, timeout: 5000 }` |
-| The page navigates after your click | `waitForNavigation { timeout }` |
-| You know nothing specific, just need a beat | `waitForTimeout { time: 3000 }` (last resort) |
+| The page navigates after your click                 | `waitForNavigation { timeout }`               |
+| You know nothing specific, just need a beat         | `waitForTimeout { time: 3000 }` (last resort) |
 
 `waitForResponse` is the most reliable — it fires on the actual network event. Prefer it whenever you can identify the API URL pattern.
 
@@ -18,32 +18,47 @@ A `wait*` call just timed out, or the page is loading content asynchronously and
 **Search-then-results:**
 
 ```json
-{ "commands": [
-  { "method": "type", "params": { "selector": "input#q", "text": "browserless" } },
-  { "method": "click", "params": { "selector": "button#search" } },
-  { "method": "waitForResponse", "params": { "url": "*api/search*", "statuses": [200] } },
-  { "method": "snapshot" }
-]}
+{
+  "commands": [
+    {
+      "method": "type",
+      "params": { "selector": "input#q", "text": "browserless" }
+    },
+    { "method": "click", "params": { "selector": "button#search" } },
+    {
+      "method": "waitForResponse",
+      "params": { "url": "*api/search*", "statuses": [200] }
+    },
+    { "method": "snapshot" }
+  ]
+}
 ```
 
 **Form submit with redirect:**
 
 ```json
-{ "commands": [
-  { "method": "click", "params": { "selector": "button#submit" } },
-  { "method": "waitForNavigation", "params": { "timeout": 10000 } },
-  { "method": "snapshot" }
-]}
+{
+  "commands": [
+    { "method": "click", "params": { "selector": "button#submit" } },
+    { "method": "waitForNavigation", "params": { "timeout": 10000 } },
+    { "method": "snapshot" }
+  ]
+}
 ```
 
 **Click that opens a modal lazily:**
 
 ```json
-{ "commands": [
-  { "method": "click", "params": { "selector": "button#open-settings" } },
-  { "method": "waitForSelector", "params": { "selector": "[role='dialog']", "timeout": 5000 } },
-  { "method": "snapshot" }
-]}
+{
+  "commands": [
+    { "method": "click", "params": { "selector": "button#open-settings" } },
+    {
+      "method": "waitForSelector",
+      "params": { "selector": "[role='dialog']", "timeout": 5000 }
+    },
+    { "method": "snapshot" }
+  ]
+}
 ```
 
 ## When a wait method times out
