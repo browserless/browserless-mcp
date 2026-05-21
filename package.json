@@ -64,7 +64,7 @@
     "globals": "^17.6.0",
     "husky": "^9.1.7",
     "ioredis-mock": "^8.13.1",
-    "mocha": "^11.1.0",
+    "mocha": "^11.7.6",
     "patch-package": "^8.0.1",
     "prettier": "^3.8.3",
     "sinon": "^22.0.0",
