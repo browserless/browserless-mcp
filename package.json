@@ -44,7 +44,7 @@
     "printWidth": 80
   },
   "dependencies": {
-    "@aws-sdk/client-sqs": "^3.1049.0",
+    "@aws-sdk/client-sqs": "^3.1051.0",
     "fastmcp": "^4.0.0",
     "ioredis": "^5.10.1",
     "ws": "^8.20.1",
