@@ -1,59 +1,50 @@
 # Screenshots
 
-You're about to capture or just captured a screenshot. The image arrives as a vision content block — you'll see it directly, so don't worry about base64 plumbing. A few rules to follow.
+Screenshot arrives as vision content block — you'll see it directly.
 
-## Snapshot vs. screenshot — pick the right tool
+## Snapshot vs. Screenshot
 
-| Need                                                             | Use                                                                                |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Element identity, text, structure, interactability               | `snapshot` (cheap, structured)                                                     |
-| Visual layout, colors, rendered output, deliverable for the user | `screenshot` (vision input)                                                        |
-| Extract text from the page                                       | `snapshot` then read names, or `text { selector }` — **never** screenshot then OCR |
-| Capture a chart, map, image-rendered formula                     | `screenshot` with a tight `selector`                                               |
-| Verify "does this look right?"                                   | `screenshot`                                                                       |
+| Need                                  | Use                                    |
+| ------------------------------------- | -------------------------------------- |
+| Element identity, text, structure     | `snapshot`                             |
+| Visual layout, colors, rendered look  | `screenshot`                           |
+| Extract text                          | `snapshot` or `text` — never OCR       |
+| Chart, map, rendered image            | `screenshot` with `selector`           |
+| Verify "does this look right?"        | `screenshot`                           |
 
-A snapshot is roughly free (one-liner per element). A screenshot's token cost is image- and model-dependent — varying with size and the consuming model rather than a fixed number — and is typically higher than a snapshot, but it's also the _only_ way to see actual rendering. Use it when visual fidelity is the point, not as a substitute for inspecting the DOM.
+Snapshot is cheap, structured. Screenshot costs vision tokens — use when visual fidelity matters.
 
-## Scope: smallest region that answers the question
+## Scope (smallest to largest)
 
-In order from cheapest/most-focused to most-expensive:
+1. **`selector: "#chart"`** — single element (best when target known)
+2. **`clip: { x, y, width, height }`** — pixel region
+3. **viewport** (default) — visible area
+4. **`fullPage: true`** — entire page (use sparingly, huge tokens)
 
-1. **`selector: "#chart"`** — element-only screenshot. Best when you know what you want to see.
-2. **`clip: { x, y, width, height }`** — fixed pixel region. Useful when no clean selector exists.
-3. **viewport (default)** — what's currently rendered. Good for "the thing the user sees right now."
-4. **`fullPage: true`** — entire scrollable page. Use sparingly: tall pages produce huge images that downsample badly in the vision input.
+Capture smallest region that answers the question.
 
-If you only need to verify a single component (a button, a header, a price), use `selector`. Don't capture the whole page just because you can.
+## Format
 
-## Format and quality
-
-- **PNG** (default) — sharp, lossless, supports transparency. Use for UI screenshots and anything with crisp edges (text, lines).
-- **JPEG with `quality: 70-85`** — smaller payload for photographic or full-page screenshots. The vision model doesn't care about the last 10% of fidelity; you save bytes on the wire.
-- **WebP** — same idea as JPEG with slightly better compression.
-- **`omitBackground: true`** — only meaningful for selector/clip screenshots of elements with transparent backgrounds.
-
-## Don't
-
-- **Don't `evaluate` to read pixel data or run OCR** on your own screenshot. You already have the image as a vision input — just look at it.
-- **Don't screenshot to extract structured data.** A snapshot or `evaluate` is faster, cheaper, and gives you machine-readable output. Screenshots are for what you literally need to see.
-- **Don't take a full-page screenshot to "be safe."** Pick a scope. The default viewport is almost always enough.
-- **Don't take multiple screenshots back-to-back of the same page state.** One image is enough; you can re-look at it. Re-screenshot only after the page has actually changed.
+- **PNG** (default) — lossless, crisp text/UI
+- **JPEG** `quality: 70-85` — smaller for photos/full-page
+- **WebP** — better compression than JPEG
+- **`omitBackground: true`** — for transparent elements
 
 ## Pattern: capture-after-action
-
-For visual verification of something you just did, batch the action and the screenshot:
 
 ```json
 {
   "commands": [
     { "method": "click", "params": { "selector": "button#open-modal" } },
-    {
-      "method": "waitForSelector",
-      "params": { "selector": "[role='dialog']", "timeout": 5000 }
-    },
+    { "method": "waitForSelector", "params": { "selector": "[role='dialog']", "timeout": 5000 } },
     { "method": "screenshot", "params": { "selector": "[role='dialog']" } }
   ]
 }
 ```
 
-The `waitForSelector` ensures the modal has actually rendered before the camera fires — without it, you may capture an empty viewport.
+## Avoid
+
+- OCR via evaluate (you have vision input)
+- Screenshotting for structured data (use snapshot/evaluate)
+- Full-page screenshots by default (pick scope)
+- Multiple screenshots of same state (one is enough)

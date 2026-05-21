@@ -1,41 +1,41 @@
 # Shadow DOM & Iframes
 
-The current snapshot contains `deep-ref=` selectors, or you just hit `SELECTOR_NOT_FOUND` on a regular selector. Either way, the page is using shadow DOM or iframes — read this before your next action.
+Snapshot contains `deep-ref=` selectors, or you hit `SELECTOR_NOT_FOUND` on regular selector. Page using shadow DOM or iframes — read before next action.
 
-## Deep selectors: the `< ` prefix
+## Deep selectors: `< ` prefix
 
-Browserless deep selectors start with `< ` (less-than, space). The space is mandatory. The format is:
+Browserless deep selectors start with `< ` (less-than, space). Space mandatory. Format:
 
 ```
 < *url-pattern* css-selector
 ```
 
-The `*url-pattern*` segment is optional and matches the iframe URL. If omitted, the selector pierces shadow roots in the main frame.
+`*url-pattern*` optional, matches iframe URL. If omitted, selector pierces shadow roots in main frame.
 
-When the snapshot lists `deep-ref=< button#deny`, pass it to `click` / `type` / `hover` exactly as shown — do not strip the `< ` prefix:
+When snapshot lists `deep-ref=< button#deny`, pass to `click` / `type` / `hover` exactly as shown — don't strip `< ` prefix:
 
 ```json
 { "method": "click", "params": { "selector": "< button#deny" } }
 ```
 
-## Constructing deep selectors for iframes the snapshot didn't surface
+## Constructing deep selectors for iframes snapshot didn't surface
 
-Snapshots only include accessible content. Iframes (especially captcha and payment widgets) often have nothing meaningful in the accessibility tree. Build the selector by hand:
+Snapshots only include accessible content. Iframes (captcha/payment widgets) often have nothing meaningful in accessibility tree. Build selector by hand:
 
 - `< *google.com/recaptcha* #recaptcha-anchor` — reCAPTCHA checkbox
 - `< *hcaptcha.com* #checkbox` — hCaptcha checkbox
 - `< *stripe.com/* input[name='cardnumber']` — Stripe payment field
 - `< *challenges.cloudflare.com* input[type='checkbox']` — Cloudflare Turnstile
 
-The URL pattern is a glob — `*` matches any substring.
+URL pattern is glob — `*` matches any substring.
 
 ## What works and what doesn't
 
 Coordinate-based actions work through deep selectors: **`click`, `type`, `hover`, `checkbox`**.
 
-DOM-read actions do **not** work and will fail or return null: **`text`, `html`, `waitForSelector`** with deep selectors.
+DOM-read actions **don't** work, fail or return null: **`text`, `html`, `waitForSelector`** with deep selectors.
 
-To read content from a shadow root or iframe, use `evaluate` with explicit traversal:
+To read content from shadow root or iframe, use `evaluate` with explicit traversal:
 
 ```json
 {
@@ -57,8 +57,8 @@ For shadow DOM:
 }
 ```
 
-## Recovery recipe when a regular selector fails
+## Recovery when regular selector fails
 
-1. First retry the same selector with the `< ` prefix (the MCP suggests this automatically).
-2. If still failing, re-snapshot — the element may have moved, re-rendered, or the page may have navigated.
-3. If the element is in an iframe, construct a `< *url-pattern* css` selector by hand from the iframe URL you can see in DevTools or the snapshot.
+1. Retry same selector with `< ` prefix (MCP suggests automatically)
+2. Still failing → re-snapshot (element moved/re-rendered or page navigated)
+3. Element in iframe → construct `< *url-pattern* css` selector by hand from iframe URL in DevTools or snapshot

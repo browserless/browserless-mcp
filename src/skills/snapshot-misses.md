@@ -1,23 +1,23 @@
 # When Snapshot Misses Content
 
-The snapshot you just received is either at the element limit (likely truncated) or empty. Either way, what you need may not be in it.
+Snapshot at element limit (truncated) or empty. What you need may not be in it.
 
 ## Why content goes missing
 
-- **Truncation**: snapshots cap at 500 elements by default. Dense pages (long lists, search results, infinite scroll) overflow.
-- **No accessible name**: images without `alt`, icon-only buttons, decorative links, and SVGs without ARIA labels are excluded from the accessibility tree.
-- **Image-rendered content**: math, formulas, charts (WolframAlpha, LaTeX, Wikipedia formulas, Google image search) — the result is a single `<img>` whose meaning lives in the `alt` text, not the DOM.
-- **Late-loading content**: the page is still hydrating. Wait for it (see the dynamic-content skill if a `wait*` call fails) and re-snapshot.
+- **Truncation**: snapshots cap at 500 elements by default. Dense pages (long lists, search results, infinite scroll) overflow
+- **No accessible name**: images without `alt`, icon-only buttons, decorative links, SVGs without ARIA labels excluded from accessibility tree
+- **Image-rendered content**: math, formulas, charts (WolframAlpha, LaTeX, Wikipedia formulas, Google image search) — result is single `<img>` with meaning in `alt` text, not DOM
+- **Late-loading content**: page still hydrating. Wait (see dynamic-content skill if `wait*` call fails), re-snapshot
 
 ## Recipe
 
-1. **If truncated, narrow the scope first.** Most tasks don't need every element on the page — re-snapshot with a higher `maxElements` only if the element you need is genuinely beyond 500:
+1. **If truncated, narrow scope first.** Most tasks don't need every element — re-snapshot with higher `maxElements` only if element genuinely beyond 500:
 
    ```json
    { "method": "snapshot", "params": { "maxElements": 1000 } }
    ```
 
-2. **If the element you need has no accessible name**, fall back to `evaluate` to read it directly:
+2. **If element has no accessible name**, use `evaluate` to read directly:
 
    ```json
    {
@@ -28,7 +28,7 @@ The snapshot you just received is either at the element limit (likely truncated)
    }
    ```
 
-   Or to get text from an icon-only button:
+   Or get text from icon-only button:
 
    ```json
    {
@@ -39,7 +39,7 @@ The snapshot you just received is either at the element limit (likely truncated)
    }
    ```
 
-3. **For image-rendered results** (WolframAlpha, LaTeX renderers), the `alt` attribute usually carries the answer:
+3. **For image-rendered results** (WolframAlpha, LaTeX renderers), `alt` attribute usually carries answer:
 
    ```json
    {
@@ -50,7 +50,7 @@ The snapshot you just received is either at the element limit (likely truncated)
    }
    ```
 
-4. **For very long lists**, scroll and re-snapshot rather than blowing up `maxElements` — pagination of the snapshot is more reliable than one giant pull:
+4. **For very long lists**, scroll and re-snapshot rather than raising `maxElements` — snapshot pagination more reliable than one giant pull:
 
    ```json
    {
@@ -63,5 +63,5 @@ The snapshot you just received is either at the element limit (likely truncated)
 
 ## Don't
 
-- Don't keep raising `maxElements` past ~2000 — past that, the model spends more on snapshot reading than the task gains. Scroll and paginate instead.
-- Don't `evaluate` to crawl `document.body.innerHTML` for general extraction. The snapshot is structured; raw HTML floods context with markup. Use `evaluate` only for _specific_ attributes the snapshot can't surface.
+- Raise `maxElements` past ~2000 — model spends more on snapshot reading than task gains. Scroll and paginate instead
+- `evaluate` to crawl `document.body.innerHTML` for general extraction. Snapshot structured; raw HTML floods context with markup. Use `evaluate` only for _specific_ attributes snapshot can't surface
