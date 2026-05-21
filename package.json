@@ -72,7 +72,7 @@
     "typescript-eslint": "^8.59.4"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "overrides": {
     "mocha": {
