@@ -8,13 +8,13 @@ Every `snapshot` response includes `tabs[]` (`targetId`, `url`, `title`, `active
 
 ## Commands
 
-| Command                                     | Use                                            |
-| ------------------------------------------- | ---------------------------------------------- |
-| `getTabs`                                   | Refresh tab list without snapshot              |
-| `switchTab { targetId }`                    | Make another tab active                        |
-| `createTab { url?, activate?, waitUntil? }` | Open new tab — defaults to `activate: true`    |
-| `closeTab { targetId }`                     | Close tab                                      |
-| `snapshot { targetId }`                     | Peek at non-active tab **without switching**   |
+| Command                                     | Use                                          |
+| ------------------------------------------- | -------------------------------------------- |
+| `getTabs`                                   | Refresh tab list without snapshot            |
+| `switchTab { targetId }`                    | Make another tab active                      |
+| `createTab { url?, activate?, waitUntil? }` | Open new tab — defaults to `activate: true`  |
+| `closeTab { targetId }`                     | Close tab                                    |
+| `snapshot { targetId }`                     | Peek at non-active tab **without switching** |
 
 ## Patterns
 

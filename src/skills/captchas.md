@@ -7,10 +7,14 @@ Page shows captcha widget (reCAPTCHA, hCaptcha, Cloudflare Turnstile, DataDome) 
 ## `solve` command
 
 ```json
-{ "method": "solve", "params": { "type": "recaptcha", "wait": true, "timeout": 30000 } }
+{
+  "method": "solve",
+  "params": { "type": "recaptcha", "wait": true, "timeout": 30000 }
+}
 ```
 
 **Params (all optional):**
+
 - `type` — auto-detects if omitted. Specify only when needed: `cloudflare`, `hcaptcha`, `recaptcha`, `recaptchaV3`, `geetest`, `normal`, `friendlyCaptcha`, `capy`, `textCaptcha`, `amazonWaf`, `dataDome`, `akamai`, `lemin`, `mtcaptcha`, `slider`
 - `wait` (default `true`) — wait for captcha appearance. `false` if already visible
 - `timeout` (default 30000ms) — wait duration for detection

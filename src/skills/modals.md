@@ -12,11 +12,13 @@ Snapshot shows `role: dialog` or `role: alertdialog` — modal is open, traps fo
 1. **Close button in snapshot** — `Close`, `×`, `Dismiss`, `No thanks`, etc. Click its ref.
 
 2. **Aria-labeled close:**
+
    ```json
    { "method": "click", "params": { "selector": "[aria-label='Close']" } }
    ```
 
 3. **Escape key:**
+
    ```json
    {
      "method": "evaluate",
@@ -27,8 +29,14 @@ Snapshot shows `role: dialog` or `role: alertdialog` — modal is open, traps fo
    ```
 
 4. **Click backdrop:**
+
    ```json
-   { "method": "click", "params": { "selector": ".modal-backdrop, [class*='overlay']:not([class*='inner'])" } }
+   {
+     "method": "click",
+     "params": {
+       "selector": ".modal-backdrop, [class*='overlay']:not([class*='inner'])"
+     }
+   }
    ```
 
 5. **Re-snapshot** to confirm gone.

@@ -4,30 +4,35 @@
 
 ## Decision tree
 
-| Situation                     | Use                                         |
-| ----------------------------- | ------------------------------------------- |
-| Know API endpoint             | `waitForResponse { url, statuses: [200] }`  |
-| Know CSS selector appears     | `waitForSelector { selector, timeout }`     |
-| Page navigates                | `waitForNavigation { timeout }`             |
-| Nothing specific (last resort)| `waitForTimeout { time: 3000 }`             |
+| Situation                      | Use                                        |
+| ------------------------------ | ------------------------------------------ |
+| Know API endpoint              | `waitForResponse { url, statuses: [200] }` |
+| Know CSS selector appears      | `waitForSelector { selector, timeout }`    |
+| Page navigates                 | `waitForNavigation { timeout }`            |
+| Nothing specific (last resort) | `waitForTimeout { time: 3000 }`            |
 
 `waitForResponse` most reliable — fires on network event. Prefer when URL pattern known.
 
 ## Patterns
 
 **Search results:**
+
 ```json
 {
   "commands": [
     { "method": "type", "params": { "selector": "input#q", "text": "query" } },
     { "method": "click", "params": { "selector": "button#search" } },
-    { "method": "waitForResponse", "params": { "url": "*api/search*", "statuses": [200] } },
+    {
+      "method": "waitForResponse",
+      "params": { "url": "*api/search*", "statuses": [200] }
+    },
     { "method": "snapshot" }
   ]
 }
 ```
 
 **Form with redirect:**
+
 ```json
 {
   "commands": [
@@ -39,11 +44,15 @@
 ```
 
 **Lazy modal:**
+
 ```json
 {
   "commands": [
     { "method": "click", "params": { "selector": "button#open" } },
-    { "method": "waitForSelector", "params": { "selector": "[role='dialog']", "timeout": 5000 } },
+    {
+      "method": "waitForSelector",
+      "params": { "selector": "[role='dialog']", "timeout": 5000 }
+    },
     { "method": "snapshot" }
   ]
 }

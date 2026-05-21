@@ -4,13 +4,13 @@ Screenshot arrives as vision content block — you'll see it directly.
 
 ## Snapshot vs. Screenshot
 
-| Need                                  | Use                                    |
-| ------------------------------------- | -------------------------------------- |
-| Element identity, text, structure     | `snapshot`                             |
-| Visual layout, colors, rendered look  | `screenshot`                           |
-| Extract text                          | `snapshot` or `text` — never OCR       |
-| Chart, map, rendered image            | `screenshot` with `selector`           |
-| Verify "does this look right?"        | `screenshot`                           |
+| Need                                 | Use                              |
+| ------------------------------------ | -------------------------------- |
+| Element identity, text, structure    | `snapshot`                       |
+| Visual layout, colors, rendered look | `screenshot`                     |
+| Extract text                         | `snapshot` or `text` — never OCR |
+| Chart, map, rendered image           | `screenshot` with `selector`     |
+| Verify "does this look right?"       | `screenshot`                     |
 
 Snapshot is cheap, structured. Screenshot costs vision tokens — use when visual fidelity matters.
 
@@ -36,7 +36,10 @@ Capture smallest region that answers the question.
 {
   "commands": [
     { "method": "click", "params": { "selector": "button#open-modal" } },
-    { "method": "waitForSelector", "params": { "selector": "[role='dialog']", "timeout": 5000 } },
+    {
+      "method": "waitForSelector",
+      "params": { "selector": "[role='dialog']", "timeout": 5000 }
+    },
     { "method": "screenshot", "params": { "selector": "[role='dialog']" } }
   ]
 }
