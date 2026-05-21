@@ -16,14 +16,18 @@ describe('Prompts', () => {
       registerScrapeUrlPrompt(server);
 
       const prompt = addPromptSpy.firstCall.args[0];
-      const result = await prompt.load(
-        { url: 'https://example.com', includeScreenshot: 'false' },
-      );
+      const result = await prompt.load({
+        url: 'https://example.com',
+        includeScreenshot: 'false',
+      });
 
       expect(result).to.have.property('messages');
       const messages = (result as { messages: unknown[] }).messages;
       expect(messages).to.have.length(1);
-      const msg = messages[0] as { role: string; content: { type: string; text: string } };
+      const msg = messages[0] as {
+        role: string;
+        content: { type: string; text: string };
+      };
       expect(msg.role).to.equal('user');
       expect(msg.content.text).to.include('https://example.com');
       expect(msg.content.text).to.include('formats=["markdown"]');
@@ -35,12 +39,16 @@ describe('Prompts', () => {
       registerScrapeUrlPrompt(server);
 
       const prompt = addPromptSpy.firstCall.args[0];
-      const result = await prompt.load(
-        { url: 'https://example.com', includeScreenshot: 'true' },
-      );
+      const result = await prompt.load({
+        url: 'https://example.com',
+        includeScreenshot: 'true',
+      });
 
       const messages = (result as { messages: unknown[] }).messages;
-      const msg = messages[0] as { role: string; content: { type: string; text: string } };
+      const msg = messages[0] as {
+        role: string;
+        content: { type: string; text: string };
+      };
       expect(msg.content.text).to.include('formats=["markdown", "screenshot"]');
     });
   });
@@ -48,9 +56,7 @@ describe('Prompts', () => {
   describe('extract-content prompt', () => {
     it('registers without error', () => {
       const server = new FastMCP({ name: 'test', version: '0.1.0' });
-      expect(() =>
-        registerExtractContentPrompt(server),
-      ).to.not.throw();
+      expect(() => registerExtractContentPrompt(server)).to.not.throw();
     });
 
     it('load returns correct message with URL and instructions', async () => {
@@ -59,14 +65,18 @@ describe('Prompts', () => {
       registerExtractContentPrompt(server);
 
       const prompt = addPromptSpy.firstCall.args[0];
-      const result = await prompt.load(
-        { url: 'https://example.com', instructions: 'Get all prices' },
-      );
+      const result = await prompt.load({
+        url: 'https://example.com',
+        instructions: 'Get all prices',
+      });
 
       expect(result).to.have.property('messages');
       const messages = (result as { messages: unknown[] }).messages;
       expect(messages).to.have.length(1);
-      const msg = messages[0] as { role: string; content: { type: string; text: string } };
+      const msg = messages[0] as {
+        role: string;
+        content: { type: string; text: string };
+      };
       expect(msg.role).to.equal('user');
       expect(msg.content.text).to.include('https://example.com');
       expect(msg.content.text).to.include('Get all prices');

@@ -1,28 +1,8 @@
-import type { AgentError } from './agent-client.js';
-
-export type ErrorCategory =
-  | 'SELECTOR_MISS'
-  | 'SESSION_LOST'
-  | 'UNAUTHORIZED'
-  | 'FORBIDDEN'
-  | 'NOT_FOUND'
-  | 'SERVER_ERROR'
-  | 'NAVIGATION_FAILED'
-  | 'TIMEOUT'
-  | 'INVALID_PARAMS'
-  | 'UNKNOWN';
-
-export interface ClassifiedError {
-  category: ErrorCategory;
-  code?: string;
-  status?: number;
-  recovery: string;
-}
-
-export interface ClassifyInput {
-  err: AgentError | { code?: string; message: string; status?: number };
-  cmd: { method: string; params: Record<string, unknown> };
-}
+import type {
+  ClassifiedError,
+  ClassifyInput,
+  ErrorCategory,
+} from '../@types/types.js';
 
 const RECOVERY: Record<ErrorCategory, string> = {
   SELECTOR_MISS:

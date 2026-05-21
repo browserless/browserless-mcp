@@ -54,11 +54,7 @@ const DEFAULT_TRANSACTION_TTL = 600;
 const DEFAULT_CODE_TTL = 300;
 const DEFAULT_CLIENT_TTL = 3600;
 
-const DATE_FIELDS = new Set([
-  'createdAt',
-  'expiresAt',
-  'issuedAt',
-]);
+const DATE_FIELDS = new Set(['createdAt', 'expiresAt', 'issuedAt']);
 
 function serialize(obj: unknown): string {
   return JSON.stringify(obj, (_key, value) => {
@@ -87,9 +83,7 @@ interface OAuthProxyInternals {
     clientRegistrationTtl?: number;
     transactionTtl?: number;
   };
-  createTransaction(
-    params: AuthorizationParams,
-  ): Promise<OAuthTransaction>;
+  createTransaction(params: AuthorizationParams): Promise<OAuthTransaction>;
   exchangeUpstreamCode(
     code: string,
     transaction: OAuthTransaction,
@@ -151,9 +145,7 @@ export class RedisOAuthProxy extends OAuthProxy {
     const redisPreExisting = new Set<string>(
       probes
         .filter(
-          (
-            p,
-          ): p is PromiseFulfilledResult<{ uri: string; existed: boolean }> =>
+          (p): p is PromiseFulfilledResult<{ uri: string; existed: boolean }> =>
             p.status === 'fulfilled' && p.value.existed,
         )
         .map((p) => p.value.uri),
@@ -222,8 +214,7 @@ export class RedisOAuthProxy extends OAuthProxy {
     }
 
     const transaction = await this._internal.createTransaction(params);
-    const ttl =
-      this._internal.config.transactionTtl || DEFAULT_TRANSACTION_TTL;
+    const ttl = this._internal.config.transactionTtl || DEFAULT_TRANSACTION_TTL;
     await this.redis.set(
       `${TX_PREFIX}${transaction.id}`,
       serialize(transaction),
@@ -255,10 +246,7 @@ export class RedisOAuthProxy extends OAuthProxy {
 
     const txJson = await this.redis.get(`${TX_PREFIX}${state}`);
     if (!txJson) {
-      throw new OAuthProxyError(
-        'invalid_request',
-        'Invalid or expired state',
-      );
+      throw new OAuthProxyError('invalid_request', 'Invalid or expired state');
     }
     const transaction = deserialize<OAuthTransaction>(txJson);
 

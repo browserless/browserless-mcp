@@ -1,3 +1,5 @@
+# Note: this workflow only bumps the version and pushes the new tag.
+# Publishing to npm is delegated to Browserless
 name: Version Browserless MCP
 on:
   workflow_dispatch:
@@ -6,16 +8,23 @@ on:
         description: 'Version you want to set ex. major.minor.patch'
         type: choice
         options:
-        - minor
-        - patch
-        - major
+          - minor
+          - patch
+          - major
         required: true
       changelog:
         description: 'Changelog entry in markdown format (optional)'
         type: string
         required: false
+
+permissions:
+  contents: write
+
 jobs:
   publish-new-tag:
+    if: github.repository == 'browserless/browserless-mcp'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Fail if branch is not main

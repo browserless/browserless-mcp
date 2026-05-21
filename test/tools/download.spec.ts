@@ -3,7 +3,7 @@ import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerDownloadTool } from '../../src/tools/download.js';
-import type { McpConfig } from '../../src/config.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -180,10 +180,7 @@ describe('browserless_download tool', () => {
     const execute = addToolSpy.firstCall.args[0].execute;
 
     try {
-      await execute(
-        { code: 'export default async () => {}' },
-        mockContext,
-      );
+      await execute({ code: 'export default async () => {}' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -223,10 +220,7 @@ describe('browserless_download tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    await execute(
-      { code: 'export default async () => {}' },
-      mockContext,
-    );
+    await execute({ code: 'export default async () => {}' }, mockContext);
 
     expect(mockContext.reportProgress.calledTwice).to.be.true;
     expect(mockContext.reportProgress.firstCall.args[0]).to.deep.equal({

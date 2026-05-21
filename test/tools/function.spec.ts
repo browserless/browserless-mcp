@@ -7,8 +7,8 @@ import {
   formatFunctionContent,
   registerFunctionTool,
 } from '../../src/tools/function.js';
-import type { GenericApiResult } from '../../src/tools/schemas.js';
-import type { McpConfig } from '../../src/config.js';
+import type { GenericApiResult } from '../../src/@types/types.js';
+import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -66,7 +66,9 @@ describe('browserless_function tool', () => {
   });
 
   it('returns JSON text on successful function execution', async () => {
-    const responseData = JSON.stringify({ books: [{ title: 'A Light in the Attic' }] });
+    const responseData = JSON.stringify({
+      books: [{ title: 'A Light in the Attic' }],
+    });
     fetchStub.resolves(
       new Response(responseData, {
         status: 200,
@@ -137,10 +139,7 @@ describe('browserless_function tool', () => {
     const execute = getToolExecute(server);
 
     try {
-      await execute(
-        { code: '' },
-        mockContext,
-      );
+      await execute({ code: '' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -156,10 +155,7 @@ describe('browserless_function tool', () => {
     const execute = addToolSpy.firstCall.args[0].execute;
 
     try {
-      await execute(
-        { code: 'export default async () => ({})' },
-        mockContext,
-      );
+      await execute({ code: 'export default async () => ({})' }, mockContext);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).to.be.instanceOf(UserError);
@@ -209,10 +205,7 @@ describe('browserless_function tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const execute = getToolExecute(server);
 
-    await execute(
-      { code: 'export default async () => ({})' },
-      mockContext,
-    );
+    await execute({ code: 'export default async () => ({})' }, mockContext);
 
     expect(mockContext.reportProgress.calledTwice).to.be.true;
     expect(mockContext.reportProgress.firstCall.args[0]).to.deep.equal({

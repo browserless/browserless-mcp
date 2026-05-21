@@ -1,6 +1,9 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { resolveApiKey, clearResolverCache } from '../../src/lib/account-resolver.js';
+import {
+  resolveApiKey,
+  clearResolverCache,
+} from '../../src/lib/account-resolver.js';
 
 function buildFakeJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(
@@ -34,7 +37,9 @@ describe('account-resolver', () => {
 
     fetchStub.resolves(
       new Response(
-        JSON.stringify([{ api_key: 'resolved-key', email: 'user@example.com' }]),
+        JSON.stringify([
+          { api_key: 'resolved-key', email: 'user@example.com' },
+        ]),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     );
@@ -60,7 +65,9 @@ describe('account-resolver', () => {
 
     fetchStub.resolves(
       new Response(
-        JSON.stringify([{ api_key: 'cached-key', email: 'cached@example.com' }]),
+        JSON.stringify([
+          { api_key: 'cached-key', email: 'cached@example.com' },
+        ]),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     );

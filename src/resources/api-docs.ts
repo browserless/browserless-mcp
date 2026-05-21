@@ -1,5 +1,5 @@
 import type { FastMCP } from 'fastmcp';
-import type { McpConfig } from '../config.js';
+import type { McpConfig } from '../@types/types.js';
 
 export function registerApiDocsResource(
   server: FastMCP,

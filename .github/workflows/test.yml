@@ -12,13 +12,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24.x]
     steps:
       - uses: actions/checkout@v6
 
-      - name: Use Node.js 24
+      - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
-          node-version: 24.x
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies

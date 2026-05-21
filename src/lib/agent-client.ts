@@ -1,66 +1,99 @@
-export interface AgentMessage {
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface AgentError {
-  code?: string;
-  message: string;
-  retryable?: boolean;
-  suggestion?: string;
-  snapshot?: SnapshotResult;
-}
-
-export interface AgentResponse {
-  id: number;
-  result?: unknown;
-  error?: AgentError;
-}
-
-export interface SnapshotElement {
-  ref: number;
-  role: string;
-  name: string;
-  selector: string;
-  tag: string;
-  text?: string;
-  value?: string;
-  type?: string;
-  placeholder?: string;
-  id?: string;
-  href?: string;
-  disabled?: boolean;
-  checked?: boolean;
-  focused?: boolean;
-  required?: boolean;
-  ariaLabel?: string;
-}
-
-export interface TabInfo {
-  targetId: string;
-  url: string;
-  title: string;
-  active: boolean;
-}
-
-export interface SnapshotResult {
-  url: string;
-  title: string;
-  elements: SnapshotElement[];
-  time: number;
-  tabs?: TabInfo[];
-  activeTargetId?: string | null;
-  detectedChallenges?: string[];
-}
-
-import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
+import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
-import type { SkillFireState } from '../skills/index.js';
-import { PROXY_FIELDS } from '../tools/schemas.js';
-import type { ProxyOptions } from '../tools/schemas.js';
+import { hashToken, isMeaningfulBody } from './utils.js';
+import type {
+  ActiveSession,
+  AgentMessage,
+  AgentResponse,
+  ProxyOptions,
+} from '../@types/types.js';
+
+/* ------------------------------------------------------------------ */
+/*  Proxy schemas — used by agent.ts's AgentParamsSchema and by the    */
+/*  session key fingerprinting below. Co-located here to avoid a       */
+/*  circular dep with agent.ts.                                         */
+/* ------------------------------------------------------------------ */
+
+const ProxyOptionsObjectSchema = z.object({
+  proxy: z
+    .enum(['residential'])
+    .optional()
+    .describe('Routing tier. Only "residential" is supported today.'),
+  proxyCountry: z
+    .string()
+    .regex(/^[A-Za-z]{2}$/, 'Must be a 2-letter ISO-2 country code')
+    .transform((v) => v.toLowerCase())
+    .optional()
+    .describe('ISO-2 country code (e.g. "us", "de"). Normalized to lowercase.'),
+  proxyState: z
+    .string()
+    .optional()
+    .describe(
+      'US state name (whitespace replaced with underscores, e.g. "new_york"). ' +
+        'Plan-gated — non-eligible tokens get a 401.',
+    ),
+  proxyCity: z
+    .string()
+    .optional()
+    .describe(
+      'City-level targeting. Requires paid/enterprise plan — non-eligible tokens get a 401.',
+    ),
+  proxySticky: z
+    .boolean()
+    .optional()
+    .describe(
+      'Stable IP while the underlying WebSocket stays open. Reconnects ' +
+        '(idle drop, network blip, browser crash) allocate a new sticky id.',
+    ),
+  proxyLocaleMatch: z
+    .boolean()
+    .optional()
+    .describe('Match navigator locale to the proxy IP country.'),
+  proxyPreset: z
+    .string()
+    .optional()
+    .describe(
+      'Named proxy preset (e.g. "px_amazon01"). Supported presets are ' +
+        'plan-dependent; ask Browserless support for the list available to your token.',
+    ),
+  externalProxyServer: z
+    .string()
+    .regex(
+      /^https?:\/\//i,
+      'externalProxyServer must start with http:// or https://',
+    )
+    .optional()
+    .describe('Bring-your-own upstream, e.g. http://user:pass@host:port'),
+});
+
+const DEPENDENT_PROXY_FIELDS = [
+  'proxyCountry',
+  'proxyState',
+  'proxyCity',
+  'proxySticky',
+  'proxyLocaleMatch',
+  'proxyPreset',
+] as const;
+
+export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
+  (v) => {
+    const hasDependent = DEPENDENT_PROXY_FIELDS.some((k) => v[k] !== undefined);
+    return (
+      !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer
+    );
+  },
+  {
+    message:
+      'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
+      "require proxy: 'residential' or externalProxyServer to be set; otherwise the API silently ignores them.",
+  },
+);
+
+export const PROXY_FIELDS = Object.keys(
+  ProxyOptionsObjectSchema.shape,
+) as Array<keyof ProxyOptions>;
 
 /**
  * Thrown when the agent WebSocket upgrade is rejected with a non-101 HTTP
@@ -85,12 +118,6 @@ export class UpgradeError extends Error {
  * api-client.ts so smart-scrape, crawl, and agent all surface profile errors
  * through the same UserError pattern.
  */
-// Reject server bodies that are obviously not a real message — empty, just
-// whitespace, or a literal `null`/`undefined` from a misbehaving JSON layer.
-// In those cases we'd rather surface the canned fallback than echo garbage.
-const isMeaningfulBody = (s: string): boolean =>
-  s.length > 0 && !/^(?:null|undefined)$/i.test(s);
-
 export class ProfileNotFoundError extends UpgradeError {
   constructor(
     public readonly profile: string,
@@ -118,21 +145,6 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
   }
   return true;
 };
-
-export interface ActiveSession {
-  ws: WebSocket;
-  msgId: number;
-  // Identity fields: these feed the session-cache key (see getSessionKey).
-  // Mutating them post-creation would desync the cache, so they're readonly.
-  readonly apiUrl: string;
-  readonly token: string;
-  readonly proxy?: ProxyOptions;
-  readonly profile?: string;
-  reconnecting?: Promise<WebSocket>;
-  skillState: SkillFireState;
-  lastUsedAt: number;
-  lastUrl?: string;
-}
 
 const sessions = new Map<string, ActiveSession>();
 // In-flight session creations keyed by session key. Concurrent
@@ -180,11 +192,6 @@ const sweepSessions = (): void => {
 // user-supplied field, so the two segments cannot ambiguously concatenate.
 const KEY_SEP = '\u0000';
 
-// 64-bit truncation of SHA-256 — wide enough to make accidental collisions
-// astronomically unlikely, unlike the 32-bit djb2 used elsewhere.
-const sha256Short = (s: string): string =>
-  createHash('sha256').update(s).digest('hex').slice(0, 16);
-
 // Hash externalProxyServer rather than serializing it raw — the session key
 // is logged on eviction (closeAndDelete), and the URL may carry user:pass
 // credentials. Hashing preserves per-upstream session distinctness without
@@ -194,7 +201,7 @@ const fingerprintValue = (
   value: unknown,
 ): string =>
   field === 'externalProxyServer'
-    ? `external#${sha256Short(String(value))}`
+    ? `external#${hashToken(String(value))}`
     : String(value);
 
 /**
@@ -221,9 +228,9 @@ const getSessionKey = (
   proxy?: ProxyOptions,
   profile?: string,
 ): string =>
-  (mcpSessionId ?? `stdio:${sha256Short(token)}`) +
+  (mcpSessionId ?? `stdio:${hashToken(token)}`) +
   proxyFingerprint(proxy) +
-  (profile ? KEY_SEP + 'profile#' + sha256Short(profile) : '');
+  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '');
 
 /**
  * Build the WebSocket URL for `/chromium/agent`. Normalizes trailing

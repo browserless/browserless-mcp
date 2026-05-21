@@ -8,32 +8,35 @@ updates:
     groups:
       aws-sdk:
         patterns:
-          - "@aws-sdk/*"
+          - '@aws-sdk/*'
       testing:
         patterns:
-          - "mocha"
-          - "chai"
-          - "sinon"
-          - "c8"
-          - "@types/mocha"
-          - "@types/chai"
-          - "@types/sinon"
+          - 'mocha'
+          - 'chai'
+          - 'sinon'
+          - 'c8'
+          - '@types/mocha'
+          - '@types/chai'
+          - '@types/sinon'
       types:
         patterns:
-          - "@types/*"
+          - '@types/*'
         exclude-patterns:
-          - "@types/mocha"
-          - "@types/chai"
-          - "@types/sinon"
+          - '@types/mocha'
+          - '@types/chai'
+          - '@types/sinon'
       linting:
         patterns:
-          - "eslint"
-          - "eslint-*"
-          - "@eslint/*"
-          - "@typescript-eslint/*"
+          - 'eslint'
+          - 'eslint-*'
+          - '@eslint/*'
+          - '@typescript-eslint/*'
       typescript:
         patterns:
-          - "typescript"
+          - 'typescript'
+      fastmcp:
+        patterns:
+          - 'fastmcp'
 
   - package-ecosystem: github-actions
     directory: /
@@ -42,4 +45,4 @@ updates:
     groups:
       github-actions:
         patterns:
-          - "*"
+          - '*'

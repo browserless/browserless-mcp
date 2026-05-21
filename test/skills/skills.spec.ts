@@ -11,7 +11,7 @@ import {
 import type {
   SnapshotElement,
   SnapshotResult,
-} from '../../src/lib/agent-client.js';
+} from '../../src/@types/types.js';
 
 const el = (overrides: Partial<SnapshotElement>): SnapshotElement => ({
   ref: 1,
@@ -124,7 +124,12 @@ describe('skills/detectSkills - shadow-dom', () => {
 describe('skills/detectSkills - cookie-consent', () => {
   it('fires when a button name matches the consent regex', () => {
     const state = createSkillState();
-    for (const name of ['Accept all', 'Reject all', 'Cookie settings', 'Consent']) {
+    for (const name of [
+      'Accept all',
+      'Reject all',
+      'Cookie settings',
+      'Consent',
+    ]) {
       const ctx = { snapshot: snapshot([el({ role: 'button', name })]) };
       expect(detectSkills(ctx, createSkillState()), name).to.include(
         'cookie-consent',
@@ -176,7 +181,7 @@ describe('skills/detectSkills - captchas', () => {
   it('fires on captcha-related element text', () => {
     const ctx = {
       snapshot: snapshot([
-        el({ role: 'heading', name: "Verify you are human" }),
+        el({ role: 'heading', name: 'Verify you are human' }),
       ]),
       apiUrl: CLOUD,
     };
@@ -217,9 +222,7 @@ describe('skills/detectSkills - snapshot-misses', () => {
       snapshot: snapshot(elements),
       cmd: { method: 'snapshot', params: {} },
     };
-    expect(detectSkills(ctx, createSkillState())).to.include(
-      'snapshot-misses',
-    );
+    expect(detectSkills(ctx, createSkillState())).to.include('snapshot-misses');
   });
 
   it('fires when the snapshot is empty', () => {
@@ -227,15 +230,15 @@ describe('skills/detectSkills - snapshot-misses', () => {
       snapshot: snapshot([]),
       cmd: { method: 'snapshot', params: {} },
     };
-    expect(detectSkills(ctx, createSkillState())).to.include(
-      'snapshot-misses',
-    );
+    expect(detectSkills(ctx, createSkillState())).to.include('snapshot-misses');
   });
 
   it('respects a higher requested maxElements (only fires when full)', () => {
     const ctx750NotFull = {
       snapshot: snapshot(
-        Array.from({ length: 600 }, (_, i) => el({ ref: i, selector: `b${i}` })),
+        Array.from({ length: 600 }, (_, i) =>
+          el({ ref: i, selector: `b${i}` }),
+        ),
       ),
       cmd: { method: 'snapshot', params: { maxElements: 1000 } },
     };
@@ -245,7 +248,9 @@ describe('skills/detectSkills - snapshot-misses', () => {
 
     const ctx1000Full = {
       snapshot: snapshot(
-        Array.from({ length: 1000 }, (_, i) => el({ ref: i, selector: `b${i}` })),
+        Array.from({ length: 1000 }, (_, i) =>
+          el({ ref: i, selector: `b${i}` }),
+        ),
       ),
       cmd: { method: 'snapshot', params: { maxElements: 1000 } },
     };
@@ -266,9 +271,7 @@ describe('skills/detectSkills - snapshot-misses', () => {
 });
 
 describe('skills/detectSkills - tabs', () => {
-  const snapshotWithTabs = (
-    tabCount: number,
-  ): SnapshotResult => ({
+  const snapshotWithTabs = (tabCount: number): SnapshotResult => ({
     url: 'https://example.com',
     title: 'Example',
     elements: [],
@@ -362,11 +365,12 @@ describe('skills/detectSkills - dynamic-content', () => {
         method: 'waitForSelector',
         params: { selector: '.results', timeout: 5000 },
       },
-      error: { message: 'waiting for selector ".results" failed: timeout 5000ms exceeded' },
+      error: {
+        message:
+          'waiting for selector ".results" failed: timeout 5000ms exceeded',
+      },
     };
-    expect(detectSkills(ctx, createSkillState())).to.include(
-      'dynamic-content',
-    );
+    expect(detectSkills(ctx, createSkillState())).to.include('dynamic-content');
   });
 
   it('fires when waitForResponse times out', () => {
@@ -374,9 +378,7 @@ describe('skills/detectSkills - dynamic-content', () => {
       cmd: { method: 'waitForResponse', params: { url: '*api/x*' } },
       error: { message: 'Timed out after 30000ms' },
     };
-    expect(detectSkills(ctx, createSkillState())).to.include(
-      'dynamic-content',
-    );
+    expect(detectSkills(ctx, createSkillState())).to.include('dynamic-content');
   });
 
   it('does not fire on a non-wait command timing out', () => {

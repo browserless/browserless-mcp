@@ -7,7 +7,10 @@ The page is showing a captcha widget (reCAPTCHA, hCaptcha, Cloudflare Turnstile,
 ## The `solve` command
 
 ```json
-{ "method": "solve", "params": { "type": "recaptcha", "wait": true, "timeout": 30000 } }
+{
+  "method": "solve",
+  "params": { "type": "recaptcha", "wait": true, "timeout": 30000 }
+}
 ```
 
 All params are optional:

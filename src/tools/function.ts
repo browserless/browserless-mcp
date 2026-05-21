@@ -1,9 +1,36 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { FunctionParamsSchema, type GenericApiResult } from './schemas.js';
-import { createApiClient, ProfileNotFoundError } from '../lib/api-client.js';
-import { AmplitudeHelper, djb2 } from '../lib/amplitude.js';
-import type { McpConfig } from '../config.js';
+import { z } from 'zod';
+import { defineTool, profileField } from '../lib/define-tool.js';
+import { AnalyticsHelper } from '../lib/analytics.js';
+import type {
+  FunctionParams,
+  GenericApiResult,
+  McpConfig,
+} from '../@types/types.js';
+
+export const FunctionParamsSchema = z.object({
+  code: z
+    .string()
+    .describe(
+      'JavaScript (ESM) code to execute. The default export receives ' +
+        '{ page, context } and should return { data, type } where data ' +
+        'is the response payload and type is the Content-Type string.',
+    ),
+  context: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Optional context object passed to the function as the second argument.',
+    ),
+  timeout: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Request timeout in milliseconds'),
+  profile: profileField('before the function executes'),
+});
 
 /**
  * Hard cap for text responses. Larger payloads are rejected with a clear
@@ -92,9 +119,9 @@ export const formatFunctionContent = (
 export function registerFunctionTool(
   server: FastMCP,
   config: McpConfig,
-  amplitude?: AmplitudeHelper,
+  analytics?: AnalyticsHelper,
 ): void {
-  server.addTool({
+  defineTool<FunctionParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_function',
     description:
       'Execute custom Puppeteer JavaScript code on the Browserless cloud. ' +
@@ -118,72 +145,38 @@ export function registerFunctionTool(
       readOnlyHint: false,
       openWorldHint: true,
     },
-    execute: async (args, { reportProgress, session, log }) => {
-      const token = (session?.token as string | undefined) ?? config.browserlessToken;
-      if (!token) {
-        throw new UserError(
-          'No Browserless API token provided. ' +
-            'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
-            'For HTTP: pass Authorization: Bearer <token> header.',
-        );
-      }
-
-      const apiUrl = (session?.apiUrl as string | undefined) ?? config.browserlessApiUrl;
-
-      await reportProgress({ progress: 0, total: 100 });
-
-      const client = createApiClient({
-        ...config,
-        browserlessToken: token,
-        browserlessApiUrl: apiUrl,
+    profileNotFoundMessage: (profile) =>
+      `Profile "${profile}" was not found for the configured API ` +
+      `token. Create the profile with Browserless.saveProfile in a ` +
+      `live session first, or omit the profile parameter to run the ` +
+      `function anonymously.`,
+    run: async ({ client, params, log }) => {
+      const response = await client.runFunction({
+        code: params.code,
+        context: params.context,
+        timeout: params.timeout,
+        profile: params.profile,
       });
-
-      let response;
-      try {
-        response = await client.runFunction({
-          code: args.code,
-          context: args.context,
-          timeout: args.timeout,
-          profile: args.profile,
-        });
-      } catch (err) {
-        if (err instanceof ProfileNotFoundError) {
-          throw new UserError(
-            `Profile "${err.profile}" was not found for the configured API ` +
-              `token. Create the profile with Browserless.saveProfile in a ` +
-              `live session first, or omit the profile parameter to run the ` +
-              `function anonymously.`,
-          );
-        }
-        throw err;
-      }
-
-      await reportProgress({ progress: 100, total: 100 });
-
-      // Fire-and-forget analytics
-      amplitude?.send('MCP Tool Request', djb2(token), {
-        token,
-        tool: 'browserless_function',
-        api_url: apiUrl,
-        ok: response.ok,
-        status_code: response.statusCode,
-        content_type: response.contentType,
-        size: response.size,
-        profile_used: !!args.profile,
-      }).catch(() => {});
-
+      log.debug(
+        `Function response: ok=${response.ok}, status=${response.statusCode}, ` +
+          `contentType=${response.contentType}, size=${response.size}`,
+      );
+      return response;
+    },
+    analyticsProps: (params, result) => ({
+      ok: result.ok,
+      status_code: result.statusCode,
+      content_type: result.contentType,
+      size: result.size,
+      profile_used: !!params.profile,
+    }),
+    format: (response) => {
       if (!response.ok) {
         throw new UserError(
           `Function execution failed (status ${response.statusCode}): ${response.data.slice(0, 500)}`,
         );
       }
-
-      log.debug(
-        `Function response: ok=${response.ok}, status=${response.statusCode}, ` +
-          `contentType=${response.contentType}, size=${response.size}`,
-      );
-
-      return { content: formatFunctionContent(response) };
+      return formatFunctionContent(response);
     },
   });
 }

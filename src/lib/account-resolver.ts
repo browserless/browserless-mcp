@@ -1,29 +1,13 @@
 import { ResponseCache } from './cache.js';
+import { decodeJwtPayload } from './utils.js';
 
 interface ResolvedAccount {
   apiKey: string;
   email: string;
 }
 
-interface SupabaseJwtPayload {
-  sub?: string;
-  email?: string;
-  app_metadata?: {
-    accountId?: string;
-  };
-}
-
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const cache = new ResponseCache(CACHE_TTL_MS);
-
-function decodeJwtPayload(jwt: string): SupabaseJwtPayload {
-  const parts = jwt.split('.');
-  if (parts.length !== 3) {
-    throw new Error('Invalid JWT format');
-  }
-  const payload = Buffer.from(parts[1], 'base64url').toString('utf-8');
-  return JSON.parse(payload) as SupabaseJwtPayload;
-}
 
 /**
  * Resolves a Browserless API key from a Supabase access token (JWT)

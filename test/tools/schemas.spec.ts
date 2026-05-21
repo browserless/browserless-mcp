@@ -1,10 +1,10 @@
 import { expect } from 'chai';
+import { AgentParamsSchema } from '../../src/tools/agent.js';
+import { FunctionParamsSchema } from '../../src/tools/function.js';
 import {
-  AgentParamsSchema,
-  FunctionParamsSchema,
   ProxyOptionsSchema,
   PROXY_FIELDS,
-} from '../../src/tools/schemas.js';
+} from '../../src/lib/agent-client.js';
 
 describe('ProxyOptionsSchema', () => {
   describe('proxyCountry', () => {
