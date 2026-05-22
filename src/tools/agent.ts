@@ -666,25 +666,17 @@ export const formatConnectError = (err: unknown): string => {
   return `Failed to connect to browser agent: ${String(err)}`;
 };
 
-const TOOL_DESCRIPTION = `Execute a browser command in a persistent agent session.
+const TOOL_DESCRIPTION = `Execute browser commands in persistent agent session.
 
-## Residential proxy (optional)
-Pass top-level \`proxy\` to route the session through residential IPs. Use this when target sites IP-block datacenter traffic.
-- \`proxy: "residential"\` — turn on residential routing
-- \`proxyCountry: "us"\` — ISO-2 geo target (lowercase preferred; auto-normalized)
-- \`proxyState: "new_york"\` — region target (paid-plan gated, 401 otherwise)
-- \`proxyCity\` — city target (paid/enterprise plan gated, 401 otherwise)
-- \`proxySticky: true\` — stable IP while the WebSocket stays open; reconnects allocate a new sticky id
-- \`proxyLocaleMatch: true\` — match navigator locale to the proxy IP country
-- \`proxyPreset: "px_amazon01"\` — named preset (plan-dependent; ask support for your list)
-- \`externalProxyServer: "http://u:p@host:port"\` — bring-your-own upstream (http(s) only)
-Geo/preset/sticky fields require \`proxy: "residential"\` or \`externalProxyServer\` to be set — otherwise the API silently ignores them. The MCP rejects this combination at validation time.
-The \`proxy\` object is read once at session creation. To change it, run \`close\` and start a new session.
+## Proxy (optional)
+Pass \`proxy\` for residential IPs when sites block datacenters.
+- \`proxy: "residential"\` — enable routing; \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
+- Geo/preset/sticky require \`proxy: "residential"\` or \`externalProxyServer\` set
+- Read once at creation; change = \`close\` + new session
 
-## Skills (auto-injected guidance)
-When the page or an error involves a non-trivial mechanic, a SKILL block will be auto-injected into your response between \`--- SKILL: <id> ---\` and \`--- END SKILL ---\` markers. Read it carefully — it contains the exact recipe.
-
-If you suspect a mechanic is in play but no SKILL block was injected, call **browserless_skill** with the id to load the recipe yourself. Available skills:
+## Skills (auto-injected)
+SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
+Load manually via **browserless_skill** if suspected but not injected:
 - \`shadow-dom\` — deep selectors, iframe targeting
 - \`cookie-consent\` — vendor-specific dismiss recipes
 - \`modals\` — closing dialogs and alertdialogs
@@ -692,93 +684,87 @@ If you suspect a mechanic is in play but no SKILL block was injected, call **bro
 - \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
-- \`tabs\` — multi-tab workflows, tab error codes, peek-without-switching
+- \`tabs\` — multi-tab workflows, peek-without-switching
 
 ## Core Loop (ReAct: Reason → Act → Observe)
-1. **goto** to navigate — waits for "domcontentloaded" by default
-2. **snapshot** to observe the page — returns interactive and informational elements (buttons, links, inputs, headings, images with alt text) with ref= selectors
-3. **Plan** all actions you can take from this snapshot
-4. **Batch execute** using the commands array — include as many actions as possible
-5. **Re-snapshot** only if the page changed (click, goto, navigation)
-6. Repeat until task is done, then **close**
+1. **goto** — waits "domcontentloaded"
+2. **snapshot** — returns interactive + informational elements (button, link, textbox, combobox, checkbox, heading, img+alt) with ref= selectors
+3. **Plan** all actions from snapshot
+4. **Batch** execute
+5. **Re-snapshot** only if page changed
+6. Repeat → **close** when done
 
 ## Snapshot Rules
-- ALWAYS snapshot before your first interaction on any page — no exceptions
-- **NEVER guess, assume, or infer selectors** — CSS selectors from your training data are wrong. The ONLY valid selectors are ref= or deep-ref= values from the most recent snapshot
-- If you haven't snapshotted yet on this page, you CANNOT click, type, or interact — snapshot first
-- Your snapshot is STALE after: click, goto, select (may trigger navigation), any navigation
-- Your snapshot is VALID after: type, hover, scroll, evaluate — no need to re-snapshot
-- When you expect new content ("next page", "search results", "after login") → re-snapshot
-- The snapshot includes element roles (link, button, textbox, combobox, checkbox, heading, etc.) — use these to understand what each element does
+- Until you snapshot a page, you CANNOT click/type/interact — snapshot first, no exceptions
+- NEVER guess, assume, or infer selectors — CSS selectors from your training data are wrong. ONLY use ref= / deep-ref= from latest snapshot
+- Snapshot STALE after: click, goto, select, navigation
+- Snapshot VALID after: type, hover, scroll, evaluate
+- Expect new content? → re-snapshot
+- Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
 
-## Using Selectors
-- Every element in the snapshot has a **ref=** or **deep-ref=** value — this is the selector to use
-- Pass it directly to click, type, select, hover commands as the "selector" param
-- **ref=** is a standard CSS selector: \`[3] button "Sign In" ref=button#submit\` → use \`"button#submit"\`
-- **deep-ref=** is a Browserless deep selector starting with \`< \` — use it exactly as shown, including the \`< \` prefix. The shadow-dom skill explains the syntax in full.
+## Selectors
+- Use **ref=** (CSS) or **deep-ref=** (starts \`< \`) exactly as shown in snapshot
+- Example: \`[3] button "Sign In" ref=button#submit\` → \`"button#submit"\`
+- deep-ref for shadow DOM — see \`shadow-dom\` skill
 
 ## Tabs
-Snapshots include \`tabs\` (with targetIds) and \`activeTargetId\` — you don't need to call getTabs after a normal action. Multi-tab workflows, peek-without-switching via \`snapshot { targetId }\`, and tab error codes are covered in the \`tabs\` skill, which auto-loads when more than one tab is present.
+Snapshots include \`tabs\` + \`activeTargetId\` — no getTabs needed. Multi-tab / \`snapshot { targetId }\` in \`tabs\` skill (auto-loads when >1 tab).
 
-## Navigating Links
-- When a snapshot shows a link with an href, **prefer goto over click** — it is more reliable (immune to layout shifts, overlapping elements, or misclicks)
-- Example: snapshot shows \`[5] a link "About" ref=a[href='/about']\` → use \`goto { url: "https://example.com/about" }\` instead of \`click { selector: "a[href='/about']" }\`
-- Only use click on links when the href is \`javascript:\`, \`#\`, or missing — those require a real click
+## Links
+**Prefer goto over click** for links with href — immune to layout shifts, overlays, misclicks.
+Example: \`[5] a "About" ref=a[href='/about']\` → \`goto { url: "https://ex.com/about" }\`
+Only click when href is \`javascript:\` / \`#\` / missing.
 
-## Extracting Content (priority order)
-1. **Check your in-memory snapshot first** — element names, text, and values are already there
-2. **text** { selector } — extract text from a specific element using a snapshot ref
-3. **evaluate** { content } — run JS in browser (always use IIFE syntax): \`(() => { return ... })()\`
-4. **html** { selector } — get raw HTML of a section
+## Content Extraction
+1. Check in-memory snapshot (text/values already there)
+2. **text** { selector } — from specific element
+3. **evaluate** { content } — JS (IIFE): \`(() => { return ... })()\`
+4. **html** { selector } — raw HTML
 
-## Batching — Maximize Commands Per Call
-After a snapshot, plan ALL actions before needing a new snapshot. Batch in one call.
+## Batching — Maximize Per Call
+Plan ALL actions from snapshot before next snapshot.
 
-**Decision process:**
-1. Identify everything you need to do from the current snapshot
-2. Classify each action:
-   - **Safe to batch** (no page change): type, hover, scroll, evaluate, select (non-navigating), checkbox
-   - **Page-changing** (triggers reload/navigation): click (buttons/links), goto
-3. If filling a form: check if the submit button is already visible in the snapshot
-4. Batch: all safe actions FIRST → page-changing action LAST
-5. After batch completes → re-snapshot → handle remaining tasks
+**Process:**
+1. Classify actions: **safe** (type, hover, scroll, evaluate, select, checkbox) vs. **page-changing** (click, goto)
+2. Batch: safe FIRST → page-changing LAST
+3. For forms: if submit button is in snapshot, batch type + click in one call
+4. Don't batch across navigations
 
-**Example — complete form fill + submit in ONE call:**
+**Example form:**
 \`\`\`json
 { "commands": [
   { "method": "type", "params": { "selector": "input#email", "text": "j@d.com" } },
   { "method": "click", "params": { "selector": "button#submit" } }
 ] }
 \`\`\`
-Do NOT batch across navigations or page reloads.
 
-## Async Content
-After actions that trigger async loading (search, form submit, lazy modal), use a \`wait*\` method before re-snapshotting — \`waitForResponse\` is the most reliable when you know the API URL. The \`dynamic-content\` skill auto-loads on a \`wait*\` timeout and explains the choice. Never use \`evaluate\` with setTimeout to wait.
+## Async
+After async triggers (search, submit), use \`wait*\` before snapshot — \`waitForResponse\` best when API URL known. \`dynamic-content\` skill auto-loads on timeout. Never \`evaluate\` with setTimeout.
 
 ## Error Recovery
-Errors are tagged with a category on the first line (\`Category: <NAME>\`). Use it to choose the right next step:
-- **SELECTOR_MISS** — re-snapshot; if the selector was not already a deep-ref, retry with \`< selector\` (likely shadow DOM)
-- **SESSION_LOST** — a fresh session was opened automatically; re-goto then re-snapshot (prior page state is gone)
-- **UNAUTHORIZED** / **FORBIDDEN** — auth/cookies are missing or rejected; do not retry the prior selector, pick a different path
-- **NOT_FOUND** — the URL no longer exists; choose a different navigation
-- **SERVER_ERROR** — origin returned 5xx; back off, then retry once
-- **NAVIGATION_FAILED** — DNS/network error; verify the URL
-- **TIMEOUT** — the page or wait condition didn't resolve; try a longer waitFor or a different signal
-- **INVALID_PARAMS** — fix the params (the schema is authoritative); do not blind-retry
-- **UNKNOWN** — re-snapshot and re-plan
-Snapshots may be prefixed with \`! NOTICE: URL changed cross-origin\` when navigation crossed origin — treat your prior plan and refs as invalid and re-plan from the new snapshot.
-Never retry the exact same failed action without re-snapshotting first.
+Errors tagged \`Category: <NAME>\`:
+- **SELECTOR_MISS** — re-snapshot; retry \`< selector\` if not already deep-ref
+- **SESSION_LOST** — a fresh session was opened automatically; re-goto + snapshot (prior state gone)
+- **UNAUTHORIZED** / **FORBIDDEN** — pick different path
+- **NOT_FOUND** — different URL
+- **SERVER_ERROR** — backoff, retry once
+- **NAVIGATION_FAILED** — verify URL
+- **TIMEOUT** — longer wait or different signal
+- **INVALID_PARAMS** — fix params (schema authoritative)
+- **UNKNOWN** — re-snapshot + re-plan
 
-## Available Methods
-Non-obvious quirks called out below. For everything else, the typed schema is authoritative.
-- **goto** { url, waitUntil? } — defaults to \`domcontentloaded\`. Prefer goto over clicking anchors.
-- **snapshot** { maxElements?, targetId? } — get page elements with selectors. Default cap 500. \`targetId\` peeks at a non-active tab without switching.
-- **evaluate** { content } — must be IIFE: \`(() => { return ... })()\`
-- **waitForSelector** { selector, timeout? } — always set timeout 5000-10000ms.
-- **waitForResponse** { url?, statuses?, timeout? } — url is a glob, e.g. \`"*api/results*"\`.
-- **createTab** { url?, activate?, waitUntil? } — defaults to \`activate: true\` (matches \`window.open\` with focus). Pass \`activate: false\` for a background tab.
-- **close** — end browser session. **Issue as its own call, NOT batched.** Only call once the task is complete; closing prematurely throws away page state.
-- **screenshot** / **solve** / **back** / **forward** / **reload** / **click** / **type** / **select** / **checkbox** / **hover** / **scroll** / **text** / **html** / **waitForNavigation** / **waitForTimeout** / **waitForRequest** / **liveURL** / **getTabs** / **switchTab** / **closeTab** — see schema.
+\`! NOTICE: URL changed cross-origin\` = prior plan/refs invalid, re-plan.
+Never retry same failed action without re-snapshot.
+
+## Methods (non-obvious)
+- **goto** { url, waitUntil? } — default "domcontentloaded"; prefer over click for links
+- **snapshot** { maxElements?, targetId? } — cap 500; targetId peeks non-active tab
+- **evaluate** { content } — IIFE only
+- **waitForSelector** { selector, timeout? } — set 5000-10000ms
+- **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
+- **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
+- **close** — own call, NOT batched; only when task complete (premature close discards page state)
+- See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 `;
 

@@ -1,24 +1,24 @@
 # Working with Tabs
 
-The page just spawned (or you just opened) more than one tab, or a tab-related error came back. Tab management has a few sharp edges — read this before issuing more tab commands.
+Page spawned (or you opened) multiple tabs, or tab-related error occurred. Tab management has sharp edges — read before issuing tab commands.
 
-## Snapshots already carry tab state
+## Snapshots include tab state
 
-Every `snapshot` response includes `tabs[]` (with `targetId`, `url`, `title`, `active`) and `activeTargetId`. After any action that might spawn a tab — a `target="_blank"` click, `window.open`, an OAuth popup — the _next_ snapshot's `tabs` list will already include the new one. **You do not need to call `getTabs` unless you want a fresh list without taking a snapshot.**
+Every `snapshot` response includes `tabs[]` (`targetId`, `url`, `title`, `active`) and `activeTargetId`. After action that spawns tab — `target="_blank"` click, `window.open`, OAuth popup — next snapshot's `tabs` list includes new tab. **No need to call `getTabs` unless you want fresh list without snapshot.**
 
 ## Commands
 
-| Command                                     | Use                                            |
-| ------------------------------------------- | ---------------------------------------------- |
-| `getTabs`                                   | Refresh the tab list without snapshotting      |
-| `switchTab { targetId }`                    | Make another tab the active one                |
-| `createTab { url?, activate?, waitUntil? }` | Open a new tab — defaults to `activate: true`  |
-| `closeTab { targetId }`                     | Close a tab                                    |
-| `snapshot { targetId }`                     | Peek at a non-active tab **without switching** |
+| Command                                     | Use                                          |
+| ------------------------------------------- | -------------------------------------------- |
+| `getTabs`                                   | Refresh tab list without snapshot            |
+| `switchTab { targetId }`                    | Make another tab active                      |
+| `createTab { url?, activate?, waitUntil? }` | Open new tab — defaults to `activate: true`  |
+| `closeTab { targetId }`                     | Close tab                                    |
+| `snapshot { targetId }`                     | Peek at non-active tab **without switching** |
 
 ## Patterns
 
-**Following a `target="_blank"` link:**
+**Following `target="_blank"` link:**
 
 ```json
 {
@@ -29,9 +29,9 @@ Every `snapshot` response includes `tabs[]` (with `targetId`, `url`, `title`, `a
 }
 ```
 
-The new tab appears in the snapshot's `tabs` list. If the click activated it (most do), `activeTargetId` already points at the new tab — keep working there. If not, `switchTab` to it.
+New tab appears in snapshot's `tabs` list. If click activated it (most do), `activeTargetId` points at new tab — keep working there. If not, `switchTab` to it.
 
-**Comparing two pages without losing your place:**
+**Comparing two pages without losing place:**
 
 ```json
 {
@@ -41,7 +41,7 @@ The new tab appears in the snapshot's `tabs` list. If the click activated it (mo
 }
 ```
 
-`snapshot { targetId }` returns the other tab's elements but **does not switch** — your active tab stays where it was. Useful for checking a popup or sibling tab before deciding whether to commit to it.
+`snapshot { targetId }` returns other tab's elements but **doesn't switch** — active tab unchanged. Useful for checking popup/sibling tab before committing.
 
 **Background tab (don't lose focus):**
 
@@ -55,23 +55,23 @@ The new tab appears in the snapshot's `tabs` list. If the click activated it (mo
 }
 ```
 
-The new tab opens but the current one stays active. Pair with `snapshot { targetId }` later if you want to read it without switching.
+New tab opens, current stays active. Pair with `snapshot { targetId }` later to read without switching.
 
 ## Closing tabs
 
-`closeTab` on the **active** tab auto-switches focus to the newest remaining tab. Check the response's `activeTargetId`:
+`closeTab` on **active** tab auto-switches focus to newest remaining tab. Check response's `activeTargetId`:
 
-- A new id → that's now your active tab.
-- `null` → no tabs remain. Either `createTab` to keep going, or `close` to end the session.
+- New id → now active tab
+- `null` → no tabs remain. `createTab` to continue or `close` to end session
 
-## Error codes you may see
+## Error codes
 
-- **`TAB_NOT_FOUND`** — the `targetId` you passed is stale. Call `getTabs` to refresh and retry with the new id. Don't loop on the same id.
-- **`TAB_CLOSED`** — the tab went away mid-operation (OAuth flows often do this). Call `getTabs` and retry against whatever's left.
-- **`TAB_LIMIT_EXCEEDED`** — too many tabs open. Close an unused one before creating another. Identify it by url/title in the snapshot's `tabs` list.
+- **`TAB_NOT_FOUND`** — `targetId` stale. Call `getTabs` to refresh, retry with new id. Don't loop on same id
+- **`TAB_CLOSED`** — tab disappeared mid-operation (OAuth flows). Call `getTabs`, retry against remaining tabs
+- **`TAB_LIMIT_EXCEEDED`** — too many tabs open. Close unused one before creating another. Identify by url/title in snapshot's `tabs` list
 
 ## Don't
 
-- **Don't keep calling `getTabs` between commands.** Snapshots already carry the list. `getTabs` is for cases where you didn't want to snapshot.
-- **Don't `switchTab` when you only need to read.** Use `snapshot { targetId }` instead — cheaper, doesn't disturb focus.
-- **Don't close tabs you didn't open** unless the user asked. Background tabs may belong to the user's larger flow, not your task.
+- Call `getTabs` between commands. Snapshots already carry list. `getTabs` for cases without snapshot
+- `switchTab` when only reading. Use `snapshot { targetId }` instead — cheaper, doesn't disturb focus
+- Close tabs you didn't open unless user requested. Background tabs may belong to user's larger flow

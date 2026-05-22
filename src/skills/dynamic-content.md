@@ -1,29 +1,26 @@
 # Waiting for Dynamic Content
 
-A `wait*` call just timed out, or the page is loading content asynchronously and your last snapshot missed it. Choosing the right wait method matters — wait for the _signal that the work is done_, not for an arbitrary delay.
+`wait*` timed out or page loads async content. Wait for signal work is done, not arbitrary delay.
 
 ## Decision tree
 
-| Situation                                           | Use                                           |
-| --------------------------------------------------- | --------------------------------------------- |
-| You know the API endpoint that returns the data     | `waitForResponse { url, statuses?: [200] }`   |
-| You know a CSS selector that will appear when ready | `waitForSelector { selector, timeout: 5000 }` |
-| The page navigates after your click                 | `waitForNavigation { timeout }`               |
-| You know nothing specific, just need a beat         | `waitForTimeout { time: 3000 }` (last resort) |
+| Situation                      | Use                                        |
+| ------------------------------ | ------------------------------------------ |
+| Know API endpoint              | `waitForResponse { url, statuses: [200] }` |
+| Know CSS selector appears      | `waitForSelector { selector, timeout }`    |
+| Page navigates                 | `waitForNavigation { timeout }`            |
+| Nothing specific (last resort) | `waitForTimeout { time: 3000 }`            |
 
-`waitForResponse` is the most reliable — it fires on the actual network event. Prefer it whenever you can identify the API URL pattern.
+`waitForResponse` most reliable — fires on network event. Prefer when URL pattern known.
 
-## Common patterns
+## Patterns
 
-**Search-then-results:**
+**Search results:**
 
 ```json
 {
   "commands": [
-    {
-      "method": "type",
-      "params": { "selector": "input#q", "text": "browserless" }
-    },
+    { "method": "type", "params": { "selector": "input#q", "text": "query" } },
     { "method": "click", "params": { "selector": "button#search" } },
     {
       "method": "waitForResponse",
@@ -34,7 +31,7 @@ A `wait*` call just timed out, or the page is loading content asynchronously and
 }
 ```
 
-**Form submit with redirect:**
+**Form with redirect:**
 
 ```json
 {
@@ -46,12 +43,12 @@ A `wait*` call just timed out, or the page is loading content asynchronously and
 }
 ```
 
-**Click that opens a modal lazily:**
+**Lazy modal:**
 
 ```json
 {
   "commands": [
-    { "method": "click", "params": { "selector": "button#open-settings" } },
+    { "method": "click", "params": { "selector": "button#open" } },
     {
       "method": "waitForSelector",
       "params": { "selector": "[role='dialog']", "timeout": 5000 }
@@ -61,17 +58,15 @@ A `wait*` call just timed out, or the page is loading content asynchronously and
 }
 ```
 
-## When a wait method times out
+## When timeout occurs
 
-If you got here because `waitForSelector`/`waitForResponse`/etc. timed out:
+1. **Re-snapshot** — content may already be there (wrong wait condition)
+2. **Widen pattern** — `*api/search*` matches more than exact URL
+3. **Switch wait type** — if `waitForResponse` fails, try `waitForSelector` for rendered output
+4. **Last resort:** `waitForTimeout { time: 3000 }`
 
-1. **Check whether the trigger actually fired** — re-snapshot. The page may have already rendered the content (your wait condition was wrong, not the page).
-2. **Widen the URL/selector pattern** — `*api/search*` matches more than `https://example.com/api/search/v2`. Use globs liberally.
-3. **Switch wait type** — if `waitForResponse` for an API call fails, the API might be cached or websocket-based; switch to `waitForSelector` for the rendered output.
-4. **Last resort: `waitForTimeout { time: 3000 }`** — coarse but always works. Only when the other methods can't lock onto a real signal.
+## Avoid
 
-## Don't
-
-- **Don't use `evaluate` with `setTimeout` / `await new Promise(...)`** to wait. The `evaluate` call returns immediately; the timer runs in the page after your code already reported done. Use the dedicated `wait*` methods instead.
-- **Don't pile up `waitForTimeout` calls** to "be safe." Three 3-second timeouts is 9 wasted seconds vs. one `waitForResponse` that finishes the moment the request lands.
-- **Don't skip the wait entirely** and re-snapshot in a tight loop. You burn tokens on each empty snapshot, and the page can race you.
+- `evaluate` with setTimeout/Promise (returns before timer completes)
+- Multiple `waitForTimeout` stacked (use specific wait methods)
+- Tight snapshot loop without wait (burns tokens, races page)
