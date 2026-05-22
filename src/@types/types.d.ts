@@ -207,7 +207,8 @@ export type SkillId =
   | 'snapshot-misses'
   | 'dynamic-content'
   | 'screenshots'
-  | 'tabs';
+  | 'tabs'
+  | 'autonomous-login';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;

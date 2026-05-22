@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all eight skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(8);
+  it('loads all nine skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(9);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -48,6 +48,7 @@ describe('skills/registry', () => {
       'dynamic-content',
       'screenshots',
       'tabs',
+      'autonomous-login',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -399,6 +400,66 @@ describe('skills/detectSkills - dynamic-content', () => {
     expect(detectSkills(ctx, createSkillState())).to.not.include(
       'dynamic-content',
     );
+  });
+});
+
+describe('skills/detectSkills - autonomous-login', () => {
+  it('fires when the snapshot contains a password input', () => {
+    const ctx = {
+      snapshot: snapshot([
+        el({
+          ref: 1,
+          role: 'textbox',
+          tag: 'input',
+          type: 'password',
+          selector: 'input#pw',
+          name: 'Password',
+        }),
+      ]),
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include(
+      'autonomous-login',
+    );
+  });
+
+  it('does not fire when no password input is present', () => {
+    const ctx = {
+      snapshot: snapshot([
+        el({
+          ref: 1,
+          role: 'textbox',
+          tag: 'input',
+          type: 'email',
+          selector: 'input#email',
+          name: 'Email',
+        }),
+        el({ ref: 2, role: 'button', name: 'Sign in', selector: 'button#go' }),
+      ]),
+    };
+    expect(detectSkills(ctx, createSkillState())).to.not.include(
+      'autonomous-login',
+    );
+  });
+
+  it('fires only once per session (no refireAfter)', () => {
+    const state = createSkillState();
+    const ctx = {
+      snapshot: snapshot([
+        el({
+          ref: 1,
+          role: 'textbox',
+          tag: 'input',
+          type: 'password',
+          selector: 'input#pw',
+          name: 'Password',
+        }),
+      ]),
+    };
+    state.cmdIndex = 1;
+    markFired(state, detectSkills(ctx, state));
+
+    state.cmdIndex = 100;
+    expect(detectSkills(ctx, state)).to.not.include('autonomous-login');
   });
 });
 

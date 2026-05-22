@@ -685,6 +685,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
 - \`tabs\` — multi-tab workflows, peek-without-switching
+- \`autonomous-login\` — gated login flow: load before authenticating when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Defines the don't-login-by-default posture, credential-matching rules, MFA/captcha branches, and the required final JSON response shape.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
 1. **goto** — waits "domcontentloaded"
@@ -904,18 +905,23 @@ const SkillIdSchema = z.enum(
 
 const SkillToolParamsSchema = z.object({
   id: SkillIdSchema.describe(
-    'The skill to load: shadow-dom, cookie-consent, modals, or captchas.',
+    'The skill to load (see tool description for the full list).',
   ),
 });
 
 const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
 
-Use this when you suspect the page exhibits a non-trivial mechanic (shadow DOM, cookie banner, modal dialog, captcha) but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
+Use this when you suspect the page exhibits a non-trivial mechanic but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
 
 Available skills:
 - **shadow-dom** — deep selectors, iframe URL-pattern syntax, what works through deep-ref
 - **cookie-consent** — vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, etc.)
 - **modals** — close-button heuristics, ESC handling, alertdialog vs. dialog
+- **snapshot-misses** — truncated/empty snapshots, image-rendered content
+- **dynamic-content** — choosing the right \`wait*\` method after async triggers
+- **screenshots** — when to screenshot vs. snapshot, scope and format choices
+- **tabs** — multi-tab workflows, peek-without-switching
+- **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)`;
 
 export function registerAgentTools(

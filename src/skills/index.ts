@@ -32,6 +32,7 @@ type Predicate =
       nameRegex?: RegExp;
       selectorPrefix?: string;
     }
+  | { kind: 'snapshot.has-input-type'; type: string }
   | { kind: 'snapshot.url-match'; regex: RegExp }
   | { kind: 'snapshot.has-detected-challenge' }
   | { kind: 'snapshot.tabs-at-least'; count: number }
@@ -59,6 +60,8 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
         return true;
       });
     }
+    case 'snapshot.has-input-type':
+      return !!ctx.snapshot?.elements?.some((el) => el.type === p.type);
     case 'snapshot.url-match':
       return !!ctx.snapshot?.url && p.regex.test(ctx.snapshot.url);
     case 'snapshot.has-detected-challenge':
@@ -166,6 +169,13 @@ const SKILL_SPECS: SkillSpec[] = [
       [{ kind: 'snapshot.tabs-at-least', count: 2 }],
       [{ kind: 'error.code', codes: TAB_ERROR_CODES }],
       [{ kind: 'command.method', methods: TAB_COMMAND_METHODS }],
+    ],
+  },
+  {
+    id: 'autonomous-login',
+    path: 'src/skills/autonomous-login.md',
+    triggers: [
+      [{ kind: 'snapshot.has-input-type', type: 'password' }],
     ],
   },
   {
