@@ -1,6 +1,13 @@
 # Latest
 
-- Emit Amplitude `MCP Tool Request` events for the `browserless_agent` and `browserless_skill` tools
+- Dependency updates
+
+# v1.4.0 - 2026-05-22
+
+- Refactor repo architecture
+- Dependency updates
+- Improve system prompt and skills
+- Initial Open Source release
 
 # v1.3.4 — 2026-05-15
 
@@ -72,7 +79,7 @@
 
 # v0.2.0
 
-- Amplitude Events
+- Analytics Events
 - Support token param in URL
 
 # v0.1.2
