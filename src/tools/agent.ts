@@ -669,10 +669,14 @@ export const formatConnectError = (err: unknown): string => {
 const TOOL_DESCRIPTION = `Execute browser commands in persistent agent session.
 
 ## Proxy (optional)
-Pass \`proxy\` for residential IPs when sites block datacenters.
+Proxy config is a **top-level tool argument** (\`proxy\`, \`proxyCountry\`, etc. on the tool call itself) — it is applied when the session is opened. **NEVER call \`proxy\` as a method inside \`commands\`** — a \`{ method: "proxy", ... }\` JSON-RPC mutation does NOT change the upstream proxy on an already-open session and will silently no-op.
+
+**If there is credible evidence the task needs a proxy, you MUST pass proxy options on the very FIRST call** (before any \`goto\`/\`snapshot\`), because the config is read once at session creation. Credible signals include: the user asks for a specific country/region/locale; the target site is known to geo-restrict or block datacenter IPs (streaming, ticketing, retail, banking, real-estate, news paywalls); a prior attempt returned 403/451/captcha/"unusual traffic"/"access denied"; the user explicitly mentions residential / sticky IP / proxy.
+
+If you already opened a session without a proxy and now realize one is needed, you must \`close\` and start a new session with the proxy options set — there is no in-session switch.
+
 - \`proxy: "residential"\` — enable routing; \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
 - Geo/preset/sticky require \`proxy: "residential"\` or \`externalProxyServer\` set
-- Read once at creation; change = \`close\` + new session
 
 ## Skills (auto-injected)
 SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
@@ -992,6 +996,15 @@ export function registerAgentTools(
           profile_used: !!profile,
         });
       };
+
+      const proxyCmd = commands.find((c) => c.method === 'proxy');
+      if (proxyCmd) {
+        sendAnalytics(false);
+        throw new UserError(
+          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
+            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
+        );
+      }
 
       if (commands.length === 1 && commands[0].method === 'close') {
         closeSession(mcpSessionId, token, proxy, profile);
