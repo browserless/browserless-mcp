@@ -174,9 +174,7 @@ const SKILL_SPECS: SkillSpec[] = [
   {
     id: 'autonomous-login',
     path: 'src/skills/autonomous-login.md',
-    triggers: [
-      [{ kind: 'snapshot.has-input-type', type: 'password' }],
-    ],
+    triggers: [[{ kind: 'snapshot.has-input-type', type: 'password' }]],
   },
   {
     id: 'captchas',

@@ -2,7 +2,7 @@
 
 A page is asking you to authenticate. **Default posture: don't.** Logins are intrusive and can damage account state. Proceed only when all three gates clear.
 
-## Gate 1 — Is login required for *this* task?
+## Gate 1 — Is login required for _this_ task?
 
 "Required" is contextual. If the user's task is "log in to X" / "post to X", login is required by definition — gate passed. Otherwise (extract / read / observe tasks), check whether the wall actually blocks the goal:
 
@@ -16,7 +16,7 @@ If you can complete the task without authenticating, return `LOGIN_NOT_NEEDED`. 
 
 Either the user directed it, or the action is functionally blocked (401, fully gated content with Gate 1 alternatives exhausted). Convenience is not enough.
 
-## Gate 3 — Are there credentials that unambiguously belong to *this* site?
+## Gate 3 — Are there credentials that unambiguously belong to _this_ site?
 
 Credentials are identified **contextually** by name-to-domain correspondence — they don't need fixed names. The bar is **extraordinary evidence**, not plausibility.
 
@@ -55,11 +55,19 @@ Any of the three missing: `FORM_NOT_FOUND` with what's missing.
 Single batched call with the Gate-3 values:
 
 ```json
-{ "commands": [
-  { "method": "type", "params": { "selector": "<username-ref>", "text": "<username-value>" } },
-  { "method": "type", "params": { "selector": "<password-ref>", "text": "<password-value>" } },
-  { "method": "click", "params": { "selector": "<submit-ref>" } }
-] }
+{
+  "commands": [
+    {
+      "method": "type",
+      "params": { "selector": "<username-ref>", "text": "<username-value>" }
+    },
+    {
+      "method": "type",
+      "params": { "selector": "<password-ref>", "text": "<password-value>" }
+    },
+    { "method": "click", "params": { "selector": "<submit-ref>" } }
+  ]
+}
 ```
 
 Then `waitForNavigation` (10000ms) or `waitForResponse` on `*`. If both time out, verify anyway — the page may have updated in place. Re-snapshot.
