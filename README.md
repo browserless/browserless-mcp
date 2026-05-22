@@ -1,4 +1,10 @@
-# browserless-mcp
+# Browserless MCP Server
+
+<div align="center">
+
+[![MCP Badge](https://lobehub.com/badge/mcp/browserless-browserless-mcp?style=plastic)](https://lobehub.com/mcp/browserless-browserless-mcp)
+
+</div>
 
 MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io) — expose the Browserless smart scraper API to LLM clients like Claude Desktop, Cursor, VS Code, and Windsurf.
 
@@ -24,6 +30,33 @@ BROWSERLESS_TOKEN=your-token npx browserless-mcp
 | `browserless_export`       | Export a webpage via the Browserless `/export` API. Fetches the URL and returns its native content (HTML, PDF, image, etc.) with automatic content-type detection.                                                                                                                   |
 | `browserless_agent`        | Drive a persistent browser session via a ReAct loop: snapshot the page, plan, batch interactions (click, type, scroll, evaluate, etc.), and re-snapshot. Uses ref-based selectors derived from snapshots, supports multi-tab workflows, screenshots, captcha solving, and live URLs. |
 | `browserless_skill`        | Load an on-demand recipe for a non-trivial page mechanic (shadow DOM, cookie consent, modals, captchas, dynamic content, snapshot misses, screenshots, tabs). Companion to `browserless_agent`.                                                                                      |
+
+## Skills
+
+The server ships with a built-in library of **Skills** — on-demand recipes the agent can load to handle tricky page mechanics. Skills auto-inject into `browserless_agent` responses when their triggers fire (e.g. the agent hits a cookie banner), and can also be loaded manually via the `browserless_skill` tool.
+
+| Skill              | Source                                                       | Purpose                                                                                                            |
+| ------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `shadow-dom`       | [src/skills/shadow-dom.md](src/skills/shadow-dom.md)         | Deep selectors and iframe targeting through shadow roots.                                                          |
+| `cookie-consent`   | [src/skills/cookie-consent.md](src/skills/cookie-consent.md) | Vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, TrustArc, etc.).                                     |
+| `modals`           | [src/skills/modals.md](src/skills/modals.md)                 | Closing dialogs, alertdialogs, and overlay close-button heuristics.                                                |
+| `captchas`         | [src/skills/captchas.md](src/skills/captchas.md)             | Using the `solve` command, response semantics, and escalation paths (Cloud only).                                  |
+| `dynamic-content`  | [src/skills/dynamic-content.md](src/skills/dynamic-content.md) | Choosing the right `wait*` method for async/AJAX/SPA content.                                                      |
+| `snapshot-misses`  | [src/skills/snapshot-misses.md](src/skills/snapshot-misses.md) | Handling truncated/empty snapshots and image-rendered content.                                                     |
+| `screenshots`      | [src/skills/screenshots.md](src/skills/screenshots.md)       | When to screenshot vs. snapshot, scope and format choices.                                                         |
+| `tabs`             | [src/skills/tabs.md](src/skills/tabs.md)                     | Multi-tab workflows and peek-without-switching via `targetId`.                                                     |
+
+Load a skill explicitly:
+
+```jsonc
+{
+  "method": "tools/call",
+  "params": {
+    "name": "browserless_skill",
+    "arguments": { "id": "cookie-consent" },
+  },
+}
+```
 
 ### Residential proxy (`browserless_agent`)
 
