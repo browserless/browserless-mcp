@@ -10,11 +10,19 @@ MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io)
 
 ## Quick Start
 
-Get an API token from [browserless.io](https://browserless.io) (free tier available), then:
+Get an API token from [browserless.io](https://browserless.io) (free tier available), then point your MCP client at the hosted server:
 
-```bash
-BROWSERLESS_TOKEN=your-token npx browserless-mcp
+```json
+{
+  "mcpServers": {
+    "browserless": {
+      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
+    }
+  }
+}
 ```
+
+No local install — see [Configuration](#configuration) for per-client snippets.
 
 ## Tools
 
@@ -97,17 +105,50 @@ The `proxy` object is read once at session creation. To change it, call `close` 
 
 ## Configuration
 
-### Environment Variables
+The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter.
 
-| Variable                  | Required | Default                                 | Description                                        |
-| ------------------------- | -------- | --------------------------------------- | -------------------------------------------------- |
-| `BROWSERLESS_TOKEN`       | Yes      | —                                       | Your Browserless API token                         |
-| `BROWSERLESS_API_URL`     | No       | `https://production-sfo.browserless.io` | API endpoint (for self-hosted instances)           |
-| `TRANSPORT`               | No       | `stdio`                                 | Transport type: `stdio` or `httpStream`            |
-| `PORT`                    | No       | `8080`                                  | HTTP server port (only for `httpStream` transport) |
-| `BROWSERLESS_TIMEOUT`     | No       | `30000`                                 | Request timeout in milliseconds                    |
-| `BROWSERLESS_MAX_RETRIES` | No       | `3`                                     | Max retry attempts for failed requests             |
-| `BROWSERLESS_CACHE_TTL`   | No       | `60000`                                 | Cache TTL in milliseconds (0 to disable)           |
+**Using headers** (recommended for clients that support them):
+
+```json
+{
+  "mcpServers": {
+    "browserless": {
+      "url": "https://mcp.browserless.io/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      }
+    }
+  }
+}
+```
+
+**Using URL query parameters** (for clients like Claude.ai custom connectors that only accept a URL):
+
+```text
+https://mcp.browserless.io/mcp?token=your-token-here
+```
+
+To connect to a specific Browserless regional endpoint, add the `x-browserless-api-url` header or the `browserlessUrl` query parameter:
+
+```json
+{
+  "mcpServers": {
+    "browserless": {
+      "url": "https://mcp.browserless.io/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here",
+        "x-browserless-api-url": "https://production-lon.browserless.io"
+      }
+    }
+  }
+}
+```
+
+```text
+https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://production-lon.browserless.io
+```
+
+When both headers and query parameters are present, headers take precedence.
 
 ### Claude Desktop
 
@@ -117,11 +158,7 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "browserless": {
-      "command": "npx",
-      "args": ["browserless-mcp"],
-      "env": {
-        "BROWSERLESS_TOKEN": "your-token-here"
-      }
+      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
     }
   }
 }
@@ -135,11 +172,7 @@ Add to your Cursor MCP settings:
 {
   "mcpServers": {
     "browserless": {
-      "command": "npx",
-      "args": ["browserless-mcp"],
-      "env": {
-        "BROWSERLESS_TOKEN": "your-token-here"
-      }
+      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
     }
   }
 }
@@ -154,10 +187,9 @@ Add to your VS Code settings (`settings.json`):
   "mcp": {
     "servers": {
       "browserless": {
-        "command": "npx",
-        "args": ["browserless-mcp"],
-        "env": {
-          "BROWSERLESS_TOKEN": "your-token-here"
+        "url": "https://mcp.browserless.io/mcp",
+        "headers": {
+          "Authorization": "Bearer your-token-here"
         }
       }
     }
@@ -173,82 +205,39 @@ Add to your Windsurf MCP configuration:
 {
   "mcpServers": {
     "browserless": {
-      "command": "npx",
-      "args": ["browserless-mcp"],
-      "env": {
-        "BROWSERLESS_TOKEN": "your-token-here"
-      }
+      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
     }
   }
 }
 ```
 
-### Remote (HTTP Stream)
+## Self-Hosting
 
-For hosted deployments or Docker, the server supports authentication via headers or URL query parameters.
-
-**Using headers** (recommended for clients that support them):
-
-```json
-{
-  "mcpServers": {
-    "browserless": {
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer your-token-here"
-      }
-    }
-  }
-}
-```
-
-To connect to a specific Browserless regional endpoint, add the `x-browserless-api-url` header:
-
-```json
-{
-  "mcpServers": {
-    "browserless": {
-      "url": "http://your-mcp-host:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer your-token-here",
-        "x-browserless-api-url": "https://production-sfo.browserless.io"
-      }
-    }
-  }
-}
-```
-
-**Using URL query parameters** (for clients like Claude.ai custom connectors that only accept a URL):
-
-```text
-https://your-mcp-host:8080/mcp?token=your-token-here
-```
-
-To also specify a regional endpoint:
-
-```text
-https://your-mcp-host:8080/mcp?token=your-token-here&browserlessUrl=https://production-sfo.browserless.io
-```
-
-When both headers and query parameters are present, headers take precedence.
-
-## Docker
+The server can also be run locally — useful for air-gapped deployments or pointing at a self-hosted Browserless instance. Clone this repo and build the Docker image:
 
 ```bash
 docker build -f docker/Dockerfile -t browserless-mcp .
 
-docker run -e BROWSERLESS_TOKEN=your-token -p 8080:8080 browserless-mcp
+docker run \
+  -e BROWSERLESS_TOKEN=your-token \
+  -e BROWSERLESS_API_URL=https://your-browserless-instance.example.com \
+  -p 8080:8080 \
+  browserless-mcp
 ```
 
-## Self-Hosted Instances
+Then point your MCP client at `http://localhost:8080/mcp` using the same header/query-parameter auth as above.
 
-Point to your own Browserless instance:
+### Self-hosted environment variables
 
-```bash
-BROWSERLESS_TOKEN=your-token \
-BROWSERLESS_API_URL=https://your-instance.example.com \
-npx browserless-mcp
-```
+| Variable                  | Required | Default                                 | Description                                        |
+| ------------------------- | -------- | --------------------------------------- | -------------------------------------------------- |
+| `BROWSERLESS_TOKEN`       | Yes      | —                                       | Your Browserless API token                         |
+| `BROWSERLESS_API_URL`     | No       | `https://production-sfo.browserless.io` | API endpoint (for self-hosted Browserless)         |
+| `TRANSPORT`               | No       | `stdio`                                 | Transport type: `stdio` or `httpStream`            |
+| `PORT`                    | No       | `8080`                                  | HTTP server port (only for `httpStream` transport) |
+| `BROWSERLESS_TIMEOUT`     | No       | `30000`                                 | Request timeout in milliseconds                    |
+| `BROWSERLESS_MAX_RETRIES` | No       | `3`                                     | Max retry attempts for failed requests             |
+| `BROWSERLESS_CACHE_TTL`   | No       | `60000`                                 | Cache TTL in milliseconds (0 to disable)           |
 
 ## MCP Resources
 
