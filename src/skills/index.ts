@@ -18,6 +18,10 @@ const CAPTCHA_HOST_RE =
 const CAPTCHA_ERROR_RE =
   /\b(captcha|cloudflare|challenge|forbidden|429|403)\b/i;
 
+const LOGIN_URL_RE = /\/(login|signin|sign-?in|log-?in|auth|sso|oauth)\b|\/account\/sign/i;
+const LOGIN_NUDGE_RE =
+  /sign in to (view|see|continue|access|read|comment|post|reply|save|order|buy|checkout|your account)|please sign in|signed out\b.*sign in|create (an )?account to/i;
+
 const TAB_ERROR_CODES = ['TAB_NOT_FOUND', 'TAB_CLOSED', 'TAB_LIMIT_EXCEEDED'];
 const TAB_COMMAND_METHODS = ['getTabs', 'switchTab', 'createTab', 'closeTab'];
 
@@ -174,7 +178,17 @@ const SKILL_SPECS: SkillSpec[] = [
   {
     id: 'autonomous-login',
     path: 'src/skills/autonomous-login.md',
-    triggers: [[{ kind: 'snapshot.has-input-type', type: 'password' }]],
+    triggers: [
+      [{ kind: 'snapshot.has-input-type', type: 'password' }],
+      [{ kind: 'snapshot.url-match', regex: LOGIN_URL_RE }],
+      [
+        {
+          kind: 'snapshot.has-element',
+          roles: ['button', 'link'],
+          nameRegex: LOGIN_NUDGE_RE,
+        },
+      ],
+    ],
   },
   {
     id: 'captchas',

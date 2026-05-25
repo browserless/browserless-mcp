@@ -674,9 +674,18 @@ Pass \`proxy\` for residential IPs when sites block datacenters.
 - Geo/preset/sticky require \`proxy: "residential"\` or \`externalProxyServer\` set
 - Read once at creation; change = \`close\` + new session
 
+## Auth
+Never log in by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first**, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
+
+## Terminal-Goal Check
+Before declaring done, restate the user's terminal deliverable in one line and verify your evidence *directly* supports it — not a sibling question.
+**Empty-state substitution.** An empty/zero/null result from a resource that normally requires auth, scope, or filter context is evidence the *precondition* wasn't met — not evidence the question is answered. Empty cart while logged out, zero results while geo-restricted, empty inbox while unauthenticated: precondition failure → fix the precondition (often: load \`autonomous-login\`), don't return the empty result as the answer.
+**Multi-step preconditions.** When the task names multiple steps ("go to X, then Y, report Z"), evaluate preconditions for the *full chain* before treating any step as optional. A blocker on step N blocks the whole task even if step 1 returned data.
+
 ## Skills (auto-injected)
 SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
 Load manually via **browserless_skill** if suspected but not injected:
+- \`autonomous-login\` — gates, credential rules, MFA/captcha, final JSON shape (see \`## Auth\` above for when to load)
 - \`shadow-dom\` — deep selectors, iframe targeting
 - \`cookie-consent\` — vendor-specific dismiss recipes
 - \`modals\` — closing dialogs and alertdialogs
@@ -685,7 +694,6 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
 - \`tabs\` — multi-tab workflows, peek-without-switching
-- \`autonomous-login\` — gated login flow: load before authenticating when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Defines the don't-login-by-default posture, credential-matching rules, MFA/captcha branches, and the required final JSON response shape.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
 1. **goto** — waits "domcontentloaded"
@@ -1184,11 +1192,13 @@ export function registerAgentTools(
           return [
             {
               type: 'text' as const,
-              text:
+              text: appendSkills(
                 batchPrefix +
-                noticeBlock +
-                formatSnapshot(lastSnapshot) +
-                closedSuffix,
+                  noticeBlock +
+                  formatSnapshot(lastSnapshot) +
+                  closedSuffix,
+                triggered,
+              ),
             },
           ];
         }
