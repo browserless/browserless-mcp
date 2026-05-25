@@ -91,5 +91,5 @@ Call `close`, then emit **exactly one** fenced JSON block — nothing before or 
 - Try SSO buttons unless the task names that provider.
 - `evaluate` to set input `value` — use `type` so real keystrokes fire.
 - Leak credentials into narration, errors, or non-`type.params.text` fields.
-- Emit anything other than the final JSON block in your last *terminal* message (ask-the-user turns are not terminal — emit plain prose and stop without `close`).
+- Emit anything other than the final JSON block in your last _terminal_ message (ask-the-user turns are not terminal — emit plain prose and stop without `close`).
 - Close the session while waiting for a user-supplied OTP — leave it open so cookies, page state, and the OTP input survive the round-trip.

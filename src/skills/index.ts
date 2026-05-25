@@ -18,7 +18,8 @@ const CAPTCHA_HOST_RE =
 const CAPTCHA_ERROR_RE =
   /\b(captcha|cloudflare|challenge|forbidden|429|403)\b/i;
 
-const LOGIN_URL_RE = /\/(login|signin|sign-?in|log-?in|auth|sso|oauth)\b|\/account\/sign/i;
+const LOGIN_URL_RE =
+  /\/(login|signin|sign-?in|log-?in|auth|sso|oauth)\b|\/account\/sign/i;
 const LOGIN_NUDGE_RE =
   /sign in to (view|see|continue|access|read|comment|post|reply|save|order|buy|checkout|your account)|please sign in|signed out\b.*sign in|create (an )?account to/i;
 
