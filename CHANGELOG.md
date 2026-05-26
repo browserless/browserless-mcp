@@ -2,6 +2,11 @@
 
 - Dependency updates
 
+# v1.5.0 - 2026-05-26
+
+- Dependency updates
+- Autonomous login skill
+
 # v1.4.0 - 2026-05-22
 
 - Refactor repo architecture
