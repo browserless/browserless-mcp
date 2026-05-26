@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1053.0",
-    "fastmcp": "^4.0.0",
+    "fastmcp": "^4.0.1",
     "ioredis": "^5.10.1",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
