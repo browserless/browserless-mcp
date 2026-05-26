@@ -18,6 +18,11 @@ const CAPTCHA_HOST_RE =
 const CAPTCHA_ERROR_RE =
   /\b(captcha|cloudflare|challenge|forbidden|429|403)\b/i;
 
+const LOGIN_URL_RE =
+  /\/(login|signin|sign-?in|log-?in|auth|sso|oauth)\b|\/account\/sign/i;
+const LOGIN_NUDGE_RE =
+  /sign in to (view|see|continue|access|read|comment|post|reply|save|order|buy|checkout|your account)|please sign in|signed out\b.*sign in|create (an )?account to/i;
+
 const TAB_ERROR_CODES = ['TAB_NOT_FOUND', 'TAB_CLOSED', 'TAB_LIMIT_EXCEEDED'];
 const TAB_COMMAND_METHODS = ['getTabs', 'switchTab', 'createTab', 'closeTab'];
 
@@ -32,6 +37,7 @@ type Predicate =
       nameRegex?: RegExp;
       selectorPrefix?: string;
     }
+  | { kind: 'snapshot.has-input-type'; type: string }
   | { kind: 'snapshot.url-match'; regex: RegExp }
   | { kind: 'snapshot.has-detected-challenge' }
   | { kind: 'snapshot.tabs-at-least'; count: number }
@@ -59,6 +65,8 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
         return true;
       });
     }
+    case 'snapshot.has-input-type':
+      return !!ctx.snapshot?.elements?.some((el) => el.type === p.type);
     case 'snapshot.url-match':
       return !!ctx.snapshot?.url && p.regex.test(ctx.snapshot.url);
     case 'snapshot.has-detected-challenge':
@@ -166,6 +174,21 @@ const SKILL_SPECS: SkillSpec[] = [
       [{ kind: 'snapshot.tabs-at-least', count: 2 }],
       [{ kind: 'error.code', codes: TAB_ERROR_CODES }],
       [{ kind: 'command.method', methods: TAB_COMMAND_METHODS }],
+    ],
+  },
+  {
+    id: 'autonomous-login',
+    path: 'src/skills/autonomous-login.md',
+    triggers: [
+      [{ kind: 'snapshot.has-input-type', type: 'password' }],
+      [{ kind: 'snapshot.url-match', regex: LOGIN_URL_RE }],
+      [
+        {
+          kind: 'snapshot.has-element',
+          roles: ['button', 'link'],
+          nameRegex: LOGIN_NUDGE_RE,
+        },
+      ],
     ],
   },
   {

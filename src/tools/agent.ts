@@ -678,9 +678,18 @@ If you already opened a session without a proxy and now realize one is needed, y
 - \`proxy: "residential"\` — enable routing; \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
 - Geo/preset/sticky require \`proxy: "residential"\` or \`externalProxyServer\` set
 
+## Auth
+Never log in by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first**, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
+
+## Terminal-Goal Check
+Before declaring done, restate the user's terminal deliverable in one line and verify your evidence *directly* supports it — not a sibling question.
+**Empty-state substitution.** An empty/zero/null result from a resource that normally requires auth, scope, or filter context is evidence the *precondition* wasn't met — not evidence the question is answered. Empty cart while logged out, zero results while geo-restricted, empty inbox while unauthenticated: precondition failure → fix the precondition (often: load \`autonomous-login\`), don't return the empty result as the answer.
+**Multi-step preconditions.** When the task names multiple steps ("go to X, then Y, report Z"), evaluate preconditions for the *full chain* before treating any step as optional. A blocker on step N blocks the whole task even if step 1 returned data.
+
 ## Skills (auto-injected)
 SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
 Load manually via **browserless_skill** if suspected but not injected:
+- \`autonomous-login\` — gates, credential rules, MFA/captcha, final JSON shape (see \`## Auth\` above for when to load)
 - \`shadow-dom\` — deep selectors, iframe targeting
 - \`cookie-consent\` — vendor-specific dismiss recipes
 - \`modals\` — closing dialogs and alertdialogs
@@ -908,18 +917,23 @@ const SkillIdSchema = z.enum(
 
 const SkillToolParamsSchema = z.object({
   id: SkillIdSchema.describe(
-    'The skill to load: shadow-dom, cookie-consent, modals, or captchas.',
+    'The skill to load (see tool description for the full list).',
   ),
 });
 
 const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
 
-Use this when you suspect the page exhibits a non-trivial mechanic (shadow DOM, cookie banner, modal dialog, captcha) but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
+Use this when you suspect the page exhibits a non-trivial mechanic but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
 
 Available skills:
 - **shadow-dom** — deep selectors, iframe URL-pattern syntax, what works through deep-ref
 - **cookie-consent** — vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, etc.)
 - **modals** — close-button heuristics, ESC handling, alertdialog vs. dialog
+- **snapshot-misses** — truncated/empty snapshots, image-rendered content
+- **dynamic-content** — choosing the right \`wait*\` method after async triggers
+- **screenshots** — when to screenshot vs. snapshot, scope and format choices
+- **tabs** — multi-tab workflows, peek-without-switching
+- **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)`;
 
 export function registerAgentTools(
@@ -1191,11 +1205,13 @@ export function registerAgentTools(
           return [
             {
               type: 'text' as const,
-              text:
+              text: appendSkills(
                 batchPrefix +
-                noticeBlock +
-                formatSnapshot(lastSnapshot) +
-                closedSuffix,
+                  noticeBlock +
+                  formatSnapshot(lastSnapshot) +
+                  closedSuffix,
+                triggered,
+              ),
             },
           ];
         }
