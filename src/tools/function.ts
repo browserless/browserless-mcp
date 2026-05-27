@@ -143,6 +143,7 @@ export function registerFunctionTool(
     annotations: {
       title: 'Browserless Function',
       readOnlyHint: false,
+      destructiveHint: true,
       openWorldHint: true,
     },
     profileNotFoundMessage: (profile) =>

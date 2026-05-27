@@ -66,6 +66,7 @@ export function registerPerformanceTool(
       annotations: {
         title: 'Browserless Lighthouse Performance Audit',
         readOnlyHint: true,
+        destructiveHint: false,
         openWorldHint: true,
       },
       validateUrl: (p) => validateHttpUrl(p.url),
