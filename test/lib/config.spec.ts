@@ -6,6 +6,7 @@ const BASELINE_PATTERNS = [
   'http://localhost:*',
   'http://127.0.0.1:*',
   'https://claude.ai/api/mcp/auth_callback',
+  'https://chatgpt.com/connector/oauth/*',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'cursor://anysphere.cursor-mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',

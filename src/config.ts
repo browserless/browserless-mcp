@@ -13,7 +13,8 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'http://localhost:*', // Claude Desktop, VS Code, Windsurf, and anything else using a local loopback callback
   'http://127.0.0.1:*',
   'https://claude.ai/api/mcp/auth_callback', // Claude.ai web custom connectors
-  'https://chatgpt.com/connector_platform_oauth_redirect', // ChatGPT MCP connector
+  'https://chatgpt.com/connector/oauth/*', // ChatGPT / OpenAI Apps SDK connector (current per-connector callback id)
+  'https://chatgpt.com/connector_platform_oauth_redirect', // ChatGPT MCP connector (legacy, still honored for already-published apps)
   'cursor://anysphere.cursor-mcp/oauth/callback', // Cursor (private-use URI scheme registered by the desktop app)
   'https://api.devin.ai/mcp/oauth/callback', // Devin prod
   'https://api.beta.devin.ai/mcp/oauth/callback', // Devin beta
