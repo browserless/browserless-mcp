@@ -76,6 +76,7 @@ export function registerSmartScraperTool(
     annotations: {
       title: 'Browserless Smart Scraper',
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: true,
     },
     validateUrl: (p) => validateHttpUrl(p.url),

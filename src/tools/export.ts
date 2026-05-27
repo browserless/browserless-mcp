@@ -81,6 +81,7 @@ export function registerExportTool(
     annotations: {
       title: 'Browserless Export',
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: true,
     },
     validateUrl: (p) => validateHttpUrl(p.url),
