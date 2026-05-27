@@ -4,7 +4,7 @@
 
 # v1.5.3 - 2026-05-27
 
-- Add destructive hints for tools
+- Add destructive hints for tools.
 
 # v1.5.2 - 2026-05-27
 
