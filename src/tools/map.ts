@@ -61,6 +61,7 @@ export function registerMapTool(
     annotations: {
       title: 'Browserless Map',
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: true,
     },
     validateUrl: (p) => validateHttpUrl(p.url),

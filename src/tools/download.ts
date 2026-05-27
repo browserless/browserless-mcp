@@ -47,6 +47,7 @@ export function registerDownloadTool(
     annotations: {
       title: 'Browserless Download',
       readOnlyHint: false,
+      destructiveHint: true,
       openWorldHint: true,
     },
     profileNotFoundMessage: (profile) =>

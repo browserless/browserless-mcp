@@ -96,6 +96,7 @@ export function registerSearchTool(
     annotations: {
       title: 'Browserless Search',
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: true,
     },
     run: async ({ client, params, log }) => {

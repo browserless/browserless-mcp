@@ -237,6 +237,7 @@ export function registerCrawlTool(
     annotations: {
       title: 'Browserless Crawl',
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: true,
     },
     validateUrl: (p) => validateHttpUrl(p.url),

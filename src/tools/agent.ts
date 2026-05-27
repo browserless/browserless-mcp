@@ -948,6 +948,7 @@ export function registerAgentTools(
     annotations: {
       title: 'Load Browserless Skill',
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: false,
     },
     run: async ({ params }) => renderSkill(params.id),
@@ -973,6 +974,7 @@ export function registerAgentTools(
     annotations: {
       title: 'Browserless Agent',
       readOnlyHint: false,
+      destructiveHint: true,
       openWorldHint: true,
     },
     run: async ({
