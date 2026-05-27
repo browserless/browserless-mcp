@@ -2,6 +2,11 @@
 
 - Dependency updates
 
+# v1.5.2 - 2026-05-27
+
+- Add destructive hints for tools
+- Enable OpenAI connectors in OAuth
+
 # v1.5.0 - 2026-05-26
 
 - Dependency updates
