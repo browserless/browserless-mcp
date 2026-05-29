@@ -1,6 +1,6 @@
 {
-  "name": "browserless-mcp",
-  "version": "1.3.4",
+  "name": "@browserless.io/mcp",
+  "version": "1.11.0",
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
   "license": "SSPL-1.0",
@@ -14,17 +14,43 @@
     ".": {
       "types": "./build/src/index.d.ts",
       "import": "./build/src/index.js"
+    },
+    "./skills": {
+      "types": "./build/src/skills/index.d.ts",
+      "import": "./build/src/skills/index.js"
+    },
+    "./agent-client": {
+      "types": "./build/src/lib/agent-client.d.ts",
+      "import": "./build/src/lib/agent-client.js"
+    },
+    "./schemas": {
+      "types": "./build/src/tools/schemas.d.ts",
+      "import": "./build/src/tools/schemas.js"
+    },
+    "./prompt": {
+      "types": "./build/src/skills/system-prompt.d.ts",
+      "import": "./build/src/skills/system-prompt.js"
+    },
+    "./errors": {
+      "types": "./build/src/lib/error-classifier.d.ts",
+      "import": "./build/src/lib/error-classifier.js"
+    },
+    "./format": {
+      "types": "./build/src/lib/agent-format.d.ts",
+      "import": "./build/src/lib/agent-format.js"
     }
   },
   "files": [
     "build/src/**/*.js",
     "build/src/**/*.d.ts",
+    "build/src/**/*.md",
     "bin/*",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run build:skills",
+    "build": "tsc && npm run build:skills && npm run build:types",
     "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
+    "build:types": "mkdir -p build/src/@types && cp src/@types/*.d.ts build/src/@types/",
     "clean": "rm -rf build",
     "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",
     "lint": "eslint src test",
@@ -33,8 +59,7 @@
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
     "prepack": "npm run build",
-    "postinstall": "patch-package",
-    "prepare": "husky",
+    "prepare": "husky && patch-package",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
   },
   "prettier": {

@@ -4,6 +4,13 @@ import type {
   ErrorCategory,
 } from '../@types/types.js';
 
+// Re-export the classifier types consumers of `@browserless.io/mcp/errors` need.
+export type {
+  ErrorCategory,
+  ClassifiedError,
+  ClassifyInput,
+} from '../@types/types.js';
+
 const RECOVERY: Record<ErrorCategory, string> = {
   SELECTOR_MISS:
     'Re-snapshot — the element is not in the current DOM. If you have not tried it yet, retry with a deep selector "< selector" in case the element is inside a shadow root.',

@@ -10,6 +10,16 @@ import type {
   ProxyOptions,
 } from '../@types/types.js';
 
+// Re-export the protocol types consumers of `@browserless.io/mcp/agent-client`
+// need (e.g. enterprise's Agent constructor takes `proxy?: ProxyOptions`).
+export type {
+  ProxyOptions,
+  ActiveSession,
+  AgentMessage,
+  AgentResponse,
+  AgentError,
+} from '../@types/types.js';
+
 /* ------------------------------------------------------------------ */
 /*  Proxy schemas — used by agent.ts's AgentParamsSchema and by the    */
 /*  session key fingerprinting below. Co-located here to avoid a       */
