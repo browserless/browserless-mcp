@@ -8,7 +8,11 @@ import type {
 } from '../@types/types.js';
 
 // Re-export the skill-engine types consumers of `@browserless.io/mcp/skills` need.
-export type { SkillId, DetectContext, SkillFireState } from '../@types/types.js';
+export type {
+  SkillId,
+  DetectContext,
+  SkillFireState,
+} from '../@types/types.js';
 
 const DEFAULT_MAX_ELEMENTS = 500;
 const CLOUD_API_HOSTS = ['production.browserless.io', 'chrome.browserless.io'];
