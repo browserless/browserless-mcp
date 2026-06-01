@@ -1,6 +1,6 @@
 {
   "name": "@browserless.io/mcp",
-  "version": "1.11.0",
+  "version": "1.3.4",
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
   "license": "SSPL-1.0",
@@ -58,8 +58,9 @@
     "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
+    "postinstall": "patch-package",
     "prepack": "npm run build",
-    "prepare": "husky && patch-package",
+    "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
   },
   "prettier": {
