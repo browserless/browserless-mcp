@@ -33,3 +33,28 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  package-hygiene:
+    name: Package hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify published tarball contents
+        run: bash scripts/ci/verify-package-tarball.sh
+
+      # Block merges that introduce a transitive dep with a known
+      # high+ CVE. Runs once (Linux, lockfile-based) — cross-OS audits
+      # would produce identical results since the lockfile is shared.
+      - name: npm audit (high+ severity)
+        run: npm audit --audit-level=high
