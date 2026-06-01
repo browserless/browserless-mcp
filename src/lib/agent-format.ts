@@ -1,20 +1,11 @@
 import type { SnapshotElement, SnapshotResult } from '../@types/types.js';
 import { ProfileNotFoundError, UpgradeError } from './agent-client.js';
 
-// Re-export the snapshot types consumers of `@browserless.io/mcp/format` need.
 export type {
   SnapshotResult,
   SnapshotElement,
   TabInfo,
 } from '../@types/types.js';
-
-/* ------------------------------------------------------------------ */
-/*  Snapshot & error formatters                                         */
-/*                                                                      */
-/*  Dependency-clean (no fastmcp). These render the agent's view of a   */
-/*  page snapshot and classified errors into the plain text fed back to */
-/*  the model. Published as `@browserless.io/mcp/format`.               */
-/* ------------------------------------------------------------------ */
 
 const safeOrigin = (url: string): string | undefined => {
   try {
@@ -25,10 +16,9 @@ const safeOrigin = (url: string): string | undefined => {
 };
 
 /**
- * Build the cross-origin notice line shown above a snapshot when the page
- * navigated to a different origin (protocol + host + port) since the last
- * snapshot. Returns '' when the origins match or either URL is missing or
- * unparseable.
+ * Build the cross-origin notice shown above a snapshot when the page changed
+ * origin (protocol + host + port) since the last snapshot. Returns '' when
+ * origins match or either URL is missing or unparseable.
  */
 export const buildCrossOriginNotice = (
   previousUrl: string | undefined,
@@ -74,10 +64,9 @@ const COLLAPSE_WS = /\s+/g;
 const SANITIZED_BODY_MAX_LEN = 200;
 
 /**
- * Sanitize a server-returned error body for inclusion in a UserError. Nginx
- * default error pages (502/503/504 when upstream is down) come back as full
- * HTML documents that bloat the message and confuse the LLM. Strip tags and
- * cap the length so the UserError stays readable.
+ * Sanitize a server-returned error body for a UserError. Nginx default error
+ * pages (502/503/504) arrive as full HTML that bloats the message and
+ * confuses the LLM — strip tags and cap the length to keep it readable.
  */
 export const sanitizeUpgradeBody = (body: string): string => {
   const trimmed = body.trim();
@@ -92,9 +81,8 @@ export const sanitizeUpgradeBody = (body: string): string => {
 
 /**
  * Translate a connect-time error into UserError-ready text. Typed
- * UpgradeErrors carry the server's HTTP response so we can give status-aware
- * guidance instead of the generic "Failed to connect" line. Anything else
- * (network, timeout, post-upgrade) falls through to the plain message.
+ * UpgradeErrors carry the HTTP response for status-aware guidance; anything
+ * else (network, timeout, post-upgrade) falls through to the plain message.
  */
 export const formatConnectError = (err: unknown): string => {
   if (err instanceof ProfileNotFoundError) {
@@ -129,15 +117,9 @@ export const formatConnectError = (err: unknown): string => {
 };
 
 /**
- * Format a single snapshot element as a compact one-liner.
- *
- * Format: [ref] tag role "name" ref=selector {attrs} (state)
- *
- * Examples:
- *   [1] a link "About Us" ref=a#about[href="/about"]
- *   [2] input textbox "Email" ref=input#email[type="text"][placeholder="Email"]
- *   [3] button button "Sign In" ref=button#submit
- *   [7] input checkbox "Remember me" ref=input#remember (checked, required)
+ * Format a single snapshot element as a compact one-liner:
+ *   [ref] tag role "name" ref=selector value="…" (state)
+ *   e.g. [7] input checkbox "Remember me" ref=input#remember (checked, required)
  */
 const formatElement = (el: SnapshotElement): string => {
   const parts: string[] = [`[${el.ref}]`, el.tag, el.role];

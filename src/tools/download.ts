@@ -1,7 +1,8 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, profileField } from '../lib/define-tool.js';
+import { defineTool } from '../lib/define-tool.js';
+import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   DownloadParams,

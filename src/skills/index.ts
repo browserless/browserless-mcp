@@ -3,11 +3,13 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   DetectContext,
+  Predicate,
+  Skill,
   SkillFireState,
   SkillId,
+  SkillSpec,
 } from '../@types/types.js';
 
-// Re-export the skill-engine types consumers of `@browserless.io/mcp/skills` need.
 export type {
   SkillId,
   DetectContext,
@@ -32,28 +34,6 @@ const LOGIN_NUDGE_RE =
 
 const TAB_ERROR_CODES = ['TAB_NOT_FOUND', 'TAB_CLOSED', 'TAB_LIMIT_EXCEEDED'];
 const TAB_COMMAND_METHODS = ['getTabs', 'switchTab', 'createTab', 'closeTab'];
-
-/**
- * A single predicate evaluated against a DetectContext. Predicates compose
- * via Trigger (AND-clause) and SkillSpec.triggers (OR of AND-clauses).
- */
-type Predicate =
-  | {
-      kind: 'snapshot.has-element';
-      roles?: string[];
-      nameRegex?: RegExp;
-      selectorPrefix?: string;
-    }
-  | { kind: 'snapshot.has-input-type'; type: string }
-  | { kind: 'snapshot.url-match'; regex: RegExp }
-  | { kind: 'snapshot.has-detected-challenge' }
-  | { kind: 'snapshot.tabs-at-least'; count: number }
-  | { kind: 'snapshot.element-cap-hit' }
-  | { kind: 'error.code'; codes: string[] }
-  | { kind: 'error.message-match'; regex: RegExp }
-  | { kind: 'command.method'; methods: string[] }
-  | { kind: 'command.method-prefix'; prefix: string }
-  | { kind: 'command.selector-not-deep' };
 
 const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
   switch (p.kind) {
@@ -106,18 +86,6 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
     }
   }
 };
-
-/** AND-clause: every predicate must match. */
-type Trigger = Predicate[];
-
-interface SkillSpec {
-  id: SkillId;
-  path: string;
-  cloudOnly?: boolean;
-  refireAfter?: number;
-  /** OR of triggers; each trigger is an AND-clause of predicates. */
-  triggers: Trigger[];
-}
 
 const SKILL_SPECS: SkillSpec[] = [
   {
@@ -214,10 +182,6 @@ const SKILL_SPECS: SkillSpec[] = [
     ],
   },
 ];
-
-interface Skill extends SkillSpec {
-  body: string;
-}
 
 const skillsDir = dirname(fileURLToPath(import.meta.url));
 const loadBody = (filename: string): string =>

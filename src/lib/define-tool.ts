@@ -10,11 +10,6 @@ import type {
   McpConfig,
 } from '../@types/types.js';
 
-// profileField is zod-only; it lives in a fastmcp-free module so the published
-// schema surface can reuse it. Re-exported here so existing tool imports
-// (`import { defineTool, profileField } from '../lib/define-tool.js'`) keep working.
-export { profileField } from './schema-fields.js';
-
 /**
  * Minimal log surface tools use. Tools only call the level methods with a
  * string today, so the extra `data` param FastMCP's Logger accepts is just

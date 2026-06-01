@@ -11,7 +11,7 @@ import type {
 } from '../@types/types.js';
 
 // Re-export the protocol types consumers of `@browserless.io/mcp/agent-client`
-// need (e.g. enterprise's Agent constructor takes `proxy?: ProxyOptions`).
+// need (e.g. a hosted Agent constructor that takes `proxy?: ProxyOptions`).
 export type {
   ProxyOptions,
   ActiveSession,
@@ -107,8 +107,8 @@ export const PROXY_FIELDS = Object.keys(
 
 /**
  * Thrown when the agent WebSocket upgrade is rejected with a non-101 HTTP
- * response. Carries the server's status code and response body so the tool
- * layer can render a status-specific UserError.
+ * response. Carries the status code and body so the tool layer can render a
+ * status-specific UserError.
  */
 export class UpgradeError extends Error {
   constructor(
@@ -123,10 +123,9 @@ export class UpgradeError extends Error {
 }
 
 /**
- * Specialization of UpgradeError for the profile-not-found case (HTTP 404 on
- * the WS upgrade when `?profile=` was supplied). Mirrors the typed error in
- * api-client.ts so smart-scrape, crawl, and agent all surface profile errors
- * through the same UserError pattern.
+ * UpgradeError specialization for the profile-not-found case (404 on the WS
+ * upgrade when `?profile=` was supplied). Mirrors api-client.ts so all tools
+ * surface profile errors through the same UserError pattern.
  */
 export class ProfileNotFoundError extends UpgradeError {
   constructor(
@@ -143,10 +142,9 @@ export class ProfileNotFoundError extends UpgradeError {
   }
 }
 
-// Upgrade statuses where a one-shot retry cannot help: the request is
-// structurally bad (400), auth is wrong (401), the plan or policy forbids it
-// (403), or a referenced resource is absent (404). Retrying just wastes time
-// and emits a misleading "second attempt also failed" message to the user.
+// Upgrade statuses where a one-shot retry cannot help: bad request (400),
+// bad auth (401), forbidden by plan/policy (403), or missing resource (404).
+// Retrying just wastes time and emits a misleading "second attempt failed".
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
@@ -202,10 +200,9 @@ const sweepSessions = (): void => {
 // user-supplied field, so the two segments cannot ambiguously concatenate.
 const KEY_SEP = '\u0000';
 
-// Hash externalProxyServer rather than serializing it raw — the session key
-// is logged on eviction (closeAndDelete), and the URL may carry user:pass
-// credentials. Hashing preserves per-upstream session distinctness without
-// putting secrets in stderr.
+// Hash externalProxyServer rather than serialize it raw: the session key is
+// logged on eviction and the URL may carry user:pass credentials. Hashing
+// keeps per-upstream distinctness without putting secrets in stderr.
 const fingerprintValue = (
   field: (typeof PROXY_FIELDS)[number],
   value: unknown,
@@ -215,10 +212,9 @@ const fingerprintValue = (
     : String(value);
 
 /**
- * Build a stable, credential-free key segment for a proxy config. Two
- * logically identical configs produce the same fingerprint regardless of
- * key order. `externalProxyServer` is SHA-256 hashed so credentials never
- * land in the eviction log.
+ * Build a stable, credential-free key segment for a proxy config — identical
+ * configs fingerprint the same regardless of key order. `externalProxyServer`
+ * is SHA-256 hashed so credentials never land in the eviction log.
  */
 export const proxyFingerprint = (proxy?: ProxyOptions): string => {
   if (!proxy) return '';
@@ -228,10 +224,9 @@ export const proxyFingerprint = (proxy?: ProxyOptions): string => {
   return parts.length ? KEY_SEP + parts.join('&') : '';
 };
 
-// Hash the profile rather than serializing it raw — like externalProxyServer,
-// the session key is logged on eviction (closeAndDelete), and a profile name
-// may be a user-identifying label. Hashing preserves per-profile session
-// distinctness without putting the raw name in stderr.
+// Hash the profile rather than serialize it raw: like externalProxyServer,
+// the eviction-logged session key may otherwise leak a user-identifying
+// profile name. Hashing keeps per-profile distinctness without that leak.
 const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
@@ -243,10 +238,9 @@ const getSessionKey = (
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '');
 
 /**
- * Build the WebSocket URL for `/chromium/agent`. Normalizes trailing
- * slashes on `apiUrl`, case-insensitively swaps http(s)→ws(s), and appends
- * `token` plus any proxy params. Boolean proxy flags follow enterprise's
- * presence-only contract: only set when truthy.
+ * Build the WebSocket URL for `/chromium/agent`: normalize trailing slashes,
+ * swap http(s)→ws(s), and append `token` plus proxy params. Boolean proxy
+ * flags follow the API's presence-only contract (set only when truthy).
  */
 export const buildAgentWsUrl = (
   apiUrl: string,
@@ -656,12 +650,9 @@ export const closeSession = (
 };
 
 /**
- * Force-destroy a session. Used when the server signals the browser has
- * crashed or the session is otherwise unrecoverable, so the next tool
- * call will create a fresh connection instead of reusing a dead one.
- * Unlike `closeSession`, this also drops any in-flight connect for the
- * same key so a concurrent `getOrCreateSession` won't resolve to a doomed
- * WebSocket.
+ * Force-destroy a session after a browser crash or unrecoverable state, so
+ * the next call reconnects fresh. Unlike `closeSession`, it also drops any
+ * in-flight connect for the key so a concurrent caller can't reuse a dead WS.
  */
 export const destroySession = (
   mcpSessionId: string | undefined,

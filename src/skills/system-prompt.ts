@@ -1,9 +1,3 @@
-/**
- * The Browserless agent system prompt — the exact ReAct instructions the MCP
- * `browserless_agent` tool ships as its tool description. Promoted to a discrete
- * artifact so a hosted-agent consumer (enterprise AI-107) can use it verbatim as
- * the model's system prompt. One source of truth: `registerAgentTools` uses this.
- */
 export const AGENT_SYSTEM_PROMPT = `Execute browser commands in persistent agent session.
 
 ## Proxy (optional)
@@ -119,10 +113,6 @@ Never retry same failed action without re-snapshot.
 
 `;
 
-/**
- * Description for the on-demand `browserless_skill` loader tool. Lists every
- * skill a consumer can request explicitly when auto-injection didn't fire.
- */
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
 
 Use this when you suspect the page exhibits a non-trivial mechanic but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.

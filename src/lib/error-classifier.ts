@@ -80,10 +80,9 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   const code = (err as { code?: string }).code;
   const message = err.message ?? '';
 
-  // waitForSelector failures are timeouts in intent — the upstream agent
-  // surfaces them as SELECTOR_NOT_FOUND, but the user explicitly asked to
-  // wait, so the actionable signal is "the wait expired", not "the DOM is
-  // missing the element right now".
+  // waitForSelector failures are timeouts in intent: the agent reports
+  // SELECTOR_NOT_FOUND, but the user asked to wait, so the actionable signal
+  // is "the wait expired", not "the element is missing right now".
   if (cmd?.method === 'waitForSelector' && code === 'SELECTOR_NOT_FOUND') {
     return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
   }

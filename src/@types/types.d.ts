@@ -223,6 +223,44 @@ export interface SkillFireState {
   cmdIndex: number;
 }
 
+/**
+ * A single predicate evaluated against a DetectContext. Predicates compose
+ * via Trigger (AND-clause) and SkillSpec.triggers (OR of AND-clauses).
+ */
+export type Predicate =
+  | {
+      kind: 'snapshot.has-element';
+      roles?: string[];
+      nameRegex?: RegExp;
+      selectorPrefix?: string;
+    }
+  | { kind: 'snapshot.has-input-type'; type: string }
+  | { kind: 'snapshot.url-match'; regex: RegExp }
+  | { kind: 'snapshot.has-detected-challenge' }
+  | { kind: 'snapshot.tabs-at-least'; count: number }
+  | { kind: 'snapshot.element-cap-hit' }
+  | { kind: 'error.code'; codes: string[] }
+  | { kind: 'error.message-match'; regex: RegExp }
+  | { kind: 'command.method'; methods: string[] }
+  | { kind: 'command.method-prefix'; prefix: string }
+  | { kind: 'command.selector-not-deep' };
+
+/** AND-clause: every predicate must match. */
+export type Trigger = Predicate[];
+
+export interface SkillSpec {
+  id: SkillId;
+  path: string;
+  cloudOnly?: boolean;
+  refireAfter?: number;
+  /** OR of triggers; each trigger is an AND-clause of predicates. */
+  triggers: Trigger[];
+}
+
+export interface Skill extends SkillSpec {
+  body: string;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Zod-inferred parameter & response types                            */
 /* ------------------------------------------------------------------ */

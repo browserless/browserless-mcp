@@ -1,7 +1,8 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, profileField } from '../lib/define-tool.js';
+import { defineTool } from '../lib/define-tool.js';
+import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   FunctionParams,
@@ -56,14 +57,9 @@ const buildMetadata = (response: GenericApiResult): string =>
   ].join('\n');
 
 /**
- * Convert a /function HTTP response into MCP content blocks.
- *
- * - `image/*` → ImageContent (vision input, ~1.5K tokens)
- * - `audio/*` → AudioContent
- * - Other binary → ResourceContent with blob (host can surface as attachment)
- * - Text → TextContent, with a hard size cap
- *
- * Throws UserError when a text payload would exceed MAX_TEXT_RESPONSE_CHARS.
+ * Convert a /function HTTP response into MCP content blocks: image/* and
+ * audio/* become vision/audio input, other binary becomes a resource blob,
+ * and text becomes TextContent (throws past MAX_TEXT_RESPONSE_CHARS).
  */
 export const formatFunctionContent = (
   response: GenericApiResult,

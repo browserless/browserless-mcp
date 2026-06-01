@@ -1,14 +1,26 @@
 import { z } from 'zod';
 import { ProxyOptionsSchema } from '../lib/agent-client.js';
-import { profileField } from '../lib/schema-fields.js';
 
-/* ------------------------------------------------------------------ */
-/*  Agent Browsing Protocol – typed command schemas                    */
-/*                                                                      */
-/*  Dependency-clean (zod only). Published as `@browserless.io/mcp/      */
-/*  schemas` so a hosted-agent consumer can derive function-calling     */
-/*  tool defs from the same AgentCommandSchema the MCP server uses.     */
-/* ------------------------------------------------------------------ */
+// NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
+// fromCharCode so the literal control character never appears in source.
+const NUL = String.fromCharCode(0);
+
+export function profileField(whenLoaded: string, extra = '') {
+  const description =
+    `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
+    "The profile's cookies, localStorage, and IndexedDB are restored into the session before the request runs. " +
+    'The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session first.' +
+    extra;
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .refine((v) => !v.includes(NUL), {
+      message: 'profile must not contain NUL characters',
+    })
+    .optional()
+    .describe(description);
+}
 
 const WaitUntilSchema = z.enum([
   'load',

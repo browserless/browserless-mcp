@@ -11,8 +11,8 @@ export function hashToken(input: string): string {
 }
 
 /**
- * djb2 string hash. Matches the enterprise repo's session ID hashing — kept
- * compatible so analytics `user_id` values stay consistent across services.
+ * djb2 string hash. Matches the Browserless backend's session ID hashing —
+ * kept compatible so analytics `user_id` values stay consistent across services.
  */
 export function djb2(str: string): number {
   let hash = 5381;

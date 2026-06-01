@@ -1,11 +1,8 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import {
-  defineTool,
-  profileField,
-  validateHttpUrl,
-} from '../lib/define-tool.js';
+import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { profileField } from './schemas.js';
 import { ResponseCache } from '../lib/cache.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
@@ -16,7 +13,7 @@ import type {
 
 /**
  * Output formats that can be requested.
- * Mirrors the Firecrawl "formats" convention used by the enterprise API.
+ * Mirrors the Firecrawl "formats" convention used by the Browserless API.
  */
 export const ScrapeFormatSchema = z.enum([
   'markdown',

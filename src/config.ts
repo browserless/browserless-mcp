@@ -3,12 +3,9 @@ import type { McpConfig } from './@types/types.js';
 
 export const DEFAULT_API_URL = 'https://production-sfo.browserless.io';
 
-// Baseline allow-list of redirect URIs trusted by the hosted
-// mcp.browserless.io deployment. These are the known MCP clients that
-// legitimately DCR against this server today.
-// Deployments that need to allow additional clients (new MCP hosts,
-// staging domains, etc.) can extend this list at runtime via
-// OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS.
+// Baseline allow-list of redirect URIs for MCP clients that legitimately DCR
+// against the hosted mcp.browserless.io deployment. Extend at runtime via
+// OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS for additional clients.
 const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'http://localhost:*', // Claude Desktop, VS Code, Windsurf, and anything else using a local loopback callback
   'http://127.0.0.1:*',

@@ -36,10 +36,7 @@ import {
   formatSnapshot,
 } from '../lib/agent-format.js';
 
-// The agent toolkit surface — schemas, system prompt, and formatters — now lives
-// in dependency-clean modules published under `@browserless.io/mcp/*`. Re-exported
-// here so in-repo imports from './agent.js' (and the existing test suite) resolve
-// unchanged.
+// export schemas, system prompt, and formatters
 export { AgentParamsSchema } from './schemas.js';
 export {
   buildCrossOriginNotice,
@@ -64,12 +61,9 @@ const SCREENSHOT_MIME: Record<string, string> = {
 };
 
 /**
- * Build the MCP response for a screenshot command. Returns null if the result
- * doesn't carry a base64 payload (caller falls back to JSON text output).
- *
- * Splitting this out lets us return the screenshot as a vision content block
- * (~1.5K tokens) instead of inlining the base64 as text (~67K tokens for a
- * typical PNG).
+ * Build the MCP response for a screenshot command, or null when there's no
+ * base64 payload (caller falls back to JSON text). Returns the image as a
+ * vision content block (~1.5K tokens) vs. ~67K inlining the base64 as text.
  */
 export const formatScreenshotContent = (
   result: unknown,
@@ -108,10 +102,9 @@ export const formatScreenshotContent = (
   return content;
 };
 
-// Zod parses params at the tool boundary, so this only needs to provide the
-// {} default when the field was omitted. The earlier JSON.parse / non-object
-// branches were dead code — the schema (z.record(z.string(), z.unknown()))
-// never delivers a string, an array, or null here.
+// Zod parses params at the tool boundary, so this only needs to supply the {}
+// default when the field was omitted — the schema never delivers a string,
+// array, or null here.
 const coerceParams = (
   params: Record<string, unknown> | undefined,
 ): Record<string, unknown> => params ?? {};
@@ -152,11 +145,6 @@ export function registerAgentTools(
     },
   });
 
-  // browserless_agent is more involved than the other tools — it manages
-  // long-lived WebSocket sessions with one-shot retry on transient failures,
-  // and fires analytics on BOTH success and failure paths. defineTool gives
-  // us the auth/token scaffolding; `run` does the rest and `format` is a
-  // passthrough.
   defineTool<AgentParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
     description: AGENT_SYSTEM_PROMPT,
@@ -242,11 +230,9 @@ export function registerAgentTools(
         // Execute all commands sequentially
         const results: Array<{ method: string; result?: unknown }> = [];
         let closedDuringBatch = false;
-        // Cross-origin baseline: prefer the URL persisted from the previous
-        // snapshot. If this is the first interaction in the session, fall
-        // back to the first URL observed during this batch — that way a
-        // single-batch sequence like [goto A, goto B, snapshot] still
-        // detects the cross-origin transition between A and the snapshot.
+        // Cross-origin baseline: prefer the URL from the previous snapshot,
+        // else the first URL seen this batch — so [goto A, goto B, snapshot]
+        // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
