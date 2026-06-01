@@ -2,6 +2,11 @@
 
 - Dependency updates
 
+# v1.6.0 - 2026-06-01
+
+- Dependency updates
+- Release repo aws npm package
+
 # v1.5.3 - 2026-05-27
 
 - Add destructive hints for tools.
