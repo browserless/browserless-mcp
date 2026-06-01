@@ -1,11 +1,8 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import {
-  defineTool,
-  profileField,
-  validateHttpUrl,
-} from '../lib/define-tool.js';
+import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   CrawlPageResult,

@@ -4,6 +4,13 @@ import type {
   ErrorCategory,
 } from '../@types/types.js';
 
+// Re-export the classifier types consumers of `@browserless.io/mcp/errors` need.
+export type {
+  ErrorCategory,
+  ClassifiedError,
+  ClassifyInput,
+} from '../@types/types.js';
+
 const RECOVERY: Record<ErrorCategory, string> = {
   SELECTOR_MISS:
     'Re-snapshot — the element is not in the current DOM. If you have not tried it yet, retry with a deep selector "< selector" in case the element is inside a shadow root.',
@@ -73,10 +80,9 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   const code = (err as { code?: string }).code;
   const message = err.message ?? '';
 
-  // waitForSelector failures are timeouts in intent — the upstream agent
-  // surfaces them as SELECTOR_NOT_FOUND, but the user explicitly asked to
-  // wait, so the actionable signal is "the wait expired", not "the DOM is
-  // missing the element right now".
+  // waitForSelector failures are timeouts in intent: the agent reports
+  // SELECTOR_NOT_FOUND, but the user asked to wait, so the actionable signal
+  // is "the wait expired", not "the element is missing right now".
   if (cmd?.method === 'waitForSelector' && code === 'SELECTOR_NOT_FOUND') {
     return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
   }

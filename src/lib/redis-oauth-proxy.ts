@@ -14,35 +14,19 @@ import {
 } from 'fastmcp/auth';
 
 /**
- * Redis-backed OAuthProxy that uses Redis as the single source of truth for
- * OAuth flow state (transactions, authorization codes, and Dynamic Client
- * Registrations).
+ * Redis-backed OAuthProxy using Redis as the single source of truth for OAuth
+ * flow state (transactions, authorization codes, DCRs), so the steps of one
+ * flow can land on different instances behind a load balancer.
  *
- * Multi-instance flows supported behind a load balancer:
- *   1. registerClient() on Instance A  → DCR record written to Redis
- *   2. authorize() on Instance B       → validates redirect_uri against Redis
- *   3. handleCallback() on Instance C  → reads transaction from Redis
- *   4. exchangeAuthorizationCode() on Instance D → reads code from Redis
+ * fastmcp v4 (CWE-601 hardening) made DCR state load-bearing for authorize(),
+ * handleCallback(), and handleConsent(), all checking a process-local Map.
+ * That breaks multi-instance (DCR on A, authorize on B → B rejects a valid
+ * redirect_uri), so the overrides here validate against Redis instead and
+ * ignore the parent's Map (super.registerClient still fills it; we never read it).
  *
- * fastmcp v4.0.0 (CWE-601 hardening) made DCR state load-bearing for
- * authorize(), handleCallback(), and handleConsent() — all three check
- * `registeredClients.has(uri)` against an in-memory Map. That Map is
- * process-local, so a naive multi-instance deployment breaks: DCR on A,
- * authorize on B → B rejects the legitimate redirect_uri.
- *
- * We resolve this by ignoring the parent's Map entirely and validating
- * against Redis in the three override paths. `super.registerClient` still
- * populates the parent Map as a side effect; we don't read from it, so its
- * state is irrelevant to correctness.
- *
- * Consent is explicitly NOT supported. The parent's handleConsent reads
- * transactions from a process-local Map, which would reintroduce the
- * multi-instance bug, and our authorize() override short-circuits the
- * consent branch regardless. The constructor throws if consent is enabled.
- *
- * Storage requirements: Redis 6.2+ or Valkey 7+. The token-exchange path uses
- * GETDEL for atomic one-time-use of authorization codes across instances;
- * that command landed in Redis 6.2 and has been in every Valkey release.
+ * Consent is NOT supported — the parent's handleConsent uses a process-local
+ * Map; the constructor throws if it's enabled. Requires Redis 6.2+ / Valkey 7+
+ * for GETDEL (atomic one-time-use of authorization codes across instances).
  */
 
 const KEY_PREFIX = 'mcp:oauth:';
@@ -116,20 +100,16 @@ export class RedisOAuthProxy extends OAuthProxy {
   }
 
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
-    // Delegate validation and response synthesis to the parent, then mirror
-    // the accepted URIs into Redis so every instance can honor the v4
-    // redirect_uri check. The parent also populates its in-memory Map as a
-    // side effect — we don't read from it, so its state doesn't affect
-    // correctness and we don't need to keep it in sync.
+    // Delegate validation/response to the parent, then mirror the accepted
+    // URIs into Redis so every instance can honor the v4 redirect_uri check.
+    // (The parent's in-memory Map is also populated but we never read it.)
     const response = await super.registerClient(request);
     const ttl =
       this._internal.config.clientRegistrationTtl ?? DEFAULT_CLIENT_TTL;
 
-    // Snapshot Redis pre-existence so rollback doesn't DEL a valid prior
-    // registration of the same URI (two DCR calls sharing a redirect_uri —
-    // rare but possible). Use allSettled so a Redis failure here doesn't
-    // escape as a raw probe error; treat probe failure as fail-fast with
-    // no writes attempted.
+    // Snapshot pre-existence so rollback doesn't DEL a valid prior
+    // registration of the same URI (two DCR calls sharing a redirect_uri).
+    // allSettled → a probe failure is fail-fast with no writes attempted.
     const probes = await Promise.allSettled(
       response.redirect_uris.map(async (uri) => ({
         uri,
@@ -195,11 +175,9 @@ export class RedisOAuthProxy extends OAuthProxy {
     if (params.client_id !== this._internal.config.upstreamClientId) {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
-    // RFC 6749 §3.1.2.3 / RFC 6819 §4.1.5 — the redirect_uri must be one that
-    // was previously registered via DCR. Skipping this is CWE-601: an attacker
-    // can steal an authorization code by passing their own URL here. Ported
-    // from fastmcp v4; we read the shared Redis registry so DCR on another
-    // instance still satisfies the check.
+    // RFC 6749 §3.1.2.3 / RFC 6819 §4.1.5 — redirect_uri must be one
+    // previously registered via DCR; skipping this is CWE-601 (auth-code
+    // theft). We read the shared Redis registry so cross-instance DCR counts.
     if (!(await this.isClientRegistered(params.redirect_uri))) {
       throw new OAuthProxyError(
         'invalid_request',
@@ -250,10 +228,9 @@ export class RedisOAuthProxy extends OAuthProxy {
     }
     const transaction = deserialize<OAuthTransaction>(txJson);
 
-    // Defense-in-depth (ported from fastmcp v4 OAuthProxy.handleCallback):
-    // reject if the transaction's stored callback URL is no longer registered.
-    // Guards against DCR revocation mid-flow and against any code path that
-    // could have persisted an unvalidated URI.
+    // Defense-in-depth: reject if the transaction's stored callback URL is no
+    // longer registered. Guards against DCR revocation mid-flow and any path
+    // that could have persisted an unvalidated URI.
     if (!(await this.isClientRegistered(transaction.clientCallbackUrl))) {
       await this.redis.del(`${TX_PREFIX}${state}`);
       throw new OAuthProxyError(
@@ -314,12 +291,9 @@ export class RedisOAuthProxy extends OAuthProxy {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
 
-    // Atomically read-and-delete the code. The parent enforces one-time use
-    // via an in-memory `used` flag, which can't work across instances: two
-    // concurrent redemptions hitting different instances would both see the
-    // code as valid before either could persist `used=true`. GETDEL makes the
-    // consume race-free — only one redemption can pull a value, regardless of
-    // instance.
+    // Atomically read-and-delete the code. The parent's in-memory `used` flag
+    // can't work across instances (two concurrent redemptions on different
+    // instances both see it valid); GETDEL makes the consume race-free.
     const codeJson = await this.redis.getdel(`${CODE_PREFIX}${request.code}`);
     if (!codeJson) {
       throw new OAuthProxyError(

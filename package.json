@@ -1,5 +1,5 @@
 {
-  "name": "browserless-mcp",
+  "name": "@browserless.io/mcp",
   "version": "1.3.4",
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
@@ -14,17 +14,44 @@
     ".": {
       "types": "./build/src/index.d.ts",
       "import": "./build/src/index.js"
+    },
+    "./skills": {
+      "types": "./build/src/skills/index.d.ts",
+      "import": "./build/src/skills/index.js"
+    },
+    "./agent-client": {
+      "types": "./build/src/lib/agent-client.d.ts",
+      "import": "./build/src/lib/agent-client.js"
+    },
+    "./schemas": {
+      "types": "./build/src/tools/schemas.d.ts",
+      "import": "./build/src/tools/schemas.js"
+    },
+    "./prompt": {
+      "types": "./build/src/skills/system-prompt.d.ts",
+      "import": "./build/src/skills/system-prompt.js"
+    },
+    "./errors": {
+      "types": "./build/src/lib/error-classifier.d.ts",
+      "import": "./build/src/lib/error-classifier.js"
+    },
+    "./format": {
+      "types": "./build/src/lib/agent-format.d.ts",
+      "import": "./build/src/lib/agent-format.js"
     }
   },
   "files": [
     "build/src/**/*.js",
     "build/src/**/*.d.ts",
+    "build/src/**/*.md",
     "bin/*",
+    "patches/**",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run build:skills",
+    "build": "tsc && npm run build:skills && npm run build:types",
     "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
+    "build:types": "mkdir -p build/src/@types && cp src/@types/*.d.ts build/src/@types/",
     "clean": "rm -rf build",
     "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",
     "lint": "eslint src test",
@@ -32,8 +59,8 @@
     "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
-    "prepack": "npm run build",
     "postinstall": "patch-package",
+    "prepack": "npm run build",
     "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
   },
@@ -47,6 +74,7 @@
     "@aws-sdk/client-sqs": "^3.1053.0",
     "fastmcp": "^4.0.0",
     "ioredis": "^5.10.1",
+    "patch-package": "^8.0.1",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
@@ -65,7 +93,6 @@
     "husky": "^9.1.7",
     "ioredis-mock": "^8.13.1",
     "mocha": "^11.7.6",
-    "patch-package": "^8.0.1",
     "prettier": "^3.8.3",
     "sinon": "^22.0.0",
     "typescript": "^6.0.3",

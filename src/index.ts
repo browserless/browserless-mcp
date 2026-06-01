@@ -20,10 +20,12 @@ import { registerStatusResource } from './resources/status.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AnalyticsHelper } from './lib/analytics.js';
-import { resolveApiKey } from './lib/account-resolver.js';
+import {
+  resolveApiKey,
+  installSupabaseTokenTtlPatch,
+} from './lib/account-resolver.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
-import { installSupabaseTokenTtlPatch } from './lib/supabase-token-patch.js';
 import { Redis } from 'ioredis';
 
 const pkg = JSON.parse(
@@ -37,7 +39,7 @@ const config = getConfig();
 
 // Override Supabase's short-lived (~60s) OAuth token TTL so MCP clients don't
 // thrash refresh. Narrowly scoped to the Supabase token endpoint; see
-// supabase-token-patch.ts for the full rationale.
+// installSupabaseTokenTtlPatch in account-resolver.ts for the full rationale.
 if (config.oauthEnabled && config.supabaseUrl) {
   installSupabaseTokenTtlPatch(config.supabaseUrl, 3600);
 }
@@ -98,11 +100,9 @@ const oauthProvider =
       })
     : undefined;
 
-// Hybrid authenticate: plain API key first, then ?token=, then OAuth/JWT fallback.
-// 1. Authorization header with plain API key (non-JWT) → direct token session
-// 2. ?token= query param → direct token session
-// 3. Authorization header with JWT (Supabase token from OAuth) → decode payload,
-//    resolve Browserless API key from Supabase PostgREST, return as session token
+// Hybrid authenticate, in order: (1) Authorization header with a plain API
+// key or (2) ?token= query param → direct token session; (3) Authorization
+// header with a Supabase JWT → resolve the Browserless API key via PostgREST.
 const hybridAuthenticate =
   config.transport === 'httpStream'
     ? async (request: IncomingMessage) => {
