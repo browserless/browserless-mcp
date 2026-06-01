@@ -460,22 +460,9 @@ const CloseCommandSchema = z.object({
   params: z.object({}).optional().default({}),
 });
 
-/** Fallback for less-common BQL methods not explicitly typed above. */
-const GenericCommandSchema = z.object({
-  method: z.string().describe('The BQL method name'),
-  params: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .default({})
-    .describe('Parameters for the method'),
-});
-
-/**
- * Typed command union — typed variants are tried first, generic fallback last.
- * This gives LLMs structured type information for the most common methods
- * while still allowing any BQL method to be called.
- */
-export const AgentCommandSchema = z.union([
+// Fully-typed command variants, each keyed by a `method` literal so they can be
+// dispatched by the discriminated union below.
+const specificCommandSchemas = [
   GotoCommandSchema,
   BackCommandSchema,
   ForwardCommandSchema,
@@ -503,6 +490,29 @@ export const AgentCommandSchema = z.union([
   SolveCommandSchema,
   ScreenshotCommandSchema,
   CloseCommandSchema,
+] as const;
+
+const KNOWN_METHODS = new Set<string>(
+  specificCommandSchemas.map((schema) => schema.shape.method.value),
+);
+
+// fallback for non typed bql methods
+const GenericCommandSchema = z.object({
+  method: z
+    .string()
+    .refine((m) => !KNOWN_METHODS.has(m), {
+      message: 'method has a typed schema and is validated there, not here',
+    })
+    .describe('The BQL method name'),
+  params: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .default({})
+    .describe('Parameters for the method'),
+});
+
+export const AgentCommandSchema = z.union([
+  z.discriminatedUnion('method', specificCommandSchemas),
   GenericCommandSchema,
 ]);
 
