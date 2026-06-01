@@ -45,6 +45,7 @@
     "build/src/**/*.d.ts",
     "build/src/**/*.md",
     "bin/*",
+    "patches/**",
     "README.md"
   ],
   "scripts": {
@@ -73,6 +74,7 @@
     "@aws-sdk/client-sqs": "^3.1053.0",
     "fastmcp": "^4.0.0",
     "ioredis": "^5.10.1",
+    "patch-package": "^8.0.1",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
@@ -91,7 +93,6 @@
     "husky": "^9.1.7",
     "ioredis-mock": "^8.13.1",
     "mocha": "^11.7.6",
-    "patch-package": "^8.0.1",
     "prettier": "^3.8.3",
     "sinon": "^22.0.0",
     "typescript": "^6.0.3",
