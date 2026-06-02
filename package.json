@@ -105,7 +105,8 @@
     "mocha": {
       "diff": "^8.0.3",
       "minimatch": "^10.2.1",
-      "glob": "^11.0.0"
+      "glob": "^11.0.0",
+      "serialize-javascript": "^7.0.5"
     }
   }
 }
