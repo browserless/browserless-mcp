@@ -1,10 +1,6 @@
 # Browserless MCP Server
 
-<div align="center">
-
-[![MCP Badge](https://lobehub.com/badge/mcp/browserless-browserless-mcp?style=plastic)](https://lobehub.com/mcp/browserless-browserless-mcp)
-
-</div>
+[![MCP Badge](https://lobehub.com/badge/mcp/browserless-browserless-mcp?style=for-the-badge)](https://lobehub.com/mcp/browserless-browserless-mcp)
 
 MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io) — expose the Browserless smart scraper API to LLM clients like Claude Desktop, Cursor, VS Code, and Windsurf.
 
