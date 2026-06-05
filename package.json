@@ -45,7 +45,6 @@
     "build/src/**/*.d.ts",
     "build/src/**/*.md",
     "bin/*",
-    "patches/**",
     "README.md"
   ],
   "scripts": {
@@ -59,7 +58,6 @@
     "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
-    "postinstall": "patch-package",
     "prepack": "npm run build",
     "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
@@ -74,7 +72,6 @@
     "@aws-sdk/client-sqs": "^3.1053.0",
     "fastmcp": "^4.0.0",
     "ioredis": "^5.10.1",
-    "patch-package": "^8.0.1",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
