@@ -1,5 +1,8 @@
 # Latest
 
+# v1.6.1
+Drop vestigial mcp-proxy postinstall patch that broke `npm install` in consumers
+
 - Dependency updates
 
 # v1.6.0 - 2026-06-01
