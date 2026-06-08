@@ -3,7 +3,6 @@ FROM node:24-slim AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-COPY patches/ patches/
 RUN npm ci
 
 COPY tsconfig.json ./
