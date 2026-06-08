@@ -4,6 +4,10 @@
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
   "license": "SSPL-1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/browserless/browserless-mcp.git"
+  },
   "type": "module",
   "main": "./build/src/index.js",
   "types": "./build/src/index.d.ts",

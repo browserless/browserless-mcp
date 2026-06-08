@@ -1,0 +1,37 @@
+name: Release Please
+
+# Maintains a single draft "Release PR" off main. As conventional-commit changes
+# land, release-please bumps package.json/package-lock.json, regenerates
+# CHANGELOG.md, and updates .release-please-manifest.json on that PR. The PR opens
+# as a draft and is NOT auto-merged — the open PR is the manual review/editing
+# window. Marking it ready and merging creates the GitHub Release and the vX.Y.Z
+# tag, which triggers npm-publish.yml and build-docker-image.yml (both listen on
+# v* tags).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    if: github.repository == 'browserless/browserless-mcp'
+    runs-on: ubuntu-latest
+    steps:
+      # App token (not GITHUB_TOKEN) so the tag/Release it creates can trigger
+      # the downstream npm-publish and docker-build workflows.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.BROWSERLESS_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.BROWSERLESS_ACTIONS_APP_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
