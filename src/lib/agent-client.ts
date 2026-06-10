@@ -450,7 +450,7 @@ const postCreateProfile = async (
     const body = await res.text().catch(() => '');
     throw new UpgradeError(res.status, res.statusText, body);
   }
-  const json = await res.json();
+  const json = (await res.json()) as Partial<CreationSessionInfo>;
   if (!json.id || typeof json.id !== 'string') {
     throw new Error(
       `POST /profile returned malformed response: missing or invalid 'id' field`,
