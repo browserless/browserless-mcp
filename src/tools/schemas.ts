@@ -594,8 +594,11 @@ export const AgentParamsSchema = z
     ),
     profile: profileField(
       'when the agent session connects',
-      ' The profile is fixed for the lifetime of the agent session; ' +
-        'passing a different profile value opens a separate browser session.',
+      ' `profile` binds each call to its hydrated session — you MUST pass it on ' +
+        'every call in a multi-call flow, not just the first. A call that omits ' +
+        '`profile` runs in the default, un-hydrated session and will look logged ' +
+        'out; if that happens, re-issue the call WITH `profile` before concluding ' +
+        'the session expired. A different `profile` value opens a separate session.',
     ),
     createProfile: CreateProfileSchema.optional(),
     rationale: z
