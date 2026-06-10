@@ -450,7 +450,13 @@ const postCreateProfile = async (
     const body = await res.text().catch(() => '');
     throw new UpgradeError(res.status, res.statusText, body);
   }
-  return (await res.json()) as CreationSessionInfo;
+  const json = await res.json();
+  if (!json.id || typeof json.id !== 'string') {
+    throw new Error(
+      `POST /profile returned malformed response: missing or invalid 'id' field`,
+    );
+  }
+  return json as CreationSessionInfo;
 };
 
 const connect = (
