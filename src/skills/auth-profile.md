@@ -37,10 +37,11 @@ already signed in.
    ```json
    { "method": "saveProfile", "params": { "name": "github" } }
    ```
-   Pass the same `name` you opened the session with. If the same
-   `(token, name)` pair already exists, the server returns a `BAD_PARAMS`
-   error telling you to use `refreshProfile` — switch and retry once. Do
-   not retry `saveProfile` with the same name.
+   Pass the same `name` you opened the session with. If a profile with that
+   name already exists for this token, the call returns `ok: false` with an
+   `error` saying the profile already exists. Don't retry `saveProfile` with the
+   same name — choose a different name, or tell the user a profile by that name
+   already exists.
 5. **Inspect the result.** A successful save returns:
 
    ```json
