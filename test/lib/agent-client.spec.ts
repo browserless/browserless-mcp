@@ -158,6 +158,23 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.get('proxyCountry')).to.equal('us');
     expect(url.searchParams.get('profile')).to.equal('my-login');
   });
+
+  it('attaches to a creation session by id and omits proxy/profile', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        { proxy: 'residential', proxyCountry: 'us' },
+        'my-login',
+        'sess-abc123',
+      ),
+    );
+    expect(url.searchParams.get('sessionId')).to.equal('sess-abc123');
+    expect(url.searchParams.get('token')).to.equal('tok');
+    // A creation session owns its own proxy/profile from POST /profile.
+    expect(url.searchParams.has('proxy')).to.equal(false);
+    expect(url.searchParams.has('profile')).to.equal(false);
+  });
 });
 
 describe('agent-client proxyFingerprint', () => {

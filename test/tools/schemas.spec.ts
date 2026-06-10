@@ -241,3 +241,30 @@ describe('profile field (shared profileField helper)', () => {
     expect(result.success).to.equal(false);
   });
 });
+
+describe('createProfile field', () => {
+  it('accepts a createProfile object on its own', () => {
+    const parsed = AgentParamsSchema.parse({
+      createProfile: { name: 'github' },
+      commands: [
+        { method: 'goto', params: { url: 'https://github.com/login' } },
+      ],
+    });
+    expect(parsed.createProfile?.name).to.equal('github');
+  });
+
+  it('rejects createProfile and profile together (mutually exclusive)', () => {
+    const result = AgentParamsSchema.safeParse({
+      profile: 'github',
+      createProfile: { name: 'github' },
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('rejects a createProfile name containing whitespace, /, ?, or #', () => {
+    for (const name of ['has space', 'a/b', 'a?b', 'a#b']) {
+      const result = AgentParamsSchema.safeParse({ createProfile: { name } });
+      expect(result.success, name).to.equal(false);
+    }
+  });
+});

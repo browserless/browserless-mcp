@@ -27,6 +27,7 @@ import type {
   CrawlParamsSchema,
 } from '../tools/crawl.js';
 import type { AgentParamsSchema } from '../tools/agent.js';
+import type { CreateProfileParams } from '../tools/schemas.js';
 import type { ProxyOptionsSchema } from '../lib/agent-client.js';
 
 /* ------------------------------------------------------------------ */
@@ -161,6 +162,13 @@ export interface ActiveSession {
   readonly token: string;
   readonly proxy?: ProxyOptions;
   readonly profile?: string;
+  // When set, this session was opened in profile-creation mode: the WS is bound
+  // to a creation session from POST /profile rather than a fresh launch. Feeds
+  // the session-cache key (see getSessionKey), so it's readonly.
+  readonly createProfile?: CreateProfileParams;
+  // The creation session id returned by POST /profile. Reconnects attach to it
+  // via /chromium/agent?sessionId rather than launching a new browser.
+  creationSessionId?: string;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;
@@ -208,7 +216,8 @@ export type SkillId =
   | 'dynamic-content'
   | 'screenshots'
   | 'tabs'
-  | 'autonomous-login';
+  | 'autonomous-login'
+  | 'auth-profile';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
