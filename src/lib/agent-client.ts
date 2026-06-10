@@ -150,6 +150,9 @@ const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof UpgradeError) {
+    // A 2xx UpgradeError is a structurally-bad success response — retrying
+    // can't fix the shape (and may duplicate side effects), so don't.
+    if (err.statusCode >= 200 && err.statusCode < 300) return false;
     return !NON_RETRYABLE_UPGRADE_STATUSES.has(err.statusCode);
   }
   return true;
@@ -450,10 +453,17 @@ const postCreateProfile = async (
     const body = await res.text().catch(() => '');
     throw new UpgradeError(res.status, res.statusText, body);
   }
-  const json = (await res.json()) as Partial<CreationSessionInfo>;
-  if (!json.id || typeof json.id !== 'string') {
-    throw new Error(
-      `POST /profile returned malformed response: missing or invalid 'id' field`,
+  const json: unknown = await res.json();
+  if (
+    typeof json !== 'object' ||
+    json === null ||
+    typeof (json as { id?: unknown }).id !== 'string' ||
+    !(json as { id: string }).id
+  ) {
+    throw new UpgradeError(
+      res.status,
+      res.statusText,
+      `POST /profile returned a malformed response (missing or invalid "id")`,
     );
   }
   return json as CreationSessionInfo;
