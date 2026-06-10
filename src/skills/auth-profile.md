@@ -42,6 +42,7 @@ already signed in.
    error telling you to use `refreshProfile` — switch and retry once. Do
    not retry `saveProfile` with the same name.
 5. **Inspect the result.** A successful save returns:
+
    ```json
    {
      "ok": true,
@@ -58,6 +59,7 @@ already signed in.
    - `cookieCount === 0` is a red flag — the site likely uses session-only
      cookies or storage you can't capture. Tell the user.
    - Any non-zero `skipped*` count means partial capture — surface it.
+
 6. **Close** the session. Tell the user the profile name and how to use it
    ("future calls can pass `profile: \"github\"`"). Do not echo cookie
    values or any captured state.
