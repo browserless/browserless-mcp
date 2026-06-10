@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all nine skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(9);
+  it('loads all ten skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(10);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -49,6 +49,7 @@ describe('skills/registry', () => {
       'screenshots',
       'tabs',
       'autonomous-login',
+      'auth-profile',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;

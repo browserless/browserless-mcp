@@ -516,58 +516,118 @@ export const AgentCommandSchema = z.union([
   GenericCommandSchema,
 ]);
 
-export const AgentParamsSchema = z.object({
-  method: z
+// Proxy block for a profile-creation session. Mirrors the POST /profile body
+// proxy shape (type/sticky/country/city/state/preset) so it passes straight
+// through — distinct from the top-level agent proxy fields (proxy/proxyCountry…).
+const CreateProfileProxySchema = z.object({
+  type: z
+    .literal('residential')
+    .optional()
+    .describe('Routing tier. Only "residential" is supported today.'),
+  sticky: z
+    .boolean()
+    .optional()
+    .describe('Keep the same IP for the lifetime of the creation session.'),
+  country: z
     .string()
     .optional()
-    .default('')
-    .describe(
-      'The BQL method to execute (used for single-command calls). ' +
-        'When using "commands" array, this field is ignored.',
-    ),
-  params: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .default({})
-    .describe('Parameters for the method (used for single-command calls).'),
-  commands: z
-    .array(AgentCommandSchema)
-    .optional()
-    .describe(
-      'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
-        'are ignored and commands are executed sequentially. Only the final result is returned. ' +
-        'Use this to batch actions that share the same page state (e.g. filling a form: ' +
-        'type email + type password + click submit). Do NOT batch across navigations.',
-    ),
-  proxy: ProxyOptionsSchema.optional().describe(
-    'Residential / external proxy config. Read once at session creation. ' +
-      'Changing requires close() + a new session call.',
-  ),
-  profile: profileField(
-    'when the agent session connects',
-    ' The profile is fixed for the lifetime of the agent session; ' +
-      'passing a different profile value opens a separate browser session.',
-  ),
-  rationale: z
+    .describe('Two-letter country code (e.g. "us").'),
+  city: z.string().optional().describe('City-level targeting (plan-gated).'),
+  state: z.string().optional().describe('State/region targeting (plan-gated).'),
+  preset: z
     .string()
     .optional()
-    .describe(
-      'A short user-facing reason for this call. HARD BUDGET: 50 characters. ' +
-        'Surfaced live in interactive UIs as the progress label. Write it for ' +
-        'a human watching, in present-continuous form ("Logging in", "Filling ' +
-        'the search form", "Checking the time", "Closing the cookie banner"). ' +
-        'If your first draft is longer than 50 chars, REWORD IT to fit — ' +
-        'compress to the essence; do NOT just chop. Bad: "Read page title and ' +
-        'body text to determine why snapshot is empty" (64). Good: "Diagnosing ' +
-        'empty snapshot" (24). Bad: "Filling out a very detailed multi-field ' +
-        'signup form" (51). Good: "Filling the signup form" (23). Never use ' +
-        'jargon, raw method names ("evaluate", "click"), JS, full URLs, or ' +
-        'credentials. Include exactly one per `browserless_agent` call, even ' +
-        'when batching commands.',
-    ),
+    .describe('Named proxy preset (plan-dependent).'),
 });
+
+const CreateProfileSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(255)
+      .refine((s) => /^[^\s/?#]+$/.test(s), {
+        message: 'name must match /^[^\\s/?#]+$/ (no whitespace, /, ?, #)',
+      })
+      .describe(
+        'Name to save the profile under. Reused as the saveProfile name.',
+      ),
+    proxy: CreateProfileProxySchema.optional(),
+    browser: z.enum(['chrome', 'chromium', 'stealth']).optional(),
+    stealth: z.boolean().optional(),
+  })
+  .describe(
+    'Open this session in profile-creation mode. The MCP tool POSTs /profile ' +
+      'with these params, attaches the agent WS to the returned creation session ' +
+      '(non-headless, 10-minute keepalive), and expects a saveProfile call before ' +
+      'close. Mutually exclusive with `profile`. Load the `auth-profile` skill ' +
+      '(via browserless_skill) for the full create-then-save recipe.',
+  );
+
+export const AgentParamsSchema = z
+  .object({
+    method: z
+      .string()
+      .optional()
+      .default('')
+      .describe(
+        'The BQL method to execute (used for single-command calls). ' +
+          'When using "commands" array, this field is ignored.',
+      ),
+    params: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .default({})
+      .describe('Parameters for the method (used for single-command calls).'),
+    commands: z
+      .array(AgentCommandSchema)
+      .optional()
+      .describe(
+        'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
+          'are ignored and commands are executed sequentially. Only the final result is returned. ' +
+          'Use this to batch actions that share the same page state (e.g. filling a form: ' +
+          'type email + type password + click submit). Do NOT batch across navigations.',
+      ),
+    proxy: ProxyOptionsSchema.optional().describe(
+      'Residential / external proxy config. Read once at session creation. ' +
+        'Changing requires close() + a new session call.',
+    ),
+    profile: profileField(
+      'when the agent session connects',
+      ' `profile` binds each call to its hydrated session — you MUST pass it on ' +
+        'every call in a multi-call flow, not just the first. A call that omits ' +
+        '`profile` runs in the default, un-hydrated session and will look logged ' +
+        'out; if that happens, re-issue the call WITH `profile` before concluding ' +
+        'the session expired. A different `profile` value opens a separate session.',
+    ),
+    createProfile: CreateProfileSchema.optional(),
+    rationale: z
+      .string()
+      .optional()
+      .describe(
+        'A short user-facing reason for this call. HARD BUDGET: 50 characters. ' +
+          'Surfaced live in interactive UIs as the progress label. Write it for ' +
+          'a human watching, in present-continuous form ("Logging in", "Filling ' +
+          'the search form", "Checking the time", "Closing the cookie banner"). ' +
+          'If your first draft is longer than 50 chars, REWORD IT to fit — ' +
+          'compress to the essence; do NOT just chop. Bad: "Read page title and ' +
+          'body text to determine why snapshot is empty" (64). Good: "Diagnosing ' +
+          'empty snapshot" (24). Bad: "Filling out a very detailed multi-field ' +
+          'signup form" (51). Good: "Filling the signup form" (23). Never use ' +
+          'jargon, raw method names ("evaluate", "click"), JS, full URLs, or ' +
+          'credentials. Include exactly one per `browserless_agent` call, even ' +
+          'when batching commands.',
+      ),
+  })
+  .refine((v) => !(v.profile && v.createProfile), {
+    message:
+      '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
+      'one) cannot both be set',
+  });
 
 /** A single validated agent command. */
 export type AgentCommand = z.infer<typeof AgentCommandSchema>;
 /** The full `browserless_agent` tool params (single command, batch, proxy, profile). */
 export type AgentParams = z.infer<typeof AgentParamsSchema>;
+/** Params for opening a profile-creation session (POST /profile passthrough). */
+export type CreateProfileParams = z.infer<typeof CreateProfileSchema>;
