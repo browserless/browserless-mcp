@@ -162,6 +162,7 @@ export function registerAgentTools(
       token,
       apiUrl,
       sessionId: mcpSessionId,
+      attachSessionId,
     }) => {
       const commands: Array<{
         method: string;
@@ -203,9 +204,42 @@ export function registerAgentTools(
       }
 
       if (commands.length === 1 && commands[0].method === 'close') {
-        closeSession(mcpSessionId, token, proxy, profile, createProfile);
+        closeSession(
+          mcpSessionId,
+          token,
+          proxy,
+          profile,
+          createProfile,
+          attachSessionId,
+        );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
+      }
+
+      // Open-only call: no real command (e.g. `createProfile`/`profile`/`proxy`
+      // set with no method/commands). Dispatching the empty-method default would
+      // make the agent route reject it as `Missing required id/method`, so just
+      // open (or reuse) the session and report it's ready for follow-up commands.
+      if (commands.length === 1 && !commands[0].method) {
+        try {
+          await getOrCreateSession(
+            mcpSessionId,
+            apiUrl,
+            token,
+            proxy,
+            profile,
+            createProfile,
+            attachSessionId,
+          );
+        } catch (connErr: unknown) {
+          sendAnalytics(false);
+          throw new UserError(formatConnectError(connErr));
+        }
+        sendAnalytics(true);
+        const text = createProfile
+          ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
+          : 'Browser session is open. Send commands to drive it.';
+        return [{ type: 'text' as const, text }];
       }
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
@@ -218,6 +252,7 @@ export function registerAgentTools(
             proxy,
             profile,
             createProfile,
+            attachSessionId,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -226,7 +261,14 @@ export function registerAgentTools(
           if (isRetry || !isRetryableUpgradeError(connErr)) {
             throw new UserError(formatConnectError(connErr));
           }
-          destroySession(mcpSessionId, token, proxy, profile, createProfile);
+          destroySession(
+            mcpSessionId,
+            token,
+            proxy,
+            profile,
+            createProfile,
+            attachSessionId,
+          );
           return runCommands(true);
         }
 
@@ -239,7 +281,14 @@ export function registerAgentTools(
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
-            closeSession(mcpSessionId, token, proxy, profile, createProfile);
+            closeSession(
+              mcpSessionId,
+              token,
+              proxy,
+              profile,
+              createProfile,
+              attachSessionId,
+            );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
             break;
@@ -253,7 +302,14 @@ export function registerAgentTools(
           try {
             resp = await send(agentSession, cmd.method, cmd.params);
           } catch (sendErr: unknown) {
-            destroySession(mcpSessionId, token, proxy, profile, createProfile);
+            destroySession(
+              mcpSessionId,
+              token,
+              proxy,
+              profile,
+              createProfile,
+              attachSessionId,
+            );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
             if (!isRetry) {

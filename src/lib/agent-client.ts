@@ -237,11 +237,13 @@ const getSessionKey = (
   proxy?: ProxyOptions,
   profile?: string,
   createProfile?: CreateProfileParams,
+  attachSessionId?: string,
 ): string =>
   (mcpSessionId ?? `stdio:${hashToken(token)}`) +
   proxyFingerprint(proxy) +
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
-  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '');
+  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
+  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '');
 
 /**
  * Build the WebSocket URL for `/chromium/agent`: normalize trailing slashes,
@@ -601,9 +603,17 @@ export const getOrCreateSession = async (
   proxy?: ProxyOptions,
   profile?: string,
   createProfile?: CreateProfileParams,
+  attachSessionId?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
-  const key = getSessionKey(mcpSessionId, token, proxy, profile, createProfile);
+  const key = getSessionKey(
+    mcpSessionId,
+    token,
+    proxy,
+    profile,
+    createProfile,
+    attachSessionId,
+  );
   const existing = sessions.get(key);
 
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
@@ -626,11 +636,16 @@ export const getOrCreateSession = async (
   }
 
   const creation = (async (): Promise<ActiveSession> => {
-    // Profile-creation mode: launch a tracked session via POST /profile, then
-    // attach the agent WS to it by id. Otherwise launch a fresh agent browser.
-    const creationSessionId = createProfile
-      ? (await postCreateProfile(apiUrl, token, createProfile)).id
-      : undefined;
+    // Three modes for the session to attach to:
+    //  - attachSessionId: a session the caller already created (autologin
+    //    runner did POST /profile itself) — attach by id, no POST here.
+    //  - createProfile: open a tracked session via POST /profile, then attach.
+    //  - neither: launch a fresh agent browser.
+    const creationSessionId = attachSessionId
+      ? attachSessionId
+      : createProfile
+        ? (await postCreateProfile(apiUrl, token, createProfile)).id
+        : undefined;
     const ws = await connect(apiUrl, token, proxy, profile, creationSessionId);
     const session: ActiveSession = {
       ws,
@@ -727,8 +742,16 @@ export const closeSession = (
   proxy?: ProxyOptions,
   profile?: string,
   createProfile?: CreateProfileParams,
+  attachSessionId?: string,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token, proxy, profile, createProfile);
+  const key = getSessionKey(
+    mcpSessionId,
+    token,
+    proxy,
+    profile,
+    createProfile,
+    attachSessionId,
+  );
   const session = sessions.get(key);
   if (session) {
     try {
@@ -751,8 +774,16 @@ export const destroySession = (
   proxy?: ProxyOptions,
   profile?: string,
   createProfile?: CreateProfileParams,
+  attachSessionId?: string,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token, proxy, profile, createProfile);
+  const key = getSessionKey(
+    mcpSessionId,
+    token,
+    proxy,
+    profile,
+    createProfile,
+    attachSessionId,
+  );
   const session = sessions.get(key);
   if (session) {
     try {

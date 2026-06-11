@@ -45,6 +45,11 @@ export interface ToolRunContext<P> {
   }) => Promise<void>;
   /** MCP session id (httpStream transport) or undefined for stdio — used by agent tool. */
   sessionId: string | undefined;
+  /**
+   * Pre-created browser session id to attach to (from the `x-browserless-session-id`
+   * header). When set, the agent tool attaches to it instead of opening its own.
+   */
+  attachSessionId?: string;
 }
 
 export interface ToolDefinition<P, R> {
@@ -142,6 +147,7 @@ export function defineTool<P, R>(
           apiUrl,
           reportProgress,
           sessionId,
+          attachSessionId: s?.attachSessionId,
         });
       } catch (err) {
         if (err instanceof ProfileNotFoundError) {

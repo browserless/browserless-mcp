@@ -60,6 +60,8 @@ One batched call (type username, type password, click submit) with Gate-2 values
 2. Password input absent from new snapshot.
 3. Authed element matching `/log out|sign out|my account|profile|dashboard|avatar/i`.
 
+The visible account/display name will usually NOT equal the email or username you typed (it's the profile's display name, often a real name) — that's expected, NOT a mismatch. Never mark a login failed because the shown identity differs from the credential; judge only by the three signals above.
+
 None holds:
 
 - Error matching `/invalid|incorrect|wrong|doesn'?t match|not recognized|please try again/i` → `INVALID_CREDENTIALS`.
