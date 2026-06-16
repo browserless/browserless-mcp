@@ -176,6 +176,7 @@ export function registerAgentTools(
 
       const proxy = params.proxy;
       const profile = params.profile;
+      const createProfile = params.createProfile;
 
       const sendAnalytics = (success: boolean) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
@@ -188,6 +189,7 @@ export function registerAgentTools(
           proxy_sticky: !!proxy?.proxySticky,
           proxy_external: !!proxy?.externalProxyServer,
           profile_used: !!profile,
+          create_profile: !!createProfile,
         });
       };
 
@@ -201,7 +203,7 @@ export function registerAgentTools(
       }
 
       if (commands.length === 1 && commands[0].method === 'close') {
-        closeSession(mcpSessionId, token, proxy, profile);
+        closeSession(mcpSessionId, token, proxy, profile, createProfile);
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
       }
@@ -215,6 +217,7 @@ export function registerAgentTools(
             token,
             proxy,
             profile,
+            createProfile,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -223,7 +226,7 @@ export function registerAgentTools(
           if (isRetry || !isRetryableUpgradeError(connErr)) {
             throw new UserError(formatConnectError(connErr));
           }
-          destroySession(mcpSessionId, token, proxy, profile);
+          destroySession(mcpSessionId, token, proxy, profile, createProfile);
           return runCommands(true);
         }
 
@@ -236,7 +239,7 @@ export function registerAgentTools(
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
-            closeSession(mcpSessionId, token, proxy, profile);
+            closeSession(mcpSessionId, token, proxy, profile, createProfile);
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
             break;
@@ -250,7 +253,7 @@ export function registerAgentTools(
           try {
             resp = await send(agentSession, cmd.method, cmd.params);
           } catch (sendErr: unknown) {
-            destroySession(mcpSessionId, token, proxy, profile);
+            destroySession(mcpSessionId, token, proxy, profile, createProfile);
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
             if (!isRetry) {
@@ -276,7 +279,13 @@ export function registerAgentTools(
           if (resp.error) {
             const err = resp.error;
             if (err.code && FATAL_CODES.has(err.code)) {
-              destroySession(mcpSessionId, token, proxy, profile);
+              destroySession(
+                mcpSessionId,
+                token,
+                proxy,
+                profile,
+                createProfile,
+              );
               if (!isRetry) {
                 return runCommands(true);
               }

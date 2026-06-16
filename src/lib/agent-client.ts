@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
+import type { CreateProfileParams } from '../tools/schemas.js';
 import type {
   ActiveSession,
   AgentMessage,
@@ -149,6 +150,9 @@ const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof UpgradeError) {
+    // A 2xx UpgradeError is a structurally-bad success response — retrying
+    // can't fix the shape (and may duplicate side effects), so don't.
+    if (err.statusCode >= 200 && err.statusCode < 300) return false;
     return !NON_RETRYABLE_UPGRADE_STATUSES.has(err.statusCode);
   }
   return true;
@@ -232,10 +236,12 @@ const getSessionKey = (
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
+  createProfile?: CreateProfileParams,
 ): string =>
   (mcpSessionId ?? `stdio:${hashToken(token)}`) +
   proxyFingerprint(proxy) +
-  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '');
+  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
+  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '');
 
 /**
  * Build the WebSocket URL for `/chromium/agent`: normalize trailing slashes,
@@ -247,10 +253,17 @@ export const buildAgentWsUrl = (
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
+  sessionId?: string,
 ): string => {
   const base = apiUrl.replace(/^http/i, 'ws').replace(/\/+$/, '');
   const url = new URL(base + '/chromium/agent');
   url.searchParams.set('token', token);
+  // A creation session already owns its proxy/profile (baked in at POST /profile);
+  // the WS only needs to attach to it by id, so proxy/profile params are skipped.
+  if (sessionId) {
+    url.searchParams.set('sessionId', sessionId);
+    return url.toString();
+  }
   if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
   if (proxy?.proxyCountry)
     url.searchParams.set('proxyCountry', proxy.proxyCountry);
@@ -391,14 +404,80 @@ const readUpgradeError = (
     res.on('close', finish);
   });
 
+/** Result of POST /profile: a tracked, non-headless creation session. */
+interface CreationSessionInfo {
+  id: string;
+  name: string;
+  connect: string;
+  stop: string;
+}
+
+// POST /profile launches a non-headless browser, which can take several seconds.
+const CREATE_PROFILE_TIMEOUT_MS = 60_000;
+
+/**
+ * Open a profile-creation session via POST /profile. Returns the tracked
+ * session id the agent WS then attaches to with `?sessionId`. Non-2xx responses
+ * throw UpgradeError so the tool layer's retry/4xx classification applies
+ * uniformly with the WS-upgrade path.
+ */
+const postCreateProfile = async (
+  apiUrl: string,
+  token: string,
+  createProfile: CreateProfileParams,
+): Promise<CreationSessionInfo> => {
+  const base = apiUrl.replace(/\/+$/, '');
+  const url = new URL(base + '/profile');
+  url.searchParams.set('token', token);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CREATE_PROFILE_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(createProfile),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    throw new Error(
+      `POST /profile failed: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new UpgradeError(res.status, res.statusText, body);
+  }
+  const json: unknown = await res.json();
+  if (
+    typeof json !== 'object' ||
+    json === null ||
+    typeof (json as { id?: unknown }).id !== 'string' ||
+    !(json as { id: string }).id
+  ) {
+    throw new UpgradeError(
+      res.status,
+      res.statusText,
+      `POST /profile returned a malformed response (missing or invalid "id")`,
+    );
+  }
+  return json as CreationSessionInfo;
+};
+
 const connect = (
   apiUrl: string,
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
+  sessionId?: string,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
-    const wsUrl = buildAgentWsUrl(apiUrl, token, proxy, profile);
+    const wsUrl = buildAgentWsUrl(apiUrl, token, proxy, profile, sessionId);
     const ws = new WebSocket(wsUrl);
     let settled = false;
 
@@ -521,9 +600,10 @@ export const getOrCreateSession = async (
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
+  createProfile?: CreateProfileParams,
 ): Promise<ActiveSession> => {
   sweepSessions();
-  const key = getSessionKey(mcpSessionId, token, proxy, profile);
+  const key = getSessionKey(mcpSessionId, token, proxy, profile, createProfile);
   const existing = sessions.get(key);
 
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
@@ -546,7 +626,12 @@ export const getOrCreateSession = async (
   }
 
   const creation = (async (): Promise<ActiveSession> => {
-    const ws = await connect(apiUrl, token, proxy, profile);
+    // Profile-creation mode: launch a tracked session via POST /profile, then
+    // attach the agent WS to it by id. Otherwise launch a fresh agent browser.
+    const creationSessionId = createProfile
+      ? (await postCreateProfile(apiUrl, token, createProfile)).id
+      : undefined;
+    const ws = await connect(apiUrl, token, proxy, profile, creationSessionId);
     const session: ActiveSession = {
       ws,
       msgId: 0,
@@ -554,6 +639,8 @@ export const getOrCreateSession = async (
       token,
       proxy,
       profile,
+      createProfile,
+      creationSessionId,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -595,11 +682,14 @@ export const send = async (
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
     if (!session.reconnecting) {
+      // A creation session must re-attach to the same browser by id — a fresh
+      // connect() would launch a new one and lose all auth progress.
       session.reconnecting = connect(
         session.apiUrl,
         session.token,
         session.proxy,
         session.profile,
+        session.creationSessionId,
       ).finally(() => {
         session.reconnecting = undefined;
       });
@@ -636,8 +726,9 @@ export const closeSession = (
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
+  createProfile?: CreateProfileParams,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token, proxy, profile);
+  const key = getSessionKey(mcpSessionId, token, proxy, profile, createProfile);
   const session = sessions.get(key);
   if (session) {
     try {
@@ -659,8 +750,9 @@ export const destroySession = (
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
+  createProfile?: CreateProfileParams,
 ): void => {
-  const key = getSessionKey(mcpSessionId, token, proxy, profile);
+  const key = getSessionKey(mcpSessionId, token, proxy, profile, createProfile);
   const session = sessions.get(key);
   if (session) {
     try {

@@ -167,6 +167,14 @@ const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    // No auto-fire triggers: there is no snapshot/error/command signal for
+    // "about to create a profile". The model loads it by id via
+    // browserless_skill, prompted by the createProfile field description.
+    id: 'auth-profile',
+    path: 'src/skills/auth-profile.md',
+    triggers: [],
+  },
+  {
     id: 'captchas',
     path: 'src/skills/captchas.md',
     cloudOnly: true,
