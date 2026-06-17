@@ -581,7 +581,8 @@ export function registerAgentTools(
           const downloads =
             (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
           const skills = triggered.length > 0 ? renderSkills(triggered) : '';
-          const prefix = batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
+          const prefix =
+            batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
           return config.transport === 'stdio'
             ? await formatDownloadsStdio(downloads, prefix, skills)
             : await formatDownloadsHttp(downloads, prefix, skills);

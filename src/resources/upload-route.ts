@@ -46,14 +46,20 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
       file = body.file;
     } catch {
       return c.json(
-        { ok: false, error: 'Expected multipart/form-data with a "file" field' },
+        {
+          ok: false,
+          error: 'Expected multipart/form-data with a "file" field',
+        },
         400,
       );
     }
 
     if (!(file instanceof File)) {
       return c.json(
-        { ok: false, error: 'Missing multipart "file" field (use -F file=@path)' },
+        {
+          ok: false,
+          error: 'Missing multipart "file" field (use -F file=@path)',
+        },
         400,
       );
     }

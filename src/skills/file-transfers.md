@@ -2,7 +2,7 @@
 
 Transferring files to/from the browser. Two methods: `uploadFile` (attach files to an `<input type="file">`) and `getDownloads` (retrieve files Chrome downloaded).
 
-**Key idea — never move bytes through this conversation.** Large files as base64 blow up the context. So downloads come back as a *handle* (a path or a `browserless-download://` URI), and uploads take that handle (or a local path) instead of base64. The MCP server reads/writes the actual bytes on disk; you only pass small references. Only fall back to base64 `content` when you genuinely have raw bytes and no handle.
+**Key idea — never move bytes through this conversation.** Large files as base64 blow up the context. So downloads come back as a _handle_ (a path or a `browserless-download://` URI), and uploads take that handle (or a local path) instead of base64. The MCP server reads/writes the actual bytes on disk; you only pass small references. Only fall back to base64 `content` when you genuinely have raw bytes and no handle.
 
 ## Downloading
 
@@ -31,7 +31,9 @@ Downloads are captured automatically once the session starts. Trigger the downlo
   "method": "uploadFile",
   "params": {
     "selector": "input[type=file]",
-    "files": [ { "handle": "browserless-download://abc-1", "name": "report.pdf" } ]
+    "files": [
+      { "handle": "browserless-download://abc-1", "name": "report.pdf" }
+    ]
   }
 }
 ```
@@ -54,12 +56,19 @@ curl -s -F file=@"/path/to/file.png" "<MCP_BASE_URL>/upload?token=<YOUR_BROWSERL
 The `/upload` route requires your Browserless token (`?token=` or `Authorization: Bearer`). The `uploadFile` path-rejection error gives you the exact command with the token filled in.
 
 ```json
-{ "method": "uploadFile", "params": { "selector": "input[type=file]", "files": [ { "handle": "browserless-download://abc-1" } ] } }
+{
+  "method": "uploadFile",
+  "params": {
+    "selector": "input[type=file]",
+    "files": [{ "handle": "browserless-download://abc-1" }]
+  }
+}
 ```
 
 Staged files share the download store (15-minute TTL). **Never** base64 a file into `content` by hand — that's what staging avoids.
 
 Other params:
+
 - `selector` — the file input. If hidden behind a styled button, the input still exists in the DOM; target it directly (use a `< ` deep selector for shadow DOM).
 - `name` / `mimeType` — optional; default from the handle/path, mimeType inferred from the extension.
 - Triggers native `input`/`change` events, so frameworks (React, etc.) see the file.

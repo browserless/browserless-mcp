@@ -2,10 +2,9 @@
 
 ## [1.6.2](https://github.com/browserless/browserless-mcp/compare/v1.6.1...v1.6.2) (2026-06-08)
 
-
 ### Bug Fixes
 
-* drop stale COPY patches/ from Dockerfile ([#109](https://github.com/browserless/browserless-mcp/issues/109)) ([976e38d](https://github.com/browserless/browserless-mcp/commit/976e38d4b79643d60485a01cdee0c16486b17afd))
+- drop stale COPY patches/ from Dockerfile ([#109](https://github.com/browserless/browserless-mcp/issues/109)) ([976e38d](https://github.com/browserless/browserless-mcp/commit/976e38d4b79643d60485a01cdee0c16486b17afd))
 
 ## Latest
 
@@ -13,6 +12,7 @@
 - Add a `POST /upload` HTTP endpoint (httpStream transport) for staging a local file into the temp store out-of-band: `curl -F file=@path "<base>/upload?token=<token>"` returns a handle for `uploadFile`, so HTTP-mode uploads never base64 through the conversation. Token-gated (same rules as the MCP surface); staged files share the 15-minute TTL store.
 
 ## v1.6.1
+
 Drop vestigial mcp-proxy postinstall patch that broke `npm install` in consumers
 
 - Dependency updates

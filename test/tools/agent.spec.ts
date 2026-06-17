@@ -344,7 +344,14 @@ describe('formatDownloadsStdio', () => {
     process.env.BROWSERLESS_DOWNLOAD_DIR = dir;
     try {
       const content = await formatDownloadsStdio(
-        [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
+        [
+          {
+            filename: 'report.csv',
+            mimeType: 'text/csv',
+            size: 3,
+            data: 'YWJj',
+          },
+        ],
         '',
         '',
       );
