@@ -455,6 +455,68 @@ const SolveCommandSchema = z.object({
     .default({}),
 });
 
+const UploadFileCommandSchema = z.object({
+  method: z.literal('uploadFile'),
+  params: z.object({
+    selector: z
+      .string()
+      .describe('CSS selector of the <input type="file"> element'),
+    files: z
+      .array(
+        z.object({
+          content: z
+            .string()
+            .optional()
+            .describe(
+              'Base64-encoded file content. LAST RESORT — only for tiny data ' +
+                'you already hold inline. Do NOT read a file into the ' +
+                'conversation, and never split/reassemble base64 by hand: use ' +
+                '`path` (stdio) or `handle` so the server moves the bytes.',
+            ),
+          handle: z
+            .string()
+            .optional()
+            .describe(
+              'A download handle from a prior getDownloads (a path in stdio ' +
+                'mode, a `browserless-download://` URI in HTTP mode). The MCP ' +
+                'server reads the stored file — works in both transports and ' +
+                'keeps the bytes out of the conversation. Use this to re-upload ' +
+                'a file you just downloaded.',
+            ),
+          path: z
+            .string()
+            .optional()
+            .describe(
+              'Local filesystem path to read and upload. stdio (local) mode ' +
+                'only — the MCP server reads and base64-encodes it. In HTTP ' +
+                'mode use `handle` or `content` instead.',
+            ),
+          name: z
+            .string()
+            .optional()
+            .describe(
+              'Filename reported to the page. Defaults to the basename of ' +
+                '`path`, else "file".',
+            ),
+          mimeType: z
+            .string()
+            .optional()
+            .describe('MIME type; inferred from the extension when omitted.'),
+        }),
+      )
+      .min(1)
+      .describe(
+        'Files to attach. Combined decoded size is capped (server default ' +
+          '10MB, hard max 50MB).',
+      ),
+  }),
+});
+
+const GetDownloadsCommandSchema = z.object({
+  method: z.literal('getDownloads'),
+  params: z.object({}).optional().default({}),
+});
+
 const CloseCommandSchema = z.object({
   method: z.literal('close'),
   params: z.object({}).optional().default({}),
@@ -489,6 +551,8 @@ const specificCommandSchemas = [
   LiveURLCommandSchema,
   SolveCommandSchema,
   ScreenshotCommandSchema,
+  UploadFileCommandSchema,
+  GetDownloadsCommandSchema,
   CloseCommandSchema,
 ] as const;
 

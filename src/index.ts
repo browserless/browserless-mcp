@@ -17,13 +17,13 @@ import { registerCrawlTool } from './tools/crawl.js';
 import { registerPerformanceTool } from './tools/performance.js';
 import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
+import { registerDownloadResources } from './resources/downloads.js';
+import { registerUploadRoute } from './resources/upload-route.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AnalyticsHelper } from './lib/analytics.js';
-import {
-  resolveApiKey,
-  installSupabaseTokenTtlPatch,
-} from './lib/account-resolver.js';
+import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
+import { resolveBrowserlessAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
 import { Redis } from 'ioredis';
@@ -107,45 +107,17 @@ const hybridAuthenticate =
   config.transport === 'httpStream'
     ? async (request: IncomingMessage) => {
         const params = new URLSearchParams(request.url?.split('?')[1] ?? '');
-        const authHeader = request.headers.authorization as string | undefined;
-        const headerToken = authHeader?.startsWith('Bearer ')
-          ? authHeader.slice(7)
-          : authHeader;
-
-        const apiUrl =
-          (request.headers['x-browserless-api-url'] as string) ??
-          params.get('browserlessUrl') ??
-          config.browserlessApiUrl;
-
-        // JWTs have 3 dot-separated base64url segments; plain API keys do not.
-        const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
-
-        // 1. Authorization header with plain API key
-        if (headerToken && !isJwt) {
-          return { token: headerToken, apiUrl } as BrowserlessSession;
-        }
-
-        // 2. ?token= query param
-        const directToken = params.get('token') || undefined;
-        if (directToken) {
-          return { token: directToken, apiUrl } as BrowserlessSession;
-        }
-
-        // 3. Authorization header with JWT → decode Supabase token directly
-        if (isJwt && headerToken) {
-          const { apiKey } = await resolveApiKey(
-            config.supabaseUrl,
-            config.supabaseServiceRoleKey,
-            headerToken,
-          );
-          return { token: apiKey, apiUrl } as BrowserlessSession;
-        }
-
-        throw new Error(
-          'No Browserless API token provided. ' +
-            'Pass it as Authorization: Bearer <token> header, ' +
-            '?token= query parameter, or authenticate via OAuth.',
-        );
+        return (await resolveBrowserlessAuth(
+          {
+            authHeader: request.headers.authorization as string | undefined,
+            tokenQuery: params.get('token') || undefined,
+            apiUrlHeader: request.headers['x-browserless-api-url'] as
+              | string
+              | undefined,
+            browserlessUrlQuery: params.get('browserlessUrl') || undefined,
+          },
+          config,
+        )) as BrowserlessSession;
       }
     : undefined;
 
@@ -167,6 +139,7 @@ registerCrawlTool(server, config, analytics);
 registerPerformanceTool(server, config, analytics);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
+registerDownloadResources(server);
 registerScrapeUrlPrompt(server);
 registerExtractContentPrompt(server);
 
@@ -190,6 +163,9 @@ if (config.transport === 'httpStream') {
       stateless: false,
     },
   });
+  // Out-of-band file staging for uploads (the LLM curls a file here and gets a
+  // handle, instead of base64-ing it through the conversation). httpStream only.
+  registerUploadRoute(server, config);
   console.error(
     `[browserless-mcp] HTTP Streamable server listening on port ${config.port}`,
   );

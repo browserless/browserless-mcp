@@ -217,7 +217,8 @@ export type SkillId =
   | 'screenshots'
   | 'tabs'
   | 'autonomous-login'
-  | 'auth-profile';
+  | 'auth-profile'
+  | 'file-transfers';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;

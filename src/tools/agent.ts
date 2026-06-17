@@ -1,6 +1,13 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { z } from 'zod';
+import {
+  downloadUri,
+  getDownload,
+  storeDownload,
+} from '../lib/download-store.js';
 import {
   getOrCreateSession,
   send,
@@ -98,6 +105,170 @@ export const formatScreenshotContent = (
     { type: 'text', text: captionText },
     { type: 'image', data: base64, mimeType },
   ];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
+};
+
+// Hard ceiling mirrored from the enterprise side (MAX_FILE_TRANSFER_MB cap).
+// The server enforces its own (possibly lower) limit; this just stops the MCP
+// from reading/shipping an oversized local upload before it ever hits the wire.
+const FILE_TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
+
+type DownloadEntry = {
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+  data?: string;
+  error?: string;
+  maxBytes?: number;
+  message?: string;
+};
+
+// Resolve each uploadFile entry to base64 `content` before it hits the wire,
+// so the model never has to emit a multi-MB base64 string itself:
+//   - `content` (base64): used as-is.
+//   - `handle`: a download handle/URI/path from a prior getDownloads — the MCP
+//     server reads the stored file. Works in both transports (server-side).
+//   - `path`: a local filesystem path — stdio only (HTTP can't read the client
+//     filesystem).
+export const normalizeUploadCommand = async (
+  cmd: { method: string; params: Record<string, unknown> },
+  transport: McpConfig['transport'],
+  mcpBaseUrl?: string,
+  token?: string,
+): Promise<void> => {
+  if (cmd.method !== 'uploadFile') return;
+  const files = cmd.params.files;
+  if (!Array.isArray(files)) return;
+  for (const file of files) {
+    if (!file || typeof file !== 'object') continue;
+    const f = file as Record<string, unknown>;
+    if (typeof f.content === 'string' && f.content) continue;
+
+    let buf: Buffer;
+    let defaultName: string;
+
+    if (typeof f.handle === 'string' && f.handle) {
+      const record = getDownload(f.handle);
+      if (!record) {
+        throw new UserError(
+          `Unknown upload handle "${f.handle}". Pass a handle returned by ` +
+            `getDownloads, or supply base64 "content".`,
+        );
+      }
+      buf = await readFile(record.path);
+      defaultName = record.filename;
+      delete f.handle;
+    } else if (typeof f.path === 'string' && f.path) {
+      if (transport !== 'stdio') {
+        const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
+        const tokenQ = `?token=${token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+        throw new UserError(
+          'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
+            'read your filesystem). Stage the file once over HTTP, then pass the ' +
+            'returned handle — do NOT base64 it through the conversation:\n' +
+            `  curl -s -F file=@"${f.path}" "${base}/upload${tokenQ}"\n` +
+            'then: uploadFile { files: [{ handle: "<handle from the response>" }] }',
+        );
+      }
+      const path = f.path;
+      buf = await readFile(path).catch((e: unknown) => {
+        throw new UserError(
+          `Failed to read upload file "${path}": ` +
+            (e instanceof Error ? e.message : String(e)),
+        );
+      });
+      defaultName = basename(path);
+      delete f.path;
+    } else {
+      continue;
+    }
+
+    if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
+      throw new UserError(
+        `Upload file "${defaultName}" is ${buf.byteLength} bytes, over the ` +
+          `50MB limit.`,
+      );
+    }
+    f.content = buf.toString('base64');
+    if (!f.name) f.name = defaultName;
+  }
+};
+
+const describeFailedDownload = (d: DownloadEntry): string =>
+  `${d.filename ?? 'unknown'}: ${d.error ?? 'no data'}` +
+  (d.maxBytes ? ` (max ${d.maxBytes} bytes)` : '');
+
+// Persist a download to the server's filesystem (out of the model's context)
+// and return its handle. Returns null for failed/empty entries.
+const persistDownload = async (
+  d: DownloadEntry,
+): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
+  if (d.error || !d.data || !d.filename) return null;
+  return storeDownload(
+    d.filename,
+    d.mimeType ?? 'application/octet-stream',
+    Buffer.from(d.data, 'base64'),
+  );
+};
+
+// stdio: files live on the same machine, so the handle is the on-disk path. The
+// model gets paths it can hand straight to uploadFile — no base64 in context.
+export const formatDownloadsStdio = async (
+  downloads: DownloadEntry[],
+  prefix: string,
+  skills: string,
+): Promise<Content[]> => {
+  const lines: string[] = [];
+  for (const d of downloads) {
+    const record = await persistDownload(d);
+    if (!record) {
+      lines.push(`- ${describeFailedDownload(d)}`);
+      continue;
+    }
+    lines.push(
+      `- ${record.path} (${record.mimeType}, ${record.size} bytes) — ` +
+        `reuse as uploadFile { path: "${record.path}" }`,
+    );
+  }
+  const text = downloads.length
+    ? `${prefix}Saved ${downloads.length} download(s):\n${lines.join('\n')}`
+    : `${prefix}No new downloads.`;
+  const content: Content[] = [{ type: 'text', text }];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
+};
+
+// httpStream: no shared disk. Return a resource_link per file (a small handle,
+// not the bytes) — the client reads it on demand via resources/read, and the
+// same handle can be passed back to uploadFile. The base64 never enters context.
+export const formatDownloadsHttp = async (
+  downloads: DownloadEntry[],
+  prefix: string,
+  skills: string,
+): Promise<Content[]> => {
+  const content: Content[] = [
+    {
+      type: 'text',
+      text: downloads.length
+        ? `${prefix}${downloads.length} download(s) — read via the resource ` +
+          `link, or reuse the URI as uploadFile { handle }:`
+        : `${prefix}No new downloads.`,
+    },
+  ];
+  for (const d of downloads) {
+    const record = await persistDownload(d);
+    if (!record) {
+      content.push({ type: 'text', text: describeFailedDownload(d) });
+      continue;
+    }
+    content.push({
+      type: 'resource_link',
+      uri: downloadUri(record.id),
+      name: record.filename,
+      mimeType: record.mimeType,
+    });
+  }
   if (skills) content.push({ type: 'text', text: skills });
   return content;
 };
@@ -403,6 +574,19 @@ export function registerAgentTools(
           ];
         }
 
+        // Downloads: branch on transport. stdio writes files to disk and
+        // returns paths; httpStream returns the bytes as resource blocks. Either
+        // way the base64 stays out of the model's text context.
+        if (last.method === 'getDownloads') {
+          const downloads =
+            (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
+          const skills = triggered.length > 0 ? renderSkills(triggered) : '';
+          const prefix = batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
+          return config.transport === 'stdio'
+            ? await formatDownloadsStdio(downloads, prefix, skills)
+            : await formatDownloadsHttp(downloads, prefix, skills);
+        }
+
         // Screenshot: return as image content block (vision input ≈ 1.5K tokens
         // vs. ~67K tokens if we dumped the base64 inline as text).
         if (last.method === 'screenshot') {
@@ -428,6 +612,16 @@ export function registerAgentTools(
       };
 
       try {
+        // Resolve any local upload paths to base64 once, before the (possibly
+        // retried) send loop runs.
+        for (const cmd of commands) {
+          await normalizeUploadCommand(
+            cmd,
+            config.transport,
+            config.mcpBaseUrl,
+            token,
+          );
+        }
         const result = await runCommands(false);
         sendAnalytics(true);
         return result;

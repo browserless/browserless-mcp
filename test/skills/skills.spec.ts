@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all ten skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(10);
+  it('loads all eleven skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(11);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -50,6 +50,7 @@ describe('skills/registry', () => {
       'tabs',
       'autonomous-login',
       'auth-profile',
+      'file-transfers',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -168,6 +169,34 @@ describe('skills/detectSkills - modals', () => {
   it('does not fire when no dialog is present', () => {
     const ctx = { snapshot: snapshot([el({ role: 'button', name: 'OK' })]) };
     expect(detectSkills(ctx, createSkillState())).to.not.include('modals');
+  });
+});
+
+describe('skills/detectSkills - file-transfers', () => {
+  it('fires when a file input is present', () => {
+    const ctx = {
+      snapshot: snapshot([el({ type: 'file', selector: 'input[type=file]' })]),
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include('file-transfers');
+  });
+
+  it('fires on an uploadFile command', () => {
+    const ctx = {
+      cmd: { method: 'uploadFile', params: { selector: 'input' } },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.include('file-transfers');
+  });
+
+  it('fires on a getDownloads command', () => {
+    const ctx = { cmd: { method: 'getDownloads', params: {} } };
+    expect(detectSkills(ctx, createSkillState())).to.include('file-transfers');
+  });
+
+  it('does not fire without a file input or transfer command', () => {
+    const ctx = { snapshot: snapshot([el({ role: 'button', name: 'OK' })]) };
+    expect(detectSkills(ctx, createSkillState())).to.not.include(
+      'file-transfers',
+    );
   });
 });
 

@@ -9,6 +9,9 @@
 
 ## Latest
 
+- Add file upload/download support to `browserless_agent` via the `uploadFile` and `getDownloads` commands, plus a `file-transfers` skill. Downloads are persisted to the MCP server's filesystem and returned as handles — a path in stdio mode, a `browserless-download://` resource link in HTTP mode — so large base64 payloads never pass through the conversation. `uploadFile` accepts a `handle` (re-upload a downloaded file in either transport), a local `path` (stdio), or base64 `content`. Honors the server-side 10MB/50MB transfer cap.
+- Add a `POST /upload` HTTP endpoint (httpStream transport) for staging a local file into the temp store out-of-band: `curl -F file=@path "<base>/upload?token=<token>"` returns a handle for `uploadFile`, so HTTP-mode uploads never base64 through the conversation. Token-gated (same rules as the MCP surface); staged files share the 15-minute TTL store.
+
 ## v1.6.1
 Drop vestigial mcp-proxy postinstall patch that broke `npm install` in consumers
 

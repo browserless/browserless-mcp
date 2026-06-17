@@ -66,6 +66,16 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 3. **evaluate** { content } — JS (IIFE): \`(() => { return ... })()\`
 4. **html** { selector } — raw HTML
 
+## Files (upload / download)
+**NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.
+- **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it.
+- **Upload a local file (HTTP)**: the server can't read your disk. Stage it once over HTTP, then use the handle:
+  \`curl -s -F file=@"/path/to/file" "<MCP_BASE_URL>/upload?token=<TOKEN>"\` → returns \`{ "handle": "browserless-download://…" }\` → \`uploadFile { files: [{ handle }] }\`. (The path-rejection error gives you the exact command with your token + URL filled in.)
+- **Re-upload something from \`getDownloads\`**: pass its \`handle\` (works in both modes).
+- **Download**: trigger it (click/goto), then \`getDownloads\` — returns a path (stdio) or \`browserless-download://\` handle (HTTP), never the bytes. Reuse that path/handle directly in \`uploadFile\`.
+- base64 \`content\` is a LAST RESORT — tiny inline data only.
+- Full recipe: \`file-transfers\` skill.
+
 ## Batching — Maximize Per Call
 Plan ALL actions from snapshot before next snapshot.
 
@@ -126,4 +136,5 @@ Available skills:
 - **screenshots** — when to screenshot vs. snapshot, scope and format choices
 - **tabs** — multi-tab workflows, peek-without-switching
 - **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
-- **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)`;
+- **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
+- **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps`;
