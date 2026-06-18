@@ -35,6 +35,7 @@ import { AgentParamsSchema } from './schemas.js';
 import {
   AGENT_SYSTEM_PROMPT,
   SKILL_TOOL_DESCRIPTION,
+  fileTransferModeNote,
 } from '../skills/system-prompt.js';
 import {
   buildCrossOriginNotice,
@@ -122,6 +123,26 @@ type DownloadEntry = {
   error?: string;
   maxBytes?: number;
   message?: string;
+  sourceUrl?: string;
+  inProgress?: boolean;
+  receivedBytes?: number;
+  totalBytes?: number;
+};
+
+const fmtBytes = (n?: number): string =>
+  typeof n !== 'number'
+    ? '?'
+    : n >= 1_048_576
+      ? `${(n / 1_048_576).toFixed(1)}MB`
+      : `${Math.round(n / 1024)}KB`;
+
+// Still-downloading entry: report progress so the caller knows to touch the
+// browser again to collect it (no bytes, nothing to save yet).
+const describeInProgressDownload = (d: DownloadEntry): string => {
+  const got = fmtBytes(d.receivedBytes);
+  const total =
+    d.totalBytes && d.totalBytes > 0 ? ` / ${fmtBytes(d.totalBytes)}` : '';
+  return `${d.filename ?? 'file'} — downloading (${got}${total}); touch the browser again to collect it`;
 };
 
 // Resolve each uploadFile entry to base64 `content` before it hits the wire,
@@ -195,33 +216,49 @@ export const normalizeUploadCommand = async (
   }
 };
 
-const describeFailedDownload = (d: DownloadEntry): string =>
-  `${d.filename ?? 'unknown'}: ${d.error ?? 'no data'}` +
-  (d.maxBytes ? ` (max ${d.maxBytes} bytes)` : '');
+const describeFailedDownload = (d: DownloadEntry): string => {
+  let s =
+    `${d.filename ?? 'unknown'}: ${d.error ?? 'no data'}` +
+    (d.maxBytes ? ` (max ${d.maxBytes} bytes)` : '');
+  // Over-cap files can't go through the transfer flow — point at the source so
+  // the caller can fetch it directly (e.g. curl) if it has network access.
+  if (d.error === 'FileTooLarge' && d.sourceUrl) {
+    s += ` — too large to transfer; fetch directly: ${d.sourceUrl}`;
+  }
+  return s;
+};
 
-// Persist a download to the server's filesystem (out of the model's context)
-// and return its handle. Returns null for failed/empty entries.
+// Persist a download to the server's filesystem (out of the model's context),
+// tagged to the MCP session for cleanup. Returns null for failed/empty entries.
 const persistDownload = async (
   d: DownloadEntry,
+  sessionId?: string,
 ): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
   if (d.error || !d.data || !d.filename) return null;
   return storeDownload(
     d.filename,
     d.mimeType ?? 'application/octet-stream',
     Buffer.from(d.data, 'base64'),
+    sessionId,
   );
 };
 
-// stdio: files live on the same machine, so the handle is the on-disk path. The
-// model gets paths it can hand straight to uploadFile — no base64 in context.
+// stdio: files live on the same machine, so the file is already saved — the
+// model gets the on-disk path (usable as uploadFile { path }). No base64 in
+// context; nothing more to fetch.
 export const formatDownloadsStdio = async (
   downloads: DownloadEntry[],
   prefix: string,
   skills: string,
+  opts: { sessionId?: string } = {},
 ): Promise<Content[]> => {
   const lines: string[] = [];
   for (const d of downloads) {
-    const record = await persistDownload(d);
+    if (d.inProgress) {
+      lines.push(`- ${describeInProgressDownload(d)}`);
+      continue;
+    }
+    const record = await persistDownload(d, opts.sessionId);
     if (!record) {
       lines.push(`- ${describeFailedDownload(d)}`);
       continue;
@@ -232,43 +269,46 @@ export const formatDownloadsStdio = async (
     );
   }
   const text = downloads.length
-    ? `${prefix}Saved ${downloads.length} download(s):\n${lines.join('\n')}`
+    ? `${prefix}Downloads:\n${lines.join('\n')}`
     : `${prefix}No new downloads.`;
   const content: Content[] = [{ type: 'text', text }];
   if (skills) content.push({ type: 'text', text: skills });
   return content;
 };
 
-// httpStream: no shared disk. Return a resource_link per file (a small handle,
-// not the bytes) — the client reads it on demand via resources/read, and the
-// same handle can be passed back to uploadFile. The base64 never enters context.
+// httpStream: no shared disk. Surface each download as a notification (metadata
+// only) plus a single-use GET URL. The client decides whether to fetch the
+// bytes (curl) or reuse the handle for uploadFile — the base64 never enters
+// context. Fetching consumes the file; the handle is gone after one GET.
 export const formatDownloadsHttp = async (
   downloads: DownloadEntry[],
   prefix: string,
   skills: string,
+  opts: { sessionId?: string; mcpBaseUrl?: string; token?: string } = {},
 ): Promise<Content[]> => {
-  const content: Content[] = [
-    {
-      type: 'text',
-      text: downloads.length
-        ? `${prefix}${downloads.length} download(s) — read via the resource ` +
-          `link, or reuse the URI as uploadFile { handle }:`
-        : `${prefix}No new downloads.`,
-    },
-  ];
+  const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
+  const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  const lines: string[] = [];
   for (const d of downloads) {
-    const record = await persistDownload(d);
-    if (!record) {
-      content.push({ type: 'text', text: describeFailedDownload(d) });
+    if (d.inProgress) {
+      lines.push(`- ${describeInProgressDownload(d)}`);
       continue;
     }
-    content.push({
-      type: 'resource_link',
-      uri: downloadUri(record.id),
-      name: record.filename,
-      mimeType: record.mimeType,
-    });
+    const record = await persistDownload(d, opts.sessionId);
+    if (!record) {
+      lines.push(`- ${describeFailedDownload(d)}`);
+      continue;
+    }
+    lines.push(
+      `- ${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
+        `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
+        `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`,
+    );
   }
+  const text = downloads.length
+    ? `${prefix}Downloads (save the ones you need — each GET works once):\n${lines.join('\n')}`
+    : `${prefix}No new downloads.`;
+  const content: Content[] = [{ type: 'text', text }];
   if (skills) content.push({ type: 'text', text: skills });
   return content;
 };
@@ -318,7 +358,9 @@ export function registerAgentTools(
 
   defineTool<AgentParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
-    description: AGENT_SYSTEM_PROMPT,
+    description:
+      AGENT_SYSTEM_PROMPT +
+      fileTransferModeNote(config.transport, config.mcpBaseUrl),
     parameters: AgentParamsSchema,
     annotations: {
       title: 'Browserless Agent',
@@ -552,15 +594,36 @@ export function registerAgentTools(
           return [{ type: 'text' as const, text: 'Browser session closed.' }];
         }
 
-        // Snapshot: format as compact ref-based text
+        // Auto-surface any files Chrome captured during this batch so the model
+        // gets a download notification without having to call getDownloads (or
+        // reach for a separate download tool). Skipped when the model already
+        // drained explicitly, or the session closed. Best-effort: a failed poll
+        // never fails the batch.
+        let autoDownloads: DownloadEntry[] = [];
+        if (!closedDuringBatch && last.method !== 'getDownloads') {
+          try {
+            const dl = await send(agentSession, 'getDownloads', {});
+            autoDownloads =
+              (dl.result as { downloads?: DownloadEntry[] } | undefined)
+                ?.downloads ?? [];
+          } catch {
+            // ignore — downloads will surface on a later call
+          }
+        }
+
+        const skillsText =
+          triggered.length > 0 ? renderSkills(triggered) : '';
+        let baseContent: Content[];
+
         if (lastSnapshot) {
+          // Snapshot: compact ref-based text.
           const notice = buildCrossOriginNotice(
             crossOriginBaseline,
             lastSnapshot.url,
           );
           const noticeBlock = notice ? `${notice}\n\n` : '';
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
-          return [
+          baseContent = [
             {
               type: 'text' as const,
               text: appendSkills(
@@ -572,44 +635,60 @@ export function registerAgentTools(
               ),
             },
           ];
-        }
-
-        // Downloads: branch on transport. stdio writes files to disk and
-        // returns paths; httpStream returns the bytes as resource blocks. Either
-        // way the base64 stays out of the model's text context.
-        if (last.method === 'getDownloads') {
+        } else if (last.method === 'getDownloads') {
+          // Explicit drain — branch on transport (stdio path vs. single-use GET).
           const downloads =
             (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
-          const skills = triggered.length > 0 ? renderSkills(triggered) : '';
           const prefix =
             batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
           return config.transport === 'stdio'
-            ? await formatDownloadsStdio(downloads, prefix, skills)
-            : await formatDownloadsHttp(downloads, prefix, skills);
+            ? await formatDownloadsStdio(downloads, prefix, skillsText, {
+                sessionId: mcpSessionId,
+              })
+            : await formatDownloadsHttp(downloads, prefix, skillsText, {
+                sessionId: mcpSessionId,
+                mcpBaseUrl: config.mcpBaseUrl,
+                token,
+              });
+        } else {
+          // Screenshot → image content block; otherwise JSON text.
+          const shot =
+            last.method === 'screenshot'
+              ? formatScreenshotContent(
+                  lastResult,
+                  lastCmd,
+                  batchPrefix,
+                  skillsText,
+                )
+              : null;
+          baseContent = shot ?? [
+            {
+              type: 'text' as const,
+              text: appendSkills(
+                batchPrefix + JSON.stringify(lastResult, null, 2),
+                triggered,
+              ),
+            },
+          ];
         }
 
-        // Screenshot: return as image content block (vision input ≈ 1.5K tokens
-        // vs. ~67K tokens if we dumped the base64 inline as text).
-        if (last.method === 'screenshot') {
-          const content = formatScreenshotContent(
-            lastResult,
-            lastCmd,
-            batchPrefix,
-            triggered.length > 0 ? renderSkills(triggered) : '',
-          );
-          if (content) return content;
+        // Append the captured-download notification (metadata + how to save),
+        // never the bytes.
+        if (autoDownloads.length > 0) {
+          const notice =
+            config.transport === 'stdio'
+              ? await formatDownloadsStdio(autoDownloads, '', '', {
+                  sessionId: mcpSessionId,
+                })
+              : await formatDownloadsHttp(autoDownloads, '', '', {
+                  sessionId: mcpSessionId,
+                  mcpBaseUrl: config.mcpBaseUrl,
+                  token,
+                });
+          baseContent = [...baseContent, ...notice];
         }
 
-        // Everything else: return as JSON text
-        return [
-          {
-            type: 'text' as const,
-            text: appendSkills(
-              batchPrefix + JSON.stringify(lastResult, null, 2),
-              triggered,
-            ),
-          },
-        ];
+        return baseContent;
       };
 
       try {

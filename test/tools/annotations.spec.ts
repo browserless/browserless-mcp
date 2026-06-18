@@ -3,7 +3,6 @@ import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerFunctionTool } from '../../src/tools/function.js';
-import { registerDownloadTool } from '../../src/tools/download.js';
 import { registerExportTool } from '../../src/tools/export.js';
 import { registerAgentTools } from '../../src/tools/agent.js';
 import { registerSearchTool } from '../../src/tools/search.js';
@@ -36,7 +35,6 @@ const mockConfig: McpConfig = {
 const registrars = [
   registerSmartScraperTool,
   registerFunctionTool,
-  registerDownloadTool,
   registerExportTool,
   registerAgentTools,
   registerSearchTool,

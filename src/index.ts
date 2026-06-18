@@ -8,7 +8,6 @@ import { getConfig } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
 import { registerSmartScraperTool } from './tools/smartscraper.js';
 import { registerFunctionTool } from './tools/function.js';
-import { registerDownloadTool } from './tools/download.js';
 import { registerExportTool } from './tools/export.js';
 import { registerAgentTools } from './tools/agent.js';
 import { registerSearchTool } from './tools/search.js';
@@ -17,8 +16,9 @@ import { registerCrawlTool } from './tools/crawl.js';
 import { registerPerformanceTool } from './tools/performance.js';
 import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
-import { registerDownloadResources } from './resources/downloads.js';
 import { registerUploadRoute } from './resources/upload-route.js';
+import { registerDownloadRoute } from './resources/download-route.js';
+import { clearSession } from './lib/download-store.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AnalyticsHelper } from './lib/analytics.js';
@@ -130,7 +130,6 @@ const server = new FastMCP<BrowserlessSession>({
 
 registerSmartScraperTool(server, config, analytics);
 registerFunctionTool(server, config, analytics);
-registerDownloadTool(server, config, analytics);
 registerExportTool(server, config, analytics);
 registerAgentTools(server, config, analytics);
 registerSearchTool(server, config, analytics);
@@ -139,7 +138,6 @@ registerCrawlTool(server, config, analytics);
 registerPerformanceTool(server, config, analytics);
 registerApiDocsResource(server, config);
 registerStatusResource(server, config);
-registerDownloadResources(server);
 registerScrapeUrlPrompt(server);
 registerExtractContentPrompt(server);
 
@@ -150,6 +148,8 @@ server.on('connect', (event) => {
 
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
+  // Drop any files staged/captured for this session (TTL is the backstop).
+  clearSession(event.session.sessionId);
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
 });
 
@@ -166,6 +166,9 @@ if (config.transport === 'httpStream') {
   // Out-of-band file staging for uploads (the LLM curls a file here and gets a
   // handle, instead of base64-ing it through the conversation). httpStream only.
   registerUploadRoute(server, config);
+  // Single-use, out-of-band fetch for captured downloads (the LLM GETs the file
+  // instead of pulling bytes through the conversation). httpStream only.
+  registerDownloadRoute(server, config);
   console.error(
     `[browserless-mcp] HTTP Streamable server listening on port ${config.port}`,
   );

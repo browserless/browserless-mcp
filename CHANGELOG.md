@@ -8,8 +8,9 @@
 
 ## Latest
 
-- Add file upload/download support to `browserless_agent` via the `uploadFile` and `getDownloads` commands, plus a `file-transfers` skill. Downloads are persisted to the MCP server's filesystem and returned as handles — a path in stdio mode, a `browserless-download://` resource link in HTTP mode — so large base64 payloads never pass through the conversation. `uploadFile` accepts a `handle` (re-upload a downloaded file in either transport), a local `path` (stdio), or base64 `content`. Honors the server-side 10MB/50MB transfer cap.
-- Add a `POST /upload` HTTP endpoint (httpStream transport) for staging a local file into the temp store out-of-band: `curl -F file=@path "<base>/upload?token=<token>"` returns a handle for `uploadFile`, so HTTP-mode uploads never base64 through the conversation. Token-gated (same rules as the MCP surface); staged files share the 15-minute TTL store.
+- Add file upload/download support to `browserless_agent` via the `uploadFile` and `getDownloads` commands, plus a `file-transfers` skill. Downloads **auto-surface** on every agent response as a ledger — never the bytes, without the model calling `getDownloads`: completed files (handle/path), still-running ones (with progress, so the model re-checks on its next browser touch), and over-cap ones (source URL for a direct fetch). In stdio mode the file is saved locally and you get its path; `uploadFile` accepts a `handle`, a local `path`, or base64 `content`. Honors the server-side 10MB/50MB transfer cap.
+- Add out-of-band HTTP file endpoints (httpStream transport), token-gated like the MCP surface: `POST /upload` stages a local file (`curl -F file=@path "<base>/upload?token=<token>"`) and returns a handle for `uploadFile`; `GET /download/<id>?token=<token>` fetches a captured download. Files share a temp store dropped after one download fetch, a 15-minute TTL, or session end — whichever comes first.
+- **Removed the standalone `browserless_download` tool.** File downloads now go through `browserless_agent` (trigger the download, then it auto-surfaces) — a single path that never inlines bytes into context. Replaces the old tool that returned the file as base64.
 
 ## v1.6.1
 

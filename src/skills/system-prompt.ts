@@ -67,12 +67,13 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 4. **html** { selector } — raw HTML
 
 ## Files (upload / download)
+**To download a file, DRIVE THE BROWSER — do not \`curl\`/\`wget\`/\`fetch\` the file yourself as a first move.** Many real downloads (login/cookie-gated, generated server-side on demand, or triggered by a click whose response headers force the download) have NO fetchable URL — a direct fetch silently gets the wrong bytes, an HTML error page, or 403. Click/goto in the agent and collect from the auto-surfaced ledger. The ONLY time a direct fetch is correct: the ledger hands you a URL to use — the single-use \`/download/<id>\` URL, or an over-cap \`sourceUrl\`. Reaching for \`curl\` first is a bug, not a shortcut.
 **NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.
 - **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it.
 - **Upload a local file (HTTP)**: the server can't read your disk. Stage it once over HTTP, then use the handle:
   \`curl -s -F file=@"/path/to/file" "<MCP_BASE_URL>/upload?token=<TOKEN>"\` → returns \`{ "handle": "browserless-download://…" }\` → \`uploadFile { files: [{ handle }] }\`. (The path-rejection error gives you the exact command with your token + URL filled in.)
 - **Re-upload something from \`getDownloads\`**: pass its \`handle\` (works in both modes).
-- **Download**: trigger it (click/goto), then \`getDownloads\` — returns a path (stdio) or \`browserless-download://\` handle (HTTP), never the bytes. Reuse that path/handle directly in \`uploadFile\`.
+- **Download**: just trigger it in the agent (click a download link, or goto the file URL). The captured file **auto-surfaces** as a notification on the agent response (filename/size/handle), never the bytes — the server waits for it to finish (bounded by size), so it usually lands on that same call. stdio: file already saved, you get its path. HTTP: a **single-use** \`curl … /download/<id>?token=\` URL — fetch only if you need it. Files over the cap aren't transferred — you get the source URL to fetch directly. Path/handle reuses in \`uploadFile\`. (No separate download tool — use the agent.)
 - base64 \`content\` is a LAST RESORT — tiny inline data only.
 - Full recipe: \`file-transfers\` skill.
 
@@ -122,6 +123,26 @@ Never retry same failed action without re-snapshot.
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 `;
+
+// Transport-specific file-transfer guidance, appended to the agent tool
+// description so the model knows its mode UP FRONT — instead of guessing (and
+// base64-ing files it should pass by path). The server knows the transport; the
+// model can't introspect it.
+export const fileTransferModeNote = (
+  transport: 'stdio' | 'httpStream',
+  mcpBaseUrl: string,
+): string =>
+  transport === 'stdio'
+    ? `\n\n## Runtime: LOCAL (stdio)\n` +
+      `Before any file transfer, know your mode: this server runs over **stdio**, on the same machine as your files. ` +
+      `To UPLOAD a local file, pass its **\`path\`** straight to \`uploadFile\` (\`files: [{ path: "/abs/file" }]\`) — the server reads it. ` +
+      `**Do NOT base64 the file or read its bytes into the conversation.** ` +
+      `DOWNLOADS are saved to local disk; the agent response gives you the path.`
+    : `\n\n## Runtime: REMOTE (HTTP)\n` +
+      `Before any file transfer, know your mode: this server runs over **HTTP** and **cannot read your filesystem**. ` +
+      `To UPLOAD a local file, stage it once over HTTP, then use the handle:\n` +
+      `  \`curl -s -F file=@"/abs/file" "${mcpBaseUrl}/upload?token=<YOUR_TOKEN>"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
+      `**Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
 
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
 

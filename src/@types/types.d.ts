@@ -6,7 +6,6 @@ import type {
   SmartScraperResponseSchema,
 } from '../tools/smartscraper.js';
 import type { FunctionParamsSchema } from '../tools/function.js';
-import type { DownloadParamsSchema } from '../tools/download.js';
 import type { ExportParamsSchema } from '../tools/export.js';
 import type {
   SearchSourceSchema,
@@ -279,7 +278,6 @@ export type ScrapeFormat = z.infer<typeof ScrapeFormatSchema>;
 export type SmartScraperParams = z.infer<typeof SmartScraperParamsSchema>;
 export type SmartScraperResponse = z.infer<typeof SmartScraperResponseSchema>;
 export type FunctionParams = z.infer<typeof FunctionParamsSchema>;
-export type DownloadParams = z.infer<typeof DownloadParamsSchema>;
 export type ExportParams = z.infer<typeof ExportParamsSchema>;
 export type ProxyOptions = z.infer<typeof ProxyOptionsSchema>;
 export type SearchSource = z.infer<typeof SearchSourceSchema>;

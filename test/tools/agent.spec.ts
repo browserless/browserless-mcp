@@ -14,6 +14,7 @@ import {
   registerAgentTools,
   sanitizeUpgradeBody,
 } from '../../src/tools/agent.js';
+import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -208,6 +209,23 @@ describe('formatScreenshotContent', () => {
   });
 });
 
+describe('fileTransferModeNote', () => {
+  it('tells the model to use a local path in stdio mode (no base64)', () => {
+    const note = fileTransferModeNote('stdio', 'https://mcp.example.com');
+    expect(note).to.match(/stdio/i);
+    expect(note).to.include('path');
+    expect(note).to.match(/do NOT base64/i);
+    expect(note).to.not.include('/upload');
+  });
+
+  it('tells the model to stage via /upload in HTTP mode', () => {
+    const note = fileTransferModeNote('httpStream', 'https://mcp.example.com');
+    expect(note).to.match(/HTTP/);
+    expect(note).to.include('https://mcp.example.com/upload');
+    expect(note).to.match(/never base64/i);
+  });
+});
+
 describe('normalizeUploadCommand', () => {
   it('reads a local path into base64 content (stdio)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-upload-'));
@@ -304,36 +322,62 @@ describe('normalizeUploadCommand', () => {
 });
 
 describe('formatDownloadsHttp', () => {
-  it('returns a resource_link handle, never the base64 bytes', async () => {
+  it('surfaces a notification + single-use GET URL, never the base64 bytes', async () => {
     const content = await formatDownloadsHttp(
       [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
       '',
       '',
+      { mcpBaseUrl: 'https://mcp.example.com', token: 'tok-1' },
     );
-    const link = content.find((c) => c.type === 'resource_link') as Extract<
-      Content,
-      { type: 'resource_link' }
-    >;
-    expect(link).to.exist;
-    expect(link.uri).to.match(/^browserless-download:\/\//);
-    expect(link.name).to.equal('report.csv');
-    expect(link.mimeType).to.equal('text/csv');
-    // The base64 must not appear anywhere in the returned content.
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.include('report.csv');
+    // GET recipe with the real base URL + token, marked single use.
+    expect(text).to.match(
+      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+    );
+    expect(text).to.include('single use');
+    // The base64 must never appear in the returned content.
     expect(JSON.stringify(content)).to.not.include('YWJj');
   });
 
-  it('degrades oversized/failed downloads to a text note', async () => {
+  it('degrades oversized/failed downloads to a text note with the source URL', async () => {
     const content = await formatDownloadsHttp(
-      [{ filename: 'big.bin', error: 'FileTooLarge', maxBytes: 1048576 }],
+      [
+        {
+          filename: 'big.bin',
+          error: 'FileTooLarge',
+          maxBytes: 1048576,
+          sourceUrl: 'https://example.com/big.bin',
+        },
+      ],
       '',
       '',
+      { mcpBaseUrl: 'https://mcp.example.com', token: 'tok-1' },
     );
-    expect(content.some((c) => c.type === 'resource_link')).to.be.false;
-    const note = content[content.length - 1] as Extract<
-      Content,
-      { type: 'text' }
-    >;
-    expect(note.text).to.match(/big\.bin: FileTooLarge/);
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.match(/big\.bin: FileTooLarge/);
+    expect(text).to.include('fetch directly: https://example.com/big.bin');
+    expect(text).to.not.include('/download/');
+  });
+
+  it('reports an in-progress download as a progress line, no fetch URL', async () => {
+    const content = await formatDownloadsHttp(
+      [
+        {
+          filename: 'movie.mov',
+          inProgress: true,
+          receivedBytes: 2 * 1048576,
+          totalBytes: 10 * 1048576,
+        },
+      ],
+      '',
+      '',
+      { mcpBaseUrl: 'https://mcp.example.com', token: 'tok-1' },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.match(/movie\.mov — downloading \(2\.0MB \/ 10\.0MB\)/);
+    expect(text).to.include('touch the browser again');
+    expect(text).to.not.include('/download/');
   });
 });
 
