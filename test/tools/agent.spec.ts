@@ -252,7 +252,11 @@ describe('normalizeUploadCommand', () => {
     };
     let threw = false;
     try {
-      await normalizeUploadCommand(cmd, 'httpStream', 'https://mcp.example.com');
+      await normalizeUploadCommand(
+        cmd,
+        'httpStream',
+        'https://mcp.example.com',
+      );
     } catch (e) {
       threw = true;
       const msg = (e as Error).message;

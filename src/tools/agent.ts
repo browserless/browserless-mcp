@@ -655,7 +655,11 @@ export function registerAgentTools(
         // Resolve any local upload paths to base64 once, before the (possibly
         // retried) send loop runs.
         for (const cmd of commands) {
-          await normalizeUploadCommand(cmd, config.transport, config.mcpBaseUrl);
+          await normalizeUploadCommand(
+            cmd,
+            config.transport,
+            config.mcpBaseUrl,
+          );
         }
         const result = await runCommands(false);
         sendAnalytics(true);
