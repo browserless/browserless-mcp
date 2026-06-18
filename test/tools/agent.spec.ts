@@ -5,8 +5,7 @@ import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
   formatConnectError,
-  formatDownloadsHttp,
-  formatDownloadsStdio,
+  formatDownloads,
   formatErrorMessage,
   formatScreenshotContent,
   formatSnapshot,
@@ -321,13 +320,17 @@ describe('normalizeUploadCommand', () => {
   });
 });
 
-describe('formatDownloadsHttp', () => {
+describe('formatDownloads (httpStream)', () => {
   it('surfaces a notification + single-use GET URL, never the base64 bytes', async () => {
-    const content = await formatDownloadsHttp(
+    const content = await formatDownloads(
       [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
       '',
       '',
-      { mcpBaseUrl: 'https://mcp.example.com', token: 'tok-1' },
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.include('report.csv');
@@ -341,7 +344,7 @@ describe('formatDownloadsHttp', () => {
   });
 
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {
-    const content = await formatDownloadsHttp(
+    const content = await formatDownloads(
       [
         {
           filename: 'big.bin',
@@ -352,7 +355,11 @@ describe('formatDownloadsHttp', () => {
       ],
       '',
       '',
-      { mcpBaseUrl: 'https://mcp.example.com', token: 'tok-1' },
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.match(/big\.bin: FileTooLarge/);
@@ -361,7 +368,7 @@ describe('formatDownloadsHttp', () => {
   });
 
   it('reports an in-progress download as a progress line, no fetch URL', async () => {
-    const content = await formatDownloadsHttp(
+    const content = await formatDownloads(
       [
         {
           filename: 'movie.mov',
@@ -372,7 +379,11 @@ describe('formatDownloadsHttp', () => {
       ],
       '',
       '',
-      { mcpBaseUrl: 'https://mcp.example.com', token: 'tok-1' },
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.match(/movie\.mov — downloading \(2\.0MB \/ 10\.0MB\)/);
@@ -381,13 +392,13 @@ describe('formatDownloadsHttp', () => {
   });
 });
 
-describe('formatDownloadsStdio', () => {
+describe('formatDownloads (stdio)', () => {
   it('writes the file to disk and reports a reusable path, no base64', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-dl-'));
     const prev = process.env.BROWSERLESS_DOWNLOAD_DIR;
     process.env.BROWSERLESS_DOWNLOAD_DIR = dir;
     try {
-      const content = await formatDownloadsStdio(
+      const content = await formatDownloads(
         [
           {
             filename: 'report.csv',
@@ -398,6 +409,7 @@ describe('formatDownloadsStdio', () => {
         ],
         '',
         '',
+        { transport: 'stdio' },
       );
       const text = (content[0] as Extract<Content, { type: 'text' }>).text;
       expect(text).to.include('report.csv');

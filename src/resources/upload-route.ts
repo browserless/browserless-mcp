@@ -1,25 +1,16 @@
 import type { FastMCP } from 'fastmcp';
-import { downloadUri, storeDownload } from '../lib/download-store.js';
+import {
+  downloadUri,
+  storeDownload,
+  FILE_TRANSFER_MAX_BYTES,
+} from '../lib/download-store.js';
 import { resolveBrowserlessAuth } from '../lib/http-auth.js';
 import type { McpConfig } from '../@types/types.js';
 
-// Hard ceiling on a single staged upload (mirrors the transfer cap).
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-
-/**
- * Registers `POST /upload` on the HTTP-stream server. Clients (e.g. an LLM with
- * shell access) push a file's bytes here once — over plain HTTP, NOT through the
- * conversation — and get back a handle they pass to the agent's `uploadFile`:
- *
- *   curl -s -F file=@/path/to/file "<mcpBaseUrl>/upload?token=<token>"
- *   → { "ok": true, "handle": "browserless-download://<id>", ... }
- *
- * Requires the same Browserless token as the MCP surface (?token= or
- * Authorization: Bearer). The handle resolves against the shared temp-file
- * store (15-min TTL), so the
- * base64 payload never enters the model's context. Only meaningful for the
- * httpStream transport; in stdio mode `uploadFile { path }` reads files directly.
- */
+// Registers `POST /upload` (httpStream only): clients push a file's bytes over
+// plain HTTP and get back a handle to pass to the agent's `uploadFile`.
+//   curl -s -F file=@/path/to/file "<mcpBaseUrl>/upload?token=<token>"
+// Same token as the MCP surface; the base64 never enters the model's context.
 export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   const app = server.getApp();
 
@@ -65,9 +56,9 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
     }
 
     const buf = Buffer.from(await file.arrayBuffer());
-    if (buf.byteLength > MAX_UPLOAD_BYTES) {
+    if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
       return c.json(
-        { ok: false, error: 'FileTooLarge', maxBytes: MAX_UPLOAD_BYTES },
+        { ok: false, error: 'FileTooLarge', maxBytes: FILE_TRANSFER_MAX_BYTES },
         413,
       );
     }

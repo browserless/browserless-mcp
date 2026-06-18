@@ -2,16 +2,8 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-/**
- * A captured download (or staged upload) persisted to the MCP server's
- * filesystem. The base64 payload never re-enters the model's context:
- * getDownloads surfaces only metadata + a handle, and the bytes are read back
- * from disk only when actually fetched — by a single-use `GET /download/:id`
- * (HTTP), a stdio disk save, or an uploadFile that references the handle.
- *
- * Lifetime: dropped after a 15-minute TTL, when its owning MCP session ends, or
- * (for downloads) once it's been fetched once — whichever comes first.
- */
+// A captured download (or staged upload) persisted to the server's filesystem;
+// bytes stay on disk (never in context). Dropped on TTL, session end, or fetch.
 export interface StoredDownload {
   id: string;
   path: string;
@@ -28,6 +20,9 @@ interface StoreEntry extends StoredDownload {
 export const DOWNLOAD_URI_SCHEME = 'browserless-download';
 
 const TTL_MS = 15 * 60 * 1000;
+
+// Hard ceiling on a single file transfer (mirrors the enterprise cap).
+export const FILE_TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
 
 const store = new Map<string, StoreEntry>();
 let counter = 0;
@@ -47,17 +42,20 @@ const idFromHandle = (handle: string): string =>
     ? handle.slice(`${DOWNLOAD_URI_SCHEME}://`.length)
     : handle;
 
+// Strip the internal timer handle before handing an entry to callers.
+const toRecord = (entry: StoreEntry): StoredDownload => {
+  const { timer: _timer, ...record } = entry;
+  return record;
+};
+
 const dropEntry = (entry: StoreEntry): void => {
   if (entry.timer) clearTimeout(entry.timer);
   store.delete(entry.id);
   void rm(entry.path, { force: true }).catch(() => {});
 };
 
-/**
- * Persist bytes to disk and register them under a fresh handle. `sessionId`
- * ties the file to an MCP session so it can be cleaned up when that session
- * ends (staged uploads via the out-of-band route have no session → TTL only).
- */
+// Persist bytes to disk under a fresh handle. `sessionId` ties the file to an
+// MCP session for cleanup on session end (no session → TTL only).
 export const storeDownload = async (
   filename: string,
   mimeType: string,
@@ -89,35 +87,26 @@ export const storeDownload = async (
     timer,
   };
   store.set(id, entry);
-
-  // Don't leak the internal timer handle to callers.
-  const { timer: _timer, ...record } = entry;
-  return record;
+  return toRecord(entry);
 };
 
-/**
- * Resolve a handle to a stored file WITHOUT removing it. Accepts a raw id, a
- * `browserless-download://<id>` URI, or the absolute path of a stored file.
- * Used by uploadFile, which may reference the same file more than once.
- */
+// Resolve a handle (id, URI, or stored path) WITHOUT removing it. Used by
+// uploadFile, which may reference the same file more than once.
 export const getDownload = (handle: string): StoredDownload | undefined => {
-  const byId = store.get(idFromHandle(handle));
-  if (byId) return byId;
-  return [...store.values()].find((r) => r.path === handle);
+  const entry =
+    store.get(idFromHandle(handle)) ??
+    [...store.values()].find((r) => r.path === handle);
+  return entry && toRecord(entry);
 };
 
-/**
- * Resolve a handle and remove it (single-use): clears the registry entry, the
- * TTL timer, and the bytes on disk. Backs the `GET /download/:id` route so a
- * download can only be fetched once.
- */
+// Resolve a handle and remove it (single-use): entry, TTL timer, and bytes.
+// Backs `GET /download/:id` so a download can only be fetched once.
 export const consumeDownload = (handle: string): StoredDownload | undefined => {
   const entry = store.get(idFromHandle(handle));
   if (!entry) return undefined;
   if (entry.timer) clearTimeout(entry.timer);
   store.delete(entry.id);
-  const { timer: _timer, ...record } = entry;
-  return record;
+  return toRecord(entry);
 };
 
 /** Drop every file owned by an MCP session (called when the session ends). */

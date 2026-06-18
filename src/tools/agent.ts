@@ -7,6 +7,8 @@ import {
   downloadUri,
   getDownload,
   storeDownload,
+  FILE_TRANSFER_MAX_BYTES,
+  type StoredDownload,
 } from '../lib/download-store.js';
 import {
   getOrCreateSession,
@@ -110,11 +112,6 @@ export const formatScreenshotContent = (
   return content;
 };
 
-// Hard ceiling mirrored from the enterprise side (MAX_FILE_TRANSFER_MB cap).
-// The server enforces its own (possibly lower) limit; this just stops the MCP
-// from reading/shipping an oversized local upload before it ever hits the wire.
-const FILE_TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
-
 type DownloadEntry = {
   filename?: string;
   mimeType?: string;
@@ -122,7 +119,6 @@ type DownloadEntry = {
   data?: string;
   error?: string;
   maxBytes?: number;
-  message?: string;
   sourceUrl?: string;
   inProgress?: boolean;
   receivedBytes?: number;
@@ -145,13 +141,8 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
   return `${d.filename ?? 'file'} — downloading (${got}${total}); touch the browser again to collect it`;
 };
 
-// Resolve each uploadFile entry to base64 `content` before it hits the wire,
-// so the model never has to emit a multi-MB base64 string itself:
-//   - `content` (base64): used as-is.
-//   - `handle`: a download handle/URI/path from a prior getDownloads — the MCP
-//     server reads the stored file. Works in both transports (server-side).
-//   - `path`: a local filesystem path — stdio only (HTTP can't read the client
-//     filesystem).
+// Resolve each uploadFile entry to base64 `content` (from `content`, a prior
+// `handle`, or a local `path` in stdio) so the model never emits base64 itself.
 export const normalizeUploadCommand = async (
   cmd: { method: string; params: Record<string, unknown> },
   transport: McpConfig['transport'],
@@ -243,51 +234,42 @@ const persistDownload = async (
   );
 };
 
-// stdio: files live on the same machine, so the file is already saved — the
-// model gets the on-disk path (usable as uploadFile { path }). No base64 in
-// context; nothing more to fetch.
-export const formatDownloadsStdio = async (
-  downloads: DownloadEntry[],
-  prefix: string,
-  skills: string,
-  opts: { sessionId?: string } = {},
-): Promise<Content[]> => {
-  const lines: string[] = [];
-  for (const d of downloads) {
-    if (d.inProgress) {
-      lines.push(`- ${describeInProgressDownload(d)}`);
-      continue;
-    }
-    const record = await persistDownload(d, opts.sessionId);
-    if (!record) {
-      lines.push(`- ${describeFailedDownload(d)}`);
-      continue;
-    }
-    lines.push(
-      `- ${record.path} (${record.mimeType}, ${record.size} bytes) — ` +
-        `reuse as uploadFile { path: "${record.path}" }`,
-    );
-  }
-  const text = downloads.length
-    ? `${prefix}Downloads:\n${lines.join('\n')}`
-    : `${prefix}No new downloads.`;
-  const content: Content[] = [{ type: 'text', text }];
-  if (skills) content.push({ type: 'text', text: skills });
-  return content;
+type FormatOpts = {
+  transport: McpConfig['transport'];
+  sessionId?: string;
+  mcpBaseUrl?: string;
+  token?: string;
 };
 
-// httpStream: no shared disk. Surface each download as a notification (metadata
-// only) plus a single-use GET URL. The client decides whether to fetch the
-// bytes (curl) or reuse the handle for uploadFile — the base64 never enters
-// context. Fetching consumes the file; the handle is gone after one GET.
-export const formatDownloadsHttp = async (
-  downloads: DownloadEntry[],
-  prefix: string,
-  skills: string,
-  opts: { sessionId?: string; mcpBaseUrl?: string; token?: string } = {},
-): Promise<Content[]> => {
+// stdio: file is already on the local disk → return its path (reuse as
+// uploadFile { path }). http: return a single-use GET URL + handle; base64
+// never enters context, and fetching consumes the file.
+const describeReadyDownload = (
+  record: StoredDownload,
+  opts: FormatOpts,
+): string => {
+  if (opts.transport === 'stdio') {
+    return (
+      `${record.path} (${record.mimeType}, ${record.size} bytes) — ` +
+      `reuse as uploadFile { path: "${record.path}" }`
+    );
+  }
   const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
   const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  return (
+    `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
+    `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
+    `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
+  );
+};
+
+// Surface captured downloads as metadata + how to retrieve them (never bytes).
+export const formatDownloads = async (
+  downloads: DownloadEntry[],
+  prefix: string,
+  skills: string,
+  opts: FormatOpts,
+): Promise<Content[]> => {
   const lines: string[] = [];
   for (const d of downloads) {
     if (d.inProgress) {
@@ -295,30 +277,21 @@ export const formatDownloadsHttp = async (
       continue;
     }
     const record = await persistDownload(d, opts.sessionId);
-    if (!record) {
-      lines.push(`- ${describeFailedDownload(d)}`);
-      continue;
-    }
     lines.push(
-      `- ${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
-        `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
-        `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`,
+      `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
     );
   }
+  const header =
+    opts.transport === 'stdio'
+      ? 'Downloads:'
+      : 'Downloads (save the ones you need — each GET works once):';
   const text = downloads.length
-    ? `${prefix}Downloads (save the ones you need — each GET works once):\n${lines.join('\n')}`
+    ? `${prefix}${header}\n${lines.join('\n')}`
     : `${prefix}No new downloads.`;
   const content: Content[] = [{ type: 'text', text }];
   if (skills) content.push({ type: 'text', text: skills });
   return content;
 };
-
-// Zod parses params at the tool boundary, so this only needs to supply the {}
-// default when the field was omitted — the schema never delivers a string,
-// array, or null here.
-const coerceParams = (
-  params: Record<string, unknown> | undefined,
-): Record<string, unknown> => params ?? {};
 
 const SkillIdSchema = z.enum(
   skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
@@ -383,9 +356,9 @@ export function registerAgentTools(
         params.commands && params.commands.length > 0
           ? params.commands.map((c) => ({
               method: c.method,
-              params: coerceParams(c.params),
+              params: c.params ?? {},
             }))
-          : [{ method: params.method, params: coerceParams(params.params) }];
+          : [{ method: params.method, params: params.params ?? {} }];
 
       const proxy = params.proxy;
       const profile = params.profile;
@@ -594,11 +567,8 @@ export function registerAgentTools(
           return [{ type: 'text' as const, text: 'Browser session closed.' }];
         }
 
-        // Auto-surface any files Chrome captured during this batch so the model
-        // gets a download notification without having to call getDownloads (or
-        // reach for a separate download tool). Skipped when the model already
-        // drained explicitly, or the session closed. Best-effort: a failed poll
-        // never fails the batch.
+        // Auto-surface files Chrome captured this batch so the model needn't call
+        // getDownloads. Skipped on explicit drain/close; a failed poll is ignored.
         let autoDownloads: DownloadEntry[] = [];
         if (!closedDuringBatch && last.method !== 'getDownloads') {
           try {
@@ -635,20 +605,17 @@ export function registerAgentTools(
             },
           ];
         } else if (last.method === 'getDownloads') {
-          // Explicit drain — branch on transport (stdio path vs. single-use GET).
+          // Explicit drain.
           const downloads =
             (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
           const prefix =
             batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
-          return config.transport === 'stdio'
-            ? await formatDownloadsStdio(downloads, prefix, skillsText, {
-                sessionId: mcpSessionId,
-              })
-            : await formatDownloadsHttp(downloads, prefix, skillsText, {
-                sessionId: mcpSessionId,
-                mcpBaseUrl: config.mcpBaseUrl,
-                token,
-              });
+          return await formatDownloads(downloads, prefix, skillsText, {
+            transport: config.transport,
+            sessionId: mcpSessionId,
+            mcpBaseUrl: config.mcpBaseUrl,
+            token,
+          });
         } else {
           // Screenshot → image content block; otherwise JSON text.
           const shot =
@@ -671,19 +638,14 @@ export function registerAgentTools(
           ];
         }
 
-        // Append the captured-download notification (metadata + how to save),
-        // never the bytes.
+        // Append the captured-download notification (metadata only, no bytes).
         if (autoDownloads.length > 0) {
-          const notice =
-            config.transport === 'stdio'
-              ? await formatDownloadsStdio(autoDownloads, '', '', {
-                  sessionId: mcpSessionId,
-                })
-              : await formatDownloadsHttp(autoDownloads, '', '', {
-                  sessionId: mcpSessionId,
-                  mcpBaseUrl: config.mcpBaseUrl,
-                  token,
-                });
+          const notice = await formatDownloads(autoDownloads, '', '', {
+            transport: config.transport,
+            sessionId: mcpSessionId,
+            mcpBaseUrl: config.mcpBaseUrl,
+            token,
+          });
           baseContent = [...baseContent, ...notice];
         }
 
