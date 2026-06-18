@@ -147,7 +147,6 @@ export const normalizeUploadCommand = async (
   cmd: { method: string; params: Record<string, unknown> },
   transport: McpConfig['transport'],
   mcpBaseUrl?: string,
-  token?: string,
 ): Promise<void> => {
   if (cmd.method !== 'uploadFile') return;
   const files = cmd.params.files;
@@ -174,7 +173,7 @@ export const normalizeUploadCommand = async (
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
         const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
-        const tokenQ = `?token=${token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+        const tokenQ = '?token=<YOUR_BROWSERLESS_TOKEN>';
         throw new UserError(
           'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
             'read your filesystem). Stage the file once over HTTP, then pass the ' +
@@ -656,12 +655,7 @@ export function registerAgentTools(
         // Resolve any local upload paths to base64 once, before the (possibly
         // retried) send loop runs.
         for (const cmd of commands) {
-          await normalizeUploadCommand(
-            cmd,
-            config.transport,
-            config.mcpBaseUrl,
-            token,
-          );
+          await normalizeUploadCommand(cmd, config.transport, config.mcpBaseUrl);
         }
         const result = await runCommands(false);
         sendAnalytics(true);

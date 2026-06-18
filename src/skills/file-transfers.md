@@ -78,7 +78,7 @@ Staged files share the download store (15-minute TTL). **Never** base64 a file i
 
 Other params:
 
-- `selector` — the file input. If hidden behind a styled button, the input still exists in the DOM; target it directly (use a `< ` deep selector for shadow DOM).
+- `selector` — the file input. If hidden behind a styled button, the input still exists in the DOM; target it directly (use a deep selector — prefix `<` followed by a space — for shadow DOM).
 - `name` / `mimeType` — optional; default from the handle/path, mimeType inferred from the extension.
 - Triggers native `input`/`change` events, so frameworks (React, etc.) see the file.
 - Returns `{ "ok": true }`, or `{ "ok": false, "error": "SelectorNotFound" | "InvalidTarget" | "FileTooLarge" }`.

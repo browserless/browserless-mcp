@@ -252,18 +252,15 @@ describe('normalizeUploadCommand', () => {
     };
     let threw = false;
     try {
-      await normalizeUploadCommand(
-        cmd,
-        'httpStream',
-        'https://mcp.example.com',
-        'tok-123',
-      );
+      await normalizeUploadCommand(cmd, 'httpStream', 'https://mcp.example.com');
     } catch (e) {
       threw = true;
       const msg = (e as Error).message;
       expect(msg).to.match(/not available in HTTP mode/);
       expect(msg).to.include('curl -s -F file=@"/etc/hosts"');
-      expect(msg).to.include('https://mcp.example.com/upload?token=tok-123');
+      expect(msg).to.include(
+        'https://mcp.example.com/upload?token=<YOUR_BROWSERLESS_TOKEN>',
+      );
     }
     expect(threw, 'expected normalizeUploadCommand to throw').to.be.true;
   });
