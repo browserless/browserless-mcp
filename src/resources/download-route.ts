@@ -17,7 +17,10 @@ import type { McpConfig } from '../@types/types.js';
  * MCP surface. Only meaningful for httpStream; in stdio the file is already on
  * the local disk at the path getDownloads reported.
  */
-export function registerDownloadRoute(server: FastMCP, config: McpConfig): void {
+export function registerDownloadRoute(
+  server: FastMCP,
+  config: McpConfig,
+): void {
   const app = server.getApp();
 
   app.get('/download/:id', async (c) => {
@@ -39,7 +42,10 @@ export function registerDownloadRoute(server: FastMCP, config: McpConfig): void 
     const record = consumeDownload(c.req.param('id'));
     if (!record) {
       return c.json(
-        { ok: false, error: 'Not found (already fetched, expired, or unknown)' },
+        {
+          ok: false,
+          error: 'Not found (already fetched, expired, or unknown)',
+        },
         404,
       );
     }

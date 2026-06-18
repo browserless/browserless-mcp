@@ -611,8 +611,7 @@ export function registerAgentTools(
           }
         }
 
-        const skillsText =
-          triggered.length > 0 ? renderSkills(triggered) : '';
+        const skillsText = triggered.length > 0 ? renderSkills(triggered) : '';
         let baseContent: Content[];
 
         if (lastSnapshot) {

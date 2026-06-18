@@ -43,8 +43,18 @@ describe('download-store', () => {
   });
 
   it('clearSession drops files owned by the session', async () => {
-    const mine = await storeDownload('c.txt', 'text/plain', Buffer.from('x'), 's1');
-    const other = await storeDownload('d.txt', 'text/plain', Buffer.from('y'), 's2');
+    const mine = await storeDownload(
+      'c.txt',
+      'text/plain',
+      Buffer.from('x'),
+      's1',
+    );
+    const other = await storeDownload(
+      'd.txt',
+      'text/plain',
+      Buffer.from('y'),
+      's2',
+    );
     clearSession('s1');
     expect(getDownload(mine.id)).to.be.undefined;
     expect(getDownload(other.id)?.id).to.equal(other.id);

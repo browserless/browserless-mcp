@@ -2,7 +2,7 @@
 
 Transferring files to/from the browser. Two methods: `uploadFile` (attach files to an `<input type="file">`) and `getDownloads` (retrieve files Chrome downloaded).
 
-**Do not `curl`/`wget`/`fetch` a file yourself to download it.** That only works for a public, static, directly-addressable URL — the easy case. The general case (files behind login/cookies, generated server-side on demand, or served by a click via `Content-Disposition` headers) has **no URL you can fetch**, and a direct fetch silently returns the wrong bytes, an HTML page, or a 403. **Drive the browser** (click/goto), and the file is captured for you. A direct fetch is only correct when this flow *hands you* a URL (the single-use `/download/<id>` URL, or an over-cap `sourceUrl`).
+**Do not `curl`/`wget`/`fetch` a file yourself to download it.** That only works for a public, static, directly-addressable URL — the easy case. The general case (files behind login/cookies, generated server-side on demand, or served by a click via `Content-Disposition` headers) has **no URL you can fetch**, and a direct fetch silently returns the wrong bytes, an HTML page, or a 403. **Drive the browser** (click/goto), and the file is captured for you. A direct fetch is only correct when this flow _hands you_ a URL (the single-use `/download/<id>` URL, or an over-cap `sourceUrl`).
 
 **Key idea — never move bytes through this conversation.** Large files as base64 blow up the context. So downloads come back as a _handle_ (a path or a `browserless-download://` URI), and uploads take that handle (or a local path) instead of base64. The MCP server reads/writes the actual bytes on disk; you only pass small references. Only fall back to base64 `content` when you genuinely have raw bytes and no handle.
 
