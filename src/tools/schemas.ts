@@ -502,7 +502,15 @@ const UploadFileCommandSchema = z.object({
             .string()
             .optional()
             .describe('MIME type; inferred from the extension when omitted.'),
-        }),
+        }).refine(
+          (f) =>
+            [f.content, f.handle, f.path].filter((s) => s !== undefined)
+              .length === 1,
+          {
+            message:
+              'Provide exactly one of "content", "handle", or "path" per file.',
+          },
+        ),
       )
       .min(1)
       .describe(
