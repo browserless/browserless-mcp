@@ -108,6 +108,8 @@
       "minimatch": "^10.2.1",
       "glob": "^11.0.0",
       "serialize-javascript": "^7.0.5"
-    }
+    },
+    "hono": "^4.12.26",
+    "undici": "^7.28.0"
   }
 }
