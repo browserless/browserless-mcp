@@ -234,8 +234,10 @@ describe('agent-client proxyFingerprint', () => {
 describe('agent-client isRetryableUpgradeError', () => {
   // The retry guard exists so the agent tool doesn't burn a second WS
   // handshake when the server already returned a definitive 4xx.
-  it('does not retry on 400/401/403/404', () => {
-    for (const status of [400, 401, 403, 404]) {
+  it('does not retry on 400/401/403/404/429', () => {
+    // 429 is non-retryable: a retry opens another session and stacks more
+    // lingering sessions against the same concurrency limit.
+    for (const status of [400, 401, 403, 404, 429]) {
       expect(
         isRetryableUpgradeError(new UpgradeError(status, 'msg', 'body')),
         `status=${status}`,
@@ -243,8 +245,8 @@ describe('agent-client isRetryableUpgradeError', () => {
     }
   });
 
-  it('retries on 5xx and 429 (transient)', () => {
-    for (const status of [429, 500, 502, 503]) {
+  it('retries on 5xx (transient)', () => {
+    for (const status of [500, 502, 503]) {
       expect(
         isRetryableUpgradeError(new UpgradeError(status, 'msg', 'body')),
         `status=${status}`,
