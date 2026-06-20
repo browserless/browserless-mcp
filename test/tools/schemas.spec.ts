@@ -242,6 +242,45 @@ describe('profile field (shared profileField helper)', () => {
   });
 });
 
+describe('loadSecret command', () => {
+  it('accepts a loadSecret command with ref + selector', () => {
+    const parsed = AgentParamsSchema.parse({
+      commands: [
+        {
+          method: 'loadSecret',
+          params: {
+            ref: 'op://Automation/imdb/password',
+            selector: 'input#ap_password',
+          },
+        },
+      ],
+    });
+    const cmd = parsed.commands?.[0];
+    expect(cmd?.method).to.equal('loadSecret');
+    expect((cmd?.params as { ref?: string })?.ref).to.equal(
+      'op://Automation/imdb/password',
+    );
+  });
+
+  it('accepts a loadSecret command with ref only (selector optional)', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [
+        { method: 'loadSecret', params: { ref: 'op://Automation/imdb/username' } },
+      ],
+    });
+    expect(result.success).to.equal(true);
+  });
+
+  it('rejects a loadSecret command missing ref', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [
+        { method: 'loadSecret', params: { selector: 'input#ap_email' } },
+      ],
+    });
+    expect(result.success).to.equal(false);
+  });
+});
+
 describe('createProfile field', () => {
   it('accepts a createProfile object on its own', () => {
     const parsed = AgentParamsSchema.parse({
