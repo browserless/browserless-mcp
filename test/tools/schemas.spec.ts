@@ -265,7 +265,10 @@ describe('loadSecret command', () => {
   it('accepts a loadSecret command with ref only (selector optional)', () => {
     const result = AgentParamsSchema.safeParse({
       commands: [
-        { method: 'loadSecret', params: { ref: 'op://Automation/imdb/username' } },
+        {
+          method: 'loadSecret',
+          params: { ref: 'op://Automation/imdb/username' },
+        },
       ],
     });
     expect(result.success).to.equal(true);
