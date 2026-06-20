@@ -645,8 +645,9 @@ export const getOrCreateSession = async (
     if (attachSessionId) {
       creationSessionId = attachSessionId;
     } else if (createProfile) {
-      creationSessionId = (await postCreateProfile(apiUrl, token, createProfile))
-        .id;
+      creationSessionId = (
+        await postCreateProfile(apiUrl, token, createProfile)
+      ).id;
     }
     const ws = await connect(apiUrl, token, proxy, profile, creationSessionId);
     const session: ActiveSession = {
