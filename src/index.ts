@@ -128,23 +128,20 @@ const hybridAuthenticate =
         // JWTs have 3 dot-separated base64url segments; plain API keys do not.
         const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
 
+        // apiUrl/attachSessionId are the same across every auth path; only the
+        // resolved token differs.
+        const session = (token: string): BrowserlessSession =>
+          ({ token, apiUrl, attachSessionId }) as BrowserlessSession;
+
         // 1. Authorization header with plain API key
         if (headerToken && !isJwt) {
-          return {
-            token: headerToken,
-            apiUrl,
-            attachSessionId,
-          } as BrowserlessSession;
+          return session(headerToken);
         }
 
         // 2. ?token= query param
         const directToken = params.get('token') || undefined;
         if (directToken) {
-          return {
-            token: directToken,
-            apiUrl,
-            attachSessionId,
-          } as BrowserlessSession;
+          return session(directToken);
         }
 
         // 3. Authorization header with JWT → decode Supabase token directly
@@ -154,11 +151,7 @@ const hybridAuthenticate =
             config.supabaseServiceRoleKey,
             headerToken,
           );
-          return {
-            token: apiKey,
-            apiUrl,
-            attachSessionId,
-          } as BrowserlessSession;
+          return session(apiKey);
         }
 
         throw new Error(

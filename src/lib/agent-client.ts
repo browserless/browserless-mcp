@@ -641,11 +641,13 @@ export const getOrCreateSession = async (
     //    runner did POST /profile itself) — attach by id, no POST here.
     //  - createProfile: open a tracked session via POST /profile, then attach.
     //  - neither: launch a fresh agent browser.
-    const creationSessionId = attachSessionId
-      ? attachSessionId
-      : createProfile
-        ? (await postCreateProfile(apiUrl, token, createProfile)).id
-        : undefined;
+    let creationSessionId: string | undefined;
+    if (attachSessionId) {
+      creationSessionId = attachSessionId;
+    } else if (createProfile) {
+      creationSessionId = (await postCreateProfile(apiUrl, token, createProfile))
+        .id;
+    }
     const ws = await connect(apiUrl, token, proxy, profile, creationSessionId);
     const session: ActiveSession = {
       ws,

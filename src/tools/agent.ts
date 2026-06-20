@@ -341,6 +341,7 @@ export function registerAgentTools(
                 proxy,
                 profile,
                 createProfile,
+                attachSessionId,
               );
               if (!isRetry) {
                 return runCommands(true);
