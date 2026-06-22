@@ -134,6 +134,7 @@ export interface SnapshotElement {
   focused?: boolean;
   required?: boolean;
   ariaLabel?: string;
+  frameId?: string;
 }
 
 export interface TabInfo {
@@ -141,6 +142,13 @@ export interface TabInfo {
   url: string;
   title: string;
   active: boolean;
+}
+
+// for iframe handling
+export interface FrameInfo {
+  frameId: string;
+  url: string;
+  crossOrigin: boolean;
 }
 
 export interface SnapshotResult {
@@ -151,6 +159,7 @@ export interface SnapshotResult {
   tabs?: TabInfo[];
   activeTargetId?: string | null;
   detectedChallenges?: string[];
+  frames?: FrameInfo[];
 }
 
 export interface ActiveSession {
