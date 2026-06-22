@@ -5,6 +5,7 @@ Snapshot contains `deep-ref=` selectors, or you hit `SELECTOR_NOT_FOUND` on regu
 ## Iframes in the snapshot
 
 Iframes (same-origin and cross-origin) are now snapshotted too. When present:
+
 - Snapshot shows a `Frames (N iframes):` block listing each frame's label, URL, and origin.
 - Elements inside a frame are tagged `[frame#N]` and carry a ready `deep-ref=` selector — cross-origin uses `< *url* css`, same-origin uses `< css`. Pass it as-is to `click`/`type`/`hover`/`checkbox` — no frame switching, no hand-construction.
 
