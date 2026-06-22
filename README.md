@@ -103,8 +103,6 @@ The `proxy` object is read once at session creation. To change it, call `close` 
 
 The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter.
 
-Installing via an AI agent? See [install.md](install.md) for agent-readable setup instructions.
-
 **Using headers** (recommended for clients that support them):
 
 ```json
