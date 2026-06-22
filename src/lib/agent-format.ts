@@ -5,6 +5,7 @@ export type {
   SnapshotResult,
   SnapshotElement,
   TabInfo,
+  FrameInfo,
 } from '../@types/types.js';
 
 const safeOrigin = (url: string): string | undefined => {
@@ -118,10 +119,16 @@ export const formatConnectError = (err: unknown): string => {
 
 /**
  * Format a single snapshot element as a compact one-liner:
- *   [ref] tag role "name" ref=selector value="…" (state)
+ *   [ref] tag role "name" ref=selector value="…" (state) [frame#N]
  *   e.g. [7] input checkbox "Remember me" ref=input#remember (checked, required)
+ * `frameLabels` maps a frameId to its display label (frame#1, …); when an
+ * element carries a frameId, the label is appended so the agent sees which
+ * iframe it lives in.
  */
-const formatElement = (el: SnapshotElement): string => {
+const formatElement = (
+  el: SnapshotElement,
+  frameLabels?: Map<string, string>,
+): string => {
   const parts: string[] = [`[${el.ref}]`, el.tag, el.role];
   const name = el.name || el.text || '';
   if (name) parts.push(`"${name}"`);
@@ -140,6 +147,9 @@ const formatElement = (el: SnapshotElement): string => {
   if (el.focused) flags.push('focused');
   if (el.required) flags.push('required');
   if (flags.length) parts.push(`(${flags.join(', ')})`);
+
+  const frameLabel = el.frameId && frameLabels?.get(el.frameId);
+  if (frameLabel) parts.push(`[${frameLabel}]`);
 
   return parts.join(' ');
 };
@@ -166,10 +176,29 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
     }
   }
 
+  // Label cross-origin iframes (frame#1, …) and list them so the agent knows
+  // which elements live in a frame and that their deep-ref selectors pierce it.
+  const frameLabels = new Map<string, string>();
+  if (snapshot.frames?.length) {
+    snapshot.frames.forEach((frame, i) =>
+      frameLabels.set(frame.frameId, `frame#${i + 1}`),
+    );
+    lines.push(`Frames (${snapshot.frames.length} iframes):`);
+    for (const frame of snapshot.frames) {
+      const origin = frame.crossOrigin ? 'cross-origin' : 'same-origin';
+      lines.push(
+        `  ${frameLabels.get(frame.frameId)} ${frame.url} (${origin})`,
+      );
+    }
+    lines.push(
+      'Elements tagged [frame#N] live in that iframe; their deep-ref selectors pierce it — pass as-is to click/type/hover.',
+    );
+  }
+
   lines.push('');
 
   for (const el of snapshot.elements) {
-    lines.push(formatElement(el));
+    lines.push(formatElement(el, frameLabels));
   }
 
   lines.push('--- END SNAPSHOT ---');

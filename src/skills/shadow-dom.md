@@ -2,6 +2,14 @@
 
 Snapshot contains `deep-ref=` selectors, or you hit `SELECTOR_NOT_FOUND` on regular selector. Page using shadow DOM or iframes — read before next action.
 
+## Iframes in the snapshot
+
+Iframes (same-origin and cross-origin) are now snapshotted too. When present:
+- Snapshot shows a `Frames (N iframes):` block listing each frame's label, URL, and origin.
+- Elements inside a frame are tagged `[frame#N]` and carry a ready `deep-ref=` selector — cross-origin uses `< *url* css`, same-origin uses `< css`. Pass it as-is to `click`/`type`/`hover`/`checkbox` — no frame switching, no hand-construction.
+
+Only build a deep selector by hand (below) when a frame element wasn't surfaced (a11y-empty widget, capped snapshot).
+
 ## Deep selectors: `< ` prefix
 
 Browserless deep selectors start with `< ` (less-than, space). Space mandatory. Format:
@@ -20,7 +28,7 @@ When snapshot lists `deep-ref=< button#deny`, pass to `click` / `type` / `hover`
 
 ## Constructing deep selectors for iframes snapshot didn't surface
 
-Snapshots only include accessible content. Iframes (captcha/payment widgets) often have nothing meaningful in accessibility tree. Build selector by hand:
+Fallback only — most cross-origin iframes are now in the snapshot (see above). Some widgets still have nothing meaningful in the accessibility tree. Build selector by hand:
 
 - `< *google.com/recaptcha* #recaptcha-anchor` — reCAPTCHA checkbox
 - `< *hcaptcha.com* #checkbox` — hCaptcha checkbox
