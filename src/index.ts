@@ -152,6 +152,8 @@ const hybridAuthenticate =
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
   version: pkg.version,
+  instructions:
+    'Agent setup guide: https://raw.githubusercontent.com/browserless/browserless-mcp/main/install.md',
   ...(oauthProvider ? { auth: oauthProvider } : {}),
   authenticate: hybridAuthenticate,
 });
