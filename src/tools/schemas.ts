@@ -162,6 +162,27 @@ const TypeCommandSchema = z.object({
   }),
 });
 
+const LoadSecretCommandSchema = z.object({
+  method: z.literal('loadSecret'),
+  params: z.object({
+    ref: z
+      .string()
+      .describe(
+        'The credential reference/alias to inject (e.g. an op:// reference). ' +
+          'The secret value is resolved server-side and typed into the field — ' +
+          'you never see it. Use this for ALL passwords and usernames from a ' +
+          'secrets vault; never put a secret value in `type`.',
+      ),
+    selector: z
+      .string()
+      .optional()
+      .describe(
+        'CSS selector of the input to fill. If omitted, the secret is injected ' +
+          'into the currently focused element (click/focus the field first).',
+      ),
+  }),
+});
+
 const SelectCommandSchema = z.object({
   method: z.literal('select'),
   params: z.object({
@@ -474,6 +495,7 @@ const specificCommandSchemas = [
   CloseTabCommandSchema,
   ClickCommandSchema,
   TypeCommandSchema,
+  LoadSecretCommandSchema,
   SelectCommandSchema,
   CheckboxCommandSchema,
   HoverCommandSchema,
