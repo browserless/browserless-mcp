@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.0](https://github.com/browserless/browserless-mcp/compare/v1.6.2...v1.7.0) (2026-06-23)
+
+
+### Features
+
+* agent file transfers ([#128](https://github.com/browserless/browserless-mcp/issues/128)) ([06483c1](https://github.com/browserless/browserless-mcp/commit/06483c1922744e1eef7b5130b4ce12d9f76978a6))
+* allow mcp agents to create and save profiles ([#117](https://github.com/browserless/browserless-mcp/issues/117)) ([a928e2d](https://github.com/browserless/browserless-mcp/commit/a928e2da9705e52f33b39722a9d57646e0a7cd4b))
+* enhance iframe handling AUTO-39 ([#132](https://github.com/browserless/browserless-mcp/issues/132)) ([70ba096](https://github.com/browserless/browserless-mcp/commit/70ba0967ab8185d6b797027d8759c332be7bce25))
+* improve 429 error handling AUTO-158 ([#129](https://github.com/browserless/browserless-mcp/issues/129)) ([f4b0122](https://github.com/browserless/browserless-mcp/commit/f4b01222284bf12aa89f1ee26d1cf6da090f4fa6))
+* surface load secrets from integrations ([#130](https://github.com/browserless/browserless-mcp/issues/130)) ([991daa7](https://github.com/browserless/browserless-mcp/commit/991daa70a5e814bb11338b7b05469870e613ea33))
+
 ## [1.6.2](https://github.com/browserless/browserless-mcp/compare/v1.6.1...v1.6.2) (2026-06-08)
 
 ### Bug Fixes
