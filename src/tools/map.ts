@@ -53,7 +53,7 @@ export function registerMapTool(
     name: 'browserless_map',
     description:
       'Discover and map all URLs on a website using Browserless. ' +
-      'Crawls a site via sitemaps and link extraction to find all pages. ' +
+      'Scans a site via sitemaps and link extraction to find all pages. ' +
       'Returns a list of URLs with optional titles and descriptions. ' +
       'Use the search parameter to order results by relevance to a query. ' +
       'Useful for site audits, content discovery, and building site maps.',
