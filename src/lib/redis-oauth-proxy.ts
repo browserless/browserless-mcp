@@ -33,7 +33,6 @@ import {
 const KEY_PREFIX = 'mcp:oauth:';
 const TX_PREFIX = `${KEY_PREFIX}tx:`;
 const CODE_PREFIX = `${KEY_PREFIX}code:`;
-const CLIENT_PREFIX = `${KEY_PREFIX}client:`;
 const CLIENT_ID_PREFIX = `${KEY_PREFIX}client-id:`;
 
 const DEFAULT_TRANSACTION_TTL = 600;
@@ -96,9 +95,7 @@ export class RedisOAuthProxy extends OAuthProxy {
         'RedisOAuthProxy requires consentRequired: false — consent flow is not supported in multi-instance mode',
       );
     }
-    // exchangeAuthorizationCode() returns the upstream tokens directly; it does
-    // not implement token swap. Fail fast rather than silently issue raw tokens
-    // while the parent's refresh path would swap them.
+    // We return upstream tokens directly (no token swap); fail fast otherwise.
     if ((this as unknown as OAuthProxyInternals).config.enableTokenSwap) {
       throw new Error(
         'RedisOAuthProxy requires enableTokenSwap: false — token-swap mode is not supported',
@@ -111,80 +108,18 @@ export class RedisOAuthProxy extends OAuthProxy {
   }
 
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
-    // Delegate validation/response to the parent, then mirror the accepted
-    // URIs into Redis so every instance can honor the v4 redirect_uri check.
-    // (The parent's in-memory Map is also populated but we never read it.)
+    // Store the client's redirect_uris under the issued client_id so any
+    // instance can validate per-client (the parent's Map is process-local).
     const response = await super.registerClient(request);
     const ttl =
       this._internal.config.clientRegistrationTtl ?? DEFAULT_CLIENT_TTL;
-
-    // Snapshot pre-existence so rollback doesn't DEL a valid prior
-    // registration of the same URI (two DCR calls sharing a redirect_uri).
-    // allSettled → a probe failure is fail-fast with no writes attempted.
-    const probes = await Promise.allSettled(
-      response.redirect_uris.map(async (uri) => ({
-        uri,
-        existed: (await this.redis.exists(`${CLIENT_PREFIX}${uri}`)) > 0,
-      })),
+    await this.redis.set(
+      `${CLIENT_ID_PREFIX}${response.client_id}`,
+      JSON.stringify(response.redirect_uris),
+      'EX',
+      ttl,
     );
-    const probeFailed = probes.find(
-      (p): p is PromiseRejectedResult => p.status === 'rejected',
-    );
-    if (probeFailed) {
-      throw probeFailed.reason;
-    }
-    const redisPreExisting = new Set<string>(
-      probes
-        .filter(
-          (p): p is PromiseFulfilledResult<{ uri: string; existed: boolean }> =>
-            p.status === 'fulfilled' && p.value.existed,
-        )
-        .map((p) => p.value.uri),
-    );
-
-    // Mirror the redirect_uris and the issued client_id so authorize/token can
-    // validate both across instances. The client_id is freshly generated, so
-    // rolling it back on failure can never drop a prior registration.
-    const clientIdKey = `${CLIENT_ID_PREFIX}${response.client_id}`;
-    const writes = await Promise.allSettled([
-      ...response.redirect_uris.map((uri) =>
-        this.redis.set(`${CLIENT_PREFIX}${uri}`, '1', 'EX', ttl),
-      ),
-      this.redis.set(
-        clientIdKey,
-        JSON.stringify(response.redirect_uris),
-        'EX',
-        ttl,
-      ),
-    ]);
-    const writeFailed = writes.find(
-      (w): w is PromiseRejectedResult => w.status === 'rejected',
-    );
-    if (writeFailed) {
-      // Best-effort cleanup of Redis keys this call introduced; if these
-      // deletes also fail the originating error still wins.
-      await Promise.allSettled([
-        ...response.redirect_uris
-          .filter((uri) => !redisPreExisting.has(uri))
-          .map((uri) => this.redis.del(`${CLIENT_PREFIX}${uri}`)),
-        this.redis.del(clientIdKey),
-      ]);
-      throw writeFailed.reason;
-    }
-
     return response;
-  }
-
-  private async keyExists(key: string): Promise<boolean> {
-    return (await this.redis.exists(key)) === 1;
-  }
-
-  private isClientRegistered(uri: string): Promise<boolean> {
-    return this.keyExists(`${CLIENT_PREFIX}${uri}`);
-  }
-
-  private isClientIdRegistered(clientId: string): Promise<boolean> {
-    return this.keyExists(`${CLIENT_ID_PREFIX}${clientId}`);
   }
 
   private async getClientRedirectUris(
@@ -207,10 +142,8 @@ export class RedisOAuthProxy extends OAuthProxy {
         "Only 'code' response type is supported",
       );
     }
-    // RFC 6749 §3.1.2.3 / RFC 6819 §4.1.5 — the redirect_uri must be one
-    // registered for THIS client_id (per-client binding; a global check would
-    // let any client pair with any other client's URI — CWE-601). Read from
-    // shared Redis so a cross-instance DCR still counts.
+    // redirect_uri must be one registered for THIS client_id — a global check
+    // would let any client pair with any other's URI (CWE-601).
     const registeredUris = await this.getClientRedirectUris(params.client_id);
     if (!registeredUris) {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
@@ -265,10 +198,10 @@ export class RedisOAuthProxy extends OAuthProxy {
     }
     const transaction = deserialize<OAuthTransaction>(txJson);
 
-    // Defense-in-depth: reject if the transaction's stored callback URL is no
-    // longer registered. Guards against DCR revocation mid-flow and any path
-    // that could have persisted an unvalidated URI.
-    if (!(await this.isClientRegistered(transaction.clientCallbackUrl))) {
+    // Defense-in-depth: the callback URL must still be bound to this client
+    // (guards against mid-flow DCR revocation/expiry).
+    const txUris = await this.getClientRedirectUris(transaction.clientId);
+    if (!txUris || !txUris.includes(transaction.clientCallbackUrl)) {
       await this.redis.del(`${TX_PREFIX}${state}`);
       throw new OAuthProxyError(
         'invalid_request',
@@ -288,10 +221,8 @@ export class RedisOAuthProxy extends OAuthProxy {
       upstreamTokens,
     );
     const codeData = this._internal.clientCodes.get(clientCode);
-    // Should never happen — generateAuthorizationCode just populated the Map.
-    // If a parent cleanup race emptied it, fail loud rather than redirect with
-    // a code we never persisted (which would surface as "invalid code" at the
-    // token step, after a successful-looking login).
+    // generateAuthorizationCode just populated the Map; if a cleanup race
+    // emptied it, fail loud rather than redirect with an unpersisted code.
     if (!codeData) {
       throw new OAuthProxyError(
         'server_error',
@@ -329,9 +260,9 @@ export class RedisOAuthProxy extends OAuthProxy {
         'Only authorization_code grant type is supported',
       );
     }
-    // Reject unknown clients here too (shared Redis); the code↔client binding
-    // below enforces that only the owning client can redeem the code.
-    if (!(await this.isClientIdRegistered(request.client_id))) {
+    // Reject unknown clients here too; the code↔client binding below enforces
+    // that only the owning client can redeem the code.
+    if (!(await this.getClientRedirectUris(request.client_id))) {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
 
@@ -350,10 +281,9 @@ export class RedisOAuthProxy extends OAuthProxy {
     if (clientCode.clientId !== request.client_id) {
       throw new OAuthProxyError('invalid_client', 'Client ID mismatch');
     }
-    // PKCE inline, not via super: the parent re-checks client_id against a
-    // process-local Map. enableTokenSwap is false, so the response below
-    // matches super's — except one-time-use, which the GETDEL above already
-    // enforces (so we intentionally skip the parent's `used` flag).
+    // PKCE inline, not via super (the parent re-checks client_id against a
+    // process-local Map). One-time-use is enforced by the GETDEL above, not the
+    // parent's `used` flag.
     if (clientCode.codeChallenge) {
       if (!request.code_verifier) {
         throw new OAuthProxyError(

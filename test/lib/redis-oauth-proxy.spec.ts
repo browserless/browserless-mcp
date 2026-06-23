@@ -114,41 +114,27 @@ describe('RedisOAuthProxy', () => {
   });
 
   describe('registerClient', () => {
-    it('mirrors every redirect_uri to Redis under the client registry prefix', async () => {
-      await proxy.registerClient({
+    it('stores the client redirect_uris under the client-id key', async () => {
+      const resp = await proxy.registerClient({
         redirect_uris: [
           'https://client.example.com/a',
           'https://client.example.com/b',
         ],
       });
-
-      const a = await redis.exists(
-        'mcp:oauth:client:https://client.example.com/a',
-      );
-      const b = await redis.exists(
-        'mcp:oauth:client:https://client.example.com/b',
-      );
-      expect(a).to.equal(1);
-      expect(b).to.equal(1);
-    });
-
-    it('stores the client redirect_uris under the client-id key', async () => {
-      const resp = await proxy.registerClient({
-        redirect_uris: [LEGIT_REDIRECT],
-      });
       const stored = await redis.get(`mcp:oauth:client-id:${resp.client_id}`);
-      expect(JSON.parse(stored!)).to.deep.equal([LEGIT_REDIRECT]);
+      expect(JSON.parse(stored!)).to.deep.equal([
+        'https://client.example.com/a',
+        'https://client.example.com/b',
+      ]);
     });
 
-    it('sets the 90-day client TTL on the registration keys', async () => {
+    it('sets the 90-day client TTL on the registration key', async () => {
       const resp = await proxy.registerClient({
         redirect_uris: [LEGIT_REDIRECT],
       });
 
       const NINETY_DAYS = 90 * 24 * 60 * 60;
-      const uriTtl = await redis.ttl(`mcp:oauth:client:${LEGIT_REDIRECT}`);
       const idTtl = await redis.ttl(`mcp:oauth:client-id:${resp.client_id}`);
-      expect(uriTtl).to.be.closeTo(NINETY_DAYS, 60);
       expect(idTtl).to.be.closeTo(NINETY_DAYS, 60);
     });
 
@@ -593,7 +579,7 @@ describe('RedisOAuthProxy', () => {
 
     it('exchangeAuthorizationCode rejects when the client lookup errors', async () => {
       const clientId = await dcr(proxy);
-      sinon.stub(redis, 'exists').rejects(new Error('redis unreachable'));
+      sinon.stub(redis, 'get').rejects(new Error('redis unreachable'));
 
       try {
         await proxy.exchangeAuthorizationCode({
@@ -609,8 +595,8 @@ describe('RedisOAuthProxy', () => {
     });
   });
 
-  describe('registerClient Redis failure rollback', () => {
-    it('does not leave any Redis state when the mirror write fails', async () => {
+  describe('registerClient Redis failure', () => {
+    it('does not leave any Redis state when the write fails', async () => {
       const setStub = sinon.stub(redis, 'set').rejects(new Error('redis down'));
 
       try {
@@ -632,66 +618,6 @@ describe('RedisOAuthProxy', () => {
         expect((err as OAuthProxyError).code).to.equal('invalid_client');
       }
     });
-
-    it('surfaces the probe failure without attempting any writes', async () => {
-      const existsStub = sinon
-        .stub(redis, 'exists')
-        .rejects(new Error('redis unreachable'));
-
-      try {
-        await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
-        expect.fail('should have thrown');
-      } catch (err) {
-        expect((err as Error).message).to.equal('redis unreachable');
-      }
-      existsStub.restore();
-
-      try {
-        await proxy.authorize(
-          baseAuthorizeParams({ client_id: 'never-registered' }),
-        );
-        expect.fail('authorize should have rejected the unknown client');
-      } catch (err) {
-        expect(err).to.be.instanceOf(OAuthProxyError);
-        expect((err as OAuthProxyError).code).to.equal('invalid_client');
-      }
-    });
-
-    it('preserves pre-existing registrations when a later overlapping DCR fails', async () => {
-      // Two different DCR calls happen to share a redirect_uri (rare but
-      // possible: same client re-registering, or two clients with colliding
-      // localhost ports). The first succeeds; the second fails its Redis
-      // mirror. Rollback must NOT remove the URI that the first call
-      // already legitimately registered.
-      const clientId = await dcr(proxy);
-
-      // Verify initial registration is honored end-to-end
-      const authOk = await proxy.authorize(
-        baseAuthorizeParams({ client_id: clientId }),
-      );
-      expect(authOk.status).to.equal(302);
-
-      // Second DCR for the same URI: force Redis failure mid-mirror
-      const setStub = sinon
-        .stub(redis, 'set')
-        .rejects(new Error('redis transient'));
-      try {
-        await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
-        expect.fail('should have thrown');
-      } catch (err) {
-        expect((err as Error).message).to.equal('redis transient');
-      }
-      setStub.restore();
-
-      // The prior registration must still be valid on both layers
-      expect(await redis.exists(`mcp:oauth:client:${LEGIT_REDIRECT}`)).to.equal(
-        1,
-      );
-      const authStillOk = await proxy.authorize(
-        baseAuthorizeParams({ client_id: clientId }),
-      );
-      expect(authStillOk.status).to.equal(302);
-    });
   });
 
   describe('handleCallback defense-in-depth', () => {
@@ -712,7 +638,7 @@ describe('RedisOAuthProxy', () => {
       const transactionId = upstreamUrl.searchParams.get('state')!;
 
       // Revoke registration from the shared Redis store
-      await redis.del(`mcp:oauth:client:${LEGIT_REDIRECT}`);
+      await redis.del(`mcp:oauth:client-id:${clientId}`);
 
       const fetchStub = mockUpstreamTokenFetch();
       const proxyB = new RedisOAuthProxy(buildConfig(), redis);
