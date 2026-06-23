@@ -35,6 +35,8 @@ const LOGIN_NUDGE_RE =
 const TAB_ERROR_CODES = ['TAB_NOT_FOUND', 'TAB_CLOSED', 'TAB_LIMIT_EXCEEDED'];
 const TAB_COMMAND_METHODS = ['getTabs', 'switchTab', 'createTab', 'closeTab'];
 
+const FILE_TRANSFER_METHODS = ['uploadFile', 'getDownloads'];
+
 const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
   switch (p.kind) {
     case 'snapshot.has-element': {
@@ -173,6 +175,16 @@ const SKILL_SPECS: SkillSpec[] = [
     id: 'auth-profile',
     path: 'src/skills/auth-profile.md',
     triggers: [],
+  },
+  {
+    id: 'file-transfers',
+    path: 'src/skills/file-transfers.md',
+    triggers: [
+      // A file input on the page — uploads are likely next.
+      [{ kind: 'snapshot.has-input-type', type: 'file' }],
+      // The model issued an upload/download command.
+      [{ kind: 'command.method', methods: FILE_TRANSFER_METHODS }],
+    ],
   },
   {
     id: 'captchas',

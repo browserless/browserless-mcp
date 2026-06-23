@@ -8,7 +8,6 @@ import { getConfig } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
 import { registerSmartScraperTool } from './tools/smartscraper.js';
 import { registerFunctionTool } from './tools/function.js';
-import { registerDownloadTool } from './tools/download.js';
 import { registerExportTool } from './tools/export.js';
 import { registerAgentTools } from './tools/agent.js';
 import { registerSearchTool } from './tools/search.js';
@@ -17,13 +16,14 @@ import { registerCrawlTool } from './tools/crawl.js';
 import { registerPerformanceTool } from './tools/performance.js';
 import { registerApiDocsResource } from './resources/api-docs.js';
 import { registerStatusResource } from './resources/status.js';
+import { registerUploadRoute } from './resources/upload-route.js';
+import { registerDownloadRoute } from './resources/download-route.js';
+import { clearSession } from './lib/download-store.js';
 import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
 import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AnalyticsHelper } from './lib/analytics.js';
-import {
-  resolveApiKey,
-  installSupabaseTokenTtlPatch,
-} from './lib/account-resolver.js';
+import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
+import { resolveBrowserlessAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
 import { Redis } from 'ioredis';
@@ -107,58 +107,21 @@ const hybridAuthenticate =
   config.transport === 'httpStream'
     ? async (request: IncomingMessage) => {
         const params = new URLSearchParams(request.url?.split('?')[1] ?? '');
-        const authHeader = request.headers.authorization as string | undefined;
-        const headerToken = authHeader?.startsWith('Bearer ')
-          ? authHeader.slice(7)
-          : authHeader;
-
-        const apiUrl =
-          (request.headers['x-browserless-api-url'] as string) ??
-          params.get('browserlessUrl') ??
-          config.browserlessApiUrl;
-
-        // A pre-created session id to attach to, threaded by the autologin
-        // runner. The agent tool opens /chromium/agent?sessionId=<this> instead
-        // of doing its own POST /profile.
-        const attachSessionId =
-          (request.headers['x-browserless-session-id'] as string) ??
-          params.get('browserlessSessionId') ??
-          undefined;
-
-        // JWTs have 3 dot-separated base64url segments; plain API keys do not.
-        const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
-
-        // apiUrl/attachSessionId are the same across every auth path; only the
-        // resolved token differs.
-        const session = (token: string): BrowserlessSession =>
-          ({ token, apiUrl, attachSessionId }) as BrowserlessSession;
-
-        // 1. Authorization header with plain API key
-        if (headerToken && !isJwt) {
-          return session(headerToken);
-        }
-
-        // 2. ?token= query param
-        const directToken = params.get('token') || undefined;
-        if (directToken) {
-          return session(directToken);
-        }
-
-        // 3. Authorization header with JWT → decode Supabase token directly
-        if (isJwt && headerToken) {
-          const { apiKey } = await resolveApiKey(
-            config.supabaseUrl,
-            config.supabaseServiceRoleKey,
-            headerToken,
-          );
-          return session(apiKey);
-        }
-
-        throw new Error(
-          'No Browserless API token provided. ' +
-            'Pass it as Authorization: Bearer <token> header, ' +
-            '?token= query parameter, or authenticate via OAuth.',
-        );
+        return (await resolveBrowserlessAuth(
+          {
+            authHeader: request.headers.authorization as string | undefined,
+            tokenQuery: params.get('token') || undefined,
+            apiUrlHeader: request.headers['x-browserless-api-url'] as
+              | string
+              | undefined,
+            browserlessUrlQuery: params.get('browserlessUrl') || undefined,
+            sessionIdHeader: request.headers['x-browserless-session-id'] as
+              | string
+              | undefined,
+            sessionIdQuery: params.get('browserlessSessionId') || undefined,
+          },
+          config,
+        )) as BrowserlessSession;
       }
     : undefined;
 
@@ -171,7 +134,6 @@ const server = new FastMCP<BrowserlessSession>({
 
 registerSmartScraperTool(server, config, analytics);
 registerFunctionTool(server, config, analytics);
-registerDownloadTool(server, config, analytics);
 registerExportTool(server, config, analytics);
 registerAgentTools(server, config, analytics);
 registerSearchTool(server, config, analytics);
@@ -190,6 +152,8 @@ server.on('connect', (event) => {
 
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
+  // Drop any files staged/captured for this session (TTL is the backstop).
+  clearSession(event.session.sessionId);
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
 });
 
@@ -203,6 +167,12 @@ if (config.transport === 'httpStream') {
       stateless: false,
     },
   });
+  // Out-of-band file staging for uploads (the LLM curls a file here and gets a
+  // handle, instead of base64-ing it through the conversation). httpStream only.
+  registerUploadRoute(server, config);
+  // Single-use, out-of-band fetch for captured downloads (the LLM GETs the file
+  // instead of pulling bytes through the conversation). httpStream only.
+  registerDownloadRoute(server, config);
   console.error(
     `[browserless-mcp] HTTP Streamable server listening on port ${config.port}`,
   );

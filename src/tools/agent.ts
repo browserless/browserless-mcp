@@ -1,6 +1,15 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { z } from 'zod';
+import {
+  downloadUri,
+  getDownload,
+  storeDownload,
+  FILE_TRANSFER_MAX_BYTES,
+  type StoredDownload,
+} from '../lib/download-store.js';
 import {
   getOrCreateSession,
   send,
@@ -28,6 +37,7 @@ import { AgentParamsSchema } from './schemas.js';
 import {
   AGENT_SYSTEM_PROMPT,
   SKILL_TOOL_DESCRIPTION,
+  fileTransferModeNote,
 } from '../skills/system-prompt.js';
 import {
   buildCrossOriginNotice,
@@ -102,12 +112,185 @@ export const formatScreenshotContent = (
   return content;
 };
 
-// Zod parses params at the tool boundary, so this only needs to supply the {}
-// default when the field was omitted — the schema never delivers a string,
-// array, or null here.
-const coerceParams = (
-  params: Record<string, unknown> | undefined,
-): Record<string, unknown> => params ?? {};
+type DownloadEntry = {
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+  data?: string;
+  error?: string;
+  maxBytes?: number;
+  sourceUrl?: string;
+  inProgress?: boolean;
+  receivedBytes?: number;
+  totalBytes?: number;
+};
+
+const fmtBytes = (n?: number): string =>
+  typeof n !== 'number'
+    ? '?'
+    : n >= 1_048_576
+      ? `${(n / 1_048_576).toFixed(1)}MB`
+      : `${Math.round(n / 1024)}KB`;
+
+// Still-downloading entry: report progress so the caller knows to touch the
+// browser again to collect it (no bytes, nothing to save yet).
+const describeInProgressDownload = (d: DownloadEntry): string => {
+  const got = fmtBytes(d.receivedBytes);
+  const total =
+    d.totalBytes && d.totalBytes > 0 ? ` / ${fmtBytes(d.totalBytes)}` : '';
+  return `${d.filename ?? 'file'} — downloading (${got}${total}); touch the browser again to collect it`;
+};
+
+// Resolve each uploadFile entry to base64 `content` (from `content`, a prior
+// `handle`, or a local `path` in stdio) so the model never emits base64 itself.
+export const normalizeUploadCommand = async (
+  cmd: { method: string; params: Record<string, unknown> },
+  transport: McpConfig['transport'],
+  mcpBaseUrl?: string,
+): Promise<void> => {
+  if (cmd.method !== 'uploadFile') return;
+  const files = cmd.params.files;
+  if (!Array.isArray(files)) return;
+  for (const file of files) {
+    if (!file || typeof file !== 'object') continue;
+    const f = file as Record<string, unknown>;
+    if (typeof f.content === 'string' && f.content) continue;
+
+    let buf: Buffer;
+    let defaultName: string;
+
+    if (typeof f.handle === 'string' && f.handle) {
+      const record = getDownload(f.handle);
+      if (!record) {
+        throw new UserError(
+          `Unknown upload handle "${f.handle}". Pass a handle returned by ` +
+            `getDownloads, or supply base64 "content".`,
+        );
+      }
+      buf = await readFile(record.path);
+      defaultName = record.filename;
+      delete f.handle;
+    } else if (typeof f.path === 'string' && f.path) {
+      if (transport !== 'stdio') {
+        const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
+        const tokenQ = '?token=<YOUR_BROWSERLESS_TOKEN>';
+        throw new UserError(
+          'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
+            'read your filesystem). Stage the file once over HTTP, then pass the ' +
+            'returned handle — do NOT base64 it through the conversation:\n' +
+            `  curl -s -F file=@"${f.path}" "${base}/upload${tokenQ}"\n` +
+            'then: uploadFile { files: [{ handle: "<handle from the response>" }] }',
+        );
+      }
+      const path = f.path;
+      buf = await readFile(path).catch((e: unknown) => {
+        throw new UserError(
+          `Failed to read upload file "${path}": ` +
+            (e instanceof Error ? e.message : String(e)),
+        );
+      });
+      defaultName = basename(path);
+      delete f.path;
+    } else {
+      continue;
+    }
+
+    if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
+      throw new UserError(
+        `Upload file "${defaultName}" is ${buf.byteLength} bytes, over the ` +
+          `50MB limit.`,
+      );
+    }
+    f.content = buf.toString('base64');
+    if (!f.name) f.name = defaultName;
+  }
+};
+
+const describeFailedDownload = (d: DownloadEntry): string => {
+  let s =
+    `${d.filename ?? 'unknown'}: ${d.error ?? 'no data'}` +
+    (d.maxBytes ? ` (max ${d.maxBytes} bytes)` : '');
+  // Over-cap files can't go through the transfer flow — point at the source so
+  // the caller can fetch it directly (e.g. curl) if it has network access.
+  if (d.error === 'FileTooLarge' && d.sourceUrl) {
+    s += ` — too large to transfer; fetch directly: ${d.sourceUrl}`;
+  }
+  return s;
+};
+
+// Persist a download to the server's filesystem (out of the model's context),
+// tagged to the MCP session for cleanup. Returns null for failed/empty entries.
+const persistDownload = async (
+  d: DownloadEntry,
+  sessionId?: string,
+): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
+  if (d.error || !d.data || !d.filename) return null;
+  return storeDownload(
+    d.filename,
+    d.mimeType ?? 'application/octet-stream',
+    Buffer.from(d.data, 'base64'),
+    sessionId,
+  );
+};
+
+type FormatOpts = {
+  transport: McpConfig['transport'];
+  sessionId?: string;
+  mcpBaseUrl?: string;
+  token?: string;
+};
+
+// stdio: file is already on the local disk → return its path (reuse as
+// uploadFile { path }). http: return a single-use GET URL + handle; base64
+// never enters context, and fetching consumes the file.
+const describeReadyDownload = (
+  record: StoredDownload,
+  opts: FormatOpts,
+): string => {
+  if (opts.transport === 'stdio') {
+    return (
+      `${record.path} (${record.mimeType}, ${record.size} bytes) — ` +
+      `reuse as uploadFile { path: "${record.path}" }`
+    );
+  }
+  const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
+  const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  return (
+    `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
+    `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
+    `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
+  );
+};
+
+// Surface captured downloads as metadata + how to retrieve them (never bytes).
+export const formatDownloads = async (
+  downloads: DownloadEntry[],
+  prefix: string,
+  skills: string,
+  opts: FormatOpts,
+): Promise<Content[]> => {
+  const lines: string[] = [];
+  for (const d of downloads) {
+    if (d.inProgress) {
+      lines.push(`- ${describeInProgressDownload(d)}`);
+      continue;
+    }
+    const record = await persistDownload(d, opts.sessionId);
+    lines.push(
+      `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
+    );
+  }
+  const header =
+    opts.transport === 'stdio'
+      ? 'Downloads:'
+      : 'Downloads (save the ones you need — each GET works once):';
+  const text = downloads.length
+    ? `${prefix}${header}\n${lines.join('\n')}`
+    : `${prefix}No new downloads.`;
+  const content: Content[] = [{ type: 'text', text }];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
+};
 
 const SkillIdSchema = z.enum(
   skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
@@ -147,7 +330,9 @@ export function registerAgentTools(
 
   defineTool<AgentParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
-    description: AGENT_SYSTEM_PROMPT,
+    description:
+      AGENT_SYSTEM_PROMPT +
+      fileTransferModeNote(config.transport, config.mcpBaseUrl),
     parameters: AgentParamsSchema,
     annotations: {
       title: 'Browserless Agent',
@@ -171,9 +356,9 @@ export function registerAgentTools(
         params.commands && params.commands.length > 0
           ? params.commands.map((c) => ({
               method: c.method,
-              params: coerceParams(c.params),
+              params: c.params ?? {},
             }))
-          : [{ method: params.method, params: coerceParams(params.params) }];
+          : [{ method: params.method, params: params.params ?? {} }];
 
       const proxy = params.proxy;
       const profile = params.profile;
@@ -438,15 +623,32 @@ export function registerAgentTools(
           return [{ type: 'text' as const, text: 'Browser session closed.' }];
         }
 
-        // Snapshot: format as compact ref-based text
+        // Auto-surface files Chrome captured this batch so the model needn't call
+        // getDownloads. Skipped on explicit drain/close; a failed poll is ignored.
+        let autoDownloads: DownloadEntry[] = [];
+        if (!closedDuringBatch && last.method !== 'getDownloads') {
+          try {
+            const dl = await send(agentSession, 'getDownloads', {});
+            autoDownloads =
+              (dl.result as { downloads?: DownloadEntry[] } | undefined)
+                ?.downloads ?? [];
+          } catch {
+            // ignore — downloads will surface on a later call
+          }
+        }
+
+        const skillsText = triggered.length > 0 ? renderSkills(triggered) : '';
+        let baseContent: Content[];
+
         if (lastSnapshot) {
+          // Snapshot: compact ref-based text.
           const notice = buildCrossOriginNotice(
             crossOriginBaseline,
             lastSnapshot.url,
           );
           const noticeBlock = notice ? `${notice}\n\n` : '';
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
-          return [
+          baseContent = [
             {
               type: 'text' as const,
               text: appendSkills(
@@ -458,33 +660,64 @@ export function registerAgentTools(
               ),
             },
           ];
+        } else if (last.method === 'getDownloads') {
+          // Explicit drain.
+          const downloads =
+            (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
+          const prefix =
+            batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
+          return await formatDownloads(downloads, prefix, skillsText, {
+            transport: config.transport,
+            sessionId: mcpSessionId,
+            mcpBaseUrl: config.mcpBaseUrl,
+            token,
+          });
+        } else {
+          // Screenshot → image content block; otherwise JSON text.
+          const shot =
+            last.method === 'screenshot'
+              ? formatScreenshotContent(
+                  lastResult,
+                  lastCmd,
+                  batchPrefix,
+                  skillsText,
+                )
+              : null;
+          baseContent = shot ?? [
+            {
+              type: 'text' as const,
+              text: appendSkills(
+                batchPrefix + JSON.stringify(lastResult, null, 2),
+                triggered,
+              ),
+            },
+          ];
         }
 
-        // Screenshot: return as image content block (vision input ≈ 1.5K tokens
-        // vs. ~67K tokens if we dumped the base64 inline as text).
-        if (last.method === 'screenshot') {
-          const content = formatScreenshotContent(
-            lastResult,
-            lastCmd,
-            batchPrefix,
-            triggered.length > 0 ? renderSkills(triggered) : '',
-          );
-          if (content) return content;
+        // Append the captured-download notification (metadata only, no bytes).
+        if (autoDownloads.length > 0) {
+          const notice = await formatDownloads(autoDownloads, '', '', {
+            transport: config.transport,
+            sessionId: mcpSessionId,
+            mcpBaseUrl: config.mcpBaseUrl,
+            token,
+          });
+          baseContent = [...baseContent, ...notice];
         }
 
-        // Everything else: return as JSON text
-        return [
-          {
-            type: 'text' as const,
-            text: appendSkills(
-              batchPrefix + JSON.stringify(lastResult, null, 2),
-              triggered,
-            ),
-          },
-        ];
+        return baseContent;
       };
 
       try {
+        // Resolve any local upload paths to base64 once, before the (possibly
+        // retried) send loop runs.
+        for (const cmd of commands) {
+          await normalizeUploadCommand(
+            cmd,
+            config.transport,
+            config.mcpBaseUrl,
+          );
+        }
         const result = await runCommands(false);
         sendAnalytics(true);
         return result;

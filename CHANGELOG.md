@@ -2,14 +2,18 @@
 
 ## [1.6.2](https://github.com/browserless/browserless-mcp/compare/v1.6.1...v1.6.2) (2026-06-08)
 
-
 ### Bug Fixes
 
-* drop stale COPY patches/ from Dockerfile ([#109](https://github.com/browserless/browserless-mcp/issues/109)) ([976e38d](https://github.com/browserless/browserless-mcp/commit/976e38d4b79643d60485a01cdee0c16486b17afd))
+- drop stale COPY patches/ from Dockerfile ([#109](https://github.com/browserless/browserless-mcp/issues/109)) ([976e38d](https://github.com/browserless/browserless-mcp/commit/976e38d4b79643d60485a01cdee0c16486b17afd))
 
 ## Latest
 
+- Add file upload/download support to `browserless_agent` via the `uploadFile` and `getDownloads` commands, plus a `file-transfers` skill. Downloads **auto-surface** on every agent response as a ledger — never the bytes, without the model calling `getDownloads`: completed files (handle/path), still-running ones (with progress, so the model re-checks on its next browser touch), and over-cap ones (source URL for a direct fetch). In stdio mode the file is saved locally and you get its path; `uploadFile` accepts a `handle`, a local `path`, or base64 `content`. Honors the server-side 10MB/50MB transfer cap.
+- Add out-of-band HTTP file endpoints (httpStream transport), token-gated like the MCP surface: `POST /upload` stages a local file (`curl -F file=@path "<base>/upload?token=<token>"`) and returns a handle for `uploadFile`; `GET /download/<id>?token=<token>` fetches a captured download. Files share a temp store dropped after one download fetch, a 15-minute TTL, or session end — whichever comes first.
+- **Removed the standalone `browserless_download` tool.** File downloads now go through `browserless_agent` (trigger the download, then it auto-surfaces) — a single path that never inlines bytes into context. Replaces the old tool that returned the file as base64.
+
 ## v1.6.1
+
 Drop vestigial mcp-proxy postinstall patch that broke `npm install` in consumers
 
 - Dependency updates

@@ -5,12 +5,19 @@ import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
   formatConnectError,
+  formatDownloads,
   formatErrorMessage,
   formatScreenshotContent,
   formatSnapshot,
+  normalizeUploadCommand,
   registerAgentTools,
   sanitizeUpgradeBody,
 } from '../../src/tools/agent.js';
+import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
+import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { downloadUri, storeDownload } from '../../src/lib/download-store.js';
 import {
   ProfileNotFoundError,
   UpgradeError,
@@ -198,6 +205,225 @@ describe('formatScreenshotContent', () => {
     const caption = content![0] as Extract<Content, { type: 'text' }>;
     expect(caption.text).to.match(/^Executed: goto → screenshot/);
     expect(caption.text).to.include('Screenshot captured');
+  });
+});
+
+describe('fileTransferModeNote', () => {
+  it('tells the model to use a local path in stdio mode (no base64)', () => {
+    const note = fileTransferModeNote('stdio', 'https://mcp.example.com');
+    expect(note).to.match(/stdio/i);
+    expect(note).to.include('path');
+    expect(note).to.match(/do NOT base64/i);
+    expect(note).to.not.include('/upload');
+  });
+
+  it('tells the model to stage via /upload in HTTP mode', () => {
+    const note = fileTransferModeNote('httpStream', 'https://mcp.example.com');
+    expect(note).to.match(/HTTP/);
+    expect(note).to.include('https://mcp.example.com/upload');
+    expect(note).to.match(/never base64/i);
+  });
+});
+
+describe('normalizeUploadCommand', () => {
+  it('reads a local path into base64 content (stdio)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-upload-'));
+    const path = join(dir, 'hello.txt');
+    await writeFile(path, 'Hello World!');
+
+    const cmd = {
+      method: 'uploadFile',
+      params: { selector: 'input', files: [{ path }] },
+    };
+    await normalizeUploadCommand(cmd, 'stdio');
+
+    const file = (cmd.params.files as Record<string, unknown>[])[0];
+    expect(file.path).to.be.undefined;
+    expect(file.name).to.equal('hello.txt');
+    expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
+      'Hello World!',
+    );
+  });
+
+  it('rejects a local path in httpStream mode with a staging recipe', async () => {
+    const cmd = {
+      method: 'uploadFile',
+      params: { selector: 'input', files: [{ path: '/etc/hosts' }] },
+    };
+    let threw = false;
+    try {
+      await normalizeUploadCommand(
+        cmd,
+        'httpStream',
+        'https://mcp.example.com',
+      );
+    } catch (e) {
+      threw = true;
+      const msg = (e as Error).message;
+      expect(msg).to.match(/not available in HTTP mode/);
+      expect(msg).to.include('curl -s -F file=@"/etc/hosts"');
+      expect(msg).to.include(
+        'https://mcp.example.com/upload?token=<YOUR_BROWSERLESS_TOKEN>',
+      );
+    }
+    expect(threw, 'expected normalizeUploadCommand to throw').to.be.true;
+  });
+
+  it('leaves base64 content and non-upload commands untouched', async () => {
+    const cmd = {
+      method: 'uploadFile',
+      params: { selector: 'input', files: [{ content: 'YWJj', name: 'a' }] },
+    };
+    await normalizeUploadCommand(cmd, 'httpStream');
+    const file = (cmd.params.files as Record<string, unknown>[])[0];
+    expect(file.content).to.equal('YWJj');
+
+    const other = { method: 'click', params: { selector: 'a' } };
+    await normalizeUploadCommand(other, 'stdio');
+    expect(other.params.selector).to.equal('a');
+  });
+
+  it('resolves a download handle to base64 content (any transport)', async () => {
+    const record = await storeDownload(
+      'grabbed.bin',
+      'application/octet-stream',
+      Buffer.from('Hello World!'),
+    );
+    const cmd = {
+      method: 'uploadFile',
+      params: {
+        selector: 'input',
+        files: [{ handle: downloadUri(record.id) }],
+      },
+    };
+    await normalizeUploadCommand(cmd, 'httpStream');
+    const file = (cmd.params.files as Record<string, unknown>[])[0];
+    expect(file.handle).to.be.undefined;
+    expect(file.name).to.equal('grabbed.bin');
+    expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
+      'Hello World!',
+    );
+  });
+
+  it('throws on an unknown upload handle', async () => {
+    const cmd = {
+      method: 'uploadFile',
+      params: { selector: 'input', files: [{ handle: 'nope://missing' }] },
+    };
+    let threw = false;
+    try {
+      await normalizeUploadCommand(cmd, 'stdio');
+    } catch (e) {
+      threw = true;
+      expect((e as Error).message).to.match(/Unknown upload handle/);
+    }
+    expect(threw).to.be.true;
+  });
+});
+
+describe('formatDownloads (httpStream)', () => {
+  it('surfaces a notification + single-use GET URL, never the base64 bytes', async () => {
+    const content = await formatDownloads(
+      [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.include('report.csv');
+    // GET recipe with the real base URL + token, marked single use.
+    expect(text).to.match(
+      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+    );
+    expect(text).to.include('single use');
+    // The base64 must never appear in the returned content.
+    expect(JSON.stringify(content)).to.not.include('YWJj');
+  });
+
+  it('degrades oversized/failed downloads to a text note with the source URL', async () => {
+    const content = await formatDownloads(
+      [
+        {
+          filename: 'big.bin',
+          error: 'FileTooLarge',
+          maxBytes: 1048576,
+          sourceUrl: 'https://example.com/big.bin',
+        },
+      ],
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.match(/big\.bin: FileTooLarge/);
+    expect(text).to.include('fetch directly: https://example.com/big.bin');
+    expect(text).to.not.include('/download/');
+  });
+
+  it('reports an in-progress download as a progress line, no fetch URL', async () => {
+    const content = await formatDownloads(
+      [
+        {
+          filename: 'movie.mov',
+          inProgress: true,
+          receivedBytes: 2 * 1048576,
+          totalBytes: 10 * 1048576,
+        },
+      ],
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.match(/movie\.mov — downloading \(2\.0MB \/ 10\.0MB\)/);
+    expect(text).to.include('touch the browser again');
+    expect(text).to.not.include('/download/');
+  });
+});
+
+describe('formatDownloads (stdio)', () => {
+  it('writes the file to disk and reports a reusable path, no base64', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-dl-'));
+    const prev = process.env.BROWSERLESS_DOWNLOAD_DIR;
+    process.env.BROWSERLESS_DOWNLOAD_DIR = dir;
+    try {
+      const content = await formatDownloads(
+        [
+          {
+            filename: 'report.csv',
+            mimeType: 'text/csv',
+            size: 3,
+            data: 'YWJj',
+          },
+        ],
+        '',
+        '',
+        { transport: 'stdio' },
+      );
+      const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+      expect(text).to.include('report.csv');
+      expect(text).to.include(dir);
+      expect(text).to.not.include('YWJj');
+      // The reported path points at the written bytes.
+      const reported = text.split('- ')[1].split(' (')[0];
+      const written = await fsReadFile(reported);
+      expect(written.toString()).to.equal('abc');
+    } finally {
+      if (prev === undefined) delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+      else process.env.BROWSERLESS_DOWNLOAD_DIR = prev;
+    }
   });
 });
 
