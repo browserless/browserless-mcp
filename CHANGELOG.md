@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/browserless/browserless-mcp/compare/v1.7.0...v1.7.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* prevent smartscraper from dominating tool selection ([#139](https://github.com/browserless/browserless-mcp/issues/139)) ([e3e8285](https://github.com/browserless/browserless-mcp/commit/e3e8285b680da9bfda347e0d0285840b93afda4c))
+
 ## [1.7.0](https://github.com/browserless/browserless-mcp/compare/v1.6.2...v1.7.0) (2026-06-23)
 
 
