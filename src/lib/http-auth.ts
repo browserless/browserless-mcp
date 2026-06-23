@@ -4,6 +4,7 @@ import type { McpConfig } from '../@types/types.js';
 export interface ResolvedBrowserlessAuth {
   token: string;
   apiUrl: string;
+  attachSessionId?: string;
 }
 
 export interface AuthInput {
@@ -11,6 +12,8 @@ export interface AuthInput {
   tokenQuery?: string;
   apiUrlHeader?: string;
   browserlessUrlQuery?: string;
+  sessionIdHeader?: string;
+  sessionIdQuery?: string;
 }
 
 /**
@@ -34,14 +37,20 @@ export const resolveBrowserlessAuth = async (
   const apiUrl =
     input.apiUrlHeader ?? input.browserlessUrlQuery ?? config.browserlessApiUrl;
 
+  // A pre-created session id to attach to, threaded by the autologin runner.
+  // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
+  // own POST /profile.
+  const attachSessionId =
+    input.sessionIdHeader ?? input.sessionIdQuery ?? undefined;
+
   // JWTs have 3 dot-separated base64url segments; plain API keys do not.
   const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
 
   if (headerToken && !isJwt) {
-    return { token: headerToken, apiUrl };
+    return { token: headerToken, apiUrl, attachSessionId };
   }
   if (input.tokenQuery) {
-    return { token: input.tokenQuery, apiUrl };
+    return { token: input.tokenQuery, apiUrl, attachSessionId };
   }
   if (isJwt && headerToken) {
     const { apiKey } = await resolveApiKey(
@@ -49,7 +58,7 @@ export const resolveBrowserlessAuth = async (
       config.supabaseServiceRoleKey,
       headerToken,
     );
-    return { token: apiKey, apiUrl };
+    return { token: apiKey, apiUrl, attachSessionId };
   }
 
   throw new Error(
