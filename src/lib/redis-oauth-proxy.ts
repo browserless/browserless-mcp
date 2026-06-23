@@ -318,8 +318,4 @@ export class RedisOAuthProxy extends OAuthProxy {
     }
     return response;
   }
-
-  override destroy(): void {
-    super.destroy();
-  }
 }

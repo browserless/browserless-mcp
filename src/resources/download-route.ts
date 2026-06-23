@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { readFile, rm } from 'node:fs/promises';
 import { consumeDownload } from '../lib/download-store.js';
-import { resolveBrowserlessAuth } from '../lib/http-auth.js';
+import { guardRouteAuth } from '../lib/http-auth.js';
 import type { McpConfig } from '../@types/types.js';
 
 /**
@@ -24,19 +24,8 @@ export function registerDownloadRoute(
   const app = server.getApp();
 
   app.get('/download/:id', async (c) => {
-    try {
-      await resolveBrowserlessAuth(
-        {
-          authHeader: c.req.header('authorization'),
-          tokenQuery: c.req.query('token'),
-          apiUrlHeader: c.req.header('x-browserless-api-url'),
-          browserlessUrlQuery: c.req.query('browserlessUrl'),
-        },
-        config,
-      );
-    } catch {
-      return c.json({ ok: false, error: 'Unauthorized' }, 401);
-    }
+    const denied = await guardRouteAuth(c, config);
+    if (denied) return denied;
 
     // Single-use: consume removes it from the registry so a second GET 404s.
     const record = consumeDownload(c.req.param('id'));
