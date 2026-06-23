@@ -50,7 +50,10 @@ Load manually via **browserless_skill** if suspected but not injected:
 ## Selectors
 - Use **ref=** (CSS) or **deep-ref=** (starts \`< \`) exactly as shown in snapshot
 - Example: \`[3] button "Sign In" ref=button#submit\` → \`"button#submit"\`
-- deep-ref for shadow DOM — see \`shadow-dom\` skill
+- deep-ref for shadow DOM / iframes — see \`shadow-dom\` skill
+
+## Iframes
+Snapshots include a \`Frames\` list (cross-origin iframes) when present. Elements inside a frame are tagged \`[frame#N]\` and carry a \`deep-ref=< *url* css\` selector that already pierces the frame — pass it as-is to \`click\`/\`type\`/\`hover\`/\`checkbox\`. No frame switching needed. captcha/payment widgets (reCAPTCHA, hCaptcha, Stripe, Turnstile) show up here. \`shadow-dom\` skill auto-loads when frames present.
 
 ## Tabs
 Snapshots include \`tabs\` + \`activeTargetId\` — no getTabs needed. Multi-tab / \`snapshot { targetId }\` in \`tabs\` skill (auto-loads when >1 tab).

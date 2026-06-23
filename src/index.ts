@@ -115,6 +115,10 @@ const hybridAuthenticate =
               | string
               | undefined,
             browserlessUrlQuery: params.get('browserlessUrl') || undefined,
+            sessionIdHeader: request.headers['x-browserless-session-id'] as
+              | string
+              | undefined,
+            sessionIdQuery: params.get('browserlessSessionId') || undefined,
           },
           config,
         )) as BrowserlessSession;

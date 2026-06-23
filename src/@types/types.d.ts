@@ -36,6 +36,13 @@ import type { ProxyOptionsSchema } from '../lib/agent-client.js';
 export interface BrowserlessSession extends Record<string, unknown> {
   token: string;
   apiUrl: string;
+  /**
+   * A pre-created browser session id to ATTACH to (via /chromium/agent?sessionId),
+   * threaded by the caller through the `x-browserless-session-id` header. Used by
+   * the autologin runner, which does POST /profile itself and hands the agent the
+   * resulting id instead of letting the model open a `createProfile` session.
+   */
+  attachSessionId?: string;
 }
 
 export interface SupabaseJwtPayload {
@@ -133,6 +140,7 @@ export interface SnapshotElement {
   focused?: boolean;
   required?: boolean;
   ariaLabel?: string;
+  frameId?: string;
 }
 
 export interface TabInfo {
@@ -140,6 +148,13 @@ export interface TabInfo {
   url: string;
   title: string;
   active: boolean;
+}
+
+// for iframe handling
+export interface FrameInfo {
+  frameId: string;
+  url: string;
+  crossOrigin: boolean;
 }
 
 export interface SnapshotResult {
@@ -150,6 +165,7 @@ export interface SnapshotResult {
   tabs?: TabInfo[];
   activeTargetId?: string | null;
   detectedChallenges?: string[];
+  frames?: FrameInfo[];
 }
 
 export interface ActiveSession {
