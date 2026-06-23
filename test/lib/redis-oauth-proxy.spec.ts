@@ -132,17 +132,24 @@ describe('RedisOAuthProxy', () => {
       expect(b).to.equal(1);
     });
 
-    it('mirrors the issued client_id to Redis so authorize can recognize it', async () => {
-      const clientId = await dcr(proxy);
-      const stored = await redis.exists(`mcp:oauth:client-id:${clientId}`);
-      expect(stored).to.equal(1);
+    it('stores the client redirect_uris under the client-id key', async () => {
+      const resp = await proxy.registerClient({
+        redirect_uris: [LEGIT_REDIRECT],
+      });
+      const stored = await redis.get(`mcp:oauth:client-id:${resp.client_id}`);
+      expect(JSON.parse(stored!)).to.deep.equal([LEGIT_REDIRECT]);
     });
 
-    it('sets a TTL on each registered redirect_uri', async () => {
-      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+    it('sets the 90-day client TTL on the registration keys', async () => {
+      const resp = await proxy.registerClient({
+        redirect_uris: [LEGIT_REDIRECT],
+      });
 
-      const ttl = await redis.ttl(`mcp:oauth:client:${LEGIT_REDIRECT}`);
-      expect(ttl).to.be.greaterThan(0);
+      const NINETY_DAYS = 90 * 24 * 60 * 60;
+      const uriTtl = await redis.ttl(`mcp:oauth:client:${LEGIT_REDIRECT}`);
+      const idTtl = await redis.ttl(`mcp:oauth:client-id:${resp.client_id}`);
+      expect(uriTtl).to.be.closeTo(NINETY_DAYS, 60);
+      expect(idTtl).to.be.closeTo(NINETY_DAYS, 60);
     });
 
     it('still rejects unregistered patterns at DCR (validateRedirectUri unchanged)', async () => {
@@ -208,6 +215,27 @@ describe('RedisOAuthProxy', () => {
           baseAuthorizeParams({
             client_id: clientId,
             redirect_uri: EVIL_REDIRECT,
+          }),
+        );
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+      }
+    });
+
+    it('rejects a redirect_uri registered to a different client (per-client binding)', async () => {
+      const clientA = await dcr(proxy, [LEGIT_REDIRECT]);
+      const clientB = await dcr(proxy, [OTHER_LEGIT_REDIRECT]);
+      expect(clientB).to.not.equal(clientA);
+
+      // B's redirect_uri is globally registered, but it is not bound to A.
+      // A global check would let this pass; the per-client check must not.
+      try {
+        await proxy.authorize(
+          baseAuthorizeParams({
+            client_id: clientA,
+            redirect_uri: OTHER_LEGIT_REDIRECT,
           }),
         );
         expect.fail('should have thrown');
@@ -293,13 +321,14 @@ describe('RedisOAuthProxy', () => {
     async function mintPkceCode(
       p: RedisOAuthProxy,
       challenge: string,
+      method = 'S256',
     ): Promise<{ clientId: string; code: string }> {
       const clientId = await dcr(p);
       const authResp = await p.authorize(
         baseAuthorizeParams({
           client_id: clientId,
           code_challenge: challenge,
-          code_challenge_method: 'S256',
+          code_challenge_method: method,
         } as Parameters<RedisOAuthProxy['authorize']>[0]),
       );
       const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
@@ -506,12 +535,53 @@ describe('RedisOAuthProxy', () => {
         expect((err as OAuthProxyError).code).to.equal('invalid_request');
       }
     });
+
+    it('PKCE plain method happy path (challenge equals verifier)', async () => {
+      mockUpstreamTokenFetch();
+      // For the "plain" method the challenge is the verifier verbatim.
+      const verifier = 'plain-code-verifier-value';
+      const { clientId, code } = await mintPkceCode(proxy, verifier, 'plain');
+
+      const tokens = await proxy.exchangeAuthorizationCode({
+        client_id: clientId,
+        code,
+        code_verifier: verifier,
+        grant_type: 'authorization_code',
+        redirect_uri: LEGIT_REDIRECT,
+      });
+      expect(tokens.access_token).to.equal('UP_ACCESS_TOKEN');
+    });
+
+    it('PKCE plain method rejects a wrong code_verifier with invalid_grant', async () => {
+      mockUpstreamTokenFetch();
+      const { clientId, code } = await mintPkceCode(
+        proxy,
+        'the-real-plain-verifier',
+        'plain',
+      );
+
+      try {
+        await proxy.exchangeAuthorizationCode({
+          client_id: clientId,
+          code,
+          code_verifier: 'the-WRONG-plain-verifier',
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_grant');
+      }
+    });
   });
 
   describe('read path fails closed on Redis error', () => {
     it('authorize rejects (does not fail open) when the client lookup errors', async () => {
       const clientId = await dcr(proxy);
-      sinon.stub(redis, 'exists').rejects(new Error('redis unreachable'));
+      // authorize reads the client's redirect_uris via GET; a Redis failure
+      // must propagate (fail closed), not be treated as "no client".
+      sinon.stub(redis, 'get').rejects(new Error('redis unreachable'));
 
       try {
         await proxy.authorize(baseAuthorizeParams({ client_id: clientId }));

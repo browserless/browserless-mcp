@@ -150,7 +150,12 @@ export class RedisOAuthProxy extends OAuthProxy {
       ...response.redirect_uris.map((uri) =>
         this.redis.set(`${CLIENT_PREFIX}${uri}`, '1', 'EX', ttl),
       ),
-      this.redis.set(clientIdKey, '1', 'EX', ttl),
+      this.redis.set(
+        clientIdKey,
+        JSON.stringify(response.redirect_uris),
+        'EX',
+        ttl,
+      ),
     ]);
     const writeFailed = writes.find(
       (w): w is PromiseRejectedResult => w.status === 'rejected',
@@ -182,6 +187,13 @@ export class RedisOAuthProxy extends OAuthProxy {
     return this.keyExists(`${CLIENT_ID_PREFIX}${clientId}`);
   }
 
+  private async getClientRedirectUris(
+    clientId: string,
+  ): Promise<string[] | null> {
+    const json = await this.redis.get(`${CLIENT_ID_PREFIX}${clientId}`);
+    return json ? (JSON.parse(json) as string[]) : null;
+  }
+
   override async authorize(params: AuthorizationParams): Promise<Response> {
     if (!params.client_id || !params.redirect_uri || !params.response_type) {
       throw new OAuthProxyError(
@@ -195,15 +207,15 @@ export class RedisOAuthProxy extends OAuthProxy {
         "Only 'code' response type is supported",
       );
     }
-    // client_id must be a DCR client — check shared Redis, not a process-local
-    // Map, so it holds when authorize lands on a different instance than DCR.
-    if (!(await this.isClientIdRegistered(params.client_id))) {
+    // RFC 6749 §3.1.2.3 / RFC 6819 §4.1.5 — the redirect_uri must be one
+    // registered for THIS client_id (per-client binding; a global check would
+    // let any client pair with any other client's URI — CWE-601). Read from
+    // shared Redis so a cross-instance DCR still counts.
+    const registeredUris = await this.getClientRedirectUris(params.client_id);
+    if (!registeredUris) {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
-    // RFC 6749 §3.1.2.3 / RFC 6819 §4.1.5 — redirect_uri must be one
-    // previously registered via DCR; skipping this is CWE-601 (auth-code
-    // theft). We read the shared Redis registry so cross-instance DCR counts.
-    if (!(await this.isClientRegistered(params.redirect_uri))) {
+    if (!registeredUris.includes(params.redirect_uri)) {
       throw new OAuthProxyError(
         'invalid_request',
         'redirect_uri is not registered for this client',
@@ -276,17 +288,25 @@ export class RedisOAuthProxy extends OAuthProxy {
       upstreamTokens,
     );
     const codeData = this._internal.clientCodes.get(clientCode);
-    if (codeData) {
-      const codeTtl =
-        this._internal.config.authorizationCodeTtl || DEFAULT_CODE_TTL;
-      await this.redis.set(
-        `${CODE_PREFIX}${clientCode}`,
-        serialize(codeData),
-        'EX',
-        codeTtl,
+    // Should never happen — generateAuthorizationCode just populated the Map.
+    // If a parent cleanup race emptied it, fail loud rather than redirect with
+    // a code we never persisted (which would surface as "invalid code" at the
+    // token step, after a successful-looking login).
+    if (!codeData) {
+      throw new OAuthProxyError(
+        'server_error',
+        'Failed to persist authorization code',
       );
-      this._internal.clientCodes.delete(clientCode);
     }
+    const codeTtl =
+      this._internal.config.authorizationCodeTtl || DEFAULT_CODE_TTL;
+    await this.redis.set(
+      `${CODE_PREFIX}${clientCode}`,
+      serialize(codeData),
+      'EX',
+      codeTtl,
+    );
+    this._internal.clientCodes.delete(clientCode);
 
     // Remove consumed transaction
     await this.redis.del(`${TX_PREFIX}${state}`);
@@ -332,7 +352,8 @@ export class RedisOAuthProxy extends OAuthProxy {
     }
     // PKCE inline, not via super: the parent re-checks client_id against a
     // process-local Map. enableTokenSwap is false, so the response below
-    // equals what super would return.
+    // matches super's — except one-time-use, which the GETDEL above already
+    // enforces (so we intentionally skip the parent's `used` flag).
     if (clientCode.codeChallenge) {
       if (!request.code_verifier) {
         throw new OAuthProxyError(
