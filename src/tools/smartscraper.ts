@@ -66,9 +66,10 @@ export function registerSmartScraperTool(
   defineTool<SmartScraperParams, SmartScrapeResult>(server, config, analytics, {
     name: 'browserless_smartscraper',
     description:
-      'Scrape any webpage using the Browserless smart scraper. ' +
-      'Returns page content in requested formats (markdown, html, screenshot, pdf, links). ' +
-      'Handles JavaScript-heavy pages, anti-bot measures, and multiple scraping strategies automatically.',
+      'Scrape a SINGLE webpage and return its content as markdown or HTML. ' +
+      'Handles JavaScript-heavy pages and anti-bot measures automatically. ' +
+      'For content across MULTIPLE pages of a site, use browserless_crawl; ' +
+      "to list a site's URLs, use browserless_map.",
     parameters: SmartScraperParamsSchema,
     annotations: {
       title: 'Browserless Smart Scraper',
