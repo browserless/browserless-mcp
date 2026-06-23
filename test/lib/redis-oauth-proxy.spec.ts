@@ -60,7 +60,9 @@ function baseAuthorizeParams(
   } as Parameters<RedisOAuthProxy['authorize']>[0];
 }
 
-function mockUpstreamTokenFetch(): sinon.SinonStub {
+function mockUpstreamTokenFetch(
+  extra: Record<string, unknown> = {},
+): sinon.SinonStub {
   return sinon.stub(globalThis, 'fetch').resolves(
     new Response(
       JSON.stringify({
@@ -69,6 +71,7 @@ function mockUpstreamTokenFetch(): sinon.SinonStub {
         refresh_token: 'UP_REFRESH_TOKEN',
         scope: 'read',
         token_type: 'Bearer',
+        ...extra,
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ),
@@ -100,6 +103,13 @@ describe('RedisOAuthProxy', () => {
         () =>
           new RedisOAuthProxy(buildConfig({ consentRequired: true }), redis),
       ).to.throw(/consentRequired: false/);
+    });
+
+    it('throws when enableTokenSwap is true (token-swap not supported)', () => {
+      expect(
+        () =>
+          new RedisOAuthProxy(buildConfig({ enableTokenSwap: true }), redis),
+      ).to.throw(/enableTokenSwap: false/);
     });
   });
 
@@ -280,6 +290,32 @@ describe('RedisOAuthProxy', () => {
       return { clientId, code };
     }
 
+    async function mintPkceCode(
+      p: RedisOAuthProxy,
+      challenge: string,
+    ): Promise<{ clientId: string; code: string }> {
+      const clientId = await dcr(p);
+      const authResp = await p.authorize(
+        baseAuthorizeParams({
+          client_id: clientId,
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        } as Parameters<RedisOAuthProxy['authorize']>[0]),
+      );
+      const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
+        'state',
+      )!;
+      const cbResp = await p.handleCallback(
+        new Request(
+          `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
+        ),
+      );
+      const code = new URL(cbResp.headers.get('Location')!).searchParams.get(
+        'code',
+      )!;
+      return { clientId, code };
+    }
+
     it('non-PKCE happy path returns the upstream access token', async () => {
       mockUpstreamTokenFetch();
       const { clientId, code } = await runToAuthorizationCode(proxy);
@@ -359,8 +395,43 @@ describe('RedisOAuthProxy', () => {
       }
     });
 
+    it('passes through an upstream id_token (OIDC)', async () => {
+      mockUpstreamTokenFetch({ id_token: 'UP_ID_TOKEN' });
+      const { clientId, code } = await runToAuthorizationCode(proxy);
+
+      const tokens = await proxy.exchangeAuthorizationCode({
+        client_id: clientId,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: LEGIT_REDIRECT,
+      });
+
+      expect(tokens.id_token).to.equal('UP_ID_TOKEN');
+    });
+
+    it('rejects redeeming a code under a different registered client', async () => {
+      // Auth-code-injection defense: a code minted for client A must not be
+      // redeemable by a different (also registered) client B.
+      mockUpstreamTokenFetch();
+      const { clientId: clientA, code } = await runToAuthorizationCode(proxy);
+      const clientB = await dcr(proxy, ['https://client.example.com/b']);
+      expect(clientB).to.not.equal(clientA);
+
+      try {
+        await proxy.exchangeAuthorizationCode({
+          client_id: clientB,
+          code,
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_client');
+      }
+    });
+
     it('PKCE happy path validates the verifier across instances', async () => {
-      // S256 challenge for verifier 'verifier' is its base64url SHA-256 digest.
       const { createHash } = await import('node:crypto');
       const verifier = 'test-code-verifier-abc123';
       const challenge = createHash('sha256')
@@ -368,30 +439,12 @@ describe('RedisOAuthProxy', () => {
         .digest('base64url');
 
       mockUpstreamTokenFetch();
-      // Instance A: DCR + authorize (with PKCE challenge)
+      // Mint on instance A, redeem on instance B — PKCE is validated inline,
+      // with no dependency on the parent's process-local Map.
       const proxyA = new RedisOAuthProxy(buildConfig(), redis);
-      const clientId = await dcr(proxyA);
-      const authResp = await proxyA.authorize(
-        baseAuthorizeParams({
-          client_id: clientId,
-          code_challenge: challenge,
-          code_challenge_method: 'S256',
-        } as Parameters<RedisOAuthProxy['authorize']>[0]),
-      );
-      const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
-        'state',
-      )!;
-      const cbResp = await proxyA.handleCallback(
-        new Request(
-          `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
-        ),
-      );
-      const code = new URL(cbResp.headers.get('Location')!).searchParams.get(
-        'code',
-      )!;
+      const { clientId, code } = await mintPkceCode(proxyA, challenge);
       proxyA.destroy();
 
-      // Instance B: token exchange — PKCE is validated inline (no parent Map).
       const proxyB = new RedisOAuthProxy(buildConfig(), redis);
       try {
         const tokens = await proxyB.exchangeAuthorizationCode({
@@ -414,25 +467,7 @@ describe('RedisOAuthProxy', () => {
         .digest('base64url');
 
       mockUpstreamTokenFetch();
-      const clientId = await dcr(proxy);
-      const authResp = await proxy.authorize(
-        baseAuthorizeParams({
-          client_id: clientId,
-          code_challenge: challenge,
-          code_challenge_method: 'S256',
-        } as Parameters<RedisOAuthProxy['authorize']>[0]),
-      );
-      const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
-        'state',
-      )!;
-      const cbResp = await proxy.handleCallback(
-        new Request(
-          `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
-        ),
-      );
-      const code = new URL(cbResp.headers.get('Location')!).searchParams.get(
-        'code',
-      )!;
+      const { clientId, code } = await mintPkceCode(proxy, challenge);
 
       try {
         await proxy.exchangeAuthorizationCode({
@@ -446,6 +481,60 @@ describe('RedisOAuthProxy', () => {
       } catch (err) {
         expect(err).to.be.instanceOf(OAuthProxyError);
         expect((err as OAuthProxyError).code).to.equal('invalid_grant');
+      }
+    });
+
+    it('PKCE rejects a missing code_verifier with invalid_request', async () => {
+      const { createHash } = await import('node:crypto');
+      const challenge = createHash('sha256')
+        .update('the-real-verifier')
+        .digest('base64url');
+
+      mockUpstreamTokenFetch();
+      const { clientId, code } = await mintPkceCode(proxy, challenge);
+
+      try {
+        await proxy.exchangeAuthorizationCode({
+          client_id: clientId,
+          code,
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+      }
+    });
+  });
+
+  describe('read path fails closed on Redis error', () => {
+    it('authorize rejects (does not fail open) when the client lookup errors', async () => {
+      const clientId = await dcr(proxy);
+      sinon.stub(redis, 'exists').rejects(new Error('redis unreachable'));
+
+      try {
+        await proxy.authorize(baseAuthorizeParams({ client_id: clientId }));
+        expect.fail('must not treat a Redis error as a registered client');
+      } catch (err) {
+        expect((err as Error).message).to.equal('redis unreachable');
+      }
+    });
+
+    it('exchangeAuthorizationCode rejects when the client lookup errors', async () => {
+      const clientId = await dcr(proxy);
+      sinon.stub(redis, 'exists').rejects(new Error('redis unreachable'));
+
+      try {
+        await proxy.exchangeAuthorizationCode({
+          client_id: clientId,
+          code: 'anything',
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect.fail('must not treat a Redis error as a registered client');
+      } catch (err) {
+        expect((err as Error).message).to.equal('redis unreachable');
       }
     });
   });

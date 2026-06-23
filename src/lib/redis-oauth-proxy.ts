@@ -96,6 +96,14 @@ export class RedisOAuthProxy extends OAuthProxy {
         'RedisOAuthProxy requires consentRequired: false — consent flow is not supported in multi-instance mode',
       );
     }
+    // exchangeAuthorizationCode() returns the upstream tokens directly; it does
+    // not implement token swap. Fail fast rather than silently issue raw tokens
+    // while the parent's refresh path would swap them.
+    if ((this as unknown as OAuthProxyInternals).config.enableTokenSwap) {
+      throw new Error(
+        'RedisOAuthProxy requires enableTokenSwap: false — token-swap mode is not supported',
+      );
+    }
   }
 
   private get _internal(): OAuthProxyInternals {
@@ -134,32 +142,30 @@ export class RedisOAuthProxy extends OAuthProxy {
         .map((p) => p.value.uri),
     );
 
-    const writes = await Promise.allSettled(
-      response.redirect_uris.map((uri) =>
+    // Mirror the redirect_uris and the issued client_id so authorize/token can
+    // validate both across instances. The client_id is freshly generated, so
+    // rolling it back on failure can never drop a prior registration.
+    const clientIdKey = `${CLIENT_ID_PREFIX}${response.client_id}`;
+    const writes = await Promise.allSettled([
+      ...response.redirect_uris.map((uri) =>
         this.redis.set(`${CLIENT_PREFIX}${uri}`, '1', 'EX', ttl),
       ),
-    );
+      this.redis.set(clientIdKey, '1', 'EX', ttl),
+    ]);
     const writeFailed = writes.find(
       (w): w is PromiseRejectedResult => w.status === 'rejected',
     );
     if (writeFailed) {
       // Best-effort cleanup of Redis keys this call introduced; if these
       // deletes also fail the originating error still wins.
-      await Promise.allSettled(
-        response.redirect_uris
+      await Promise.allSettled([
+        ...response.redirect_uris
           .filter((uri) => !redisPreExisting.has(uri))
           .map((uri) => this.redis.del(`${CLIENT_PREFIX}${uri}`)),
-      );
+        this.redis.del(clientIdKey),
+      ]);
       throw writeFailed.reason;
     }
-
-    // Mirror the client_id so authorize/token recognize it across instances.
-    await this.redis.set(
-      `${CLIENT_ID_PREFIX}${response.client_id}`,
-      '1',
-      'EX',
-      ttl,
-    );
 
     return response;
   }
@@ -352,6 +358,9 @@ export class RedisOAuthProxy extends OAuthProxy {
     };
     if (clientCode.upstreamTokens.refreshToken) {
       response.refresh_token = clientCode.upstreamTokens.refreshToken;
+    }
+    if (clientCode.upstreamTokens.idToken) {
+      response.id_token = clientCode.upstreamTokens.idToken;
     }
     if (clientCode.upstreamTokens.scope?.length > 0) {
       response.scope = clientCode.upstreamTokens.scope.join(' ');
