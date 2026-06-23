@@ -620,7 +620,8 @@ describe('formatConnectError', () => {
       ),
     );
     expect(out).to.match(/^Concurrency limit reached \(429\)/);
-    expect(out).to.include('Wait for');
+    expect(out).to.include('Stop retrying');
+    expect(out).to.include('wait for');
   });
 
   it('falls back to a generic upgrade message for unrecognized statuses', () => {
@@ -687,7 +688,7 @@ describe('formatConnectError with proxy-injected errors', () => {
     const out = formatConnectError(
       new UpgradeError(429, 'Too Many Requests', ''),
     );
-    expect(out).to.match(/^Concurrency limit reached \(429\)\. Wait for/);
+    expect(out).to.match(/^Concurrency limit reached \(429\)\. Stop retrying/);
   });
 
   it('renders nginx HTML 502 body as cleaned text', () => {

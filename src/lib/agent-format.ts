@@ -103,7 +103,7 @@ export const formatConnectError = (err: unknown): string => {
       case 403:
         return `Forbidden (403) — your plan does not include this feature${detail ? ` (server says: ${detail})` : ''}.`;
       case 429:
-        return `Concurrency limit reached (429)${detail ? `: ${detail}` : ''}. Wait for in-flight sessions to finish, or upgrade the plan.`;
+        return `Concurrency limit reached (429)${detail ? `: ${detail}` : ''}. Stop retrying — each new attempt opens another session and stacks more against the limit. Close any sessions you still have open (call browserless_agent with method "close"), wait for in-flight sessions to finish, or upgrade the plan, then start over.`;
       default: {
         const fallback = detail || err.statusMessage || '';
         return `Failed to connect to browser agent (HTTP ${err.statusCode})${fallback ? `: ${fallback}` : ''}.`;

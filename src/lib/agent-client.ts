@@ -144,9 +144,10 @@ export class ProfileNotFoundError extends UpgradeError {
 }
 
 // Upgrade statuses where a one-shot retry cannot help: bad request (400),
-// bad auth (401), forbidden by plan/policy (403), or missing resource (404).
-// Retrying just wastes time and emits a misleading "second attempt failed".
-const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404]);
+// bad auth (401), forbidden by plan/policy (403), missing resource (404), or
+// concurrency limit (429). Retrying a 429 just opens another session and
+// stacks more lingering sessions against the same limit, so stop instead.
+const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof UpgradeError) {
