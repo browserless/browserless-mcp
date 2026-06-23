@@ -8,6 +8,7 @@ import { RedisOAuthProxy } from '../../src/lib/redis-oauth-proxy.js';
 const UPSTREAM_CLIENT_ID = 'upstream-client-id';
 const UPSTREAM_CLIENT_SECRET = 'upstream-client-secret';
 const LEGIT_REDIRECT = 'https://client.example.com/callback';
+const OTHER_LEGIT_REDIRECT = 'https://client.example.com/other';
 const EVIL_REDIRECT = 'https://evil.attacker.com/steal';
 
 function buildConfig(
@@ -30,6 +31,16 @@ function buildConfig(
 
 function makeRedis(): Redis {
   return new RedisMock() as unknown as Redis;
+}
+
+// DCR issues a random per-client client_id; clients authorize with THAT id, not
+// the upstream identity. Register first and use the returned id everywhere.
+async function dcr(
+  p: RedisOAuthProxy,
+  redirectUris: string[] = [LEGIT_REDIRECT],
+): Promise<string> {
+  const resp = await p.registerClient({ redirect_uris: redirectUris });
+  return resp.client_id;
 }
 
 function baseAuthorizeParams(
@@ -111,6 +122,12 @@ describe('RedisOAuthProxy', () => {
       expect(b).to.equal(1);
     });
 
+    it('mirrors the issued client_id to Redis so authorize can recognize it', async () => {
+      const clientId = await dcr(proxy);
+      const stored = await redis.exists(`mcp:oauth:client-id:${clientId}`);
+      expect(stored).to.equal(1);
+    });
+
     it('sets a TTL on each registered redirect_uri', async () => {
       await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
 
@@ -130,12 +147,24 @@ describe('RedisOAuthProxy', () => {
   });
 
   describe('authorize CWE-601 checks', () => {
+    it('accepts a DCR-issued client_id', async () => {
+      const clientId = await dcr(proxy);
+      const response = await proxy.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
+      expect(response.status).to.equal(302);
+      expect(response.headers.get('Location')).to.include(
+        'provider.example.com/oauth/authorize',
+      );
+    });
+
     it('rejects an unknown client_id with invalid_client', async () => {
-      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      // A valid registration exists, but the request uses a different id.
+      await dcr(proxy);
 
       try {
         await proxy.authorize(
-          baseAuthorizeParams({ client_id: 'not-the-upstream' }),
+          baseAuthorizeParams({ client_id: 'never-registered' }),
         );
         expect.fail('should have thrown');
       } catch (err) {
@@ -145,21 +174,14 @@ describe('RedisOAuthProxy', () => {
     });
 
     it('rejects a redirect_uri that was never registered via DCR', async () => {
-      try {
-        await proxy.authorize(baseAuthorizeParams());
-        expect.fail('should have thrown');
-      } catch (err) {
-        expect(err).to.be.instanceOf(OAuthProxyError);
-        expect((err as OAuthProxyError).code).to.equal('invalid_request');
-      }
-    });
-
-    it('rejects an attacker redirect_uri even when client_id matches', async () => {
-      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      const clientId = await dcr(proxy);
 
       try {
         await proxy.authorize(
-          baseAuthorizeParams({ redirect_uri: EVIL_REDIRECT }),
+          baseAuthorizeParams({
+            client_id: clientId,
+            redirect_uri: OTHER_LEGIT_REDIRECT,
+          }),
         );
         expect.fail('should have thrown');
       } catch (err) {
@@ -168,16 +190,37 @@ describe('RedisOAuthProxy', () => {
       }
     });
 
-    it('accepts a redirect_uri registered on a different instance via shared Redis', async () => {
+    it('rejects an attacker redirect_uri even when client_id is valid', async () => {
+      const clientId = await dcr(proxy);
+
+      try {
+        await proxy.authorize(
+          baseAuthorizeParams({
+            client_id: clientId,
+            redirect_uri: EVIL_REDIRECT,
+          }),
+        );
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+      }
+    });
+
+    it('accepts a client registered on a different instance via shared Redis', async () => {
       // Instance A: DCR
       const proxyA = new RedisOAuthProxy(buildConfig(), redis);
-      await proxyA.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      const clientId = await dcr(proxyA);
       proxyA.destroy();
 
-      // Instance B: authorize reads the DCR state from shared Redis
+      // Instance B: authorize reads the DCR state from shared Redis. This is
+      // the regression guard for the original bug — A's client_id must be
+      // recognized by B even though B's in-memory client Map is empty.
       const proxyB = new RedisOAuthProxy(buildConfig(), redis);
       try {
-        const response = await proxyB.authorize(baseAuthorizeParams());
+        const response = await proxyB.authorize(
+          baseAuthorizeParams({ client_id: clientId }),
+        );
         expect(response.status).to.equal(302);
         expect(response.headers.get('Location')).to.include(
           'provider.example.com/oauth/authorize',
@@ -188,9 +231,11 @@ describe('RedisOAuthProxy', () => {
     });
 
     it('persists the transaction to Redis after successful validation', async () => {
-      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      const clientId = await dcr(proxy);
 
-      const response = await proxy.authorize(baseAuthorizeParams());
+      const response = await proxy.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
       const upstreamUrl = new URL(response.headers.get('Location')!);
       const transactionId = upstreamUrl.searchParams.get('state')!;
 
@@ -203,7 +248,7 @@ describe('RedisOAuthProxy', () => {
     it('rejects an unknown client_id with invalid_client', async () => {
       try {
         await proxy.exchangeAuthorizationCode({
-          client_id: 'not-the-upstream',
+          client_id: 'never-registered',
           code: 'anything',
           grant_type: 'authorization_code',
           redirect_uri: LEGIT_REDIRECT,
@@ -215,9 +260,13 @@ describe('RedisOAuthProxy', () => {
       }
     });
 
-    async function runToAuthorizationCode(p: RedisOAuthProxy) {
-      await p.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
-      const authResp = await p.authorize(baseAuthorizeParams());
+    async function runToAuthorizationCode(
+      p: RedisOAuthProxy,
+    ): Promise<{ clientId: string; code: string }> {
+      const clientId = await dcr(p);
+      const authResp = await p.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
       const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
         'state',
       )!;
@@ -225,15 +274,18 @@ describe('RedisOAuthProxy', () => {
         `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
       );
       const cbResp = await p.handleCallback(cbReq);
-      return new URL(cbResp.headers.get('Location')!).searchParams.get('code')!;
+      const code = new URL(cbResp.headers.get('Location')!).searchParams.get(
+        'code',
+      )!;
+      return { clientId, code };
     }
 
     it('non-PKCE happy path returns the upstream access token', async () => {
       mockUpstreamTokenFetch();
-      const code = await runToAuthorizationCode(proxy);
+      const { clientId, code } = await runToAuthorizationCode(proxy);
 
       const tokens = await proxy.exchangeAuthorizationCode({
-        client_id: UPSTREAM_CLIENT_ID,
+        client_id: clientId,
         code,
         grant_type: 'authorization_code',
         redirect_uri: LEGIT_REDIRECT,
@@ -246,10 +298,10 @@ describe('RedisOAuthProxy', () => {
 
     it('non-PKCE redemption is one-time use — second call throws invalid_grant', async () => {
       mockUpstreamTokenFetch();
-      const code = await runToAuthorizationCode(proxy);
+      const { clientId, code } = await runToAuthorizationCode(proxy);
 
       await proxy.exchangeAuthorizationCode({
-        client_id: UPSTREAM_CLIENT_ID,
+        client_id: clientId,
         code,
         grant_type: 'authorization_code',
         redirect_uri: LEGIT_REDIRECT,
@@ -257,7 +309,7 @@ describe('RedisOAuthProxy', () => {
 
       try {
         await proxy.exchangeAuthorizationCode({
-          client_id: UPSTREAM_CLIENT_ID,
+          client_id: clientId,
           code,
           grant_type: 'authorization_code',
           redirect_uri: LEGIT_REDIRECT,
@@ -274,19 +326,19 @@ describe('RedisOAuthProxy', () => {
       // the same code. Exactly one should succeed; the other should see
       // invalid_grant. Without GETDEL (plain GET + DEL) both would succeed.
       mockUpstreamTokenFetch();
-      const code = await runToAuthorizationCode(proxy);
+      const { clientId, code } = await runToAuthorizationCode(proxy);
 
       const proxyB = new RedisOAuthProxy(buildConfig(), redis);
       try {
         const results = await Promise.allSettled([
           proxy.exchangeAuthorizationCode({
-            client_id: UPSTREAM_CLIENT_ID,
+            client_id: clientId,
             code,
             grant_type: 'authorization_code',
             redirect_uri: LEGIT_REDIRECT,
           }),
           proxyB.exchangeAuthorizationCode({
-            client_id: UPSTREAM_CLIENT_ID,
+            client_id: clientId,
             code,
             grant_type: 'authorization_code',
             redirect_uri: LEGIT_REDIRECT,
@@ -306,6 +358,96 @@ describe('RedisOAuthProxy', () => {
         proxyB.destroy();
       }
     });
+
+    it('PKCE happy path validates the verifier across instances', async () => {
+      // S256 challenge for verifier 'verifier' is its base64url SHA-256 digest.
+      const { createHash } = await import('node:crypto');
+      const verifier = 'test-code-verifier-abc123';
+      const challenge = createHash('sha256')
+        .update(verifier)
+        .digest('base64url');
+
+      mockUpstreamTokenFetch();
+      // Instance A: DCR + authorize (with PKCE challenge)
+      const proxyA = new RedisOAuthProxy(buildConfig(), redis);
+      const clientId = await dcr(proxyA);
+      const authResp = await proxyA.authorize(
+        baseAuthorizeParams({
+          client_id: clientId,
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        } as Parameters<RedisOAuthProxy['authorize']>[0]),
+      );
+      const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
+        'state',
+      )!;
+      const cbResp = await proxyA.handleCallback(
+        new Request(
+          `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
+        ),
+      );
+      const code = new URL(cbResp.headers.get('Location')!).searchParams.get(
+        'code',
+      )!;
+      proxyA.destroy();
+
+      // Instance B: token exchange — PKCE is validated inline (no parent Map).
+      const proxyB = new RedisOAuthProxy(buildConfig(), redis);
+      try {
+        const tokens = await proxyB.exchangeAuthorizationCode({
+          client_id: clientId,
+          code,
+          code_verifier: verifier,
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect(tokens.access_token).to.equal('UP_ACCESS_TOKEN');
+      } finally {
+        proxyB.destroy();
+      }
+    });
+
+    it('PKCE rejects a wrong code_verifier with invalid_grant', async () => {
+      const { createHash } = await import('node:crypto');
+      const challenge = createHash('sha256')
+        .update('the-real-verifier')
+        .digest('base64url');
+
+      mockUpstreamTokenFetch();
+      const clientId = await dcr(proxy);
+      const authResp = await proxy.authorize(
+        baseAuthorizeParams({
+          client_id: clientId,
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        } as Parameters<RedisOAuthProxy['authorize']>[0]),
+      );
+      const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
+        'state',
+      )!;
+      const cbResp = await proxy.handleCallback(
+        new Request(
+          `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(txId)}`,
+        ),
+      );
+      const code = new URL(cbResp.headers.get('Location')!).searchParams.get(
+        'code',
+      )!;
+
+      try {
+        await proxy.exchangeAuthorizationCode({
+          client_id: clientId,
+          code,
+          code_verifier: 'the-WRONG-verifier',
+          grant_type: 'authorization_code',
+          redirect_uri: LEGIT_REDIRECT,
+        });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).to.be.instanceOf(OAuthProxyError);
+        expect((err as OAuthProxyError).code).to.equal('invalid_grant');
+      }
+    });
   });
 
   describe('registerClient Redis failure rollback', () => {
@@ -320,13 +462,15 @@ describe('RedisOAuthProxy', () => {
       }
       setStub.restore();
 
-      // Redis has no registration → authorize rejects the URI
+      // Nothing registered → authorize rejects an unknown client.
       try {
-        await proxy.authorize(baseAuthorizeParams());
-        expect.fail('authorize should have rejected the un-registered URI');
+        await proxy.authorize(
+          baseAuthorizeParams({ client_id: 'never-registered' }),
+        );
+        expect.fail('authorize should have rejected the unknown client');
       } catch (err) {
         expect(err).to.be.instanceOf(OAuthProxyError);
-        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+        expect((err as OAuthProxyError).code).to.equal('invalid_client');
       }
     });
 
@@ -344,11 +488,13 @@ describe('RedisOAuthProxy', () => {
       existsStub.restore();
 
       try {
-        await proxy.authorize(baseAuthorizeParams());
-        expect.fail('authorize should have rejected the un-registered URI');
+        await proxy.authorize(
+          baseAuthorizeParams({ client_id: 'never-registered' }),
+        );
+        expect.fail('authorize should have rejected the unknown client');
       } catch (err) {
         expect(err).to.be.instanceOf(OAuthProxyError);
-        expect((err as OAuthProxyError).code).to.equal('invalid_request');
+        expect((err as OAuthProxyError).code).to.equal('invalid_client');
       }
     });
 
@@ -358,10 +504,12 @@ describe('RedisOAuthProxy', () => {
       // localhost ports). The first succeeds; the second fails its Redis
       // mirror. Rollback must NOT remove the URI that the first call
       // already legitimately registered.
-      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      const clientId = await dcr(proxy);
 
       // Verify initial registration is honored end-to-end
-      const authOk = await proxy.authorize(baseAuthorizeParams());
+      const authOk = await proxy.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
       expect(authOk.status).to.equal(302);
 
       // Second DCR for the same URI: force Redis failure mid-mirror
@@ -380,7 +528,9 @@ describe('RedisOAuthProxy', () => {
       expect(await redis.exists(`mcp:oauth:client:${LEGIT_REDIRECT}`)).to.equal(
         1,
       );
-      const authStillOk = await proxy.authorize(baseAuthorizeParams());
+      const authStillOk = await proxy.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
       expect(authStillOk.status).to.equal(302);
     });
   });
@@ -393,8 +543,10 @@ describe('RedisOAuthProxy', () => {
       //   Instance B: upstream callback arrives, local Map empty, Redis empty
       //               → must reject and purge the transaction
       const proxyA = new RedisOAuthProxy(buildConfig(), redis);
-      await proxyA.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
-      const authResponse = await proxyA.authorize(baseAuthorizeParams());
+      const clientId = await dcr(proxyA);
+      const authResponse = await proxyA.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
       proxyA.destroy();
 
       const upstreamUrl = new URL(authResponse.headers.get('Location')!);
@@ -427,10 +579,12 @@ describe('RedisOAuthProxy', () => {
     });
 
     it('completes the happy path: 302 back to the registered callback with code + state', async () => {
-      await proxy.registerClient({ redirect_uris: [LEGIT_REDIRECT] });
+      const clientId = await dcr(proxy);
       mockUpstreamTokenFetch();
 
-      const authResponse = await proxy.authorize(baseAuthorizeParams());
+      const authResponse = await proxy.authorize(
+        baseAuthorizeParams({ client_id: clientId }),
+      );
       const upstreamUrl = new URL(authResponse.headers.get('Location')!);
       const transactionId = upstreamUrl.searchParams.get('state')!;
 

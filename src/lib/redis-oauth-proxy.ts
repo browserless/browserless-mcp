@@ -2,6 +2,7 @@ import { Redis } from 'ioredis';
 import {
   OAuthProxy,
   OAuthProxyError,
+  PKCEUtils,
   type AuthorizationParams,
   type ClientCode,
   type DCRRequest,
@@ -33,10 +34,12 @@ const KEY_PREFIX = 'mcp:oauth:';
 const TX_PREFIX = `${KEY_PREFIX}tx:`;
 const CODE_PREFIX = `${KEY_PREFIX}code:`;
 const CLIENT_PREFIX = `${KEY_PREFIX}client:`;
+const CLIENT_ID_PREFIX = `${KEY_PREFIX}client-id:`;
 
 const DEFAULT_TRANSACTION_TTL = 600;
 const DEFAULT_CODE_TTL = 300;
-const DEFAULT_CLIENT_TTL = 3600;
+// DCR clients are reused for weeks; a short TTL would expire one mid-life.
+const DEFAULT_CLIENT_TTL = 90 * 24 * 60 * 60;
 
 const DATE_FIELDS = new Set(['createdAt', 'expiresAt', 'issuedAt']);
 
@@ -150,11 +153,27 @@ export class RedisOAuthProxy extends OAuthProxy {
       throw writeFailed.reason;
     }
 
+    // Mirror the client_id so authorize/token recognize it across instances.
+    await this.redis.set(
+      `${CLIENT_ID_PREFIX}${response.client_id}`,
+      '1',
+      'EX',
+      ttl,
+    );
+
     return response;
   }
 
-  private async isClientRegistered(uri: string): Promise<boolean> {
-    return (await this.redis.exists(`${CLIENT_PREFIX}${uri}`)) === 1;
+  private async keyExists(key: string): Promise<boolean> {
+    return (await this.redis.exists(key)) === 1;
+  }
+
+  private isClientRegistered(uri: string): Promise<boolean> {
+    return this.keyExists(`${CLIENT_PREFIX}${uri}`);
+  }
+
+  private isClientIdRegistered(clientId: string): Promise<boolean> {
+    return this.keyExists(`${CLIENT_ID_PREFIX}${clientId}`);
   }
 
   override async authorize(params: AuthorizationParams): Promise<Response> {
@@ -170,9 +189,9 @@ export class RedisOAuthProxy extends OAuthProxy {
         "Only 'code' response type is supported",
       );
     }
-    // RFC 6749 §5.2 — reject any client_id other than the single upstream
-    // identity this proxy fronts. Ported from fastmcp v4 OAuthProxy.authorize.
-    if (params.client_id !== this._internal.config.upstreamClientId) {
+    // client_id must be a DCR client — check shared Redis, not a process-local
+    // Map, so it holds when authorize lands on a different instance than DCR.
+    if (!(await this.isClientIdRegistered(params.client_id))) {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
     // RFC 6749 §3.1.2.3 / RFC 6819 §4.1.5 — redirect_uri must be one
@@ -284,10 +303,9 @@ export class RedisOAuthProxy extends OAuthProxy {
         'Only authorization_code grant type is supported',
       );
     }
-    // RFC 6749 §5.2 — reject unknown clients at token exchange too, so a
-    // stolen authorization code cannot be redeemed by an arbitrary caller.
-    // Ported from fastmcp v4 OAuthProxy.exchangeAuthorizationCode.
-    if (request.client_id !== this._internal.config.upstreamClientId) {
+    // Reject unknown clients here too (shared Redis); the code↔client binding
+    // below enforces that only the owning client can redeem the code.
+    if (!(await this.isClientIdRegistered(request.client_id))) {
       throw new OAuthProxyError('invalid_client', 'Unknown client_id');
     }
 
@@ -306,21 +324,24 @@ export class RedisOAuthProxy extends OAuthProxy {
     if (clientCode.clientId !== request.client_id) {
       throw new OAuthProxyError('invalid_client', 'Client ID mismatch');
     }
-    if (clientCode.codeChallenge && !request.code_verifier) {
-      throw new OAuthProxyError(
-        'invalid_request',
-        'code_verifier required for PKCE',
-      );
-    }
-    if (clientCode.codeChallenge && request.code_verifier) {
-      // Delegate PKCE validation to parent by placing code in Map temporarily.
-      // Redis key is already consumed by GETDEL above, so no additional del
-      // is needed in finally — only the local Map cleanup.
-      this._internal.clientCodes.set(request.code, clientCode);
-      try {
-        return await super.exchangeAuthorizationCode(request);
-      } finally {
-        this._internal.clientCodes.delete(request.code);
+    // PKCE inline, not via super: the parent re-checks client_id against a
+    // process-local Map. enableTokenSwap is false, so the response below
+    // equals what super would return.
+    if (clientCode.codeChallenge) {
+      if (!request.code_verifier) {
+        throw new OAuthProxyError(
+          'invalid_request',
+          'code_verifier required for PKCE',
+        );
+      }
+      if (
+        !PKCEUtils.validateChallenge(
+          request.code_verifier,
+          clientCode.codeChallenge,
+          clientCode.codeChallengeMethod,
+        )
+      ) {
+        throw new OAuthProxyError('invalid_grant', 'Invalid PKCE verifier');
       }
     }
 
