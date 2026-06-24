@@ -25,7 +25,10 @@ import {
 } from '../../src/lib/agent-client.js';
 import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
-import { makeRejectingServer } from '../helpers/upgrade-server.js';
+import {
+  makeRejectingServer,
+  makeRespondingServer,
+} from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -843,6 +846,36 @@ describe('browserless_agent retry-guard (runCommands)', () => {
         expect((err as Error).message).to.include('Profile "ghost"');
       }
       expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('returns the saved-download handle when a screenshot { toDisk } batch ends with close', async () => {
+    // 1x1 PNG so getScreenshotPayload sees a real base64 payload.
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const srv = await makeRespondingServer((method) =>
+      method === 'screenshot' ? { base64: png } : { closed: true },
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = (await execute(
+        {
+          commands: [
+            { method: 'screenshot', params: { toDisk: true } },
+            { method: 'close' },
+          ],
+        },
+        ctx('todisk-then-close'),
+      )) as { content: Content[] };
+      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+        .text;
+      // toDisk branch fired: a reusable path, not the inline image/JSON the
+      // close-as-lastCmd bug produced.
+      expect(text).to.include('Screenshot saved to disk');
+      expect(text).to.include('reuse as uploadFile');
+      expect(result.content.some((c) => c.type === 'image')).to.equal(false);
     } finally {
       await srv.close();
     }
