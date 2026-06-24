@@ -22,6 +22,7 @@ Just trigger the download in the agent — navigate to the file URL, or click a 
 - A short, size-scaled grace wait lets quick downloads land on the **same** call. A slower one shows up as **in-progress with a byte count** ("downloading 2.0MB / 10MB") — just keep using the browser; it'll appear completed on a later response. As long as you keep touching the browser, the download state stays fresh.
 - Files **larger than the cap** aren't transferred: you get a `FileTooLarge` note with the **source URL** — fetch it directly (e.g. `curl`) if you have network access.
 - You decide whether to save each file. (`getDownloads` still exists for an explicit poll, but it's rarely needed.)
+- A **screenshot** can be captured straight to disk with `screenshot { toDisk: true }` instead of returned inline — it then behaves exactly like a download here (same handle/path/URL, same reuse). See the **screenshots** skill.
 
 **Local (stdio) mode:** the file is already on the local disk (`BROWSERLESS_DOWNLOAD_DIR`, default a temp dir). The response lists the saved **path** — use/move it, or hand it straight back to `uploadFile { path }`. Nothing more to fetch.
 

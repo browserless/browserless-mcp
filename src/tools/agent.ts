@@ -292,6 +292,44 @@ export const formatDownloads = async (
   return content;
 };
 
+// persist the bytes we already got back to the download store and surface a reusable handle
+export const formatScreenshotToDisk = async (
+  result: unknown,
+  cmd: { params?: Record<string, unknown> },
+  caption: string,
+  skills: string,
+  opts: FormatOpts,
+): Promise<Content[] | null> => {
+  const base64 =
+    typeof (result as Record<string, unknown> | null)?.base64 === 'string'
+      ? ((result as Record<string, unknown>).base64 as string)
+      : '';
+  if (!base64) return null;
+
+  const requestedType =
+    typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
+  const mimeType = SCREENSHOT_MIME[requestedType] ?? 'image/png';
+  const ext = requestedType === 'jpeg' ? 'jpg' : requestedType;
+
+  const record = await storeDownload(
+    `screenshot.${ext}`,
+    mimeType,
+    Buffer.from(base64, 'base64'),
+    opts.sessionId,
+  );
+
+  const text = [
+    caption.trimEnd(),
+    `Screenshot saved to disk (not shown inline):\n- ${describeReadyDownload(record, opts)}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const content: Content[] = [{ type: 'text', text }];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
+};
+
 const SkillIdSchema = z.enum(
   skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
 );
@@ -483,9 +521,19 @@ export function registerAgentTools(
 
           agentSession.skillState.cmdIndex += 1;
 
+          // `toDisk` is a local directive (route the screenshot to the download
+          // store); it's not a CDP screenshot param, so strip it before sending
+          // or Chrome rejects the unknown key. The original cmd keeps it so the
+          // result formatter can tell it should save instead of inline.
+          let outboundParams = cmd.params;
+          if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
+            outboundParams = { ...cmd.params };
+            delete (outboundParams as Record<string, unknown>).toDisk;
+          }
+
           let resp;
           try {
-            resp = await send(agentSession, cmd.method, cmd.params);
+            resp = await send(agentSession, cmd.method, outboundParams);
           } catch (sendErr: unknown) {
             destroySession(
               mcpSessionId,
@@ -672,6 +720,32 @@ export function registerAgentTools(
             mcpBaseUrl: config.mcpBaseUrl,
             token,
           });
+        } else if (
+          last.method === 'screenshot' &&
+          lastCmd.params?.toDisk === true
+        ) {
+          // Screenshot saved to disk → reusable handle, no inline image.
+          const saved = await formatScreenshotToDisk(
+            lastResult,
+            lastCmd,
+            batchPrefix,
+            skillsText,
+            {
+              transport: config.transport,
+              sessionId: mcpSessionId,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            },
+          );
+          baseContent = saved ?? [
+            {
+              type: 'text' as const,
+              text: appendSkills(
+                batchPrefix + JSON.stringify(lastResult, null, 2),
+                triggered,
+              ),
+            },
+          ];
         } else {
           // Screenshot → image content block; otherwise JSON text.
           const shot =
