@@ -37,6 +37,8 @@ updates:
       fastmcp:
         patterns:
           - 'fastmcp'
+    cooldown:
+      default-days: 3
 
   - package-ecosystem: github-actions
     directory: /
@@ -46,3 +48,5 @@ updates:
       github-actions:
         patterns:
           - '*'
+    cooldown:
+      default-days: 3
