@@ -70,6 +70,25 @@ const SCREENSHOT_MIME: Record<string, string> = {
   png: 'image/png',
 };
 
+const getScreenshotPayload = (
+  result: unknown,
+  cmd: { params?: Record<string, unknown> },
+): { base64: string; mimeType: string; requestedType: string } | null => {
+  const base64 =
+    typeof (result as Record<string, unknown> | null)?.base64 === 'string'
+      ? ((result as Record<string, unknown>).base64 as string)
+      : '';
+  if (!base64) return null;
+
+  const requestedType =
+    typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
+  return {
+    base64,
+    mimeType: SCREENSHOT_MIME[requestedType] ?? 'image/png',
+    requestedType,
+  };
+};
+
 /**
  * Build the MCP response for a screenshot command, or null when there's no
  * base64 payload (caller falls back to JSON text). Returns the image as a
@@ -81,15 +100,9 @@ export const formatScreenshotContent = (
   caption: string,
   skills: string,
 ): Content[] | null => {
-  const base64 =
-    typeof (result as Record<string, unknown> | null)?.base64 === 'string'
-      ? ((result as Record<string, unknown>).base64 as string)
-      : '';
-  if (!base64) return null;
-
-  const requestedType =
-    typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
-  const mimeType = SCREENSHOT_MIME[requestedType] ?? 'image/png';
+  const payload = getScreenshotPayload(result, cmd);
+  if (!payload) return null;
+  const { base64, mimeType } = payload;
 
   const decodedBytes = Math.floor(base64.length * 0.75);
   const sizeLabel =
@@ -300,15 +313,9 @@ export const formatScreenshotToDisk = async (
   skills: string,
   opts: FormatOpts,
 ): Promise<Content[] | null> => {
-  const base64 =
-    typeof (result as Record<string, unknown> | null)?.base64 === 'string'
-      ? ((result as Record<string, unknown>).base64 as string)
-      : '';
-  if (!base64) return null;
-
-  const requestedType =
-    typeof cmd.params?.type === 'string' ? cmd.params.type : 'png';
-  const mimeType = SCREENSHOT_MIME[requestedType] ?? 'image/png';
+  const payload = getScreenshotPayload(result, cmd);
+  if (!payload) return null;
+  const { base64, mimeType, requestedType } = payload;
   const ext = requestedType === 'jpeg' ? 'jpg' : requestedType;
 
   const record = await storeDownload(
