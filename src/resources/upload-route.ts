@@ -4,7 +4,7 @@ import {
   storeDownload,
   FILE_TRANSFER_MAX_BYTES,
 } from '../lib/download-store.js';
-import { resolveBrowserlessAuth } from '../lib/http-auth.js';
+import { guardRouteAuth } from '../lib/http-auth.js';
 import type { McpConfig } from '../@types/types.js';
 
 // Registers `POST /upload` (httpStream only): clients push a file's bytes over
@@ -15,21 +15,10 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   const app = server.getApp();
 
   app.post('/upload', async (c) => {
-    // Raw Hono routes bypass FastMCP's authenticate, so gate the route on the
-    // same Browserless token rules as the MCP surface — no anonymous drops.
-    try {
-      await resolveBrowserlessAuth(
-        {
-          authHeader: c.req.header('authorization'),
-          tokenQuery: c.req.query('token'),
-          apiUrlHeader: c.req.header('x-browserless-api-url'),
-          browserlessUrlQuery: c.req.query('browserlessUrl'),
-        },
-        config,
-      );
-    } catch {
-      return c.json({ ok: false, error: 'Unauthorized' }, 401);
-    }
+    // Raw Hono routes bypass FastMCP's authenticate, so gate on the same token
+    // rules as the MCP surface — no anonymous drops.
+    const denied = await guardRouteAuth(c, config);
+    if (denied) return denied;
 
     let file: unknown;
     try {
