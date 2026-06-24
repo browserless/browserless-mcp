@@ -645,7 +645,7 @@ export function registerAgentTools(
         const reportable = closedDuringBatch ? results.slice(0, -1) : results;
         const last = reportable[reportable.length - 1];
         const lastResult = last.result as Record<string, unknown>;
-        const lastCmd = commands[commands.length - 1];
+        const lastCmd = commands[reportable.length - 1];
 
         const closedSuffix = closedDuringBatch
           ? '\n\nBrowser session closed.'
