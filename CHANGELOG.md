@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/browserless/browserless-mcp/compare/v1.7.1...v1.7.2) (2026-06-24)
+
+
+### Bug Fixes
+
+* recognize DCR-issued client_id across instances in OAuth proxy ([#141](https://github.com/browserless/browserless-mcp/issues/141)) ([783528b](https://github.com/browserless/browserless-mcp/commit/783528bba831f2e077e4f68d464760c1e701015c))
+
 ## [1.7.1](https://github.com/browserless/browserless-mcp/compare/v1.7.0...v1.7.1) (2026-06-23)
 
 
