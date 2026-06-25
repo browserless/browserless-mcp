@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/browserless/browserless-mcp/compare/v1.7.2...v1.8.0) (2026-06-25)
+
+
+### Features
+
+* add support for saving screenshots to disk with reusable handles ([#145](https://github.com/browserless/browserless-mcp/issues/145)) ([2ff2903](https://github.com/browserless/browserless-mcp/commit/2ff29037e469cf78aee40e63d2e066f312184995))
+
 ## [1.7.2](https://github.com/browserless/browserless-mcp/compare/v1.7.1...v1.7.2) (2026-06-24)
 
 
