@@ -8,6 +8,7 @@ import {
   formatDownloads,
   formatErrorMessage,
   formatScreenshotContent,
+  formatScreenshotToDisk,
   formatSnapshot,
   normalizeUploadCommand,
   registerAgentTools,
@@ -24,7 +25,10 @@ import {
 } from '../../src/lib/agent-client.js';
 import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
-import { makeRejectingServer } from '../helpers/upgrade-server.js';
+import {
+  makeRejectingServer,
+  makeRespondingServer,
+} from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -205,6 +209,72 @@ describe('formatScreenshotContent', () => {
     const caption = content![0] as Extract<Content, { type: 'text' }>;
     expect(caption.text).to.match(/^Executed: goto → screenshot/);
     expect(caption.text).to.include('Screenshot captured');
+  });
+});
+
+describe('formatScreenshotToDisk', () => {
+  const FAKE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+
+  it('writes the screenshot to disk and reports a path, no inline image (stdio)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-shot-'));
+    const prev = process.env.BROWSERLESS_DOWNLOAD_DIR;
+    process.env.BROWSERLESS_DOWNLOAD_DIR = dir;
+    try {
+      const content = await formatScreenshotToDisk(
+        { base64: FAKE_PNG },
+        { params: {} },
+        '',
+        '',
+        { transport: 'stdio' },
+      );
+      expect(content).to.not.be.null;
+      // No image content block — bytes live on disk, not in context.
+      expect(content!.every((c) => c.type === 'text')).to.be.true;
+      const text = (content![0] as Extract<Content, { type: 'text' }>).text;
+      expect(text).to.include('saved to disk');
+      expect(text).to.include(dir);
+      // The reported path holds the decoded bytes, and base64 never leaks.
+      expect(JSON.stringify(content)).to.not.include(FAKE_PNG);
+      const reported = text.split('- ')[1].split(' (')[0];
+      const written = await fsReadFile(reported);
+      expect(written.equals(Buffer.from(FAKE_PNG, 'base64'))).to.be.true;
+    } finally {
+      if (prev === undefined) delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+      else process.env.BROWSERLESS_DOWNLOAD_DIR = prev;
+    }
+  });
+
+  it('gives a single-use GET URL with the .jpg extension over HTTP', async () => {
+    const content = await formatScreenshotToDisk(
+      { base64: FAKE_PNG },
+      { params: { type: 'jpeg' } },
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token: 'tok-1',
+      },
+    );
+    const text = (content![0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.match(
+      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+    );
+    expect(text).to.include('screenshot.jpg');
+    expect(JSON.stringify(content)).to.not.include(FAKE_PNG);
+  });
+
+  it('returns null when base64 is missing (caller falls back to JSON)', async () => {
+    expect(
+      await formatScreenshotToDisk({}, { params: {} }, '', '', {
+        transport: 'stdio',
+      }),
+    ).to.be.null;
+    expect(
+      await formatScreenshotToDisk(null, { params: {} }, '', '', {
+        transport: 'stdio',
+      }),
+    ).to.be.null;
   });
 });
 
@@ -776,6 +846,36 @@ describe('browserless_agent retry-guard (runCommands)', () => {
         expect((err as Error).message).to.include('Profile "ghost"');
       }
       expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('returns the saved-download handle when a screenshot { toDisk } batch ends with close', async () => {
+    // 1x1 PNG so getScreenshotPayload sees a real base64 payload.
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const srv = await makeRespondingServer((method) =>
+      method === 'screenshot' ? { base64: png } : { closed: true },
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = (await execute(
+        {
+          commands: [
+            { method: 'screenshot', params: { toDisk: true } },
+            { method: 'close' },
+          ],
+        },
+        ctx('todisk-then-close'),
+      )) as { content: Content[] };
+      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+        .text;
+      // toDisk branch fired: a reusable path, not the inline image/JSON the
+      // close-as-lastCmd bug produced.
+      expect(text).to.include('Screenshot saved to disk');
+      expect(text).to.include('reuse as uploadFile');
+      expect(result.content.some((c) => c.type === 'image')).to.equal(false);
     } finally {
       await srv.close();
     }

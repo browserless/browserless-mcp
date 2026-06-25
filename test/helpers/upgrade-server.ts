@@ -105,6 +105,43 @@ export const makeStallingServer = async (
   };
 };
 
+// for tests only
+export const makeRespondingServer = async (
+  responder: (method: string, params: unknown) => unknown,
+): Promise<UpgradeServerHandle> => {
+  const wss = new WebSocketServer({ noServer: true });
+  const server = http.createServer();
+  server.on('upgrade', (req, socket, head) => {
+    socket.on('error', () => {});
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on('message', (data: Buffer) => {
+        const msg = JSON.parse(data.toString('utf8')) as {
+          id: string;
+          method: string;
+          params: unknown;
+        };
+        ws.send(
+          JSON.stringify({
+            id: msg.id,
+            result: responder(msg.method, msg.params),
+          }),
+        );
+      });
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((r) => {
+        wss.clients.forEach((c) => c.terminate());
+        server.closeAllConnections?.();
+        server.close(() => r());
+      }),
+  };
+};
+
 /**
  * Spin up an HTTP server that completes the WS upgrade successfully. Used by
  * tests that need a live session — the server holds connections open until

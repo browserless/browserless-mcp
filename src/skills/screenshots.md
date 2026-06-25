@@ -30,6 +30,24 @@ Capture smallest region that answers the question.
 - **WebP** — better compression than JPEG
 - **`omitBackground: true`** — for transparent elements
 
+## Save to disk instead of seeing it
+
+By default a screenshot comes back as an inline image you see right away — that
+costs vision tokens and lives in context. If you only need the file _later_
+(hand it to the user, or re-upload it elsewhere) and don't need to look at it
+now, add **`toDisk: true`**:
+
+```json
+{ "method": "screenshot", "params": { "selector": "#invoice", "toDisk": true } }
+```
+
+You will **not** see the image. The response gives a reusable handle — a local
+path (stdio) or a single-use GET URL (HTTP) — exactly like a download. Reuse it
+with `uploadFile`, or hand the path/URL to the user. See the **file-transfers**
+skill for the handle/path/URL rules and TTL. Note: to actually _look_ at a
+disk-saved shot you'd have to load it back into context — so only use `toDisk`
+when you don't need to view it.
+
 ## Pattern: capture-after-action
 
 ```json

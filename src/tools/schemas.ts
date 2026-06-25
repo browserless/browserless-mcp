@@ -411,6 +411,16 @@ const ScreenshotCommandSchema = z.object({
         .number()
         .optional()
         .describe('Timeout in milliseconds (default 30000)'),
+      toDisk: z
+        .boolean()
+        .optional()
+        .describe(
+          'Save the screenshot to disk instead of returning it inline. ' +
+            'You will NOT see the image; the response gives a reusable handle ' +
+            '(local path in stdio, single-use GET URL over HTTP) exactly like a ' +
+            'download — reuse it with uploadFile or hand it to the user. Use when ' +
+            'you only need the file later, not to look at now (see file-transfers).',
+        ),
     })
     .optional()
     .default({})
