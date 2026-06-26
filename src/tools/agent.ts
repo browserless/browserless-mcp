@@ -376,6 +376,7 @@ export function registerAgentTools(
           proxy_external: !!proxy?.externalProxyServer,
           profile_used: !!profile,
           create_profile: !!createProfile,
+          rationale: params.rationale ?? null,
         });
       };
 
