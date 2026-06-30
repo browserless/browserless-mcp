@@ -34,9 +34,11 @@ Gate 1 or 2 fails → stop, emit the matching `reason_code`. (Gate 0 isn't a sto
 ## Reach the form
 
 - Password input in snapshot → continue.
-- Sign-in link/button → click, wait, re-snapshot.
+- Sign-in link/button → click, wait, re-snapshot. Take the control that _advances_ sign-in for **this** site (`Sign in`, `Log in`, `Sign in to an existing account`, `Continue`) — not a generic nav link that reloads the page you're on, not `Sign up`/`Create account`.
+- **Account / identity chooser** (page offers several ways in — `Sign in with <Site>` next to `Continue with Google`/`Apple`/`Amazon`/`Facebook`/…): take **this site's own** option, matched to `LOGIN_TARGET_URL`'s brand/host. A third-party identity provider only when the credential context names that provider, or it is the _sole_ option. A site's own `Sign in with <Site>` is the native path even beside a third-party one. A chooser is not `FORM_NOT_FOUND`.
 - Email-first → type username, click `Continue`/`Next`, `waitForSelector` on `input[type="password"]` (10000ms), re-snapshot.
-- Two transitions, still no password → `FORM_NOT_FOUND`.
+- Multi-hop is normal (landing → chooser → form): keep taking the native sign-in step and re-snapshotting **while each hop reveals a new sign-in step**. `FORM_NOT_FOUND` only after **two transitions that reveal no new sign-in affordance and no password** — reloading the same URL is not progress.
+- **Before typing credentials, check origin.** The form must be on `LOGIN_TARGET_URL`'s host or that site's own auth host (`accounts.`/`login.`/`secure.<site>`, `<site>/ap/signin`, …). If the only form is on an **unrelated third-party origin** the credentials aren't scoped to, go back and take the native option — typing there is refused server-side and wastes the attempt. No native path → `MISSING_CONTEXT`.
 
 ## Sanity check
 
