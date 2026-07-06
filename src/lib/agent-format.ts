@@ -305,7 +305,8 @@ export const formatSnapshotDiff = (
   const frameLabels = frameLabelsOf(snapshot);
   const seen = new Set<string>();
   const added: SnapshotElement[] = [];
-  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> = [];
+  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> =
+    [];
   for (const [key, el] of identityEntries(snapshot.elements)) {
     seen.add(key);
     const before = prev.get(key);

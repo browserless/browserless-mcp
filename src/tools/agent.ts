@@ -712,9 +712,11 @@ export function registerAgentTools(
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
           // A peek (targetId ≠ active tab) reads a different tab; it must not
           // diff against or overwrite the active tab's cache.
-          const targetId = (lastCmd?.params as { targetId?: string } | undefined)
-            ?.targetId;
-          const peeking = !!targetId && targetId !== lastSnapshot.activeTargetId;
+          const targetId = (
+            lastCmd?.params as { targetId?: string } | undefined
+          )?.targetId;
+          const peeking =
+            !!targetId && targetId !== lastSnapshot.activeTargetId;
           // Active tab changed (switch/create/close) → prior cache is a different
           // tab; re-baseline with a full snapshot.
           const switchedTab =
