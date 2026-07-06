@@ -188,12 +188,7 @@ export interface ActiveSession {
   skillState: SkillFireState;
   lastUsedAt: number;
   lastUrl?: string;
-  // Previous snapshot's elements keyed by selector, for snapshot diffing —
-  // subsequent snapshots return only what changed. Re-indexed each snapshot;
-  // the diff is skipped after a cross-origin nav since prior refs are invalid.
   lastElements?: Map<string, SnapshotElement>;
-  // Previous snapshot's elements in DOM order, for the positional diff — order
-  // survives an in-place SPA re-render even when ids/selectors churn.
   lastSnapshotElements?: SnapshotElement[];
 }
 

@@ -710,12 +710,8 @@ export function registerAgentTools(
           );
           const noticeBlock = notice ? `${notice}\n\n` : '';
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
-          // Diff against the prior snapshot to save tokens. Send full instead
-          // when: first snapshot this session; cross-origin nav (notice set —
-          // prior refs invalid); or the prior snapshot was captured mid-hydration
-          // (SPA baseline had far fewer elements, so a diff would read as
-          // all-new). And even when we diff, never emit more than a full snapshot
-          // — on SPA re-mounts the diff can churn larger, so take the shorter.
+          // Send full on first snapshot / cross-origin nav / mid-hydration
+          // baseline / explicit full; otherwise diff (shortest-wins below).
           const prevElements = agentSession.lastElements;
           const prevArr = agentSession.lastSnapshotElements;
           const hydrating =
@@ -727,10 +723,8 @@ export function registerAgentTools(
           const full = formatSnapshot(lastSnapshot);
           let snapshotText = full;
           if (prevElements && !notice && !hydrating && !forceFull) {
-            // Take the shortest of full / identity-diff / positional-diff. The
-            // positional candidate (only when element count is unchanged) catches
-            // in-place SPA value updates that identity-keying churns on; a bad
-            // positional guess just loses to a shorter candidate and is dropped.
+            // Shortest of full / identity-diff / positional-diff wins, so a bad
+            // positional guess (only tried at equal count) can never cost more.
             const candidates = [
               full,
               formatSnapshotDiff(lastSnapshot, prevElements),
