@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.0](https://github.com/browserless/browserless-mcp/compare/v1.8.0...v1.9.0) (2026-06-30)
+
+
+### Features
+
+* include rationale in browserless_agent analytics event ([#147](https://github.com/browserless/browserless-mcp/issues/147)) ([4bd9233](https://github.com/browserless/browserless-mcp/commit/4bd923337f1994a9a6862803e5a4f7a3d9919f88))
+
+
+### Bug Fixes
+
+* drill multi-step sign-in choosers in autonomous-login skill ([#153](https://github.com/browserless/browserless-mcp/issues/153)) ([7119acc](https://github.com/browserless/browserless-mcp/commit/7119accf18885753d902cb53c68c39e8738426f4))
+
 ## [1.8.0](https://github.com/browserless/browserless-mcp/compare/v1.7.2...v1.8.0) (2026-06-25)
 
 
