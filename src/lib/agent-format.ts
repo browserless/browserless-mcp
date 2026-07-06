@@ -176,24 +176,8 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
     }
   }
 
-  // Label cross-origin iframes (frame#1, …) and list them so the agent knows
-  // which elements live in a frame and that their deep-ref selectors pierce it.
-  const frameLabels = new Map<string, string>();
-  if (snapshot.frames?.length) {
-    snapshot.frames.forEach((frame, i) =>
-      frameLabels.set(frame.frameId, `frame#${i + 1}`),
-    );
-    lines.push(`Frames (${snapshot.frames.length} iframes):`);
-    for (const frame of snapshot.frames) {
-      const origin = frame.crossOrigin ? 'cross-origin' : 'same-origin';
-      lines.push(
-        `  ${frameLabels.get(frame.frameId)} ${frame.url} (${origin})`,
-      );
-    }
-    lines.push(
-      'Elements tagged [frame#N] live in that iframe; their deep-ref selectors pierce it — pass as-is to click/type/hover.',
-    );
-  }
+  const frameLabels = frameLabelsOf(snapshot);
+  lines.push(...frameLegend(snapshot, frameLabels));
 
   lines.push('');
 
@@ -203,4 +187,179 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
 
   lines.push('--- END SNAPSHOT ---');
   return lines.join('\n');
+};
+
+const SIGNATURE_FIELDS: Array<keyof SnapshotElement> = [
+  'role',
+  'name',
+  'text',
+  'value',
+  'type',
+  'placeholder',
+  'href',
+  'disabled',
+  'checked',
+  'focused',
+  'required',
+  'ariaLabel',
+  'tag',
+  'frameId',
+];
+
+const elementSignature = (el: SnapshotElement): string =>
+  JSON.stringify(SIGNATURE_FIELDS.map((f) => el[f]));
+
+// Framework-generated ids (Radix/useId/Headless/MUI) churn every render, so a
+// selector or id built from one is not a stable diff key — excluded below.
+const FRAMEWORK_ID = /(radix-|headlessui-|mui-[a-z]|«r|:r[0-9a-z]|_r_)/i;
+
+// Stable cross-snapshot identity: clean id → clean selector → semantic composite
+// (never the positional ref). Degrades gracefully when selectors churn on SPAs.
+export const elementKey = (el: SnapshotElement): string => {
+  if (el.id && !FRAMEWORK_ID.test(el.id)) return `#${el.id}`;
+  if (el.selector && !FRAMEWORK_ID.test(el.selector))
+    return `sel:${el.selector}`;
+  // name often holds the volatile value (a stat number) and would churn the key;
+  // aria-label is the stable descriptor, so the value shows as `changed` instead.
+  const label = el.ariaLabel || el.name;
+  return `sem:${el.tag}|${el.role}|${label}|${el.href ?? ''}`;
+};
+
+// Occurrence-suffix the identity key so duplicate-keyed elements (two unlabeled
+// buttons, repeated links) are each kept instead of collapsing to last-wins.
+const identityEntries = (
+  elements: SnapshotElement[],
+): Array<[string, SnapshotElement]> => {
+  const seen = new Map<string, number>();
+  return elements.map((el) => {
+    const base = elementKey(el);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return [`${base} ${n}`, el];
+  });
+};
+
+export const indexByIdentity = (
+  snapshot: SnapshotResult,
+): Map<string, SnapshotElement> => new Map(identityEntries(snapshot.elements));
+
+const frameLabelsOf = (snapshot: SnapshotResult): Map<string, string> => {
+  const labels = new Map<string, string>();
+  snapshot.frames?.forEach((f, i) => labels.set(f.frameId, `frame#${i + 1}`));
+  return labels;
+};
+
+// Frame legend + deep-ref guidance, shared by full and diff snapshots so framed
+// elements never arrive without their [frame#N] → url mapping.
+const frameLegend = (
+  snapshot: SnapshotResult,
+  frameLabels: Map<string, string>,
+): string[] => {
+  if (!snapshot.frames?.length) return [];
+  const lines = [`Frames (${snapshot.frames.length} iframes):`];
+  for (const frame of snapshot.frames) {
+    const origin = frame.crossOrigin ? 'cross-origin' : 'same-origin';
+    lines.push(`  ${frameLabels.get(frame.frameId)} ${frame.url} (${origin})`);
+  }
+  lines.push(
+    'Elements tagged [frame#N] live in that iframe; their deep-ref selectors pierce it — pass as-is to click/type/hover.',
+  );
+  return lines;
+};
+
+// Shared header/footer for both diffs so the rendered shape stays one thing.
+const assembleDiff = (
+  snapshot: SnapshotResult,
+  countsLine: string,
+  changeLines: string[],
+  unchanged: number,
+): string => {
+  const lines = [
+    '--- PAGE SNAPSHOT (diff vs previous; unchanged elements omitted) ---',
+    `${snapshot.url} | ${snapshot.title}`,
+    countsLine,
+    ...(snapshot.detectedChallenges ?? []).map(
+      (t) => `! Detected challenge: ${t}`,
+    ),
+    ...frameLegend(snapshot, frameLabelsOf(snapshot)),
+  ];
+  if (changeLines.length === 0) {
+    lines.push('', 'No changes since last snapshot.');
+  } else {
+    lines.push('', ...changeLines);
+    if (unchanged > 0)
+      lines.push(
+        `… ${unchanged} unchanged elements omitted (still valid from the previous snapshot).`,
+      );
+  }
+  lines.push('--- END SNAPSHOT ---');
+  return lines.join('\n');
+};
+
+// Delta vs the previous snapshot: +new / ~changed / -removed, unchanged collapsed
+// to a count. Assumes the prior snapshot is still in context (caller sends full otherwise).
+export const formatSnapshotDiff = (
+  snapshot: SnapshotResult,
+  prev: Map<string, SnapshotElement>,
+): string => {
+  const frameLabels = frameLabelsOf(snapshot);
+  const seen = new Set<string>();
+  const added: SnapshotElement[] = [];
+  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> =
+    [];
+  for (const [key, el] of identityEntries(snapshot.elements)) {
+    seen.add(key);
+    const before = prev.get(key);
+    if (!before) added.push(el);
+    else if (elementSignature(before) !== elementSignature(el))
+      changed.push({ before, after: el });
+  }
+  // Removed elements print by selector (the actionable handle), not the key.
+  const removed = [...prev.entries()]
+    .filter(([key]) => !seen.has(key))
+    .map(([, el]) => el.selector);
+  const unchanged = snapshot.elements.length - added.length - changed.length;
+
+  const changeLines = [
+    ...added.map((el) => `+ ${formatElement(el, frameLabels)}`),
+    ...changed.map(({ before, after }) =>
+      formatChange(before, after, frameLabels),
+    ),
+    ...removed.map((sel) => `- ref=${sel} (removed)`),
+  ];
+  const counts = `Changes: ${added.length} new, ${changed.length} changed, ${removed.length} removed, ${unchanged} unchanged (${snapshot.elements.length} total)`;
+  return assembleDiff(snapshot, counts, changeLines, unchanged);
+};
+
+// `~` line with the field-level old→new reason, so a detected change is always
+// visible. Reads SIGNATURE_FIELDS — the same fields change detection keys on.
+const formatChange = (
+  before: SnapshotElement,
+  after: SnapshotElement,
+  frameLabels?: Map<string, string>,
+): string => {
+  const deltas = SIGNATURE_FIELDS.filter((f) => before[f] !== after[f]).map(
+    (f) =>
+      `${f}: ${JSON.stringify(before[f] ?? '')}→${JSON.stringify(after[f] ?? '')}`,
+  );
+  const suffix = deltas.length ? ` (${deltas.join(', ')})` : '';
+  return `~ ${formatElement(after, frameLabels)}${suffix}`;
+};
+
+// Diff equal-length snapshots by DOM position — order survives an in-place SPA
+// re-render when ids churn, surfacing moved values. Caller gates on equal length + shortest-wins.
+export const formatSnapshotDiffPositional = (
+  prev: SnapshotElement[],
+  snapshot: SnapshotResult,
+): string => {
+  const frameLabels = frameLabelsOf(snapshot);
+  const changeLines: string[] = [];
+  snapshot.elements.forEach((after, i) => {
+    const before = prev[i];
+    if (before && elementSignature(before) !== elementSignature(after))
+      changeLines.push(formatChange(before, after, frameLabels));
+  });
+  const unchanged = snapshot.elements.length - changeLines.length;
+  const counts = `Changes: ${changeLines.length} changed, ${unchanged} unchanged (${snapshot.elements.length} total)`;
+  return assembleDiff(snapshot, counts, changeLines, unchanged);
 };

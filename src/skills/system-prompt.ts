@@ -46,6 +46,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - Snapshot VALID after: type, hover, scroll, evaluate
 - Expect new content? → re-snapshot
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
+- Snapshots after the first return a **diff** vs. your previous snapshot: only \`+\` new / \`~\` changed / \`-\` removed elements, plus a count of unchanged ones omitted. Unchanged elements stay valid — keep using their refs from the earlier snapshot. If that earlier snapshot is no longer in your context (summarized/trimmed away), request \`snapshot { full: true }\` to get the complete element list again.
 
 ## Selectors
 - Use **ref=** (CSS) or **deep-ref=** (starts \`< \`) exactly as shown in snapshot

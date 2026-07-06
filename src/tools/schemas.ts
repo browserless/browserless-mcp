@@ -60,6 +60,15 @@ const SnapshotCommandSchema = z.object({
           'Optional tab targetId to peek at without switching the active tab. ' +
             'Obtain via getTabs or a prior snapshot response. Omit to snapshot the active tab.',
         ),
+      full: z
+        .boolean()
+        .optional()
+        .describe(
+          'Force a complete snapshot instead of a diff. Snapshots normally return ' +
+            'only what changed since your previous one; set full:true when you no ' +
+            'longer have that previous snapshot in context (e.g. it was summarized ' +
+            'away) and need the entire element list again.',
+        ),
     })
     .optional()
     .default({}),

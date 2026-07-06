@@ -188,6 +188,10 @@ export interface ActiveSession {
   skillState: SkillFireState;
   lastUsedAt: number;
   lastUrl?: string;
+  lastElements?: Map<string, SnapshotElement>;
+  lastSnapshotElements?: SnapshotElement[];
+  // Active tab the cache above belongs to; a change means re-baseline (new tab).
+  lastActiveTargetId?: string | null;
 }
 
 /* ------------------------------------------------------------------ */
