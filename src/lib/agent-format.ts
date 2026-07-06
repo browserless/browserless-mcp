@@ -262,7 +262,9 @@ const assembleDiff = (
     '--- PAGE SNAPSHOT (diff vs previous; unchanged elements omitted) ---',
     `${snapshot.url} | ${snapshot.title}`,
     countsLine,
-    ...(snapshot.detectedChallenges ?? []).map((t) => `! Detected challenge: ${t}`),
+    ...(snapshot.detectedChallenges ?? []).map(
+      (t) => `! Detected challenge: ${t}`,
+    ),
   ];
   if (changeLines.length === 0) {
     lines.push('', 'No changes since last snapshot.');
