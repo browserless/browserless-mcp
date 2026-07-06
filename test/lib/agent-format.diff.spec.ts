@@ -94,6 +94,18 @@ describe('formatSnapshotDiff', () => {
     expect(out).to.include('(checked)');
   });
 
+  it('shows a reason for changes formatElement does not render (e.g. placeholder)', () => {
+    const prev = indexByIdentity(
+      snap([el({ selector: '#q', name: 'Search', placeholder: 'old' })]),
+    );
+    const out = formatSnapshotDiff(
+      snap([el({ selector: '#q', name: 'Search', placeholder: 'new' })]),
+      prev,
+    );
+    expect(out).to.match(/1 changed/);
+    expect(out).to.include('placeholder: "old"→"new"');
+  });
+
   it('reports no changes when nothing moved', () => {
     const prev = indexByIdentity(
       snap([el({ ref: 1, selector: '#x', name: 'X' })]),

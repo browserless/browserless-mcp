@@ -710,8 +710,19 @@ export function registerAgentTools(
           );
           const noticeBlock = notice ? `${notice}\n\n` : '';
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
+          // A peek (targetId ≠ active tab) reads a different tab; it must not
+          // diff against or overwrite the active tab's cache.
+          const targetId = (lastCmd?.params as { targetId?: string } | undefined)
+            ?.targetId;
+          const peeking = !!targetId && targetId !== lastSnapshot.activeTargetId;
+          // Active tab changed (switch/create/close) → prior cache is a different
+          // tab; re-baseline with a full snapshot.
+          const switchedTab =
+            lastSnapshot.activeTargetId != null &&
+            agentSession.lastActiveTargetId != null &&
+            lastSnapshot.activeTargetId !== agentSession.lastActiveTargetId;
           // Send full on first snapshot / cross-origin nav / mid-hydration
-          // baseline / explicit full; otherwise diff (shortest-wins below).
+          // baseline / explicit full / peek / tab switch; else diff (shortest-wins).
           const prevElements = agentSession.lastElements;
           const prevArr = agentSession.lastSnapshotElements;
           const hydrating =
@@ -722,7 +733,14 @@ export function registerAgentTools(
             (lastCmd?.params as { full?: boolean } | undefined)?.full === true;
           const full = formatSnapshot(lastSnapshot);
           let snapshotText = full;
-          if (prevElements && !notice && !hydrating && !forceFull) {
+          if (
+            prevElements &&
+            !notice &&
+            !hydrating &&
+            !forceFull &&
+            !peeking &&
+            !switchedTab
+          ) {
             // Shortest of full / identity-diff / positional-diff wins, so a bad
             // positional guess (only tried at equal count) can never cost more.
             const candidates = [
@@ -738,8 +756,12 @@ export function registerAgentTools(
               b.length < a.length ? b : a,
             );
           }
-          agentSession.lastElements = indexByIdentity(lastSnapshot);
-          agentSession.lastSnapshotElements = lastSnapshot.elements;
+          // Never let a peek's other-tab elements become the active baseline.
+          if (!peeking) {
+            agentSession.lastElements = indexByIdentity(lastSnapshot);
+            agentSession.lastSnapshotElements = lastSnapshot.elements;
+            agentSession.lastActiveTargetId = lastSnapshot.activeTargetId;
+          }
           baseContent = [
             {
               type: 'text' as const,

@@ -189,25 +189,25 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
   return lines.join('\n');
 };
 
-// Fields whose change marks an element "changed". Excludes ref (positional) and
-// selector (the identity key itself).
+const SIGNATURE_FIELDS: Array<keyof SnapshotElement> = [
+  'role',
+  'name',
+  'text',
+  'value',
+  'type',
+  'placeholder',
+  'href',
+  'disabled',
+  'checked',
+  'focused',
+  'required',
+  'ariaLabel',
+  'tag',
+  'frameId',
+];
+
 const elementSignature = (el: SnapshotElement): string =>
-  JSON.stringify([
-    el.role,
-    el.name,
-    el.text,
-    el.value,
-    el.type,
-    el.placeholder,
-    el.href,
-    el.disabled,
-    el.checked,
-    el.focused,
-    el.required,
-    el.ariaLabel,
-    el.tag,
-    el.frameId,
-  ]);
+  JSON.stringify(SIGNATURE_FIELDS.map((f) => el[f]));
 
 // Framework-generated ids (Radix/useId/Headless/MUI) churn every render, so a
 // selector or id built from one is not a stable diff key — excluded below.
@@ -305,13 +305,13 @@ export const formatSnapshotDiff = (
   const frameLabels = frameLabelsOf(snapshot);
   const seen = new Set<string>();
   const added: SnapshotElement[] = [];
-  const changed: SnapshotElement[] = [];
+  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> = [];
   for (const [key, el] of identityEntries(snapshot.elements)) {
     seen.add(key);
     const before = prev.get(key);
     if (!before) added.push(el);
     else if (elementSignature(before) !== elementSignature(el))
-      changed.push(el);
+      changed.push({ before, after: el });
   }
   // Removed elements print by selector (the actionable handle), not the key.
   const removed = [...prev.entries()]
@@ -321,29 +321,23 @@ export const formatSnapshotDiff = (
 
   const changeLines = [
     ...added.map((el) => `+ ${formatElement(el, frameLabels)}`),
-    ...changed.map((el) => `~ ${formatElement(el, frameLabels)}`),
+    ...changed.map(({ before, after }) =>
+      formatChange(before, after, frameLabels),
+    ),
     ...removed.map((sel) => `- ref=${sel} (removed)`),
   ];
   const counts = `Changes: ${added.length} new, ${changed.length} changed, ${removed.length} removed, ${unchanged} unchanged (${snapshot.elements.length} total)`;
   return assembleDiff(snapshot, counts, changeLines, unchanged);
 };
 
-// Fields whose old→new transition is worth surfacing on a changed element.
-const CHANGE_FIELDS: Array<keyof SnapshotElement> = [
-  'name',
-  'value',
-  'text',
-  'checked',
-  'disabled',
-  'focused',
-];
-
+// `~` line with the field-level old→new reason, so a detected change is always
+// visible. Reads SIGNATURE_FIELDS — the same fields change detection keys on.
 const formatChange = (
   before: SnapshotElement,
   after: SnapshotElement,
   frameLabels?: Map<string, string>,
 ): string => {
-  const deltas = CHANGE_FIELDS.filter((f) => before[f] !== after[f]).map(
+  const deltas = SIGNATURE_FIELDS.filter((f) => before[f] !== after[f]).map(
     (f) =>
       `${f}: ${JSON.stringify(before[f] ?? '')}→${JSON.stringify(after[f] ?? '')}`,
   );
