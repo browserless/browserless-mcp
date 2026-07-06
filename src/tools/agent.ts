@@ -727,11 +727,18 @@ export function registerAgentTools(
             // positional candidate (only when element count is unchanged) catches
             // in-place SPA value updates that identity-keying churns on; a bad
             // positional guess just loses to a shorter candidate and is dropped.
-            const candidates = [full, formatSnapshotDiff(lastSnapshot, prevElements)];
+            const candidates = [
+              full,
+              formatSnapshotDiff(lastSnapshot, prevElements),
+            ];
             if (prevArr && prevArr.length === lastSnapshot.elements.length) {
-              candidates.push(formatSnapshotDiffPositional(prevArr, lastSnapshot));
+              candidates.push(
+                formatSnapshotDiffPositional(prevArr, lastSnapshot),
+              );
             }
-            snapshotText = candidates.reduce((a, b) => (b.length < a.length ? b : a));
+            snapshotText = candidates.reduce((a, b) =>
+              b.length < a.length ? b : a,
+            );
           }
           agentSession.lastElements = indexByIdentity(lastSnapshot);
           agentSession.lastSnapshotElements = lastSnapshot.elements;

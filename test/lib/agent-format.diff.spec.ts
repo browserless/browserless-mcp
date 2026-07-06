@@ -5,7 +5,10 @@ import {
   formatSnapshotDiffPositional,
   indexByIdentity,
 } from '../../src/lib/agent-format.js';
-import type { SnapshotElement, SnapshotResult } from '../../src/@types/types.js';
+import type {
+  SnapshotElement,
+  SnapshotResult,
+} from '../../src/@types/types.js';
 
 const el = (over: Partial<SnapshotElement>): SnapshotElement => ({
   ref: 0,
@@ -61,7 +64,9 @@ describe('formatSnapshotDiff', () => {
   });
 
   it('reports no changes when nothing moved', () => {
-    const prev = indexByIdentity(snap([el({ ref: 1, selector: '#x', name: 'X' })]));
+    const prev = indexByIdentity(
+      snap([el({ ref: 1, selector: '#x', name: 'X' })]),
+    );
     const out = formatSnapshotDiff(
       snap([el({ ref: 2, selector: '#x', name: 'X' })]),
       prev,
@@ -93,12 +98,22 @@ describe('formatSnapshotDiff', () => {
     // (role+name+tag) must still match so it is not counted as new+removed.
     const prev = indexByIdentity(
       snap([
-        el({ ref: 1, role: 'menuitem', name: 'Profile', selector: 'div#radix-«r1»' }),
+        el({
+          ref: 1,
+          role: 'menuitem',
+          name: 'Profile',
+          selector: 'div#radix-«r1»',
+        }),
       ]),
     );
     const out = formatSnapshotDiff(
       snap([
-        el({ ref: 7, role: 'menuitem', name: 'Profile', selector: 'div#radix-«r9»' }),
+        el({
+          ref: 7,
+          role: 'menuitem',
+          name: 'Profile',
+          selector: 'div#radix-«r9»',
+        }),
       ]),
       prev,
     );

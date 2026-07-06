@@ -237,7 +237,8 @@ const FRAMEWORK_ID = /(radix-|headlessui-|mui-[a-z]|«r|:r[0-9a-z]|_r_)/i;
 // degrades gracefully on SPAs where the selector embeds a framework id.
 export const elementKey = (el: SnapshotElement): string => {
   if (el.id && !FRAMEWORK_ID.test(el.id)) return `#${el.id}`;
-  if (el.selector && !FRAMEWORK_ID.test(el.selector)) return `sel:${el.selector}`;
+  if (el.selector && !FRAMEWORK_ID.test(el.selector))
+    return `sel:${el.selector}`;
   // Prefer aria-label over name: name often carries the volatile value (a stat
   // tile's number), so keying on it churns the element on every value change;
   // aria-label is the stable descriptor. Value change then shows as `changed`.
@@ -334,7 +335,8 @@ const formatChange = (
   frameLabels?: Map<string, string>,
 ): string => {
   const deltas = CHANGE_FIELDS.filter((f) => before[f] !== after[f]).map(
-    (f) => `${f}: ${JSON.stringify(before[f] ?? '')}→${JSON.stringify(after[f] ?? '')}`,
+    (f) =>
+      `${f}: ${JSON.stringify(before[f] ?? '')}→${JSON.stringify(after[f] ?? '')}`,
   );
   const suffix = deltas.length ? ` (${deltas.join(', ')})` : '';
   return `~ ${formatElement(after, frameLabels)}${suffix}`;
@@ -356,7 +358,8 @@ export const formatSnapshotDiffPositional = (
     frameLabels.set(frame.frameId, `frame#${i + 1}`),
   );
 
-  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> = [];
+  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> =
+    [];
   snapshot.elements.forEach((after, i) => {
     const before = prev[i];
     if (before && elementSignature(before) !== elementSignature(after))
