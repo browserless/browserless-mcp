@@ -204,3 +204,193 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
   lines.push('--- END SNAPSHOT ---');
   return lines.join('\n');
 };
+
+// Fields that define whether an element "changed" between snapshots. `ref` is
+// excluded (it's positional/cosmetic — the agent acts by selector); `selector`
+// is excluded because it's the identity key itself.
+const elementSignature = (el: SnapshotElement): string =>
+  JSON.stringify([
+    el.role,
+    el.name,
+    el.text,
+    el.value,
+    el.type,
+    el.placeholder,
+    el.href,
+    el.disabled,
+    el.checked,
+    el.focused,
+    el.required,
+    el.ariaLabel,
+    el.tag,
+    el.frameId,
+  ]);
+
+// Framework-generated ids churn on every render (Radix `radix-«r…»`/`:r0:`,
+// React useId `«r…»`/`:r…:`, Headless UI, MUI). A selector/id built from one is
+// NOT a stable cross-render identity, so we exclude it from the diff key.
+const FRAMEWORK_ID = /(radix-|headlessui-|mui-[a-z]|«r|:r[0-9a-z]|_r_)/i;
+
+// Cross-snapshot identity for an element. Numeric [ref] is positional (churns),
+// so we never key on it. Prefer a clean id, then a clean CSS selector, then a
+// semantic composite — this keeps precision when the selector is stable but
+// degrades gracefully on SPAs where the selector embeds a framework id.
+export const elementKey = (el: SnapshotElement): string => {
+  if (el.id && !FRAMEWORK_ID.test(el.id)) return `#${el.id}`;
+  if (el.selector && !FRAMEWORK_ID.test(el.selector)) return `sel:${el.selector}`;
+  // Prefer aria-label over name: name often carries the volatile value (a stat
+  // tile's number), so keying on it churns the element on every value change;
+  // aria-label is the stable descriptor. Value change then shows as `changed`.
+  const label = el.ariaLabel || el.name;
+  return `sem:${el.tag}|${el.role}|${label}|${el.href ?? ''}`;
+};
+
+// Index a snapshot's elements by their stable identity key.
+// ponytail: last-wins on key collisions (e.g. two unlabeled buttons that fall
+// back to the same semantic key). Rare; tighten with a positional tiebreak only
+// if it shows up in practice.
+export const indexByIdentity = (
+  snapshot: SnapshotResult,
+): Map<string, SnapshotElement> =>
+  new Map(snapshot.elements.map((el) => [elementKey(el), el]));
+
+// Render a snapshot as a delta against the previous snapshot's elements: only
+// new/changed elements print in full, removed ones as a selector list, and
+// unchanged ones collapse to a count. Callers fall back to formatSnapshot() for
+// the first snapshot in a session or after a cross-origin reset (prior refs
+// invalid). Assumes the previous full/diff snapshot is still in the model's
+// transcript so omitted elements remain referenceable.
+export const formatSnapshotDiff = (
+  snapshot: SnapshotResult,
+  prev: Map<string, SnapshotElement>,
+): string => {
+  const frameLabels = new Map<string, string>();
+  snapshot.frames?.forEach((frame, i) =>
+    frameLabels.set(frame.frameId, `frame#${i + 1}`),
+  );
+
+  const seen = new Set<string>();
+  const added: SnapshotElement[] = [];
+  const changed: SnapshotElement[] = [];
+  for (const el of snapshot.elements) {
+    const key = elementKey(el);
+    seen.add(key);
+    const before = prev.get(key);
+    if (!before) added.push(el);
+    else if (elementSignature(before) !== elementSignature(el))
+      changed.push(el);
+  }
+  // Print removed elements by their selector (the actionable handle), not the
+  // internal identity key.
+  const removed = [...prev.entries()]
+    .filter(([key]) => !seen.has(key))
+    .map(([, el]) => el.selector);
+  const unchanged = snapshot.elements.length - added.length - changed.length;
+
+  const lines: string[] = [
+    '--- PAGE SNAPSHOT (diff vs previous; unchanged elements omitted) ---',
+    `${snapshot.url} | ${snapshot.title}`,
+    `Changes: ${added.length} new, ${changed.length} changed, ${removed.length} removed, ${unchanged} unchanged (${snapshot.elements.length} total)`,
+  ];
+
+  lines.push(
+    ...(snapshot.detectedChallenges ?? []).map(
+      (type) => `! Detected challenge: ${type}`,
+    ),
+  );
+
+  if (!added.length && !changed.length && !removed.length) {
+    lines.push('', 'No changes since last snapshot.', '--- END SNAPSHOT ---');
+    return lines.join('\n');
+  }
+
+  lines.push('');
+  for (const el of added) lines.push(`+ ${formatElement(el, frameLabels)}`);
+  for (const el of changed) lines.push(`~ ${formatElement(el, frameLabels)}`);
+  for (const sel of removed) lines.push(`- ref=${sel} (removed)`);
+  if (unchanged > 0) {
+    lines.push(
+      `… ${unchanged} unchanged elements omitted (still valid from the previous snapshot).`,
+    );
+  }
+
+  lines.push('--- END SNAPSHOT ---');
+  return lines.join('\n');
+};
+
+// Fields whose old→new transition is worth surfacing on a changed element.
+const CHANGE_FIELDS: Array<keyof SnapshotElement> = [
+  'name',
+  'value',
+  'text',
+  'checked',
+  'disabled',
+  'focused',
+];
+
+const formatChange = (
+  before: SnapshotElement,
+  after: SnapshotElement,
+  frameLabels?: Map<string, string>,
+): string => {
+  const deltas = CHANGE_FIELDS.filter((f) => before[f] !== after[f]).map(
+    (f) => `${f}: ${JSON.stringify(before[f] ?? '')}→${JSON.stringify(after[f] ?? '')}`,
+  );
+  const suffix = deltas.length ? ` (${deltas.join(', ')})` : '';
+  return `~ ${formatElement(after, frameLabels)}${suffix}`;
+};
+
+// Diff two snapshots of equal length by PAIRING ELEMENTS BY POSITION. DOM order
+// survives an in-place SPA re-render even when ids/selectors churn, so when the
+// element count is unchanged this pairs each slot old↔new and surfaces only the
+// value/state that moved (e.g. a stat card 0→1,158) — the case identity-keying
+// can't catch. Only meaningful when prev.length === snapshot.elements.length;
+// the caller gates on that and takes the shortest of {full, identity, positional}
+// so a bad positional guess (a reorder) is simply discarded, never emitted.
+export const formatSnapshotDiffPositional = (
+  prev: SnapshotElement[],
+  snapshot: SnapshotResult,
+): string => {
+  const frameLabels = new Map<string, string>();
+  snapshot.frames?.forEach((frame, i) =>
+    frameLabels.set(frame.frameId, `frame#${i + 1}`),
+  );
+
+  const changed: Array<{ before: SnapshotElement; after: SnapshotElement }> = [];
+  snapshot.elements.forEach((after, i) => {
+    const before = prev[i];
+    if (before && elementSignature(before) !== elementSignature(after))
+      changed.push({ before, after });
+  });
+  const unchanged = snapshot.elements.length - changed.length;
+
+  const lines: string[] = [
+    '--- PAGE SNAPSHOT (diff vs previous; unchanged elements omitted) ---',
+    `${snapshot.url} | ${snapshot.title}`,
+    `Changes: ${changed.length} changed, ${unchanged} unchanged (${snapshot.elements.length} total)`,
+  ];
+
+  lines.push(
+    ...(snapshot.detectedChallenges ?? []).map(
+      (type) => `! Detected challenge: ${type}`,
+    ),
+  );
+
+  if (!changed.length) {
+    lines.push('', 'No changes since last snapshot.', '--- END SNAPSHOT ---');
+    return lines.join('\n');
+  }
+
+  lines.push('');
+  for (const { before, after } of changed) {
+    lines.push(formatChange(before, after, frameLabels));
+  }
+  if (unchanged > 0) {
+    lines.push(
+      `… ${unchanged} unchanged elements omitted (still valid from the previous snapshot).`,
+    );
+  }
+
+  lines.push('--- END SNAPSHOT ---');
+  return lines.join('\n');
+};

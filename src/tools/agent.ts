@@ -44,6 +44,9 @@ import {
   formatConnectError,
   formatErrorMessage,
   formatSnapshot,
+  formatSnapshotDiff,
+  formatSnapshotDiffPositional,
+  indexByIdentity,
 } from '../lib/agent-format.js';
 
 // export schemas, system prompt, and formatters
@@ -703,14 +706,40 @@ export function registerAgentTools(
           );
           const noticeBlock = notice ? `${notice}\n\n` : '';
           if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
+          // Diff against the prior snapshot to save tokens. Send full instead
+          // when: first snapshot this session; cross-origin nav (notice set —
+          // prior refs invalid); or the prior snapshot was captured mid-hydration
+          // (SPA baseline had far fewer elements, so a diff would read as
+          // all-new). And even when we diff, never emit more than a full snapshot
+          // — on SPA re-mounts the diff can churn larger, so take the shorter.
+          const prevElements = agentSession.lastElements;
+          const prevArr = agentSession.lastSnapshotElements;
+          const hydrating =
+            !!prevElements &&
+            lastSnapshot.elements.length > 0 &&
+            prevElements.size < lastSnapshot.elements.length * 0.25;
+          const forceFull =
+            (lastCmd?.params as { full?: boolean } | undefined)?.full === true;
+          const full = formatSnapshot(lastSnapshot);
+          let snapshotText = full;
+          if (prevElements && !notice && !hydrating && !forceFull) {
+            // Take the shortest of full / identity-diff / positional-diff. The
+            // positional candidate (only when element count is unchanged) catches
+            // in-place SPA value updates that identity-keying churns on; a bad
+            // positional guess just loses to a shorter candidate and is dropped.
+            const candidates = [full, formatSnapshotDiff(lastSnapshot, prevElements)];
+            if (prevArr && prevArr.length === lastSnapshot.elements.length) {
+              candidates.push(formatSnapshotDiffPositional(prevArr, lastSnapshot));
+            }
+            snapshotText = candidates.reduce((a, b) => (b.length < a.length ? b : a));
+          }
+          agentSession.lastElements = indexByIdentity(lastSnapshot);
+          agentSession.lastSnapshotElements = lastSnapshot.elements;
           baseContent = [
             {
               type: 'text' as const,
               text: appendSkills(
-                batchPrefix +
-                  noticeBlock +
-                  formatSnapshot(lastSnapshot) +
-                  closedSuffix,
+                batchPrefix + noticeBlock + snapshotText + closedSuffix,
                 triggered,
               ),
             },
