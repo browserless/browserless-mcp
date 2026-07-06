@@ -19,11 +19,15 @@ const el = (over: Partial<SnapshotElement>): SnapshotElement => ({
   ...over,
 });
 
-const snap = (elements: SnapshotElement[]): SnapshotResult => ({
+const snap = (
+  elements: SnapshotElement[],
+  extra: Partial<SnapshotResult> = {},
+): SnapshotResult => ({
   url: 'https://example.com',
   title: 'Example',
   elements,
   time: 1,
+  ...extra,
 });
 
 describe('formatSnapshotDiff', () => {
@@ -48,6 +52,33 @@ describe('formatSnapshotDiff', () => {
     expect(out).to.include('1 unchanged elements omitted');
     // Unchanged element must NOT be re-listed — that's the whole point.
     expect(out).to.not.include('"Home"');
+  });
+
+  it('preserves duplicate identity keys (removal of one is not hidden)', () => {
+    // Two elements collapse to the same semantic key; removing one must show.
+    const dup = { role: 'button', tag: 'button', name: 'Go', selector: '' };
+    const prev = indexByIdentity(snap([el(dup), el(dup)]));
+    const out = formatSnapshotDiff(snap([el(dup)]), prev);
+    expect(out).to.match(/0 new, 0 changed, 1 removed/);
+  });
+
+  it('includes the frame legend in a diff when frames are present', () => {
+    const frames = [
+      { frameId: 'f1', url: 'https://ad.example', crossOrigin: true },
+    ];
+    const prev = indexByIdentity(snap([el({ selector: '#a', name: 'A' })]));
+    const out = formatSnapshotDiff(
+      snap(
+        [
+          el({ selector: '#a', name: 'A' }),
+          el({ selector: '#b', name: 'B', frameId: 'f1' }),
+        ],
+        { frames },
+      ),
+      prev,
+    );
+    expect(out).to.include('Frames (1 iframes):');
+    expect(out).to.include('frame#1 https://ad.example (cross-origin)');
   });
 
   it('flags an element whose state changed, ignoring ref renumbering', () => {

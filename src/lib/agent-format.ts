@@ -176,21 +176,8 @@ export const formatSnapshot = (snapshot: SnapshotResult): string => {
     }
   }
 
-  // Label cross-origin iframes (frame#1, …) and list them so the agent knows
-  // which elements live in a frame and that their deep-ref selectors pierce it.
   const frameLabels = frameLabelsOf(snapshot);
-  if (snapshot.frames?.length) {
-    lines.push(`Frames (${snapshot.frames.length} iframes):`);
-    for (const frame of snapshot.frames) {
-      const origin = frame.crossOrigin ? 'cross-origin' : 'same-origin';
-      lines.push(
-        `  ${frameLabels.get(frame.frameId)} ${frame.url} (${origin})`,
-      );
-    }
-    lines.push(
-      'Elements tagged [frame#N] live in that iframe; their deep-ref selectors pierce it — pass as-is to click/type/hover.',
-    );
-  }
+  lines.push(...frameLegend(snapshot, frameLabels));
 
   lines.push('');
 
@@ -238,17 +225,46 @@ export const elementKey = (el: SnapshotElement): string => {
   return `sem:${el.tag}|${el.role}|${label}|${el.href ?? ''}`;
 };
 
-// ponytail: last-wins on key collisions (two unlabeled buttons → same semantic
-// key); add a tiebreak only if it bites.
+// Occurrence-suffix the identity key so duplicate-keyed elements (two unlabeled
+// buttons, repeated links) are each kept instead of collapsing to last-wins.
+const identityEntries = (
+  elements: SnapshotElement[],
+): Array<[string, SnapshotElement]> => {
+  const seen = new Map<string, number>();
+  return elements.map((el) => {
+    const base = elementKey(el);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return [`${base} ${n}`, el];
+  });
+};
+
 export const indexByIdentity = (
   snapshot: SnapshotResult,
-): Map<string, SnapshotElement> =>
-  new Map(snapshot.elements.map((el) => [elementKey(el), el]));
+): Map<string, SnapshotElement> => new Map(identityEntries(snapshot.elements));
 
 const frameLabelsOf = (snapshot: SnapshotResult): Map<string, string> => {
   const labels = new Map<string, string>();
   snapshot.frames?.forEach((f, i) => labels.set(f.frameId, `frame#${i + 1}`));
   return labels;
+};
+
+// Frame legend + deep-ref guidance, shared by full and diff snapshots so framed
+// elements never arrive without their [frame#N] → url mapping.
+const frameLegend = (
+  snapshot: SnapshotResult,
+  frameLabels: Map<string, string>,
+): string[] => {
+  if (!snapshot.frames?.length) return [];
+  const lines = [`Frames (${snapshot.frames.length} iframes):`];
+  for (const frame of snapshot.frames) {
+    const origin = frame.crossOrigin ? 'cross-origin' : 'same-origin';
+    lines.push(`  ${frameLabels.get(frame.frameId)} ${frame.url} (${origin})`);
+  }
+  lines.push(
+    'Elements tagged [frame#N] live in that iframe; their deep-ref selectors pierce it — pass as-is to click/type/hover.',
+  );
+  return lines;
 };
 
 // Shared header/footer for both diffs so the rendered shape stays one thing.
@@ -265,6 +281,7 @@ const assembleDiff = (
     ...(snapshot.detectedChallenges ?? []).map(
       (t) => `! Detected challenge: ${t}`,
     ),
+    ...frameLegend(snapshot, frameLabelsOf(snapshot)),
   ];
   if (changeLines.length === 0) {
     lines.push('', 'No changes since last snapshot.');
@@ -289,8 +306,7 @@ export const formatSnapshotDiff = (
   const seen = new Set<string>();
   const added: SnapshotElement[] = [];
   const changed: SnapshotElement[] = [];
-  for (const el of snapshot.elements) {
-    const key = elementKey(el);
+  for (const [key, el] of identityEntries(snapshot.elements)) {
     seen.add(key);
     const before = prev.get(key);
     if (!before) added.push(el);
