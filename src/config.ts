@@ -16,6 +16,7 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'https://api.devin.ai/mcp/oauth/callback', // Devin prod
   'https://api.beta.devin.ai/mcp/oauth/callback', // Devin beta
   'https://api.itsdev.in/mcp/oauth/callback', // Devin dev
+  'https://www.make.com/oauth/cb/mcp', // Make.com MCP client (canonical www host even for regional orgs)
 ];
 
 export function getConfig(): McpConfig {
