@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.0](https://github.com/browserless/browserless-mcp/compare/v1.9.0...v1.10.0) (2026-07-07)
+
+
+### Features
+
+* snapshot diffing AUTO-40 ([#154](https://github.com/browserless/browserless-mcp/issues/154)) ([9bca439](https://github.com/browserless/browserless-mcp/commit/9bca439f2e11f5ec9d65c581a18b22bdbeb036e2))
+
+
+### Bug Fixes
+
+* allow-list Make.com MCP client OAuth redirect URI ([#162](https://github.com/browserless/browserless-mcp/issues/162)) ([b52fa94](https://github.com/browserless/browserless-mcp/commit/b52fa94c7f9d0905cc51fbe3d77b600fafa3063f))
+
 ## [1.9.0](https://github.com/browserless/browserless-mcp/compare/v1.8.0...v1.9.0) (2026-06-30)
 
 
