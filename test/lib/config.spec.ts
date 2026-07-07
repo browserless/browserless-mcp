@@ -12,6 +12,7 @@ const BASELINE_PATTERNS = [
   'https://api.devin.ai/mcp/oauth/callback',
   'https://api.beta.devin.ai/mcp/oauth/callback',
   'https://api.itsdev.in/mcp/oauth/callback',
+  'https://www.make.com/oauth/cb/mcp',
 ];
 
 describe('config.oauthAllowedRedirectUriPatterns', () => {
