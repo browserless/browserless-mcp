@@ -53,7 +53,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run build:skills && npm run build:types",
-    "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
+    "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/ && cp -R src/skills/sites build/src/skills/sites",
     "build:types": "mkdir -p build/src/@types && cp src/@types/*.d.ts build/src/@types/",
     "clean": "rm -rf build",
     "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",

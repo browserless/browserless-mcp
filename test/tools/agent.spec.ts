@@ -98,7 +98,7 @@ describe('browserless_skill tool', () => {
     expect(text).to.include('deep selector');
   });
 
-  it('rejects unknown skill ids at the schema level', async () => {
+  it('requires either an id or a site at the schema level', async () => {
     const skillCall = addToolSpy
       .getCalls()
       .find((c) => c.args[0].name === 'browserless_skill');
@@ -106,7 +106,46 @@ describe('browserless_skill tool', () => {
       safeParse: (v: unknown) => { success: boolean };
     };
     expect(schema.safeParse({ id: 'shadow-dom' }).success).to.equal(true);
-    expect(schema.safeParse({ id: 'not-a-skill' }).success).to.equal(false);
+    expect(schema.safeParse({ site: 'ebay.com' }).success).to.equal(true);
+    expect(schema.safeParse({}).success).to.equal(false);
+  });
+
+  it('throws UserError for an unknown in-house id', async () => {
+    const skillCall = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill');
+    try {
+      await skillCall!.args[0].execute({ id: 'not-a-skill' }, mockContext);
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.include('Unknown skill id');
+    }
+  });
+
+  it('lists site recipes for a known host without injecting the body', async () => {
+    const skillCall = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill');
+    const result = await skillCall!.args[0].execute(
+      { site: 'ebay.com' },
+      mockContext,
+    );
+    const text = (result.content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.include('SITE RECIPES for ebay.com');
+    expect(text).to.include('browserless_skill { id:');
+    expect(text).to.not.include('## Purpose');
+  });
+
+  it('reports no recipe for an unknown host', async () => {
+    const skillCall = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill');
+    const result = await skillCall!.args[0].execute(
+      { site: 'no-such-host.example' },
+      mockContext,
+    );
+    const text = (result.content[0] as Extract<Content, { type: 'text' }>).text;
+    expect(text).to.include('No site recipe found');
   });
 });
 

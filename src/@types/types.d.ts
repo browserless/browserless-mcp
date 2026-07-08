@@ -250,6 +250,8 @@ export interface DetectContext {
 export interface SkillFireState {
   fired: Map<SkillId, number>;
   cmdIndex: number;
+  /** Hosts whose site-recipe pointer has already been surfaced this session. */
+  sitesSurfaced: Set<string>;
 }
 
 /**

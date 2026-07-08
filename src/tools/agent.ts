@@ -31,8 +31,12 @@ import {
   markFired,
   renderSkill,
   renderSkills,
-  skillsRegistry,
 } from '../skills/index.js';
+import {
+  loadSiteSkill,
+  renderSiteSkillList,
+  siteRecipeNotice,
+} from '../skills/sites.js';
 import { AgentParamsSchema } from './schemas.js';
 import {
   AGENT_SYSTEM_PROMPT,
@@ -340,22 +344,36 @@ export const formatScreenshotToDisk = async (
   return content;
 };
 
-const SkillIdSchema = z.enum(
-  skillsRegistry.map((s) => s.id) as [SkillId, ...SkillId[]],
-);
+type SkillToolParams = { id?: string; site?: string };
 
-const SkillToolParamsSchema = z.object({
-  id: SkillIdSchema.describe(
-    'The skill to load (see tool description for the full list).',
-  ),
-});
+const SkillToolParamsSchema = z
+  .object({
+    id: z
+      .string()
+      .optional()
+      .describe(
+        'The skill to load: an in-house skill id (see tool description) OR a ' +
+          'site recipe id "host/slug" returned by a prior `site` lookup.',
+      ),
+    site: z
+      .string()
+      .optional()
+      .describe(
+        'A page host (e.g. "ebay.com"). Lists any site-specific recipes tuned ' +
+          'for that host as pointers — then load one with its id.',
+      ),
+  })
+  .refine((d) => !!d.id || !!d.site, {
+    message:
+      'Provide either `id` (load a skill) or `site` (list site recipes).',
+  });
 
 export function registerAgentTools(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
-  defineTool<{ id: SkillId }, string>(server, config, analytics, {
+  defineTool<SkillToolParams, string>(server, config, analytics, {
     name: 'browserless_skill',
     description: SKILL_TOOL_DESCRIPTION,
     parameters: SkillToolParamsSchema,
@@ -365,14 +383,26 @@ export function registerAgentTools(
       destructiveHint: false,
       openWorldHint: false,
     },
-    run: async ({ params }) => renderSkill(params.id),
+    run: async ({ params }) => {
+      if (params.site !== undefined) return renderSiteSkillList(params.site);
+      const id = params.id ?? '';
+      return renderSkill(id as SkillId) || loadSiteSkill(id) || '';
+    },
     analyticsProps: (params, body) => ({
-      skill: params.id,
+      skill: params.id ?? `site:${params.site}`,
       success: !!body,
     }),
     format: (body, params) => {
-      if (!body) throw new UserError(`Unknown skill id: ${params.id}`);
-      return [{ type: 'text' as const, text: body }];
+      if (body) return [{ type: 'text' as const, text: body }];
+      if (params.site !== undefined) {
+        return [
+          {
+            type: 'text' as const,
+            text: `No site recipe found for "${params.site}". Proceed with the standard agent loop.`,
+          },
+        ];
+      }
+      throw new UserError(`Unknown skill id: ${params.id}`);
     },
   });
 
@@ -699,7 +729,27 @@ export function registerAgentTools(
           }
         }
 
-        const skillsText = triggered.length > 0 ? renderSkills(triggered) : '';
+        // Proactively surface a site-recipe pointer (once per host) for the
+        // URL this batch landed on — a tuned recipe must win over a from-scratch
+        // plan, and prose ordering in the tool description gets skipped/clipped.
+        const currentUrl =
+          lastSnapshot?.url ??
+          (lastResult as { url?: string } | undefined)?.url ??
+          crossOriginBaseline;
+        const siteNotice = siteRecipeNotice(
+          currentUrl,
+          agentSession.skillState.sitesSurfaced,
+        );
+        const extraText = [
+          triggered.length > 0 ? renderSkills(triggered) : '',
+          siteNotice,
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        const appendExtra = (base: string): string =>
+          extraText ? `${base}\n\n${extraText}` : base;
+
+        const skillsText = extraText;
         let baseContent: Content[];
 
         if (lastSnapshot) {
@@ -767,9 +817,8 @@ export function registerAgentTools(
           baseContent = [
             {
               type: 'text' as const,
-              text: appendSkills(
+              text: appendExtra(
                 batchPrefix + noticeBlock + snapshotText + closedSuffix,
-                triggered,
               ),
             },
           ];
@@ -805,9 +854,8 @@ export function registerAgentTools(
           baseContent = saved ?? [
             {
               type: 'text' as const,
-              text: appendSkills(
+              text: appendExtra(
                 batchPrefix + JSON.stringify(lastResult, null, 2),
-                triggered,
               ),
             },
           ];
@@ -825,9 +873,8 @@ export function registerAgentTools(
           baseContent = shot ?? [
             {
               type: 'text' as const,
-              text: appendSkills(
+              text: appendExtra(
                 batchPrefix + JSON.stringify(lastResult, null, 2),
-                triggered,
               ),
             },
           ];

@@ -4,7 +4,14 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: ['build/**', 'node_modules/**', 'coverage/**'],
+    ignores: [
+      'build/**',
+      'node_modules/**',
+      'coverage/**',
+      // Site recipe artifacts — reference scripts shipped as text, not compiled
+      // or linted as server code (also excluded from tsc; served via SKILL.md).
+      'src/skills/sites/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

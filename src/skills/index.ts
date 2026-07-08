@@ -227,6 +227,7 @@ export const isCloudApi = (apiUrl: string | undefined): boolean => {
 export const createSkillState = (): SkillFireState => ({
   fired: new Map(),
   cmdIndex: 0,
+  sitesSurfaced: new Set(),
 });
 
 const fires = (skill: Skill, ctx: DetectContext): boolean =>
