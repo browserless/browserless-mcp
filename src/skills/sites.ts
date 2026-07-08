@@ -13,11 +13,9 @@ export interface SiteSkill {
 
 const sitesDir = join(dirname(fileURLToPath(import.meta.url)), 'sites');
 
-// Minimal frontmatter reader: we author these files, so we only need `name`,
-// `title`, and `description`, including YAML folded scalars (`>-`, `|`). Not a
-// general YAML parser.
-// ponytail: line-based, handles the fields we emit; swap for a YAML lib if the
-// frontmatter ever grows nested structures we need to read.
+// Minimal reader for the fields we emit (name/title/description), including
+// folded scalars (`>-`, `|`). Not general YAML.
+// ponytail: swap for a YAML lib if the frontmatter ever grows nested structures.
 const parseFrontmatter = (raw: string): Record<string, string> => {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
@@ -88,7 +86,7 @@ const byId = new Map<string, SiteSkill>(
 
 // A page host may carry a `www.` prefix the skill directory doesn't (or vice
 // versa); try the host as given, then toggle the prefix.
-const lookupHost = (host: string): SiteSkill[] => {
+export const listSiteSkillsForHost = (host: string): SiteSkill[] => {
   const h = host.toLowerCase().replace(/:\d+$/, '');
   return (
     manifest.get(h) ??
@@ -98,11 +96,8 @@ const lookupHost = (host: string): SiteSkill[] => {
   );
 };
 
-export const listSiteSkillsForHost = (host: string): SiteSkill[] =>
-  lookupHost(host);
-
 export const renderSiteSkillList = (host: string): string => {
-  const skills = lookupHost(host);
+  const skills = listSiteSkillsForHost(host);
   if (skills.length === 0) return '';
   const lines = skills.map(
     (s) =>
@@ -117,9 +112,8 @@ export const renderSiteSkillList = (host: string): string => {
   ].join('\n');
 };
 
-// Proactive pointer for the batch's current URL: fires once per host per
-// session. Surfaces the recipe *pointer* (never the body) so a from-scratch
-// plan doesn't beat a tuned recipe just because prose ordering got skipped.
+// Proactive, once-per-host pointer for the batch's URL — surfaces the recipe
+// *pointer* (never the body) so a tuned recipe isn't lost to prose ordering.
 export const siteRecipeNotice = (
   url: string | undefined,
   seen: Set<string>,
@@ -131,14 +125,16 @@ export const siteRecipeNotice = (
   } catch {
     return '';
   }
-  if (seen.has(host)) return '';
-  seen.add(host);
-  const skills = lookupHost(host);
+  const skills = listSiteSkillsForHost(host);
+  // Dedup on the canonical recipe host so www./bare variants count as one.
+  const canonical = skills.length > 0 ? skills[0].host : host;
+  if (seen.has(canonical)) return '';
+  seen.add(canonical);
   if (skills.length === 0) return '';
   return [
-    `⚠ ${skills.length} SITE RECIPE(S) available for ${host} — a tuned recipe for this site.`,
+    `⚠ ${skills.length} SITE RECIPE(S) available for ${canonical} — a tuned recipe for this site.`,
     'Load and follow the matching one BEFORE planning your own steps:',
-    renderSiteSkillList(host),
+    renderSiteSkillList(canonical),
   ].join('\n');
 };
 

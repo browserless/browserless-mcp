@@ -729,9 +729,8 @@ export function registerAgentTools(
           }
         }
 
-        // Proactively surface a site-recipe pointer (once per host) for the
-        // URL this batch landed on — a tuned recipe must win over a from-scratch
-        // plan, and prose ordering in the tool description gets skipped/clipped.
+        // Surface a site-recipe pointer for the URL this batch landed on — the
+        // tool-description prose gate gets skipped/clipped, so push it as a result.
         const currentUrl =
           lastSnapshot?.url ??
           (lastResult as { url?: string } | undefined)?.url ??
