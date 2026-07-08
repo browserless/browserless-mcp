@@ -346,7 +346,7 @@ export const formatScreenshotToDisk = async (
 
 type SkillToolParams = { id?: string; site?: string };
 
-export const skillAnalyticsProps = (
+export const buildSkillEventProps = (
   params: SkillToolParams,
   body: string,
 ): Record<string, unknown> => {
@@ -402,12 +402,18 @@ export function registerAgentTools(
       destructiveHint: false,
       openWorldHint: false,
     },
-    run: async ({ params }) => {
-      if (params.site !== undefined) return renderSiteSkillList(params.site);
+    run: async ({ params, analytics, token, apiUrl }) => {
       const id = params.id ?? '';
-      return renderSkill(id as SkillId) || loadSiteSkill(id) || '';
+      const body =
+        params.site !== undefined
+          ? renderSiteSkillList(params.site)
+          : renderSkill(id as SkillId) || loadSiteSkill(id) || '';
+      analytics?.fireSkill(token, {
+        ...buildSkillEventProps(params, body),
+        api_url: apiUrl,
+      });
+      return body;
     },
-    analyticsProps: skillAnalyticsProps,
     format: (body, params) => {
       if (body) return [{ type: 'text' as const, text: body }];
       if (params.site !== undefined) {
@@ -757,8 +763,13 @@ export function registerAgentTools(
         );
         if (siteNotice && currentUrl) {
           try {
-            analytics?.fireToolRequest(token, 'browserless_agent', {
-              site_recipe_surfaced: new URL(currentUrl).hostname.toLowerCase(),
+            const host = new URL(currentUrl).hostname.toLowerCase();
+            analytics?.fireSkill(token, {
+              skill: `site:${host}`,
+              skill_action: 'surfaced',
+              site_skill: true,
+              host,
+              success: true,
               api_url: apiUrl,
             });
           } catch {

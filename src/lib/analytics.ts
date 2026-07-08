@@ -101,4 +101,14 @@ export class AnalyticsHelper {
       ...properties,
     }).catch(() => {});
   }
+
+  /**
+   * Skill lifecycle (load / list / proactive surface) — a stream of its own,
+   * kept out of "MCP Tool Request" so skill usage isn't mixed with tool calls.
+   */
+  public fireSkill(token: string, properties: Record<string, unknown>): void {
+    this.send('MCP Skill', djb2(token), { token, ...properties }).catch(
+      () => {},
+    );
+  }
 }
