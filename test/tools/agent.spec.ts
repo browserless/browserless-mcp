@@ -13,6 +13,7 @@ import {
   normalizeUploadCommand,
   registerAgentTools,
   sanitizeUpgradeBody,
+  skillAnalyticsProps,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
@@ -146,6 +147,25 @@ describe('browserless_skill tool', () => {
     );
     const text = (result.content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.include('No site recipe found');
+  });
+
+  it('tags analytics for site lookups, site loads, and in-house loads', () => {
+    expect(skillAnalyticsProps({ site: 'ebay.com' }, 'body')).to.include({
+      skill_action: 'list_site',
+      site_skill: true,
+      host: 'ebay.com',
+    });
+    expect(
+      skillAnalyticsProps({ id: 'ebay.com/find-a-product' }, 'body'),
+    ).to.include({
+      skill_action: 'load',
+      site_skill: true,
+      host: 'ebay.com',
+    });
+    const inHouse = skillAnalyticsProps({ id: 'shadow-dom' }, 'body');
+    expect(inHouse).to.include({ skill_action: 'load', site_skill: false });
+    expect(inHouse.host).to.equal(undefined);
+    expect(skillAnalyticsProps({ id: 'x' }, '').success).to.equal(false);
   });
 });
 

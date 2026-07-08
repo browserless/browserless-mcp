@@ -346,6 +346,25 @@ export const formatScreenshotToDisk = async (
 
 type SkillToolParams = { id?: string; site?: string };
 
+export const skillAnalyticsProps = (
+  params: SkillToolParams,
+  body: string,
+): Record<string, unknown> => {
+  const listingSite = params.site !== undefined;
+  const siteSkillLoad = !listingSite && !!params.id?.includes('/');
+  return {
+    skill: params.id ?? `site:${params.site}`,
+    skill_action: listingSite ? 'list_site' : 'load',
+    site_skill: listingSite || siteSkillLoad,
+    host: listingSite
+      ? params.site
+      : siteSkillLoad
+        ? params.id!.split('/')[0]
+        : undefined,
+    success: !!body,
+  };
+};
+
 const SkillToolParamsSchema = z
   .object({
     id: z
@@ -388,10 +407,7 @@ export function registerAgentTools(
       const id = params.id ?? '';
       return renderSkill(id as SkillId) || loadSiteSkill(id) || '';
     },
-    analyticsProps: (params, body) => ({
-      skill: params.id ?? `site:${params.site}`,
-      success: !!body,
-    }),
+    analyticsProps: skillAnalyticsProps,
     format: (body, params) => {
       if (body) return [{ type: 'text' as const, text: body }];
       if (params.site !== undefined) {
@@ -739,6 +755,16 @@ export function registerAgentTools(
           currentUrl,
           agentSession.skillState.sitesSurfaced,
         );
+        if (siteNotice && currentUrl) {
+          try {
+            analytics?.fireToolRequest(token, 'browserless_agent', {
+              site_recipe_surfaced: new URL(currentUrl).hostname.toLowerCase(),
+              api_url: apiUrl,
+            });
+          } catch {
+            // malformed URL — nothing to report
+          }
+        }
         const extraText = [
           triggered.length > 0 ? renderSkills(triggered) : '',
           siteNotice,
