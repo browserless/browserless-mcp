@@ -106,13 +106,13 @@ A single `browserless_agent` call whose `commands` array is:
 
 ## Mode Comparison
 
-| Feature             | Plain `browserless_agent`          | With `proxy` + `solve`                                    |
-| ------------------- | ---------------------------------- | --------------------------------------------------------- |
-| Speed               | Faster                             | Slightly slower                                           |
-| CAPTCHA solving     | No                                 | Yes (`solve`: reCAPTCHA/hCaptcha/Turnstile/DataDome)      |
-| Residential proxies | No                                 | Yes (`proxy: {proxy:"residential", proxyCountry:"us"}`)   |
+| Feature             | Plain `browserless_agent`                                                              | With `proxy` + `solve`                                    |
+| ------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Speed               | Faster                                                                                 | Slightly slower                                           |
+| CAPTCHA solving     | No                                                                                     | Yes (`solve`: reCAPTCHA/hCaptcha/Turnstile/DataDome)      |
+| Residential proxies | No                                                                                     | Yes (`proxy: {proxy:"residential", proxyCountry:"us"}`)   |
 | Session persistence | Across calls with the same `proxy`/`profile`; batch a flow in one call for convenience | Same; keep the whole flow in one call                     |
-| Best for            | Public/simple pages                | Protected sites, geo-specific access, production scraping |
+| Best for            | Public/simple pages                                                                    | Protected sites, geo-specific access, production scraping |
 
 ## Best Practices
 

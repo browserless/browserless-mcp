@@ -81,11 +81,11 @@ Extract a complete read-only property overview for **The Circle at Hermann Park*
 
 ### Browserless session config (mandatory)
 
-| Setting                               | Required?   | Why                                                                                                                                                                                    |
-| ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| stealth (plain `browserless_agent`)   | yes         | Cloudflare otherwise serves a JS challenge on every navigation. If stealth alone still challenges, add a `{ "method": "solve", "params": { "type": "cloudflare" } }` after the `goto`. |
-| `proxy: { proxy: "residential" }`     | yes         | Without residential IPs the challenge escalates to a full block (HTTP 403 Akamai-style). Repeat the `proxy` arg on every call.                                                         |
-| single `commands` array (one session) | recommended | The session persists across calls (keyed by `proxy`/`profile`) and is reused across `/`, `/amenities.aspx`, `/1/floorplans.aspx`, `/1/availableunits.aspx` within one call, avoiding re-solving the challenge on each nav.          |
+| Setting                               | Required?   | Why                                                                                                                                                                                                                        |
+| ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stealth (plain `browserless_agent`)   | yes         | Cloudflare otherwise serves a JS challenge on every navigation. If stealth alone still challenges, add a `{ "method": "solve", "params": { "type": "cloudflare" } }` after the `goto`.                                     |
+| `proxy: { proxy: "residential" }`     | yes         | Without residential IPs the challenge escalates to a full block (HTTP 403 Akamai-style). Repeat the `proxy` arg on every call.                                                                                             |
+| single `commands` array (one session) | recommended | The session persists across calls (keyed by `proxy`/`profile`) and is reused across `/`, `/amenities.aspx`, `/1/floorplans.aspx`, `/1/availableunits.aspx` within one call, avoiding re-solving the challenge on each nav. |
 
 ## Site-Specific Gotchas
 

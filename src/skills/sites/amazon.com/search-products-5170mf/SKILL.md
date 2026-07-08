@@ -126,23 +126,21 @@ you build the URL once.
 6. **The session persists across calls — it does NOT tear down on return.** It is keyed by
    the call's session config (`proxy` / `profile`): a later call carrying the **same** `proxy`
    reconnects to the same warmed, logged-in-to-cookies browser with the `/s` page still loaded;
-   a call that **drops** `proxy` lands in a *different* (default, un-warmed) session that looks
+   a call that **drops** `proxy` lands in a _different_ (default, un-warmed) session that looks
    blank and will 503/Robot-Check on Amazon. So:
    - **Pass the same `proxy` on every call of the flow**, not just the first. Dropping it is the
-     usual cause of a "logged-out"/blank follow-up — re-issue *with* `proxy` before assuming the
+     usual cause of a "logged-out"/blank follow-up — re-issue _with_ `proxy` before assuming the
      session died.
    - **Recover from a failed step by re-issuing that step alone** (same `proxy`), against the
      page still in the session — do **not** restart the warm-up batch. E.g. if `evaluate` throws,
      just call `evaluate` again; the `/s` page is still there.
-   - Batching warm-up → search → extract in one `commands` array is still handy (fewer round
-     trips), but it is a convenience, not a requirement forced by session lifetime.
 
 ### The extractor (`evaluate` expression)
 
 > **Pass this as a single-line string in `evaluate.content`.** Minify it (strip the
 > newlines) before putting it in the JSON tool call — a pretty-printed multi-line blob
 > stuffed into a JSON string field is the #1 cause of `SyntaxError: Invalid or unexpected
-> token` on the first try. Note there is **no `'\n'` string literal anywhere in this
+token` on the first try. Note there is **no `'\n'` string literal anywhere in this
 > extractor** (the old version split the header on `'\n'`, which mangles under JSON
 > escaping); the header is a single-line read via `.textContent`, and `String.fromCharCode(10)`
 > is used if you ever need a newline.
@@ -192,7 +190,9 @@ you build the URL once.
     let title = img ? (img.getAttribute('alt') || '').trim() : '';
     title = title.replace(/^Sponsored Ad\s*-\s*/i, '').trim();
     if (title.length < 5) title = h2 ? h2.innerText.trim() : null;
-    const priceOff = c.querySelector('.a-price:not(.a-text-price) .a-offscreen');
+    const priceOff = c.querySelector(
+      '.a-price:not(.a-text-price) .a-offscreen',
+    );
     const listOff =
       c.querySelector('.a-price.a-text-price .a-offscreen') ||
       c.querySelector('[data-a-strike="true"] .a-offscreen');
