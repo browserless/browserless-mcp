@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/browserless/browserless-mcp/compare/v1.10.0...v1.10.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* allow-list Make.com Celonis-hosted MCP client OAuth redirect URIs ([#163](https://github.com/browserless/browserless-mcp/issues/163)) ([d3933d4](https://github.com/browserless/browserless-mcp/commit/d3933d47bc93f9af248cfac736d859f7136aa050))
+
 ## [1.10.0](https://github.com/browserless/browserless-mcp/compare/v1.9.0...v1.10.0) (2026-07-07)
 
 
