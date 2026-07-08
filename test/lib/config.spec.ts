@@ -13,6 +13,8 @@ const BASELINE_PATTERNS = [
   'https://api.beta.devin.ai/mcp/oauth/callback',
   'https://api.itsdev.in/mcp/oauth/callback',
   'https://www.make.com/oauth/cb/mcp',
+  'https://us1.make.celonis.com/oauth/cb/mcp',
+  'https://eu1.make.celonis.com/oauth/cb/mcp',
 ];
 
 describe('config.oauthAllowedRedirectUriPatterns', () => {
