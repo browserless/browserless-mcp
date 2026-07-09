@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/browserless/browserless-mcp/compare/v1.10.1...v1.11.0) (2026-07-09)
+
+
+### Features
+
+* bundle skills ([#165](https://github.com/browserless/browserless-mcp/issues/165)) ([e7e6b4e](https://github.com/browserless/browserless-mcp/commit/e7e6b4e1f51207076aaff9fd3ac7c454c66ee1f7))
+
 ## [1.10.1](https://github.com/browserless/browserless-mcp/compare/v1.10.0...v1.10.1) (2026-07-08)
 
 
