@@ -21,5 +21,6 @@
     "skipLibCheck": true,
     "types": ["node", "mocha", "chai", "sinon"]
   },
-  "include": ["./src/**/*", "./test/**/*"]
+  "include": ["./src/**/*", "./test/**/*"],
+  "exclude": ["node_modules", "build", "src/skills/sites"]
 }

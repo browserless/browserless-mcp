@@ -1,4 +1,17 @@
-export const AGENT_SYSTEM_PROMPT = `Execute browser commands in persistent agent session.
+export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in persistent agent session.
+
+## Core Loop (ReAct: Reason → Act → Observe)
+0. **Plan + check for a site recipe** — restate the goal, decide the target host, then \`browserless_skill { site: "<host>" }\` (see above). Load and follow any matching recipe before writing your own plan. Never jump straight to \`goto\`.
+1. **goto** — waits "domcontentloaded"
+2. **snapshot** — returns interactive + informational elements (button, link, textbox, combobox, checkbox, heading, img+alt) with ref= selectors
+3. **Plan** all actions from snapshot
+4. **Batch** execute
+5. **Re-snapshot** only if page changed
+6. Repeat → **close** when done
+
+## Site recipes (site-specific, NOT auto-injected) — CHECK FIRST
+Many specific sites (marketplaces, gov portals, travel, real-estate, etc.) have a **tuned recipe** for a given task — proven selectors, API shortcuts, proxy needs, and known gotchas that a from-scratch plan will miss. These are **not** auto-injected; you must ask for them, and a recipe **overrides** any plan you'd build yourself (including "just use a prefiltered URL + evaluate").
+**This is step 0 of every task — do it before your first \`goto\`.** The moment you know the target host (the user named the site, or you resolved which site to use), call \`browserless_skill { site: "<host>" }\` — e.g. \`{ site: "airbnb.com" }\`. If it lists a recipe matching your task, load it with \`browserless_skill { id: "<host>/<slug>" }\` and follow it. Only when there's no match do you plan the steps yourself. Skipping this check on a supported site is a mistake — it's one cheap call.
 
 ## Proxy (optional)
 Proxy config is a **top-level tool argument** (\`proxy\`, \`proxyCountry\`, etc. on the tool call itself) — it is applied when the session is opened. **NEVER call \`proxy\` as a method inside \`commands\`** — a \`{ method: "proxy", ... }\` JSON-RPC mutation does NOT change the upstream proxy on an already-open session and will silently no-op.
@@ -30,14 +43,6 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
 - \`tabs\` — multi-tab workflows, peek-without-switching
-
-## Core Loop (ReAct: Reason → Act → Observe)
-1. **goto** — waits "domcontentloaded"
-2. **snapshot** — returns interactive + informational elements (button, link, textbox, combobox, checkbox, heading, img+alt) with ref= selectors
-3. **Plan** all actions from snapshot
-4. **Batch** execute
-5. **Re-snapshot** only if page changed
-6. Repeat → **close** when done
 
 ## Snapshot Rules
 - Until you snapshot a page, you CANNOT click/type/interact — snapshot first, no exceptions
@@ -148,11 +153,15 @@ export const fileTransferModeNote = (
       `  \`curl -s -F file=@"/abs/file" "${mcpBaseUrl}/upload?token=<YOUR_TOKEN>"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
       `**Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
 
-export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
+export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.
 
-Use this when you suspect the page exhibits a non-trivial mechanic but no SKILL block was auto-injected into a previous response. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
+Two uses:
+- **{ site: "<host>" }** — list any **site-specific recipes** tuned for that host (e.g. \`{ site: "ebay.com" }\`), returned as pointers. Do this as soon as you know the host you're about to drive; if one matches your task, load it by id. Returns a "no recipe" note when there's none.
+- **{ id: "<id>" }** — load a skill body: an in-house skill id (list below) OR a site recipe id \`host/slug\` from a \`site\` lookup.
 
-Available skills:
+Use the in-house skills below when you suspect the page exhibits a non-trivial mechanic but no SKILL block was auto-injected. The auto-injection heuristics are conservative; calling this tool is the explicit fallback.
+
+Available in-house skills:
 - **shadow-dom** — deep selectors, iframe URL-pattern syntax, what works through deep-ref
 - **cookie-consent** — vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, etc.)
 - **modals** — close-button heuristics, ESC handling, alertdialog vs. dialog
