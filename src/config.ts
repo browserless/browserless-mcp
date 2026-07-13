@@ -21,6 +21,33 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'https://eu1.make.celonis.com/oauth/cb/mcp', // Make.com Celonis-hosted (enterprise) — EU region
 ];
 
+// Fail closed on the compliance gate: any SET value that isn't an explicit
+// opt-out enables the compliant (restricted) surface. A fumbled flag — "TRUE",
+// "1", a trailing space, a typo, even an empty string — must not silently fall
+// through to the full, prohibited surface on a directory-listed endpoint. Only
+// an UNSET var or an explicit opt-out token (false/0/no/off) serves the full
+// surface.
+const COMPLIANCE_OPT_OUT = new Set(['false', '0', 'no', 'off']);
+const COMPLIANCE_OPT_IN = new Set(['true', '1', 'yes', 'on']);
+function parseComplianceMode(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  return !COMPLIANCE_OPT_OUT.has(raw.trim().toLowerCase());
+}
+
+// Classify the raw MCP_COMPLIANCE_MODE for boot logging. `unrecognized` still
+// resolves to compliant (fail-closed, see parseComplianceMode) but is surfaced
+// as a warning so a typo'd / mis-scoped value ("ture", "compliant", a stray
+// space) is visible instead of silently reading as an intentional opt-in.
+export function classifyComplianceInput(
+  raw: string | undefined,
+): 'unset' | 'opt-out' | 'opt-in' | 'unrecognized' {
+  if (raw === undefined) return 'unset';
+  const v = raw.trim().toLowerCase();
+  if (COMPLIANCE_OPT_OUT.has(v)) return 'opt-out';
+  if (COMPLIANCE_OPT_IN.has(v)) return 'opt-in';
+  return 'unrecognized';
+}
+
 export function getConfig(): McpConfig {
   return {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
@@ -31,6 +58,10 @@ export function getConfig(): McpConfig {
     maxRetries: parseInt(process.env.BROWSERLESS_MAX_RETRIES ?? '3', 10),
     cacheTtlMs: parseInt(process.env.BROWSERLESS_CACHE_TTL ?? '60000', 10),
     analyticsEnabled: process.env.ANALYTICS_ENABLED === 'true',
+    // Per-process toggle for the compliant surface used by the OpenAI/Anthropic
+    // directory listings: registers fewer tools and de-fangs the agent (see
+    // tools/compliance.ts). Fails closed — see parseComplianceMode.
+    complianceMode: parseComplianceMode(process.env.MCP_COMPLIANCE_MODE),
     sqsQueueUrl: process.env.SQS_QUEUE_URL,
     sqsRegion: process.env.SQS_REGION ?? 'us-west-2',
     // OAuth (Supabase)

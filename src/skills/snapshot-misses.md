@@ -17,6 +17,8 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
    { "method": "snapshot", "params": { "maxElements": 1000 } }
    ```
 
+<!-- compliant-omit -->
+
 2. **If element has no accessible name**, use `evaluate` to read directly:
 
    ```json
@@ -50,6 +52,24 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
    }
    ```
 
+   <!-- /compliant-omit -->
+
+<!-- compliant-only -->
+
+2. **If a control has no accessible name** (icon-only button, image without `alt`), `screenshot` to see it, then act via a nearby labeled element from the snapshot — or read a region with `html` / `text` on a container selector:
+
+   ```json
+   { "method": "html", "params": { "selector": "main" } }
+   ```
+
+3. **For image-rendered results** (WolframAlpha, LaTeX, charts, image search), `screenshot` and read the answer visually — the model has vision, so a single `<img>` whose meaning isn't in the DOM is still readable:
+
+   ```json
+   { "method": "screenshot" }
+   ```
+
+<!-- /compliant-only -->
+
 4. **For very long lists**, scroll and re-snapshot rather than raising `maxElements` — snapshot pagination more reliable than one giant pull:
 
    ```json
@@ -64,4 +84,6 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
 ## Don't
 
 - Raise `maxElements` past ~2000 — model spends more on snapshot reading than task gains. Scroll and paginate instead
+<!-- compliant-omit -->
 - `evaluate` to crawl `document.body.innerHTML` for general extraction. Snapshot structured; raw HTML floods context with markup. Use `evaluate` only for _specific_ attributes snapshot can't surface
+<!-- /compliant-omit -->

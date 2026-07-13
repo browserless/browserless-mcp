@@ -66,6 +66,10 @@ export interface McpConfig {
   maxRetries: number;
   cacheTtlMs: number;
   analyticsEnabled: boolean;
+  // Required (not optional): the compliant surface is a security gate, so every
+  // McpConfig must choose explicitly — an omitted field must not default to the
+  // fuller/prohibited surface.
+  complianceMode: boolean;
   sqsQueueUrl?: string;
   sqsRegion: string;
   oauthEnabled: boolean;

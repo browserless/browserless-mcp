@@ -740,6 +740,75 @@ export const AgentParamsSchema = z
       'one) cannot both be set',
   });
 
+// ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
+// De-fanged agent surface for the OpenAI / Anthropic directory listings. Drops
+// the commands + config those directories prohibit (CAPTCHA solving, arbitrary
+// JS, residential/geo proxy, stealth, autologin) and the raw-BQL passthrough
+// that could otherwise reach them by name. Server-side Zod is the enforcement,
+// not the description; `.strict()` rejects (not silently strips) any removed
+// top-level key (proxy / profile / createProfile / method / params) — `profile`
+// hydrates a saved auth session, the most security-relevant dropped key.
+const compliantCommandSchemas = [
+  GotoCommandSchema,
+  BackCommandSchema,
+  ForwardCommandSchema,
+  ReloadCommandSchema,
+  SnapshotCommandSchema,
+  GetTabsCommandSchema,
+  SwitchTabCommandSchema,
+  CreateTabCommandSchema,
+  CloseTabCommandSchema,
+  ClickCommandSchema,
+  TypeCommandSchema,
+  SelectCommandSchema,
+  CheckboxCommandSchema,
+  HoverCommandSchema,
+  ScrollCommandSchema,
+  TextCommandSchema,
+  HtmlCommandSchema,
+  WaitForSelectorCommandSchema,
+  WaitForNavigationCommandSchema,
+  WaitForTimeoutCommandSchema,
+  WaitForRequestCommandSchema,
+  WaitForResponseCommandSchema,
+  LiveURLCommandSchema,
+  ScreenshotCommandSchema,
+  UploadFileCommandSchema,
+  GetDownloadsCommandSchema,
+  CloseCommandSchema,
+] as const;
+
+/** Method names the compliant agent permits — defense-in-depth for run(). */
+export const COMPLIANT_AGENT_METHODS: ReadonlySet<string> = new Set<string>(
+  compliantCommandSchemas.map((s) => s.shape.method.value),
+);
+
+// No `profile` / `createProfile`: the compliant surface exposes zero
+// authentication-profile capability. `profile` hydrates a saved session's
+// cookies/localStorage/IndexedDB (see profileField) — an auth-session-injection
+// knob that belongs with the autonomous-login/auth-profile skills the compliant
+// surface hides. `.strict()` rejects both if a caller sends them anyway.
+export const CompliantAgentParamsSchema = z
+  .object({
+    commands: z
+      .array(z.discriminatedUnion('method', compliantCommandSchemas))
+      .min(1)
+      .describe(
+        'Batch of browser navigation, read, and interaction commands ' +
+          '(click, type, scroll, etc.) executed sequentially against the page ' +
+          'the user specifies. Only the final result is returned.',
+      ),
+    rationale: z
+      .string()
+      .optional()
+      .describe(
+        'Short user-facing reason for this call (<=50 chars, present-continuous).',
+      ),
+  })
+  .strict();
+
+export type CompliantAgentParams = z.infer<typeof CompliantAgentParamsSchema>;
+
 /** A single validated agent command. */
 export type AgentCommand = z.infer<typeof AgentCommandSchema>;
 /** The full `browserless_agent` tool params (single command, batch, proxy, profile). */

@@ -4,23 +4,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FastMCP, OAuthProvider } from 'fastmcp';
 import { OAuthProxy } from 'fastmcp/auth';
-import { getConfig } from './config.js';
+import { getConfig, classifyComplianceInput } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
-import { registerSmartScraperTool } from './tools/smartscraper.js';
-import { registerFunctionTool } from './tools/function.js';
-import { registerExportTool } from './tools/export.js';
-import { registerAgentTools } from './tools/agent.js';
-import { registerSearchTool } from './tools/search.js';
-import { registerMapTool } from './tools/map.js';
-import { registerCrawlTool } from './tools/crawl.js';
-import { registerPerformanceTool } from './tools/performance.js';
-import { registerApiDocsResource } from './resources/api-docs.js';
-import { registerStatusResource } from './resources/status.js';
+import { registerSurface } from './tools/register.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
 import { clearSession } from './lib/download-store.js';
-import { registerScrapeUrlPrompt } from './prompts/scrape-url.js';
-import { registerExtractContentPrompt } from './prompts/extract-content.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessAuth } from './lib/http-auth.js';
@@ -112,10 +101,12 @@ const hybridAuthenticate =
             authHeader: request.headers.authorization as string | undefined,
             tokenQuery: params.get('token') || undefined,
             apiUrlHeader: request.headers['x-browserless-api-url'] as
-              string | undefined,
+              | string
+              | undefined,
             browserlessUrlQuery: params.get('browserlessUrl') || undefined,
             sessionIdHeader: request.headers['x-browserless-session-id'] as
-              string | undefined,
+              | string
+              | undefined,
             sessionIdQuery: params.get('browserlessSessionId') || undefined,
           },
           config,
@@ -130,18 +121,29 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
-registerSmartScraperTool(server, config, analytics);
-registerFunctionTool(server, config, analytics);
-registerExportTool(server, config, analytics);
-registerAgentTools(server, config, analytics);
-registerSearchTool(server, config, analytics);
-registerMapTool(server, config, analytics);
-registerCrawlTool(server, config, analytics);
-registerPerformanceTool(server, config, analytics);
-registerApiDocsResource(server, config);
-registerStatusResource(server, config);
-registerScrapeUrlPrompt(server);
-registerExtractContentPrompt(server);
+registerSurface(server, config, analytics);
+// Log the active surface (both transports) so it's visible in the boot logs.
+// complianceMode fails closed (see parseComplianceMode), so a fumbled *value*
+// lands on the compliant surface. Distinguish "unset" (a dropped/wrong-scoped
+// env var on a directory deploy) from a deliberate opt-out — both print "full"
+// otherwise — and warn on an unrecognized value so a typo isn't read silently
+// as an intentional opt-in.
+const complianceInput = classifyComplianceInput(
+  process.env.MCP_COMPLIANCE_MODE,
+);
+if (complianceInput === 'unrecognized') {
+  console.error(
+    `[browserless-mcp] WARNING: MCP_COMPLIANCE_MODE="${process.env.MCP_COMPLIANCE_MODE}" ` +
+      'is not a recognized value; defaulting to the compliant (reduced) surface. ' +
+      'Set "true" for compliant or "false" for the full surface.',
+  );
+}
+const complianceSurface = config.complianceMode
+  ? 'compliant (reduced)'
+  : complianceInput === 'unset'
+    ? 'full (MCP_COMPLIANCE_MODE unset — set it to "true" for the compliant surface)'
+    : 'full (explicit opt-out)';
+console.error(`[browserless-mcp] Tool surface: ${complianceSurface}`);
 
 server.on('connect', (event) => {
   const id = event.session.sessionId ?? 'stdio';

@@ -266,15 +266,80 @@ export const markFired = (
   }
 };
 
-export const renderSkill = (id: SkillId): string => {
+// A skill body carries two surface-specific markers so one file serves both:
+//   <!-- compliant-omit -->…<!-- /compliant-omit -->  full-only (evaluate
+//     techniques, captcha selectors) — dropped in compliant render.
+//   <!-- compliant-only -->…<!-- /compliant-only -->  compliant-only — the
+//     replacement guidance for what the omit removed (e.g. `screenshot`/`html`
+//     instead of `evaluate`), so the reduced recipe stays coherent; dropped in
+//     full render.
+// Each render drops the other surface's blocks and strips its own markers.
+// compliance-mode.spec.ts asserts the compliant render of every allowlisted
+// skill contains no evaluate/captcha content.
+const COMPLIANT_OMIT_BLOCK =
+  /<!-- compliant-omit -->[\s\S]*?<!-- \/compliant-omit -->\n*/g;
+const COMPLIANT_ONLY_BLOCK =
+  /<!-- compliant-only -->[\s\S]*?<!-- \/compliant-only -->\n*/g;
+const MARKER_LINE = /[ \t]*<!-- \/?compliant-(?:omit|only) -->\n?/g;
+
+// The block strippers only match EXACT, balanced markers. A malformed one — a
+// typo, stray spacing, an unclosed/mismatched/nested pair — silently leaves the
+// block in place (prohibited content retained in the compliant render) and the
+// MARKER_LINE pass then erases the orphan marker, hiding the evidence. Validate
+// at skill-load so any anomaly fails closed at boot rather than leaking later.
+const VALID_MARKER = /^<!-- \/?compliant-(?:omit|only) -->$/;
+const SUSPECT_MARKER = /<!--[^>]*compliant[^>]*-->/gi;
+const MARKER_TOKEN = /<!-- (\/?)compliant-(omit|only) -->/g;
+
+export const validateMarkers = (body: string, path: string): void => {
+  // Any comment mentioning "compliant" must be an exact marker — catches typos
+  // and stray spacing the strippers would silently skip over.
+  for (const m of body.match(SUSPECT_MARKER) ?? []) {
+    if (!VALID_MARKER.test(m)) {
+      throw new Error(
+        `skill ${path}: malformed compliant marker ${JSON.stringify(m)}`,
+      );
+    }
+  }
+  // Markers must be balanced, matched by kind, and never nested.
+  const open: string[] = [];
+  for (const [, slash, kind] of body.matchAll(MARKER_TOKEN)) {
+    if (slash === '') {
+      if (open.length) {
+        throw new Error(`skill ${path}: nested compliant-${kind} marker`);
+      }
+      open.push(kind);
+    } else if (open.pop() !== kind) {
+      throw new Error(`skill ${path}: unbalanced compliant-${kind} close`);
+    }
+  }
+  if (open.length) {
+    throw new Error(`skill ${path}: unclosed compliant-${open[0]} marker`);
+  }
+};
+
+// Fail closed at boot rather than leak a mis-marked block per render.
+skills.forEach((skill) => validateMarkers(skill.body, skill.path));
+
+export const renderSkill = (id: SkillId, compliant: boolean): string => {
   const skill = skills.find((s) => s.id === id);
   if (!skill) return '';
+  const body = skill.body
+    .replace(compliant ? COMPLIANT_OMIT_BLOCK : COMPLIANT_ONLY_BLOCK, '')
+    .replace(MARKER_LINE, '')
+    .trimEnd();
   return [
     `--- SKILL: ${skill.id} (${skill.path}) ---`,
-    skill.body.trimEnd(),
+    body,
     '--- END SKILL ---',
   ].join('\n');
 };
 
-export const renderSkills = (ids: ReadonlyArray<SkillId>): string =>
-  ids.map(renderSkill).filter(Boolean).join('\n\n');
+export const renderSkills = (
+  ids: ReadonlyArray<SkillId>,
+  compliant: boolean,
+): string =>
+  ids
+    .map((id) => renderSkill(id, compliant))
+    .filter(Boolean)
+    .join('\n\n');

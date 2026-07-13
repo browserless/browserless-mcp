@@ -1,8 +1,9 @@
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
+import { isCompliant } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   McpConfig,
@@ -43,11 +44,21 @@ export const PerformanceParamsSchema = z.object({
   profile: profileField('before the Lighthouse audit runs'),
 });
 
+// Excludes `profile` (auth-session hydration) — no authentication-profile
+// capability on the compliant surface (parity with agent/export/search).
+const CompliantPerformanceParamsSchema = PerformanceParamsSchema.pick({
+  url: true,
+  categories: true,
+  budgets: true,
+  timeout: true,
+}).strict();
+
 export function registerPerformanceTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const compliant = isCompliant(config);
   defineTool<PerformanceParams, PerformanceResponse>(
     server,
     config,
@@ -59,7 +70,9 @@ export function registerPerformanceTool(
         'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
         'Optionally filter by category or supply performance budgets. ' +
         'Note: audits can take 30s–120s depending on the site.',
-      parameters: PerformanceParamsSchema,
+      parameters: compliant
+        ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
+        : PerformanceParamsSchema,
       annotations: {
         title: 'Browserless Lighthouse Performance Audit',
         readOnlyHint: true,
@@ -73,6 +86,11 @@ export function registerPerformanceTool(
         `live session first, or omit the profile parameter to audit ` +
         `the page anonymously.`,
       run: async ({ client, params, log }) => {
+        if (compliant && params.profile !== undefined) {
+          throw new UserError(
+            'Authentication profiles are not available on this endpoint.',
+          );
+        }
         const response = await client.performance({
           url: params.url,
           categories: params.categories,

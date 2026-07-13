@@ -2,6 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
+import { isCompliant, COMPLIANT_SEARCH_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   McpConfig,
@@ -80,19 +81,45 @@ export const SearchParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
+// Compliant surface: an explicit param ALLOWLIST (`.pick`, not `.omit`), so a
+// field added to the full schema later does NOT auto-appear here — it stays off
+// until deliberately allowed, matching the fail-closed philosophy. Notably
+// excludes `scrapeOptions` (per-result scraping reads as a search-driven bulk
+// relay). `.strict()` rejects any non-allowed key loudly instead of silently
+// stripping it (see ./compliance.ts).
+const CompliantSearchParamsSchema = SearchParamsSchema.pick({
+  query: true,
+  limit: true,
+  lang: true,
+  country: true,
+  location: true,
+  tbs: true,
+  sources: true,
+  categories: true,
+  timeout: true,
+}).strict();
+
 export function registerSearchTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const compliant = isCompliant(config);
+
   defineTool<SearchParams, SearchResponse>(server, config, analytics, {
     name: 'browserless_search',
-    description:
-      'Search the web using Browserless and optionally scrape each result. ' +
-      'Performs web searches via SearXNG and can return results from web, news, or images. ' +
-      'Optionally scrape each result URL to get markdown, HTML, links, or screenshots. ' +
-      'Useful for research, gathering information, and finding relevant web pages.',
-    parameters: SearchParamsSchema,
+    description: compliant
+      ? COMPLIANT_SEARCH_DESCRIPTION
+      : 'Search the web using Browserless and optionally scrape each result. ' +
+        'Performs web searches via SearXNG and can return results from web, news, or images. ' +
+        'Optionally scrape each result URL to get markdown, HTML, links, or screenshots. ' +
+        'Useful for research, gathering information, and finding relevant web pages.',
+    // Cast: Zod's generic is invariant, so the ternary needs it. The compliant
+    // schema is a `.pick` subset (a structural subtype); the runtime schema
+    // FastMCP validates against is the real guard, plus the compliance-mode spec.
+    parameters: (compliant
+      ? CompliantSearchParamsSchema
+      : SearchParamsSchema) as z.ZodType<SearchParams>,
     annotations: {
       title: 'Browserless Search',
       readOnlyHint: true,
@@ -100,6 +127,12 @@ export function registerSearchTool(
       openWorldHint: true,
     },
     run: async ({ client, params, log }) => {
+      // Defense-in-depth (parity with the agent allowlist): the `.pick().strict()`
+      // schema already rejects `scrapeOptions`, but guard run() too so a future
+      // schema regression can't forward per-result scraping to the backend.
+      if (compliant && params.scrapeOptions !== undefined) {
+        throw new UserError('scrapeOptions is not available on this endpoint.');
+      }
       const response = await client.search({
         query: params.query,
         limit: params.limit,

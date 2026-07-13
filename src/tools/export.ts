@@ -3,6 +3,7 @@ import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
+import { isCompliant, COMPLIANT_EXPORT_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   ExportParams,
@@ -61,20 +62,44 @@ export const ExportParamsSchema = z.object({
   profile: profileField('before the page is exported'),
 });
 
+// Compliant surface: an explicit param ALLOWLIST (`.pick`, not `.omit`), so a
+// field added to the full schema later does NOT auto-appear here — it stays off
+// until deliberately allowed, matching the fail-closed philosophy. Notably
+// excludes `includeResources` (ZIP every linked CSS/JS/image reads as bulk
+// collection). `.strict()` rejects any non-allowed key loudly instead of
+// silently stripping it (see ./compliance.ts).
+// Excludes `profile` (auth-session hydration) for the same reason the compliant
+// agent does — no authentication-profile capability on the compliant surface.
+const CompliantExportParamsSchema = ExportParamsSchema.pick({
+  url: true,
+  gotoOptions: true,
+  bestAttempt: true,
+  waitForTimeout: true,
+  timeout: true,
+}).strict();
+
 export function registerExportTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const compliant = isCompliant(config);
+
   defineTool<ExportParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_export',
-    description:
-      'Export a webpage from a URL via the Browserless /export API. ' +
-      'Fetches the URL and returns its content in the native format ' +
-      '(HTML, PDF, image, etc.). Automatically detects the content type. ' +
-      'Set includeResources=true to bundle all page assets (CSS, JS, images) ' +
-      'into a ZIP archive for offline use.',
-    parameters: ExportParamsSchema,
+    description: compliant
+      ? COMPLIANT_EXPORT_DESCRIPTION
+      : 'Export a webpage from a URL via the Browserless /export API. ' +
+        'Fetches the URL and returns its content in the native format ' +
+        '(HTML, PDF, image, etc.). Automatically detects the content type. ' +
+        'Set includeResources=true to bundle all page assets (CSS, JS, images) ' +
+        'into a ZIP archive for offline use.',
+    // Cast: Zod's generic is invariant, so the ternary needs it. The compliant
+    // schema is a `.pick` subset (a structural subtype); the runtime schema
+    // FastMCP validates against is the real guard, plus the compliance-mode spec.
+    parameters: (compliant
+      ? CompliantExportParamsSchema
+      : ExportParamsSchema) as z.ZodType<ExportParams>,
     annotations: {
       title: 'Browserless Export',
       readOnlyHint: true,
@@ -88,6 +113,19 @@ export function registerExportTool(
       `live session first, or omit the profile parameter to export ` +
       `the page anonymously.`,
     run: async ({ client, params, log }) => {
+      // Defense-in-depth (parity with the agent allowlist): the `.pick().strict()`
+      // schema already rejects `includeResources`, but guard run() too so a future
+      // schema regression can't forward bulk asset capture to the backend.
+      if (compliant && params.includeResources !== undefined) {
+        throw new UserError(
+          'includeResources is not available on this endpoint.',
+        );
+      }
+      if (compliant && params.profile !== undefined) {
+        throw new UserError(
+          'Authentication profiles are not available on this endpoint.',
+        );
+      }
       const response = await client.exportPage({
         url: params.url,
         gotoOptions: params.gotoOptions,

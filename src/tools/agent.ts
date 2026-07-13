@@ -27,10 +27,10 @@ import { classifyAgentError } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
-  detectSkills,
   markFired,
   renderSkill,
   renderSkills,
+  skillsRegistry,
 } from '../skills/index.js';
 import {
   loadSiteSkill,
@@ -38,6 +38,15 @@ import {
   siteRecipeNotice,
 } from '../skills/sites.js';
 import { AgentParamsSchema } from './schemas.js';
+import {
+  isCompliant,
+  detectVisibleSkills,
+  COMPLIANT_SKILLS,
+  COMPLIANT_AGENT_DESCRIPTION,
+  COMPLIANT_SKILL_TOOL_DESCRIPTION,
+  COMPLIANT_AGENT_METHODS,
+  CompliantAgentParamsSchema,
+} from './compliance.js';
 import {
   AGENT_SYSTEM_PROMPT,
   SKILL_TOOL_DESCRIPTION,
@@ -66,10 +75,31 @@ export {
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
 
-const appendSkills = (base: string, ids: ReadonlyArray<SkillId>): string => {
+const appendSkills = (
+  base: string,
+  ids: ReadonlyArray<SkillId>,
+  compliant: boolean,
+): string => {
   if (ids.length === 0) return base;
-  return `${base}\n\n${renderSkills(ids)}`;
+  return `${base}\n\n${renderSkills(ids, compliant)}`;
 };
+
+// Surface-specific reply extras appended to an agent response: auto-injected
+// skill bodies (de-fanged on the compliant surface) and the site-recipe pointer
+// (suppressed on compliant — recipes can prescribe proxy/evaluate/login steps).
+// Pure + exported so both branches' threading of `compliant` is regression-
+// tested without a live session (compliance-mode.spec.ts). Note: in full mode
+// siteRecipeNotice mutates `sitesSurfaced` (dedup), matching the prior inline
+// behavior; compliant short-circuits before that call.
+export const buildSurfaceExtras = (
+  compliant: boolean,
+  triggered: ReadonlyArray<SkillId>,
+  currentUrl: string | undefined,
+  sitesSurfaced: Set<string>,
+): { skills: string; siteNotice: string } => ({
+  skills: triggered.length > 0 ? renderSkills(triggered, compliant) : '',
+  siteNotice: compliant ? '' : siteRecipeNotice(currentUrl, sitesSurfaced),
+});
 
 const SCREENSHOT_MIME: Record<string, string> = {
   jpeg: 'image/jpeg',
@@ -387,15 +417,56 @@ const SkillToolParamsSchema = z
       'Provide either `id` (load a skill) or `site` (list site recipes).',
   });
 
+// The agent tool is registered with either the full or the compliant params
+// schema. Both are structural subtypes of this boundary type: `method`/`params`
+// are the full-surface single-command passthrough (absent in compliant mode),
+// so they are optional here and run() reads them undefined-safely.
+type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
+  method?: string;
+  params?: Record<string, unknown>;
+};
+
 export function registerAgentTools(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const compliant = isCompliant(config);
+
+  // Compliant mode: drop the circumvention/autologin recipes from the enum so
+  // they're neither selectable nor advertised, and omit the `site` recipe
+  // lookup — arbitrary site recipes can prescribe proxy/evaluate/login steps
+  // that can't be de-fanged, so the compliant surface exposes only the vetted
+  // in-house skills.
+  const compliantSkillIds = skillsRegistry
+    .map((s) => s.id)
+    .filter((id) => COMPLIANT_SKILLS.has(id));
+  // z.enum([]) doesn't throw — it builds an all-rejecting schema, so an empty
+  // allowlist would make browserless_skill silently reject every call. Fail
+  // loudly at boot instead. The destructure also gives z.enum a non-empty tuple
+  // type, dropping the cast.
+  if (compliantSkillIds.length === 0) {
+    throw new Error('Compliant surface has no allowlisted skills configured.');
+  }
+  const [firstSkillId, ...restSkillIds] = compliantSkillIds;
+  const compliantSkillParamsSchema = z
+    .object({
+      id: z
+        .enum([firstSkillId, ...restSkillIds])
+        .describe(
+          'The skill to load (see tool description for the full list).',
+        ),
+    })
+    .strict();
+
   defineTool<SkillToolParams, string>(server, config, analytics, {
     name: 'browserless_skill',
-    description: SKILL_TOOL_DESCRIPTION,
-    parameters: SkillToolParamsSchema,
+    description: compliant
+      ? COMPLIANT_SKILL_TOOL_DESCRIPTION
+      : SKILL_TOOL_DESCRIPTION,
+    parameters: compliant
+      ? (compliantSkillParamsSchema as z.ZodType<SkillToolParams>)
+      : SkillToolParamsSchema,
     annotations: {
       title: 'Load Browserless Skill',
       readOnlyHint: true,
@@ -404,10 +475,16 @@ export function registerAgentTools(
     },
     run: async ({ params, analytics, token, apiUrl }) => {
       const id = params.id ?? '';
-      const body =
-        params.site !== undefined
+      // Compliant: no `site` recipes; only allowlisted in-house skills. The enum
+      // already blocks other ids — this guard is defense-in-depth for a bypass.
+      if (compliant && !COMPLIANT_SKILLS.has(id as SkillId)) {
+        throw new UserError(`Skill "${id}" is not available on this endpoint.`);
+      }
+      const body = compliant
+        ? renderSkill(id as SkillId, true)
+        : params.site !== undefined
           ? renderSiteSkillList(params.site)
-          : renderSkill(id as SkillId) || loadSiteSkill(id) || '';
+          : renderSkill(id as SkillId, false) || loadSiteSkill(id) || '';
       analytics?.fireSkill(token, {
         ...buildSkillEventProps(params, body),
         api_url: apiUrl,
@@ -428,12 +505,19 @@ export function registerAgentTools(
     },
   });
 
-  defineTool<AgentParams, Content[]>(server, config, analytics, {
+  defineTool<AgentToolParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
-    description:
-      AGENT_SYSTEM_PROMPT +
-      fileTransferModeNote(config.transport, config.mcpBaseUrl),
-    parameters: AgentParamsSchema,
+    description: compliant
+      ? COMPLIANT_AGENT_DESCRIPTION
+      : AGENT_SYSTEM_PROMPT +
+        fileTransferModeNote(config.transport, config.mcpBaseUrl),
+    // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
+    // is a genuine supertype of both schemas' output (method/params optional); the
+    // runtime schema FastMCP validates against is the real guard, plus the
+    // compliance-mode spec (drift guard + run()-layer allowlist).
+    parameters: (compliant
+      ? CompliantAgentParamsSchema
+      : AgentParamsSchema) as z.ZodType<AgentToolParams>,
     annotations: {
       title: 'Browserless Agent',
       readOnlyHint: false,
@@ -458,7 +542,33 @@ export function registerAgentTools(
               method: c.method,
               params: c.params ?? {},
             }))
-          : [{ method: params.method, params: params.params ?? {} }];
+          : [{ method: params.method ?? '', params: params.params ?? {} }];
+
+      // Defense-in-depth: even if the schema were mis-built, the compliant
+      // surface never forwards a non-allowlisted method, an auth-profile, or a
+      // proxy argument to the backend.
+      if (compliant) {
+        for (const c of commands) {
+          if (!COMPLIANT_AGENT_METHODS.has(c.method)) {
+            throw new UserError(
+              `Command "${c.method}" is not available on this endpoint.`,
+            );
+          }
+        }
+        if (
+          params.profile !== undefined ||
+          params.createProfile !== undefined
+        ) {
+          throw new UserError(
+            'Authentication profiles are not available on this endpoint.',
+          );
+        }
+        if (params.proxy !== undefined) {
+          throw new UserError(
+            'Proxy configuration is not available on this endpoint.',
+          );
+        }
+      }
 
       const proxy = params.proxy;
       const profile = params.profile;
@@ -678,13 +788,14 @@ export function registerAgentTools(
                 : undefined,
             });
 
-            const triggered = detectSkills(
+            const triggered = detectVisibleSkills(
               { snapshot: err.snapshot, error: err, cmd, apiUrl },
               agentSession.skillState,
+              compliant,
             );
             markFired(agentSession.skillState, triggered);
 
-            throw new UserError(appendSkills(body, triggered));
+            throw new UserError(appendSkills(body, triggered, compliant));
           }
 
           // Capture the first URL we observe in the batch as a fallback
@@ -720,7 +831,7 @@ export function registerAgentTools(
             ? (lastResult as unknown as SnapshotResult)
             : undefined;
 
-        const triggered = detectSkills(
+        const triggered = detectVisibleSkills(
           {
             snapshot: lastSnapshot,
             cmd: lastCmd,
@@ -728,6 +839,7 @@ export function registerAgentTools(
             apiUrl,
           },
           agentSession.skillState,
+          compliant,
         );
         markFired(agentSession.skillState, triggered);
 
@@ -752,12 +864,15 @@ export function registerAgentTools(
         }
 
         // Surface a site-recipe pointer for the URL this batch landed on — the
-        // tool-description prose gate gets skipped/clipped, so push it as a result.
+        // tool-description prose gate gets skipped/clipped, so push it as a
+        // result. Suppressed on the compliant surface (no site recipes there).
         const currentUrl =
           lastSnapshot?.url ??
           (lastResult as { url?: string } | undefined)?.url ??
           crossOriginBaseline;
-        const siteNotice = siteRecipeNotice(
+        const { skills: renderedSkills, siteNotice } = buildSurfaceExtras(
+          compliant,
+          triggered,
           currentUrl,
           agentSession.skillState.sitesSurfaced,
         );
@@ -776,10 +891,7 @@ export function registerAgentTools(
             // malformed URL — nothing to report
           }
         }
-        const extraText = [
-          triggered.length > 0 ? renderSkills(triggered) : '',
-          siteNotice,
-        ]
+        const extraText = [renderedSkills, siteNotice]
           .filter(Boolean)
           .join('\n\n');
         const appendExtra = (base: string): string =>
