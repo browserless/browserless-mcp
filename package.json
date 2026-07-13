@@ -93,8 +93,9 @@
     "globals": "^17.6.0",
     "husky": "^9.1.7",
     "ioredis-mock": "^8.13.1",
+    "lint-staged": "^17.0.8",
     "mocha": "^11.7.6",
-    "prettier": "^3.8.3",
+    "prettier": "3.9.4",
     "sinon": "^22.0.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.0"
@@ -112,5 +113,8 @@
     },
     "hono": "^4.12.26",
     "undici": "^7.28.0"
+  },
+  "lint-staged": {
+    "**/*": "prettier --write --ignore-unknown"
   }
 }
