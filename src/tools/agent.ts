@@ -36,6 +36,7 @@ import {
   loadSiteSkill,
   renderSiteSkillList,
   siteRecipeNotice,
+  hydrateRemoteSkills,
 } from '../skills/sites.js';
 import { AgentParamsSchema } from './schemas.js';
 import {
@@ -404,6 +405,11 @@ export function registerAgentTools(
     },
     run: async ({ params, analytics, token, apiUrl }) => {
       const id = params.id ?? '';
+      const siteHost =
+        params.site ?? (id.includes('/') ? id.split('/')[0] : '');
+      if (siteHost) {
+        await hydrateRemoteSkills(`https://${siteHost}`, apiUrl, token);
+      }
       const body =
         params.site !== undefined
           ? renderSiteSkillList(params.site)
@@ -757,6 +763,7 @@ export function registerAgentTools(
           lastSnapshot?.url ??
           (lastResult as { url?: string } | undefined)?.url ??
           crossOriginBaseline;
+        await hydrateRemoteSkills(currentUrl, apiUrl, token);
         const siteNotice = siteRecipeNotice(
           currentUrl,
           agentSession.skillState.sitesSurfaced,
