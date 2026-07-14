@@ -84,6 +84,9 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
 ## Don't
 
 - Raise `maxElements` past ~2000 — model spends more on snapshot reading than task gains. Scroll and paginate instead
+
 <!-- compliant-omit -->
+
 - `evaluate` to crawl `document.body.innerHTML` for general extraction. Snapshot structured; raw HTML floods context with markup. Use `evaluate` only for _specific_ attributes snapshot can't surface
+
 <!-- /compliant-omit -->

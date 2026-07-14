@@ -69,6 +69,8 @@ when you don't need to view it.
 
 - OCR via evaluate (you have vision input)
 - Screenshotting for structured data (use snapshot/evaluate)
+
 <!-- /compliant-omit -->
+
 - Full-page screenshots by default (pick scope)
 - Multiple screenshots of same state (one is enough)

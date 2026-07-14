@@ -30,9 +30,13 @@ No match → fallback to attribute-based deep selectors: `< button[aria-label*="
 ## Don't
 
 - Click `Accept all` reflexively. Sites track aggressively and may serve different content. Prefer reject when both present
+
 <!-- compliant-omit -->
+
 - Dismiss via `evaluate` removing banner element. Consent state server-side/cookies; hiding banner doesn't grant access, leaves event handlers blocking clicks
+
 <!-- /compliant-omit -->
+
 - Continue with selectors from pre-dismiss snapshot. Always re-snapshot after close
 
 ## Batching

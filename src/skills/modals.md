@@ -59,5 +59,7 @@ Critical confirmations ("Delete?"). Don't auto-dismiss. Find explicit button (`C
 <!-- compliant-omit -->
 
 - Removing modal DOM via evaluate (SPAs remount it)
+
 <!-- /compliant-omit -->
+
 - Interacting with page behind without closing first (pointer events captured)
