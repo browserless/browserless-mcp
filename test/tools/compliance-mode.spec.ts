@@ -15,6 +15,7 @@ import {
   validateMarkers,
 } from '../../src/skills/index.js';
 import { buildSurfaceExtras } from '../../src/tools/agent.js';
+import { COMPLIANT_AGENT_SYSTEM_PROMPT } from '../../src/skills/system-prompt.js';
 import type { McpConfig, SkillId } from '../../src/@types/types.js';
 
 const baseConfig: McpConfig = {
@@ -318,6 +319,26 @@ describe('compliance mode — compliant tool surface', () => {
           expect(desc, `description must not mention ${s.id}`).to.not.contain(
             s.id,
           );
+        }
+      }
+    });
+
+    it('agent system prompt lists exactly the allowlisted skills (guards prompt drift)', () => {
+      // The de-fanged agent prompt hand-maintains the same skill list as
+      // COMPLIANT_SKILL_TOOL_DESCRIPTION. Guard it the same way so a skill
+      // added to / removed from COMPLIANT_SKILLS can't silently desync it.
+      for (const id of COMPLIANT_SKILLS) {
+        expect(
+          COMPLIANT_AGENT_SYSTEM_PROMPT,
+          `prompt must mention ${id}`,
+        ).to.contain(id);
+      }
+      for (const s of skillsRegistry) {
+        if (!COMPLIANT_SKILLS.has(s.id)) {
+          expect(
+            COMPLIANT_AGENT_SYSTEM_PROMPT,
+            `prompt must not mention ${s.id}`,
+          ).to.not.contain(s.id);
         }
       }
     });
