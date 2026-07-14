@@ -39,6 +39,12 @@ updates:
           - 'fastmcp'
     cooldown:
       default-days: 3
+    ignore:
+      # TypeScript 7 (native/Go compiler) ships without a JS API; blocked until
+      # typescript-eslint supports it.
+      # See https://github.com/typescript-eslint/typescript-eslint/issues/10940
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
