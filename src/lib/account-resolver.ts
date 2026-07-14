@@ -1,5 +1,6 @@
 import { ResponseCache } from './cache.js';
-import { decodeJwtPayload } from './utils.js';
+import { hashToken } from './utils.js';
+import type { SupabaseJwtPayload } from '../@types/types.js';
 
 interface ResolvedAccount {
   apiKey: string;
@@ -10,28 +11,76 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const cache = new ResponseCache(CACHE_TTL_MS);
 
 /**
- * Resolves a Browserless API key from a Supabase access token (JWT)
- * by extracting app_metadata.accountId and querying Supabase PostgREST.
+ * Verify a Supabase access token by presenting it to Supabase Auth's
+ * `/auth/v1/user` endpoint (hosted Supabase in prod, the local Supabase stack
+ * in dev — same REST surface). Supabase Auth checks the JWT signature, expiry,
+ * and revocation server-side and returns the authoritative user record. We
+ * deliberately do NOT decode and trust the token payload client-side: an
+ * unsigned/forged token with an attacker-chosen `app_metadata.accountId` would
+ * otherwise resolve to any account's API key. The `accountId` we act on comes
+ * only from this verified response.
  */
-export async function resolveApiKey(
+async function verifyAccessToken(
   supabaseUrl: string,
   serviceRoleKey: string,
   accessToken: string,
-): Promise<ResolvedAccount> {
-  const payload = decodeJwtPayload(accessToken);
-  const accountId = payload.app_metadata?.accountId;
+): Promise<string> {
+  // Cheap format guard so obviously-malformed input fails fast without a round
+  // trip. GoTrue is still the authority on validity below.
+  if (accessToken.split('.').length !== 3) {
+    throw new Error('Invalid JWT format');
+  }
 
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Supabase rejected the access token (${response.status}). ` +
+        'The token is invalid, expired, or not signed by this project.',
+    );
+  }
+
+  const user = (await response.json()) as SupabaseJwtPayload;
+  const accountId = user.app_metadata?.accountId;
   if (!accountId) {
     throw new Error(
       'Supabase JWT does not contain app_metadata.accountId. ' +
         'The user may not have a Browserless account.',
     );
   }
+  return accountId;
+}
 
-  const cached = cache.get<ResolvedAccount>(`account:${accountId}`);
+/**
+ * Resolves a Browserless API key from a Supabase access token (JWT) by
+ * verifying the token with Supabase Auth, then querying Supabase PostgREST for
+ * the verified account's `api_key`.
+ */
+export async function resolveApiKey(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  accessToken: string,
+): Promise<ResolvedAccount> {
+  // Cache on the token itself: only tokens that already passed Supabase Auth
+  // verification populate the cache, so a forged token can never hit a warm
+  // entry keyed on an account it doesn't own.
+  const cacheKey = `token:${hashToken(accessToken)}`;
+  const cached = cache.get<ResolvedAccount>(cacheKey);
   if (cached) {
     return cached;
   }
+
+  const accountId = await verifyAccessToken(
+    supabaseUrl,
+    serviceRoleKey,
+    accessToken,
+  );
 
   const url = `${supabaseUrl}/rest/v1/accounts?account_id=eq.${encodeURIComponent(accountId)}&select=api_key,email`;
   const response = await fetch(url, {
@@ -63,7 +112,7 @@ export async function resolveApiKey(
     email: account.email,
   };
 
-  cache.set(`account:${accountId}`, resolved);
+  cache.set(cacheKey, resolved);
   return resolved;
 }
 
