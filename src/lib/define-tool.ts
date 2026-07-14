@@ -50,6 +50,11 @@ export interface ToolRunContext<P> {
    * header). When set, the agent tool attaches to it instead of opening its own.
    */
   attachSessionId?: string;
+  /**
+   * Forwarded `x-browserless-client` sub-source (e.g. 'script_generator'),
+   * threaded onto the agent WS upgrade. Defaults to 'mcp' for ordinary clients.
+   */
+  clientSource?: string;
 }
 
 export interface ToolDefinition<P, R> {
@@ -148,6 +153,7 @@ export function defineTool<P, R>(
           reportProgress,
           sessionId,
           attachSessionId: s?.attachSessionId,
+          clientSource: s?.clientSource,
         });
       } catch (err) {
         if (err instanceof ProfileNotFoundError) {

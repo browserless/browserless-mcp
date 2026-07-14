@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import {
   buildAgentWsUrl,
+  DEFAULT_CLIENT_SOURCE,
   getOrCreateSession,
   isRetryableUpgradeError,
   ProfileNotFoundError,
@@ -11,6 +12,7 @@ import {
 import type { ProxyOptions } from '../../src/@types/types.js';
 import {
   makeAcceptingServer,
+  makeHeaderCapturingServer,
   makeRejectingServer,
   makeStallingServer,
 } from '../helpers/upgrade-server.js';
@@ -527,6 +529,72 @@ describe('agent-client session-cache isolation', () => {
         'profile-a',
       );
       expect(sessAAgain.ws).to.equal(sessA.ws);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('agent-client x-browserless-client marker', () => {
+  it('stamps the default "mcp" marker on a normal agent WS connect', async () => {
+    const server = await makeHeaderCapturingServer();
+    try {
+      await getOrCreateSession('mcp-marker-default', server.url, 'tok');
+      const [upgrade] = server.upgrades();
+      expect(upgrade, 'expected one accepted upgrade').to.not.equal(undefined);
+      expect(upgrade.headers['x-browserless-client']).to.equal(
+        DEFAULT_CLIENT_SOURCE,
+      );
+      // The marker never leaks into the query string (token lives there).
+      expect(upgrade.url).to.not.include('x-browserless-client');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards a sub-source marker (script_generator) verbatim', async () => {
+    const server = await makeHeaderCapturingServer();
+    try {
+      await getOrCreateSession(
+        'mcp-marker-scriptgen',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'script_generator',
+      );
+      const [upgrade] = server.upgrades();
+      expect(upgrade.headers['x-browserless-client']).to.equal(
+        'script_generator',
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('stamps the marker on the sessionId attach flow too', async () => {
+    const server = await makeHeaderCapturingServer();
+    try {
+      // attachSessionId short-circuits POST /profile but still goes through the
+      // same connect() → new WebSocket() call, so the marker must be present.
+      await getOrCreateSession(
+        'mcp-marker-attach',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        'sess-attach-123',
+        'script_generator',
+      );
+      const [upgrade] = server.upgrades();
+      expect(upgrade.headers['x-browserless-client']).to.equal(
+        'script_generator',
+      );
+      // Confirm this really is the attach flow (sessionId on the URL).
+      expect(upgrade.url).to.include('sessionId=sess-attach-123');
     } finally {
       await server.close();
     }

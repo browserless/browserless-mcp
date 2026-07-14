@@ -117,6 +117,8 @@ const hybridAuthenticate =
             sessionIdHeader: request.headers['x-browserless-session-id'] as
               string | undefined,
             sessionIdQuery: params.get('browserlessSessionId') || undefined,
+            clientHeader: request.headers['x-browserless-client'] as
+              string | undefined,
           },
           config,
         )) as BrowserlessSession;

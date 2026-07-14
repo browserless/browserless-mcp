@@ -1,4 +1,7 @@
 import type { IncomingMessage } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
@@ -158,6 +161,45 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
   }
   return true;
 };
+
+// Package name/version, read once, so the agent WS upgrade can advertise which
+// MCP build opened it. Failures just omit those headers — never block connect.
+const { name: MCP_CLIENT_NAME, version: MCP_CLIENT_VERSION } = ((): {
+  name?: string;
+  version?: string;
+} => {
+  try {
+    return JSON.parse(
+      readFileSync(
+        join(
+          dirname(fileURLToPath(import.meta.url)),
+          '..',
+          '..',
+          '..',
+          'package.json',
+        ),
+        'utf-8',
+      ),
+    ) as { name?: string; version?: string };
+  } catch {
+    return {};
+  }
+})();
+
+// Default `x-browserless-client` marker; a forwarded inbound source (e.g.
+// 'script_generator') overrides it per connection.
+export const DEFAULT_CLIENT_SOURCE = 'mcp';
+
+// Marker headers stamped on every agent WS upgrade so enterprise can attribute
+// traffic (MCP vs. direct WS, and sub-sources like the Script Generator). Kept
+// out of the query string so the marker never lands in URL logs.
+const buildClientHeaders = (clientSource?: string): Record<string, string> => ({
+  'x-browserless-client': clientSource || DEFAULT_CLIENT_SOURCE,
+  ...(MCP_CLIENT_NAME ? { 'x-browserless-client-name': MCP_CLIENT_NAME } : {}),
+  ...(MCP_CLIENT_VERSION
+    ? { 'x-browserless-client-version': MCP_CLIENT_VERSION }
+    : {}),
+});
 
 const sessions = new Map<string, ActiveSession>();
 // In-flight session creations keyed by session key. Concurrent
@@ -478,10 +520,13 @@ const connect = (
   proxy?: ProxyOptions,
   profile?: string,
   sessionId?: string,
+  clientSource?: string,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(apiUrl, token, proxy, profile, sessionId);
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, {
+      headers: buildClientHeaders(clientSource),
+    });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -605,6 +650,7 @@ export const getOrCreateSession = async (
   profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
+  clientSource?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
   const key = getSessionKey(
@@ -650,7 +696,14 @@ export const getOrCreateSession = async (
         await postCreateProfile(apiUrl, token, createProfile)
       ).id;
     }
-    const ws = await connect(apiUrl, token, proxy, profile, creationSessionId);
+    const ws = await connect(
+      apiUrl,
+      token,
+      proxy,
+      profile,
+      creationSessionId,
+      clientSource,
+    );
     const session: ActiveSession = {
       ws,
       msgId: 0,
@@ -660,6 +713,7 @@ export const getOrCreateSession = async (
       profile,
       createProfile,
       creationSessionId,
+      clientSource,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -709,6 +763,7 @@ export const send = async (
         session.proxy,
         session.profile,
         session.creationSessionId,
+        session.clientSource,
       ).finally(() => {
         session.reconnecting = undefined;
       });

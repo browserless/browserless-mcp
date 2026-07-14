@@ -43,6 +43,13 @@ export interface BrowserlessSession extends Record<string, unknown> {
    * resulting id instead of letting the model open a `createProfile` session.
    */
   attachSessionId?: string;
+  /**
+   * Forwarded `x-browserless-client` value identifying an internal sub-source
+   * (e.g. 'script_generator'). Threaded onto the agent WS upgrade so enterprise
+   * Amplitude events can distinguish it from generic MCP traffic. Absent for
+   * ordinary MCP clients, which default to 'mcp' at connect time.
+   */
+  clientSource?: string;
 }
 
 export interface SupabaseJwtPayload {
@@ -184,6 +191,10 @@ export interface ActiveSession {
   // The creation session id returned by POST /profile. Reconnects attach to it
   // via /chromium/agent?sessionId rather than launching a new browser.
   creationSessionId?: string;
+  // `x-browserless-client` marker stamped on the agent WS upgrade (e.g. 'mcp'
+  // or a forwarded sub-source like 'script_generator'). Preserved so reconnects
+  // re-advertise the same source. Not part of the session-cache key.
+  readonly clientSource?: string;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;

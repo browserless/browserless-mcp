@@ -168,3 +168,44 @@ export const makeAcceptingServer = async (): Promise<UpgradeServerHandle> => {
       }),
   };
 };
+
+export interface CapturedUpgrade {
+  headers: http.IncomingHttpHeaders;
+  url: string;
+}
+
+export interface HeaderCapturingServerHandle extends UpgradeServerHandle {
+  /** Every accepted WS upgrade, in arrival order. */
+  upgrades: () => CapturedUpgrade[];
+}
+
+/**
+ * Like `makeAcceptingServer`, but records the request headers (and URL) of
+ * every accepted WS upgrade so a test can assert what the client sent — used
+ * to verify the `x-browserless-client` marker is stamped on the agent WS.
+ */
+export const makeHeaderCapturingServer =
+  async (): Promise<HeaderCapturingServerHandle> => {
+    const upgrades: CapturedUpgrade[] = [];
+    const wss = new WebSocketServer({ noServer: true });
+    const server = http.createServer();
+    server.on('upgrade', (req, socket, head) => {
+      socket.on('error', () => {});
+      upgrades.push({ headers: req.headers, url: req.url ?? '' });
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on('close', () => {});
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      upgrades: () => upgrades,
+      close: () =>
+        new Promise<void>((r) => {
+          wss.clients.forEach((c) => c.terminate());
+          server.closeAllConnections?.();
+          server.close(() => r());
+        }),
+    };
+  };

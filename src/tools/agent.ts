@@ -448,6 +448,7 @@ export function registerAgentTools(
       apiUrl,
       sessionId: mcpSessionId,
       attachSessionId,
+      clientSource,
     }) => {
       const commands: Array<{
         method: string;
@@ -519,6 +520,7 @@ export function registerAgentTools(
             profile,
             createProfile,
             attachSessionId,
+            clientSource,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false);
@@ -542,6 +544,7 @@ export function registerAgentTools(
             profile,
             createProfile,
             attachSessionId,
+            clientSource,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting

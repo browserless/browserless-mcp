@@ -6,6 +6,7 @@ export interface ResolvedBrowserlessAuth {
   token: string;
   apiUrl: string;
   attachSessionId?: string;
+  clientSource?: string;
 }
 
 export interface AuthInput {
@@ -15,7 +16,19 @@ export interface AuthInput {
   browserlessUrlQuery?: string;
   sessionIdHeader?: string;
   sessionIdQuery?: string;
+  clientHeader?: string;
 }
+
+// Inbound `x-browserless-client` values we forward verbatim onto the agent WS
+// upgrade. Anything else (including a client trying to pass itself off as
+// 'direct') collapses to 'mcp' so MCP-originated traffic can never masquerade
+// as a raw WebSocket client. Grows as new first-party sub-sources appear.
+const FORWARDED_CLIENT_SOURCES = new Set(['script_generator']);
+
+const resolveClientSource = (clientHeader?: string): string =>
+  clientHeader && FORWARDED_CLIENT_SOURCES.has(clientHeader)
+    ? clientHeader
+    : 'mcp';
 
 /**
  * Resolve a Browserless API token from an inbound HTTP request, in order:
@@ -39,6 +52,10 @@ export const resolveBrowserlessAuth = async (
   // own POST /profile.
   const attachSessionId = input.sessionIdHeader ?? input.sessionIdQuery;
 
+  // Sub-source marker (e.g. 'script_generator') forwarded onto the agent WS so
+  // enterprise Amplitude events can attribute it; defaults to 'mcp'.
+  const clientSource = resolveClientSource(input.clientHeader);
+
   const headerToken = input.authHeader?.startsWith('Bearer ')
     ? input.authHeader.slice(7)
     : input.authHeader;
@@ -49,7 +66,7 @@ export const resolveBrowserlessAuth = async (
   // A plain key (header or ?token=) is used directly and wins over JWT exchange.
   const plainKey = (isJwt ? undefined : headerToken) ?? input.tokenQuery;
   if (plainKey) {
-    return { token: plainKey, apiUrl, attachSessionId };
+    return { token: plainKey, apiUrl, attachSessionId, clientSource };
   }
 
   // A JWT is exchanged for the account's Browserless API key via PostgREST.
@@ -59,7 +76,7 @@ export const resolveBrowserlessAuth = async (
       config.supabaseServiceRoleKey,
       headerToken,
     );
-    return { token: apiKey, apiUrl, attachSessionId };
+    return { token: apiKey, apiUrl, attachSessionId, clientSource };
   }
 
   throw new Error(
