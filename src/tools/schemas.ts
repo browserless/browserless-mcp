@@ -773,8 +773,10 @@ const compliantCommandSchemas = [
   WaitForResponseCommandSchema,
   LiveURLCommandSchema,
   ScreenshotCommandSchema,
-  UploadFileCommandSchema,
-  GetDownloadsCommandSchema,
+  // No uploadFile/getDownloads on the compliant surface: file upload
+  // impersonates a human write action (vendor-TOS concern) and downloads are
+  // the paired file-I/O — a compliant web agent reads page content, it doesn't
+  // move files.
   CloseCommandSchema,
 ] as const;
 

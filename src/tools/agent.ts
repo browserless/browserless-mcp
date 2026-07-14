@@ -42,13 +42,13 @@ import {
   isCompliant,
   detectVisibleSkills,
   COMPLIANT_SKILLS,
-  COMPLIANT_AGENT_DESCRIPTION,
   COMPLIANT_SKILL_TOOL_DESCRIPTION,
   COMPLIANT_AGENT_METHODS,
   CompliantAgentParamsSchema,
 } from './compliance.js';
 import {
   AGENT_SYSTEM_PROMPT,
+  COMPLIANT_AGENT_SYSTEM_PROMPT,
   SKILL_TOOL_DESCRIPTION,
   fileTransferModeNote,
 } from '../skills/system-prompt.js';
@@ -508,7 +508,7 @@ export function registerAgentTools(
   defineTool<AgentToolParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
     description: compliant
-      ? COMPLIANT_AGENT_DESCRIPTION
+      ? COMPLIANT_AGENT_SYSTEM_PROMPT
       : AGENT_SYSTEM_PROMPT +
         fileTransferModeNote(config.transport, config.mcpBaseUrl),
     // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
@@ -629,6 +629,7 @@ export function registerAgentTools(
             profile,
             createProfile,
             attachSessionId,
+            compliant,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false);
@@ -652,6 +653,7 @@ export function registerAgentTools(
             profile,
             createProfile,
             attachSessionId,
+            compliant,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting

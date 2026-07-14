@@ -210,8 +210,6 @@ describe('compliance mode — compliant tool surface', () => {
         'waitForResponse',
         'liveURL',
         'screenshot',
-        'uploadFile',
-        'getDownloads',
         'close',
       ];
       expect([...COMPLIANT_AGENT_METHODS]).to.have.members(EXPECTED_METHODS);
@@ -284,7 +282,6 @@ describe('compliance mode — compliant tool surface', () => {
         'dynamic-content',
         'screenshots',
         'tabs',
-        'file-transfers',
       ];
       expect(
         [...COMPLIANT_SKILLS].sort(),

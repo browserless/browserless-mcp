@@ -69,6 +69,10 @@ export interface McpConfig {
   // Required (not optional): the compliant surface is a security gate, so every
   // McpConfig must choose explicitly — an omitted field must not default to the
   // fuller/prohibited surface.
+  // Named for the tool-surface policy it gates, deliberately NOT `webBotAuth`:
+  // Web Bot Auth (the IETF HTTP-Message-Signatures bot-identity scheme) is a
+  // separate, future mechanism — keeping the names distinct avoids a collision
+  // when it lands.
   complianceMode: boolean;
   sqsQueueUrl?: string;
   sqsRegion: string;

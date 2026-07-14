@@ -22,7 +22,8 @@ export const isCompliant = (config: McpConfig): boolean =>
 // ALLOWLIST of skills served on the compliant surface — fail-closed, mirroring
 // the search/export `.pick` allowlists: a skill newly added to the registry does
 // NOT auto-appear here; it must be added deliberately. Excludes captchas
-// (circumvention) and autonomous-login/auth-profile (credential-driven login).
+// (circumvention), autonomous-login/auth-profile (credential-driven login), and
+// file-transfers (upload impersonates a human; no file I/O on this surface).
 // Typed SkillId so a rename/removal of any listed id breaks the build.
 export const COMPLIANT_SKILLS: ReadonlySet<SkillId> = new Set<SkillId>([
   'shadow-dom',
@@ -32,7 +33,6 @@ export const COMPLIANT_SKILLS: ReadonlySet<SkillId> = new Set<SkillId>([
   'dynamic-content',
   'screenshots',
   'tabs',
-  'file-transfers',
 ]);
 
 // Filter detected skill ids for the auto-injection path (see detectVisibleSkills
@@ -56,13 +56,9 @@ export const detectVisibleSkills = (
   compliant: boolean,
 ): SkillId[] => visibleSkills(detectSkills(ctx, state), compliant);
 
-export const COMPLIANT_AGENT_DESCRIPTION =
-  'Drive a browser to complete a user-directed task on a page the user specifies: ' +
-  'navigate, read, click, type, scroll, switch tabs, and screenshot. Use only for ' +
-  'content the user is authorized to access. Do not use to bypass access controls ' +
-  'or bot protection, solve CAPTCHAs, evade detection, route around IP/geo ' +
-  "restrictions, or access content in violation of a site's terms of service. " +
-  'Provide `commands` as a sequential batch; only the final result is returned.';
+// The compliant agent's description is the de-fanged system prompt
+// COMPLIANT_AGENT_SYSTEM_PROMPT (see skills/system-prompt.ts) — the full ReAct
+// loop minus the prohibited/impersonation surface, not a barebone blurb.
 
 export const COMPLIANT_SEARCH_DESCRIPTION =
   'Search the web using Browserless. Performs web searches via SearXNG ' +
@@ -85,5 +81,4 @@ Available skills:
 - **snapshot-misses** — truncated/empty snapshots, image-rendered content
 - **dynamic-content** — choosing the right \`wait*\` method after async triggers
 - **screenshots** — when to screenshot vs. snapshot, scope and format choices
-- **tabs** — multi-tab workflows, peek-without-switching
-- **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps`;
+- **tabs** — multi-tab workflows, peek-without-switching`;
