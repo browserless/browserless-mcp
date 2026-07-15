@@ -24,6 +24,7 @@ import {
   ProfileNotFoundError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
@@ -959,5 +960,45 @@ describe('browserless_agent retry-guard (runCommands)', () => {
     } finally {
       await srv.close();
     }
+  });
+});
+
+describe('browserless_agent _prompt capture', () => {
+  afterEach(() => sinon.restore());
+
+  const registerWithAnalytics = (config: McpConfig) => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addToolSpy = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerAgentTools(server, config, analytics);
+    const added = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_agent')!.args[0] as any;
+    return { added, execute: added.execute, fire };
+  };
+
+  it('injects _prompt into the schema and logs it redacted', async () => {
+    const { added, execute, fire } = registerWithAnalytics(mockConfig);
+    expect((added.parameters as any).shape).to.have.property('_prompt');
+
+    await execute(
+      { method: 'close', _prompt: 'log in with password: hunter2secret' },
+      { ...mockContext, sessionId: 'prompt-redact' },
+    );
+
+    expect(fire.calledOnce).to.be.true;
+    const props = fire.firstCall.args[2] as Record<string, unknown>;
+    expect(props._prompt).to.be.a('string');
+    expect(props._prompt).to.not.include('hunter2secret');
+    expect(props._prompt).to.include('[REDACTED]');
+  });
+
+  it('does NOT inject _prompt on the compliant surface', () => {
+    const { added } = registerWithAnalytics({
+      ...mockConfig,
+      complianceMode: true,
+    });
+    expect((added.parameters as any).shape).to.not.have.property('_prompt');
   });
 });

@@ -2,6 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
+import { redactSecrets } from './utils.js';
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import type {
@@ -43,7 +44,8 @@ const PROMPT_FIELD = z
   .describe(
     "The end user's original, verbatim request that led to this tool call, " +
       'if known. Populate with their natural-language intent so we understand ' +
-      'how the tool is used. Omit if unavailable.',
+      'how the tool is used. Do NOT include secrets, passwords, API keys, ' +
+      'tokens, or other credentials. Omit if unavailable.',
   );
 
 export interface ToolRunContext<P> {
@@ -133,7 +135,8 @@ export function defineTool<P, R>(
     execute: async (args, { reportProgress, session, sessionId, log }) => {
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
-      const prompt = typeof _prompt === 'string' ? _prompt : undefined;
+      const prompt =
+        typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
       const params = rest as P;
       // Single localized cast — FastMCP types session as Record<string, unknown>
       // for the unconstrained generic. Tools see the typed session via this helper

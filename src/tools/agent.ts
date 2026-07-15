@@ -521,7 +521,6 @@ export function registerAgentTools(
       sessionId: mcpSessionId,
       attachSessionId,
     }) => {
-      console.log(prompt);
       const commands: Array<{
         method: string;
         params: Record<string, unknown>;
