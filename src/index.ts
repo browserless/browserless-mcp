@@ -101,10 +101,12 @@ const hybridAuthenticate =
             authHeader: request.headers.authorization as string | undefined,
             tokenQuery: params.get('token') || undefined,
             apiUrlHeader: request.headers['x-browserless-api-url'] as
-              string | undefined,
+              | string
+              | undefined,
             browserlessUrlQuery: params.get('browserlessUrl') || undefined,
             sessionIdHeader: request.headers['x-browserless-session-id'] as
-              string | undefined,
+              | string
+              | undefined,
             sessionIdQuery: params.get('browserlessSessionId') || undefined,
           },
           config,
