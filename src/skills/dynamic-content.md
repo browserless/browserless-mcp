@@ -67,6 +67,11 @@
 
 ## Avoid
 
+<!-- compliant-omit -->
+
 - `evaluate` with setTimeout/Promise (returns before timer completes)
+
+<!-- /compliant-omit -->
+
 - Multiple `waitForTimeout` stacked (use specific wait methods)
 - Tight snapshot loop without wait (burns tokens, races page)

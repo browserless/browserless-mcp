@@ -266,15 +266,69 @@ export const markFired = (
   }
 };
 
-export const renderSkill = (id: SkillId): string => {
+// One file, two surfaces: <!-- compliant-omit -->…(full-only) and
+// <!-- compliant-only -->…(compliant replacement). Each render drops the other's blocks + strips markers.
+const COMPLIANT_OMIT_BLOCK =
+  /<!-- compliant-omit -->[\s\S]*?<!-- \/compliant-omit -->\n*/g;
+const COMPLIANT_ONLY_BLOCK =
+  /<!-- compliant-only -->[\s\S]*?<!-- \/compliant-only -->\n*/g;
+const MARKER_LINE = /[ \t]*<!-- \/?compliant-(?:omit|only) -->\n?/g;
+
+// The strippers match only exact, balanced markers; a malformed one would
+// silently leave a prohibited block in the compliant render. Validate at load, fail closed.
+const VALID_MARKER = /^<!-- \/?compliant-(?:omit|only) -->$/;
+const SUSPECT_MARKER = /<!--[^>]*compliant[^>]*-->/gi;
+const MARKER_TOKEN = /<!-- (\/?)compliant-(omit|only) -->/g;
+
+export const validateMarkers = (body: string, path: string): void => {
+  // Any comment mentioning "compliant" must be an exact marker — catches typos
+  // and stray spacing the strippers would silently skip over.
+  for (const m of body.match(SUSPECT_MARKER) ?? []) {
+    if (!VALID_MARKER.test(m)) {
+      throw new Error(
+        `skill ${path}: malformed compliant marker ${JSON.stringify(m)}`,
+      );
+    }
+  }
+  // Markers must be balanced, matched by kind, and never nested.
+  const open: string[] = [];
+  for (const [, slash, kind] of body.matchAll(MARKER_TOKEN)) {
+    if (slash === '') {
+      if (open.length) {
+        throw new Error(`skill ${path}: nested compliant-${kind} marker`);
+      }
+      open.push(kind);
+    } else if (open.pop() !== kind) {
+      throw new Error(`skill ${path}: unbalanced compliant-${kind} close`);
+    }
+  }
+  if (open.length) {
+    throw new Error(`skill ${path}: unclosed compliant-${open[0]} marker`);
+  }
+};
+
+// Fail closed at boot rather than leak a mis-marked block per render.
+skills.forEach((skill) => validateMarkers(skill.body, skill.path));
+
+export const renderSkill = (id: SkillId, compliant: boolean): string => {
   const skill = skills.find((s) => s.id === id);
   if (!skill) return '';
+  const body = skill.body
+    .replace(compliant ? COMPLIANT_OMIT_BLOCK : COMPLIANT_ONLY_BLOCK, '')
+    .replace(MARKER_LINE, '')
+    .trimEnd();
   return [
     `--- SKILL: ${skill.id} (${skill.path}) ---`,
-    skill.body.trimEnd(),
+    body,
     '--- END SKILL ---',
   ].join('\n');
 };
 
-export const renderSkills = (ids: ReadonlyArray<SkillId>): string =>
-  ids.map(renderSkill).filter(Boolean).join('\n\n');
+export const renderSkills = (
+  ids: ReadonlyArray<SkillId>,
+  compliant: boolean,
+): string =>
+  ids
+    .map((id) => renderSkill(id, compliant))
+    .filter(Boolean)
+    .join('\n\n');

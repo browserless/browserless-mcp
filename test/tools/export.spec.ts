@@ -14,6 +14,7 @@ const mockConfig: McpConfig = {
   maxRetries: 0,
   cacheTtlMs: 0,
   analyticsEnabled: false,
+  complianceMode: false,
   sqsRegion: 'us-east-1',
   oauthEnabled: false,
   supabaseUrl: '',

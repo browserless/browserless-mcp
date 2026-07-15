@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.0](https://github.com/browserless/browserless-mcp/compare/v1.11.0...v1.12.0) (2026-07-15)
+
+
+### Features
+
+* add compliant MCP tool surface via MCP_COMPLIANCE_MODE  ([#166](https://github.com/browserless/browserless-mcp/issues/166)) ([0109fbb](https://github.com/browserless/browserless-mcp/commit/0109fbb0df6da462a392c19364f2179b43d5b6fe))
+
+
+### Bug Fixes
+
+* **auth:** PLT-1318 verify Supabase JWT signature before trusting accountId ([#176](https://github.com/browserless/browserless-mcp/issues/176)) ([4778052](https://github.com/browserless/browserless-mcp/commit/477805229b328fe8e93dc2213693925ab544bd57))
+
 ## [1.11.0](https://github.com/browserless/browserless-mcp/compare/v1.10.1...v1.11.0) (2026-07-09)
 
 

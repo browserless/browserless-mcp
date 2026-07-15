@@ -740,6 +740,67 @@ export const AgentParamsSchema = z
       'one) cannot both be set',
   });
 
+// ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
+// De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,
+// stealth, autologin) + raw-BQL passthrough. `.strict()` rejects removed keys server-side.
+const compliantCommandSchemas = [
+  GotoCommandSchema,
+  BackCommandSchema,
+  ForwardCommandSchema,
+  ReloadCommandSchema,
+  SnapshotCommandSchema,
+  GetTabsCommandSchema,
+  SwitchTabCommandSchema,
+  CreateTabCommandSchema,
+  CloseTabCommandSchema,
+  ClickCommandSchema,
+  TypeCommandSchema,
+  SelectCommandSchema,
+  CheckboxCommandSchema,
+  HoverCommandSchema,
+  ScrollCommandSchema,
+  TextCommandSchema,
+  HtmlCommandSchema,
+  WaitForSelectorCommandSchema,
+  WaitForNavigationCommandSchema,
+  WaitForTimeoutCommandSchema,
+  WaitForRequestCommandSchema,
+  WaitForResponseCommandSchema,
+  LiveURLCommandSchema,
+  ScreenshotCommandSchema,
+  // No uploadFile/getDownloads: upload impersonates a human write (vendor-TOS),
+  // download is the paired file-I/O — a compliant web agent reads, doesn't move files.
+  CloseCommandSchema,
+] as const;
+
+/** Method names the compliant agent permits — defense-in-depth for run(). */
+export const COMPLIANT_AGENT_METHODS: ReadonlySet<string> = new Set<string>(
+  compliantCommandSchemas.map((s) => s.shape.method.value),
+);
+
+// No profile/createProfile: zero auth-profile capability. profile hydrates a
+// saved session (see profileField) — belongs with the hidden autonomous-login skills.
+export const CompliantAgentParamsSchema = z
+  .object({
+    commands: z
+      .array(z.discriminatedUnion('method', compliantCommandSchemas))
+      .min(1)
+      .describe(
+        'Batch of browser navigation, read, and interaction commands ' +
+          '(click, type, scroll, etc.) executed sequentially against the page ' +
+          'the user specifies. Only the final result is returned.',
+      ),
+    rationale: z
+      .string()
+      .optional()
+      .describe(
+        'Short user-facing reason for this call (<=50 chars, present-continuous).',
+      ),
+  })
+  .strict();
+
+export type CompliantAgentParams = z.infer<typeof CompliantAgentParamsSchema>;
+
 /** A single validated agent command. */
 export type AgentCommand = z.infer<typeof AgentCommandSchema>;
 /** The full `browserless_agent` tool params (single command, batch, proxy, profile). */
