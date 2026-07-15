@@ -42,11 +42,16 @@ now, add **`toDisk: true`**:
 ```
 
 You will **not** see the image. The response gives a reusable handle — a local
-path (stdio) or a single-use GET URL (HTTP) — exactly like a download. Reuse it
-with `uploadFile`, or hand the path/URL to the user. See the **file-transfers**
-skill for the handle/path/URL rules and TTL. Note: to actually _look_ at a
-disk-saved shot you'd have to load it back into context — so only use `toDisk`
-when you don't need to view it.
+path (stdio) or a single-use GET URL (HTTP) — exactly like a download. Hand the
+path/URL to the user.
+<!-- compliant-omit -->
+
+Reuse it with `uploadFile`, or see the **file-transfers** skill for the
+handle/path/URL rules and TTL.
+<!-- /compliant-omit -->
+
+Note: to actually _look_ at a disk-saved shot you'd have to load it back into
+context — so only use `toDisk` when you don't need to view it.
 
 ## Pattern: capture-after-action
 
@@ -65,7 +70,12 @@ when you don't need to view it.
 
 ## Avoid
 
+<!-- compliant-omit -->
+
 - OCR via evaluate (you have vision input)
 - Screenshotting for structured data (use snapshot/evaluate)
+
+<!-- /compliant-omit -->
+
 - Full-page screenshots by default (pick scope)
 - Multiple screenshots of same state (one is enough)

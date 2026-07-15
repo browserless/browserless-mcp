@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { SupabaseJwtPayload } from '../@types/types.js';
 
 /**
  * 64-bit truncation of SHA-256 — wide enough to make accidental collisions
@@ -52,16 +51,6 @@ export function parseCsv(raw: string | undefined): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-}
-
-/** Decode the payload segment of a JWT. Throws on malformed input. */
-export function decodeJwtPayload(jwt: string): SupabaseJwtPayload {
-  const parts = jwt.split('.');
-  if (parts.length !== 3) {
-    throw new Error('Invalid JWT format');
-  }
-  const payload = Buffer.from(parts[1], 'base64url').toString('utf-8');
-  return JSON.parse(payload) as SupabaseJwtPayload;
 }
 
 /**

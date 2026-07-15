@@ -3,6 +3,7 @@ import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
+import { isCompliant, COMPLIANT_EXPORT_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   ExportParams,
@@ -61,20 +62,37 @@ export const ExportParamsSchema = z.object({
   profile: profileField('before the page is exported'),
 });
 
+// Fail-closed param allowlist (.pick, not .omit) — a new full-schema field stays
+// off until allowed. Drops includeResources (bulk ZIP) + profile (auth); .strict() rejects extras.
+const CompliantExportParamsSchema = ExportParamsSchema.pick({
+  url: true,
+  gotoOptions: true,
+  bestAttempt: true,
+  waitForTimeout: true,
+  timeout: true,
+}).strict();
+
 export function registerExportTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const compliant = isCompliant(config);
+
   defineTool<ExportParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_export',
-    description:
-      'Export a webpage from a URL via the Browserless /export API. ' +
-      'Fetches the URL and returns its content in the native format ' +
-      '(HTML, PDF, image, etc.). Automatically detects the content type. ' +
-      'Set includeResources=true to bundle all page assets (CSS, JS, images) ' +
-      'into a ZIP archive for offline use.',
-    parameters: ExportParamsSchema,
+    description: compliant
+      ? COMPLIANT_EXPORT_DESCRIPTION
+      : 'Export a webpage from a URL via the Browserless /export API. ' +
+        'Fetches the URL and returns its content in the native format ' +
+        '(HTML, PDF, image, etc.). Automatically detects the content type. ' +
+        'Set includeResources=true to bundle all page assets (CSS, JS, images) ' +
+        'into a ZIP archive for offline use.',
+    // Cast: Zod's generic is invariant, so the ternary needs it. The compliant .pick
+    // schema is a structural subtype; FastMCP's runtime schema + compliance spec are the real guards.
+    parameters: (compliant
+      ? CompliantExportParamsSchema
+      : ExportParamsSchema) as z.ZodType<ExportParams>,
     annotations: {
       title: 'Browserless Export',
       readOnlyHint: true,
@@ -88,6 +106,19 @@ export function registerExportTool(
       `live session first, or omit the profile parameter to export ` +
       `the page anonymously.`,
     run: async ({ client, params, log }) => {
+      // Defense-in-depth (parity with the agent allowlist): the `.pick().strict()`
+      // schema already rejects `includeResources`, but guard run() too so a future
+      // schema regression can't forward bulk asset capture to the backend.
+      if (compliant && params.includeResources !== undefined) {
+        throw new UserError(
+          'includeResources is not available on this endpoint.',
+        );
+      }
+      if (compliant && params.profile !== undefined) {
+        throw new UserError(
+          'Authentication profiles are not available on this endpoint.',
+        );
+      }
       const response = await client.exportPage({
         url: params.url,
         gotoOptions: params.gotoOptions,

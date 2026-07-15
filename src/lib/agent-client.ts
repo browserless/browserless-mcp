@@ -257,6 +257,7 @@ export const buildAgentWsUrl = (
   proxy?: ProxyOptions,
   profile?: string,
   sessionId?: string,
+  compliant = false,
 ): string => {
   const base = apiUrl.replace(/^http/i, 'ws').replace(/\/+$/, '');
   const url = new URL(base + '/chromium/agent');
@@ -267,18 +268,24 @@ export const buildAgentWsUrl = (
     url.searchParams.set('sessionId', sessionId);
     return url.toString();
   }
-  if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
-  if (proxy?.proxyCountry)
-    url.searchParams.set('proxyCountry', proxy.proxyCountry);
-  if (proxy?.proxyState) url.searchParams.set('proxyState', proxy.proxyState);
-  if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
-  if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
-  if (proxy?.proxyLocaleMatch) url.searchParams.set('proxyLocaleMatch', 'true');
-  if (proxy?.proxyPreset)
-    url.searchParams.set('proxyPreset', proxy.proxyPreset);
-  if (proxy?.externalProxyServer)
-    url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
-  if (profile) url.searchParams.set('profile', profile);
+  // Compliant surface exposes no proxy/profile — the schema and run()-layer
+  // guards already reject them, but hard-drop here too so no caller path can
+  // put them on the wire (last line of defense before the upstream connect).
+  if (!compliant) {
+    if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
+    if (proxy?.proxyCountry)
+      url.searchParams.set('proxyCountry', proxy.proxyCountry);
+    if (proxy?.proxyState) url.searchParams.set('proxyState', proxy.proxyState);
+    if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
+    if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
+    if (proxy?.proxyLocaleMatch)
+      url.searchParams.set('proxyLocaleMatch', 'true');
+    if (proxy?.proxyPreset)
+      url.searchParams.set('proxyPreset', proxy.proxyPreset);
+    if (proxy?.externalProxyServer)
+      url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
+    if (profile) url.searchParams.set('profile', profile);
+  }
   return url.toString();
 };
 
@@ -478,9 +485,17 @@ const connect = (
   proxy?: ProxyOptions,
   profile?: string,
   sessionId?: string,
+  compliant = false,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
-    const wsUrl = buildAgentWsUrl(apiUrl, token, proxy, profile, sessionId);
+    const wsUrl = buildAgentWsUrl(
+      apiUrl,
+      token,
+      proxy,
+      profile,
+      sessionId,
+      compliant,
+    );
     const ws = new WebSocket(wsUrl);
     let settled = false;
 
@@ -605,6 +620,7 @@ export const getOrCreateSession = async (
   profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
+  compliant = false,
 ): Promise<ActiveSession> => {
   sweepSessions();
   const key = getSessionKey(
@@ -650,7 +666,14 @@ export const getOrCreateSession = async (
         await postCreateProfile(apiUrl, token, createProfile)
       ).id;
     }
-    const ws = await connect(apiUrl, token, proxy, profile, creationSessionId);
+    const ws = await connect(
+      apiUrl,
+      token,
+      proxy,
+      profile,
+      creationSessionId,
+      compliant,
+    );
     const session: ActiveSession = {
       ws,
       msgId: 0,

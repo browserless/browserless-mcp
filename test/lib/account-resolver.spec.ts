@@ -16,6 +16,25 @@ function buildFakeJwt(payload: Record<string, unknown>): string {
 const SUPABASE_URL = 'https://test.supabase.co';
 const SERVICE_ROLE_KEY = 'test-service-role-key';
 
+/** Supabase Auth `/auth/v1/user` success — the authoritative, signature-verified user. */
+function supabaseUser(appMetadata: Record<string, unknown>): Response {
+  return new Response(
+    JSON.stringify({ id: 'user-uuid', app_metadata: appMetadata }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+}
+
+/** PostgREST `/rest/v1/accounts` success. */
+function postgrestRows(rows: Array<Record<string, unknown>>): Response {
+  return new Response(JSON.stringify(rows), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 describe('account-resolver', () => {
   let fetchStub: sinon.SinonStub;
 
@@ -28,59 +47,120 @@ describe('account-resolver', () => {
     sinon.restore();
   });
 
-  it('resolves API key from valid Supabase JWT via PostgREST', async () => {
+  it('verifies the token with Supabase Auth, then resolves the API key via PostgREST', async () => {
     const jwt = buildFakeJwt({
       sub: 'user-uuid',
       email: 'user@example.com',
       app_metadata: { accountId: 'acc-123' },
     });
 
-    fetchStub.resolves(
-      new Response(
-        JSON.stringify([
-          { api_key: 'resolved-key', email: 'user@example.com' },
-        ]),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    );
+    fetchStub.onFirstCall().resolves(supabaseUser({ accountId: 'acc-123' }));
+    fetchStub
+      .onSecondCall()
+      .resolves(
+        postgrestRows([{ api_key: 'resolved-key', email: 'user@example.com' }]),
+      );
 
     const result = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
 
     expect(result.apiKey).to.equal('resolved-key');
     expect(result.email).to.equal('user@example.com');
 
-    // Verify PostgREST call
-    const [url, opts] = fetchStub.firstCall.args;
+    // First call must be the Supabase Auth verification with the USER's token.
+    const [verifyUrl, verifyOpts] = fetchStub.firstCall.args;
+    expect(verifyUrl).to.include('/auth/v1/user');
+    expect(verifyOpts.headers.apikey).to.equal(SERVICE_ROLE_KEY);
+    expect(verifyOpts.headers.Authorization).to.equal(`Bearer ${jwt}`);
+
+    // Second call is the PostgREST lookup, keyed on the VERIFIED accountId.
+    const [url, opts] = fetchStub.secondCall.args;
     expect(url).to.include('/rest/v1/accounts');
     expect(url).to.include('account_id=eq.acc-123');
     expect(opts.headers.apikey).to.equal(SERVICE_ROLE_KEY);
     expect(opts.headers.Authorization).to.equal(`Bearer ${SERVICE_ROLE_KEY}`);
   });
 
-  it('returns cached result on second call', async () => {
+  it('rejects a token Supabase Auth does not accept (forged/expired) without any PostgREST call', async () => {
+    // Attacker forges a token carrying a victim accountId; Supabase Auth rejects it.
+    const forged = buildFakeJwt({
+      sub: 'attacker',
+      app_metadata: { accountId: 'victim-account' },
+    });
+
+    fetchStub.onFirstCall().resolves(
+      new Response('{"msg":"invalid JWT"}', {
+        status: 401,
+        statusText: 'Unauthorized',
+      }),
+    );
+
+    try {
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, forged);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).to.include('rejected the access token');
+    }
+
+    // Crucially, no lookup for the victim account was ever made.
+    expect(fetchStub.callCount).to.equal(1);
+    expect(fetchStub.firstCall.args[0]).to.include('/auth/v1/user');
+  });
+
+  it('caches verification + lookup within the TTL (2nd call hits neither Supabase endpoint)', async () => {
     const jwt = buildFakeJwt({
       sub: 'user-uuid',
       app_metadata: { accountId: 'acc-456' },
     });
 
-    fetchStub.resolves(
-      new Response(
-        JSON.stringify([
-          { api_key: 'cached-key', email: 'cached@example.com' },
-        ]),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    );
+    // call 1: verify + PostgREST ; call 2: served entirely from cache.
+    fetchStub.onCall(0).resolves(supabaseUser({ accountId: 'acc-456' }));
+    fetchStub
+      .onCall(1)
+      .resolves(
+        postgrestRows([{ api_key: 'cached-key', email: 'cached@example.com' }]),
+      );
 
     await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
     const result = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
 
     expect(result.apiKey).to.equal('cached-key');
-    expect(fetchStub.callCount).to.equal(1);
+    // 2nd call reuses the verify cache AND the account cache -> no new fetches.
+    const authCalls = fetchStub
+      .getCalls()
+      .filter((c) => String(c.args[0]).includes('/auth/v1/user'));
+    const restCalls = fetchStub
+      .getCalls()
+      .filter((c) => String(c.args[0]).includes('/rest/v1/accounts'));
+    expect(authCalls.length).to.equal(1);
+    expect(restCalls.length).to.equal(1);
+    expect(fetchStub.callCount).to.equal(2);
   });
 
-  it('throws when JWT has no app_metadata.accountId', async () => {
+  it('bounds every Supabase call with an abort signal (timeout guard)', async () => {
+    const jwt = buildFakeJwt({
+      sub: 'user-uuid',
+      app_metadata: { accountId: 'acc-signal' },
+    });
+    fetchStub.onCall(0).resolves(supabaseUser({ accountId: 'acc-signal' }));
+    fetchStub
+      .onCall(1)
+      .resolves(postgrestRows([{ api_key: 'k', email: 'e@example.com' }]));
+
+    await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+
+    // A hung Supabase must not stall these fetches — both carry an AbortSignal.
+    for (const call of fetchStub.getCalls()) {
+      expect(
+        call.args[1]?.signal,
+        `missing signal on ${call.args[0]}`,
+      ).to.be.an('AbortSignal');
+    }
+  });
+
+  it('throws when the verified user has no app_metadata.accountId', async () => {
     const jwt = buildFakeJwt({ sub: 'user-uuid', email: 'user@example.com' });
+
+    fetchStub.onFirstCall().resolves(supabaseUser({}));
 
     try {
       await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
@@ -96,12 +176,10 @@ describe('account-resolver', () => {
       app_metadata: { accountId: 'acc-missing' },
     });
 
-    fetchStub.resolves(
-      new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    fetchStub
+      .onFirstCall()
+      .resolves(supabaseUser({ accountId: 'acc-missing' }));
+    fetchStub.onSecondCall().resolves(postgrestRows([]));
 
     try {
       await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
@@ -117,7 +195,8 @@ describe('account-resolver', () => {
       app_metadata: { accountId: 'acc-err' },
     });
 
-    fetchStub.resolves(
+    fetchStub.onFirstCall().resolves(supabaseUser({ accountId: 'acc-err' }));
+    fetchStub.onSecondCall().resolves(
       new Response('Internal Server Error', {
         status: 500,
         statusText: 'Internal Server Error',
@@ -132,12 +211,13 @@ describe('account-resolver', () => {
     }
   });
 
-  it('throws on invalid JWT format', async () => {
+  it('throws on invalid JWT format without contacting Supabase Auth', async () => {
     try {
       await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, 'not-a-jwt');
       expect.fail('should have thrown');
     } catch (err) {
       expect((err as Error).message).to.include('Invalid JWT format');
     }
+    expect(fetchStub.callCount).to.equal(0);
   });
 });

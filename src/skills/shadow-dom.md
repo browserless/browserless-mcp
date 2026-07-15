@@ -27,6 +27,8 @@ When snapshot lists `deep-ref=< button#deny`, pass to `click` / `type` / `hover`
 { "method": "click", "params": { "selector": "< button#deny" } }
 ```
 
+<!-- compliant-omit -->
+
 ## Constructing deep selectors for iframes snapshot didn't surface
 
 Fallback only — most cross-origin iframes are now in the snapshot (see above). Some widgets still have nothing meaningful in the accessibility tree. Build selector by hand:
@@ -38,11 +40,21 @@ Fallback only — most cross-origin iframes are now in the snapshot (see above).
 
 URL pattern is glob — `*` matches any substring.
 
+<!-- /compliant-omit -->
+
 ## What works and what doesn't
 
 Coordinate-based actions work through deep selectors: **`click`, `type`, `hover`, `checkbox`**.
 
 DOM-read actions **don't** work, fail or return null: **`text`, `html`, `waitForSelector`** with deep selectors.
+
+<!-- compliant-only -->
+
+To read content inside a frame or shadow root, use the snapshot — iframes are surfaced above with ready `deep-ref=` selectors — or `screenshot` the page and read it visually. Deep selectors are for interaction, not reading.
+
+<!-- /compliant-only -->
+
+<!-- compliant-omit -->
 
 To read content from shadow root or iframe, use `evaluate` with explicit traversal:
 
@@ -65,6 +77,8 @@ For shadow DOM:
   }
 }
 ```
+
+<!-- /compliant-omit -->
 
 ## Recovery when regular selector fails
 
