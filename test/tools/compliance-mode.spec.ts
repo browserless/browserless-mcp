@@ -890,8 +890,9 @@ describe('compliance mode — compliant tool surface', () => {
 
     // Recipes now come from the remote skill bucket, so seed the host the way a
     // live GET /skills would before exercising the notice path.
-    beforeEach(() =>
-      hydrateRemoteSkills(
+    beforeEach(() => {
+      __resetRemoteSkillsForTesting();
+      return hydrateRemoteSkills(
         RECIPE_URL,
         'https://api.example.com',
         'test-token',
@@ -907,8 +908,8 @@ describe('compliance mode — compliant tool surface', () => {
               },
             ],
           }) as unknown as Response) as typeof fetch,
-      ),
-    );
+      );
+    });
 
     afterEach(() => __resetRemoteSkillsForTesting());
 

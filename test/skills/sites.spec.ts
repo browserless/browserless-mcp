@@ -133,6 +133,37 @@ describe('site skills', function () {
       expect(calls).to.equal(1);
     });
 
+    it('shares the in-flight fetch across concurrent callers', async function () {
+      let calls = 0;
+      const slow: typeof fetch = async () => {
+        calls++;
+        return {
+          ok: true,
+          json: async () => [
+            { task: 'search', title: 'Shop Search', skill_md: SKILL_BODY },
+          ],
+        } as unknown as Response;
+      };
+      await Promise.all([
+        hydrateRemoteSkills(
+          'https://shop.example/a',
+          'https://api.test',
+          'tok',
+          slow,
+        ),
+        hydrateRemoteSkills(
+          'https://shop.example/b',
+          'https://api.test',
+          'tok',
+          slow,
+        ),
+      ]);
+      expect(calls).to.equal(1);
+      expect(
+        listSiteSkillsForHost('shop.example').map((s) => s.slug),
+      ).to.deep.equal(['search']);
+    });
+
     it('never throws and leaves the host empty on fetch failure', async function () {
       const throwing: typeof fetch = async () => {
         throw new Error('network down');

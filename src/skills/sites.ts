@@ -77,7 +77,7 @@ export const loadSiteSkill = (id: string): string | null => {
 // the manifest on first goto. A slow or failed fetch is a no-op, never a stall.
 
 const REMOTE_SKILL_TIMEOUT_MS = 2500;
-const hydratedHosts = new Set<string>();
+const hydrations = new Map<string, Promise<void>>();
 
 interface RemoteSkill {
   task?: string;
@@ -103,25 +103,13 @@ const mergeRemoteSkills = (key: string, remote: RemoteSkill[]): void => {
   manifest.set(key, entries);
 };
 
-export const hydrateRemoteSkills = async (
-  url: string | undefined,
-  apiUrl: string | undefined,
-  token: string | undefined,
-  fetchImpl: typeof fetch = fetch,
+const fetchAndMerge = async (
+  key: string,
+  host: string,
+  apiUrl: string,
+  token: string,
+  fetchImpl: typeof fetch,
 ): Promise<void> => {
-  if (!url || !apiUrl || !token) return;
-
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return;
-  }
-
-  const key = bareHost(host);
-  if (hydratedHosts.has(key)) return;
-  hydratedHosts.add(key); // one attempt per host per process, success or not
-
   const endpoint = `${apiUrl.replace(/\/+$/, '')}/skills?domain=${encodeURIComponent(
     host,
   )}&token=${encodeURIComponent(token)}`;
@@ -140,8 +128,32 @@ export const hydrateRemoteSkills = async (
   }
 };
 
+export const hydrateRemoteSkills = (
+  url: string | undefined,
+  apiUrl: string | undefined,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> => {
+  if (!url || !apiUrl || !token) return Promise.resolve();
+
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return Promise.resolve();
+  }
+
+  const key = bareHost(host);
+  const inflight = hydrations.get(key);
+  if (inflight) return inflight;
+
+  const p = fetchAndMerge(key, host, apiUrl, token, fetchImpl);
+  hydrations.set(key, p); // kept after settle → one fetch per host per process
+  return p;
+};
+
 export const __resetRemoteSkillsForTesting = (): void => {
-  hydratedHosts.clear();
+  hydrations.clear();
   manifest.clear();
   byId.clear();
 };
