@@ -105,7 +105,11 @@ export async function resolveApiKey(
   const verifyKey = fullHash(accessToken);
   let accountId = verifyCache.get<string>(verifyKey);
   if (!accountId) {
-    accountId = await verifyAccessToken(supabaseUrl, serviceRoleKey, accessToken);
+    accountId = await verifyAccessToken(
+      supabaseUrl,
+      serviceRoleKey,
+      accessToken,
+    );
     verifyCache.set(verifyKey, accountId);
   }
 
