@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { getConfig } from '../../src/config.js';
+import { getConfig, classifyComplianceInput } from '../../src/config.js';
 
 const ENV_KEY = 'OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS';
 const BASELINE_PATTERNS = [
@@ -64,5 +64,61 @@ describe('config.oauthAllowedRedirectUriPatterns', () => {
     const patterns = getConfig().oauthAllowedRedirectUriPatterns;
     expect(patterns).to.have.members(BASELINE_PATTERNS);
     expect(patterns).to.have.lengthOf(BASELINE_PATTERNS.length);
+  });
+});
+
+describe('config.complianceMode', () => {
+  const COMPLIANCE_KEY = 'MCP_COMPLIANCE_MODE';
+  let original: string | undefined;
+
+  beforeEach(() => {
+    original = process.env[COMPLIANCE_KEY];
+    delete process.env[COMPLIANCE_KEY];
+  });
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[COMPLIANCE_KEY];
+    else process.env[COMPLIANCE_KEY] = original;
+  });
+
+  it('defaults to false (full surface) when the env var is unset', () => {
+    expect(getConfig().complianceMode).to.equal(false);
+  });
+
+  it('is true for "true"', () => {
+    process.env[COMPLIANCE_KEY] = 'true';
+    expect(getConfig().complianceMode).to.equal(true);
+  });
+
+  it('fails closed: any set value that is not an explicit opt-out enables compliant mode', () => {
+    // '' (set-but-empty) is included: a set var, even empty, must not fall
+    // through to the full surface.
+    for (const v of ['1', 'yes', 'TRUE', 'on', ' true ', 'garbage', '']) {
+      process.env[COMPLIANCE_KEY] = v;
+      expect(getConfig().complianceMode, `value ${JSON.stringify(v)}`).to.equal(
+        true,
+      );
+    }
+  });
+
+  it('serves the full surface only for unset or an explicit opt-out token', () => {
+    for (const v of ['false', '0', 'no', 'off', 'FALSE', ' off ']) {
+      process.env[COMPLIANCE_KEY] = v;
+      expect(getConfig().complianceMode, `value ${JSON.stringify(v)}`).to.equal(
+        false,
+      );
+    }
+  });
+
+  it('classifyComplianceInput distinguishes unset / opt-out / opt-in / unrecognized', () => {
+    expect(classifyComplianceInput(undefined)).to.equal('unset');
+    for (const v of ['false', '0', 'no', 'off', 'FALSE', ' off '])
+      expect(classifyComplianceInput(v), v).to.equal('opt-out');
+    for (const v of ['true', '1', 'yes', 'on', 'TRUE', ' true '])
+      expect(classifyComplianceInput(v), v).to.equal('opt-in');
+    // Fumbled values still parse to compliant (fail-closed) but classify as
+    // unrecognized so the boot log warns instead of reading them as opt-in.
+    for (const v of ['ture', 'compliant', 'garbage', ''])
+      expect(classifyComplianceInput(v), v).to.equal('unrecognized');
   });
 });

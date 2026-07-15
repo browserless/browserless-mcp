@@ -17,6 +17,7 @@ export function registerStatusResource(
           text: JSON.stringify(
             {
               apiUrl: config.browserlessApiUrl,
+              surface: config.complianceMode ? 'compliant' : 'full',
               ok: false,
               message:
                 'No BROWSERLESS_TOKEN configured. For HTTP: pass Authorization header.',
@@ -33,8 +34,11 @@ export function registerStatusResource(
       return {
         text: JSON.stringify(
           {
-            apiUrl: config.browserlessApiUrl,
+            // Spread status first so apiUrl/surface stay authoritative even if
+            // the status payload ever grows an overlapping key.
             ...status,
+            apiUrl: config.browserlessApiUrl,
+            surface: config.complianceMode ? 'compliant' : 'full',
             timestamp: new Date().toISOString(),
           },
           null,

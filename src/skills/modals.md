@@ -17,6 +17,8 @@ Snapshot shows `role: dialog` or `role: alertdialog` — modal is open, traps fo
    { "method": "click", "params": { "selector": "[aria-label='Close']" } }
    ```
 
+<!-- compliant-omit -->
+
 3. **Escape key:**
 
    ```json
@@ -27,6 +29,8 @@ Snapshot shows `role: dialog` or `role: alertdialog` — modal is open, traps fo
      }
    }
    ```
+
+   <!-- /compliant-omit -->
 
 4. **Click backdrop:**
 
@@ -52,5 +56,10 @@ Critical confirmations ("Delete?"). Don't auto-dismiss. Find explicit button (`C
 
 ## Avoid
 
+<!-- compliant-omit -->
+
 - Removing modal DOM via evaluate (SPAs remount it)
+
+<!-- /compliant-omit -->
+
 - Interacting with page behind without closing first (pointer events captured)

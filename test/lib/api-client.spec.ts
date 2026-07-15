@@ -16,6 +16,7 @@ const mockConfig: McpConfig & { browserlessToken: string } = {
   maxRetries: 0,
   cacheTtlMs: 60000,
   analyticsEnabled: false,
+  complianceMode: false,
   sqsRegion: 'us-east-1',
   oauthEnabled: false,
   supabaseUrl: '',

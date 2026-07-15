@@ -61,7 +61,7 @@ describe('skills/registry', () => {
   });
 
   it('renderSkill wraps body with markers and the file path', () => {
-    const out = renderSkill('shadow-dom');
+    const out = renderSkill('shadow-dom', false);
     expect(out).to.match(
       /^--- SKILL: shadow-dom \(src\/skills\/shadow-dom\.md\) ---/,
     );
@@ -69,7 +69,7 @@ describe('skills/registry', () => {
   });
 
   it('renderSkills joins multiple', () => {
-    const out = renderSkills(['shadow-dom', 'modals']);
+    const out = renderSkills(['shadow-dom', 'modals'], false);
     expect(out).to.include('SKILL: shadow-dom');
     expect(out).to.include('SKILL: modals');
   });
