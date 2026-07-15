@@ -1,5 +1,4 @@
 import { FastMCP } from 'fastmcp';
-import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -62,18 +61,17 @@ export function registerProfilesTool(
         ];
       }
       const list = profiles
-        .map((p) => {
-          const lastUsed = p.lastUsedAt ?? 'never used';
-          return `- ${p.name} — ${p.cookieCount} cookies, ${p.originCount} origins (last used: ${lastUsed})`;
-        })
+        .map(
+          (p) =>
+            `- ${p.name} — ${p.cookieCount} cookies, ${p.originCount} origins (last used: ${p.lastUsedAt ?? 'never used'})`,
+        )
         .join('\n');
-      const blocks: Content[] = [
+      return [
         {
           type: 'text' as const,
           text: `## Saved Profiles (${profiles.length})\n\n${list}\n\nPass a profile's name as \`profile\` to reuse its logged-in state.`,
         },
       ];
-      return blocks;
     },
   });
 }

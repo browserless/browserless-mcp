@@ -14,6 +14,7 @@ import type {
   SearchParamsSchema,
 } from '../tools/search.js';
 import type { SitemapModeSchema, MapParamsSchema } from '../tools/map.js';
+import type { ListProfilesParamsSchema } from '../tools/profiles.js';
 import type {
   LighthouseCategorySchema,
   PerformanceParamsSchema,
@@ -308,6 +309,7 @@ export type TimeBasedOptions = z.infer<typeof TimeBasedOptionsSchema>;
 export type SearchParams = z.infer<typeof SearchParamsSchema>;
 export type SitemapMode = z.infer<typeof SitemapModeSchema>;
 export type MapParams = z.infer<typeof MapParamsSchema>;
+export type ListProfilesRequest = z.infer<typeof ListProfilesParamsSchema>;
 export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
 export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
 export type CrawlStatus = z.infer<typeof CrawlStatusSchema>;
@@ -562,11 +564,6 @@ export interface ProfileSummary {
   lastUsedAt: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface ListProfilesRequest {
-  limit?: number;
-  offset?: number;
 }
 
 export interface ApiClient {
