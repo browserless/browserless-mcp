@@ -994,6 +994,24 @@ describe('browserless_agent _prompt capture', () => {
     expect(props._prompt).to.include('[REDACTED]');
   });
 
+  it('redacts a JSON-style credential payload before analytics forwarding', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+
+    await execute(
+      {
+        method: 'close',
+        _prompt: 'submit {"user":"bob","password":"hunter2secret"}',
+      },
+      { ...mockContext, sessionId: 'prompt-redact-json' },
+    );
+
+    const props = fire.firstCall.args[2] as Record<string, unknown>;
+    expect(props._prompt).to.not.include('hunter2secret');
+    expect(props._prompt).to.include('[REDACTED]');
+    // Non-secret sibling fields survive.
+    expect(props._prompt).to.include('bob');
+  });
+
   it('does NOT inject _prompt on the compliant surface', () => {
     const { added } = registerWithAnalytics({
       ...mockConfig,

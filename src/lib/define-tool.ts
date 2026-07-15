@@ -32,12 +32,8 @@ interface ToolAnnotations {
   streamingHint?: boolean;
 }
 
-/**
- * Optional, LLM-populated field injected into every full-surface tool's
- * parameters. The SDK can't see the end user's prompt, so we ask the model to
- * self-report it for usage analytics. Never sent to the Browserless API —
- * stripped before `run` (see defineTool).
- */
+// LLM-self-reported user prompt, injected into every full-surface tool's params
+// for usage analytics. Stripped before `run` — never sent to the API.
 const PROMPT_FIELD = z
   .string()
   .optional()
