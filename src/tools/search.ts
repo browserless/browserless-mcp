@@ -81,12 +81,8 @@ export const SearchParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
-// Compliant surface: an explicit param ALLOWLIST (`.pick`, not `.omit`), so a
-// field added to the full schema later does NOT auto-appear here — it stays off
-// until deliberately allowed, matching the fail-closed philosophy. Notably
-// excludes `scrapeOptions` (per-result scraping reads as a search-driven bulk
-// relay). `.strict()` rejects any non-allowed key loudly instead of silently
-// stripping it (see ./compliance.ts).
+// Fail-closed param allowlist (.pick, not .omit) — a new full-schema field stays
+// off until allowed. Drops scrapeOptions (per-result bulk scrape); .strict() rejects extras.
 const CompliantSearchParamsSchema = SearchParamsSchema.pick({
   query: true,
   limit: true,
@@ -114,9 +110,8 @@ export function registerSearchTool(
         'Performs web searches via SearXNG and can return results from web, news, or images. ' +
         'Optionally scrape each result URL to get markdown, HTML, links, or screenshots. ' +
         'Useful for research, gathering information, and finding relevant web pages.',
-    // Cast: Zod's generic is invariant, so the ternary needs it. The compliant
-    // schema is a `.pick` subset (a structural subtype); the runtime schema
-    // FastMCP validates against is the real guard, plus the compliance-mode spec.
+    // Cast: Zod's generic is invariant, so the ternary needs it. The compliant .pick
+    // schema is a structural subtype; FastMCP's runtime schema + compliance spec are the real guards.
     parameters: (compliant
       ? CompliantSearchParamsSchema
       : SearchParamsSchema) as z.ZodType<SearchParams>,

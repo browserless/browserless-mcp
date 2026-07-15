@@ -741,13 +741,8 @@ export const AgentParamsSchema = z
   });
 
 // ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
-// De-fanged agent surface for the OpenAI / Anthropic directory listings. Drops
-// the commands + config those directories prohibit (CAPTCHA solving, arbitrary
-// JS, residential/geo proxy, stealth, autologin) and the raw-BQL passthrough
-// that could otherwise reach them by name. Server-side Zod is the enforcement,
-// not the description; `.strict()` rejects (not silently strips) any removed
-// top-level key (proxy / profile / createProfile / method / params) — `profile`
-// hydrates a saved auth session, the most security-relevant dropped key.
+// De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,
+// stealth, autologin) + raw-BQL passthrough. `.strict()` rejects removed keys server-side.
 const compliantCommandSchemas = [
   GotoCommandSchema,
   BackCommandSchema,
@@ -773,10 +768,8 @@ const compliantCommandSchemas = [
   WaitForResponseCommandSchema,
   LiveURLCommandSchema,
   ScreenshotCommandSchema,
-  // No uploadFile/getDownloads on the compliant surface: file upload
-  // impersonates a human write action (vendor-TOS concern) and downloads are
-  // the paired file-I/O — a compliant web agent reads page content, it doesn't
-  // move files.
+  // No uploadFile/getDownloads: upload impersonates a human write (vendor-TOS),
+  // download is the paired file-I/O — a compliant web agent reads, doesn't move files.
   CloseCommandSchema,
 ] as const;
 
@@ -785,11 +778,8 @@ export const COMPLIANT_AGENT_METHODS: ReadonlySet<string> = new Set<string>(
   compliantCommandSchemas.map((s) => s.shape.method.value),
 );
 
-// No `profile` / `createProfile`: the compliant surface exposes zero
-// authentication-profile capability. `profile` hydrates a saved session's
-// cookies/localStorage/IndexedDB (see profileField) — an auth-session-injection
-// knob that belongs with the autonomous-login/auth-profile skills the compliant
-// surface hides. `.strict()` rejects both if a caller sends them anyway.
+// No profile/createProfile: zero auth-profile capability. profile hydrates a
+// saved session (see profileField) — belongs with the hidden autonomous-login skills.
 export const CompliantAgentParamsSchema = z
   .object({
     commands: z

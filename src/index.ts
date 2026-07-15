@@ -121,11 +121,8 @@ const server = new FastMCP<BrowserlessSession>({
 
 registerSurface(server, config, analytics);
 // Log the active surface (both transports) so it's visible in the boot logs.
-// complianceMode fails closed (see parseComplianceMode), so a fumbled *value*
-// lands on the compliant surface. Distinguish "unset" (a dropped/wrong-scoped
-// env var on a directory deploy) from a deliberate opt-out — both print "full"
-// otherwise — and warn on an unrecognized value so a typo isn't read silently
-// as an intentional opt-in.
+// Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
+// on a directory deploy) from opt-out, and warn on an unrecognized value (typo).
 const complianceInput = classifyComplianceInput(
   process.env.MCP_COMPLIANCE_MODE,
 );

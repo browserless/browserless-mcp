@@ -21,12 +21,8 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'https://eu1.make.celonis.com/oauth/cb/mcp', // Make.com Celonis-hosted (enterprise) — EU region
 ];
 
-// Fail closed on the compliance gate: any SET value that isn't an explicit
-// opt-out enables the compliant (restricted) surface. A fumbled flag — "TRUE",
-// "1", a trailing space, a typo, even an empty string — must not silently fall
-// through to the full, prohibited surface on a directory-listed endpoint. Only
-// an UNSET var or an explicit opt-out token (false/0/no/off) serves the full
-// surface.
+// Fail closed: any SET value except an explicit opt-out (false/0/no/off) enables
+// the compliant surface, so a fumbled flag can't leak the full one to a directory.
 const COMPLIANCE_OPT_OUT = new Set(['false', '0', 'no', 'off']);
 const COMPLIANCE_OPT_IN = new Set(['true', '1', 'yes', 'on']);
 function parseComplianceMode(raw: string | undefined): boolean {
@@ -34,10 +30,8 @@ function parseComplianceMode(raw: string | undefined): boolean {
   return !COMPLIANCE_OPT_OUT.has(raw.trim().toLowerCase());
 }
 
-// Classify the raw MCP_COMPLIANCE_MODE for boot logging. `unrecognized` still
-// resolves to compliant (fail-closed, see parseComplianceMode) but is surfaced
-// as a warning so a typo'd / mis-scoped value ("ture", "compliant", a stray
-// space) is visible instead of silently reading as an intentional opt-in.
+// Classify the raw flag for boot logging: `unrecognized` still resolves to
+// compliant (fail-closed) but is warned, so a typo isn't read as intentional opt-in.
 export function classifyComplianceInput(
   raw: string | undefined,
 ): 'unset' | 'opt-out' | 'opt-in' | 'unrecognized' {

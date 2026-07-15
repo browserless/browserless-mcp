@@ -84,13 +84,9 @@ const appendSkills = (
   return `${base}\n\n${renderSkills(ids, compliant)}`;
 };
 
-// Surface-specific reply extras appended to an agent response: auto-injected
-// skill bodies (de-fanged on the compliant surface) and the site-recipe pointer
-// (suppressed on compliant — recipes can prescribe proxy/evaluate/login steps).
-// Pure + exported so both branches' threading of `compliant` is regression-
-// tested without a live session (compliance-mode.spec.ts). Note: in full mode
-// siteRecipeNotice mutates `sitesSurfaced` (dedup), matching the prior inline
-// behavior; compliant short-circuits before that call.
+// Reply extras: auto-injected skill bodies (de-fanged when compliant) + the
+// site-recipe pointer (suppressed when compliant). Pure/exported so both branches'
+// compliant threading is testable without a live session.
 export const buildSurfaceExtras = (
   compliant: boolean,
   triggered: ReadonlyArray<SkillId>,
@@ -417,10 +413,8 @@ const SkillToolParamsSchema = z
       'Provide either `id` (load a skill) or `site` (list site recipes).',
   });
 
-// The agent tool is registered with either the full or the compliant params
-// schema. Both are structural subtypes of this boundary type: `method`/`params`
-// are the full-surface single-command passthrough (absent in compliant mode),
-// so they are optional here and run() reads them undefined-safely.
+// Boundary type for both schemas: method/params are the full-only single-command
+// passthrough (absent when compliant), so optional here and read undefined-safely.
 type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
   method?: string;
   params?: Record<string, unknown>;
@@ -433,18 +427,13 @@ export function registerAgentTools(
 ): void {
   const compliant = isCompliant(config);
 
-  // Compliant mode: drop the circumvention/autologin recipes from the enum so
-  // they're neither selectable nor advertised, and omit the `site` recipe
-  // lookup — arbitrary site recipes can prescribe proxy/evaluate/login steps
-  // that can't be de-fanged, so the compliant surface exposes only the vetted
-  // in-house skills.
+  // Compliant: drop circumvention/autologin recipes from the enum + omit the
+  // `site` lookup (arbitrary recipes can prescribe proxy/evaluate/login) — vetted skills only.
   const compliantSkillIds = skillsRegistry
     .map((s) => s.id)
     .filter((id) => COMPLIANT_SKILLS.has(id));
-  // z.enum([]) doesn't throw — it builds an all-rejecting schema, so an empty
-  // allowlist would make browserless_skill silently reject every call. Fail
-  // loudly at boot instead. The destructure also gives z.enum a non-empty tuple
-  // type, dropping the cast.
+  // z.enum([]) doesn't throw (all-rejecting schema) — fail loudly at boot instead.
+  // The destructure also gives z.enum a non-empty tuple, dropping the cast.
   if (compliantSkillIds.length === 0) {
     throw new Error('Compliant surface has no allowlisted skills configured.');
   }
@@ -512,9 +501,7 @@ export function registerAgentTools(
       : AGENT_SYSTEM_PROMPT +
         fileTransferModeNote(config.transport, config.mcpBaseUrl),
     // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
-    // is a genuine supertype of both schemas' output (method/params optional); the
-    // runtime schema FastMCP validates against is the real guard, plus the
-    // compliance-mode spec (drift guard + run()-layer allowlist).
+    // supertypes both schemas; FastMCP's runtime schema + compliance spec are the real guards.
     parameters: (compliant
       ? CompliantAgentParamsSchema
       : AgentParamsSchema) as z.ZodType<AgentToolParams>,
@@ -544,9 +531,8 @@ export function registerAgentTools(
             }))
           : [{ method: params.method ?? '', params: params.params ?? {} }];
 
-      // Defense-in-depth: even if the schema were mis-built, the compliant
-      // surface never forwards a non-allowlisted method, an auth-profile, or a
-      // proxy argument to the backend.
+      // Defense-in-depth: even if the schema were mis-built, compliant never
+      // forwards a non-allowlisted method, auth-profile, or proxy arg to the backend.
       if (compliant) {
         for (const c of commands) {
           if (!COMPLIANT_AGENT_METHODS.has(c.method)) {

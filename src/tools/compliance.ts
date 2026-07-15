@@ -1,16 +1,9 @@
 import type { McpConfig, SkillId } from '../@types/types.js';
 import { detectSkills } from '../skills/index.js';
 
-// The compliant (directory-listable) surface. Serves the OpenAI + Anthropic app
-// directories, whose policies reject the full surface (CAPTCHA solving,
-// arbitrary code, residential/geo proxy, stealth, autologin, mass collection).
-// Enabled per-process by MCP_COMPLIANCE_MODE; when off, the same process serves
-// the full surface. This module owns the compliance policy: the `isCompliant`
-// predicate, the COMPLIANT_SKILLS allowlist + `visibleSkills` filter, the
-// compliant descriptions, and a re-export of the agent schema + allowed methods
-// (built in schemas.js, where the command schemas live). Tools import the policy
-// from here; the per-tool derivations (search/export `.pick` allowlists, the
-// register.ts surface gate) live in their own modules and branch on `isCompliant`.
+// Compliance policy for the MCP_COMPLIANCE_MODE surface, which the OpenAI /
+// Anthropic directories accept but the full one they reject: the isCompliant
+// gate, COMPLIANT_SKILLS allowlist + visibleSkills filter, compliant descriptions.
 export {
   CompliantAgentParamsSchema,
   COMPLIANT_AGENT_METHODS,
@@ -19,12 +12,9 @@ export {
 export const isCompliant = (config: McpConfig): boolean =>
   config.complianceMode === true;
 
-// ALLOWLIST of skills served on the compliant surface — fail-closed, mirroring
-// the search/export `.pick` allowlists: a skill newly added to the registry does
-// NOT auto-appear here; it must be added deliberately. Excludes captchas
-// (circumvention), autonomous-login/auth-profile (credential-driven login), and
-// file-transfers (upload impersonates a human; no file I/O on this surface).
-// Typed SkillId so a rename/removal of any listed id breaks the build.
+// Fail-closed allowlist — a new registry skill does NOT auto-appear, add it
+// deliberately. Omits captchas (circumvention), autonomous-login/auth-profile
+// (login), file-transfers (file I/O). Typed so a bad id breaks the build.
 export const COMPLIANT_SKILLS: ReadonlySet<SkillId> = new Set<SkillId>([
   'shadow-dom',
   'cookie-consent',
@@ -35,31 +25,23 @@ export const COMPLIANT_SKILLS: ReadonlySet<SkillId> = new Set<SkillId>([
   'tabs',
 ]);
 
-// Filter detected skill ids for the auto-injection path (see detectVisibleSkills
-// in agent.ts): in compliant mode only allowlisted skills survive, so a
-// restricted — or newly-added, not-yet-vetted — recipe never auto-injects into a
-// reply. The skill enum is filtered off the same allowlist in agent.ts.
+// Auto-injection filter: in compliant mode only allowlisted skills survive, so a
+// restricted or unvetted recipe never auto-injects. The enum uses the same set.
 export const visibleSkills = (
   ids: ReadonlyArray<SkillId>,
   compliant: boolean,
 ): SkillId[] =>
   compliant ? ids.filter((id) => COMPLIANT_SKILLS.has(id)) : ids.slice();
 
-// Compose detectSkills + visibleSkills for the agent auto-injection path. Lives
-// here (not in agent.ts) so agent.ts imports only this filtered wrapper, not the
-// raw detectSkills — an agent.ts auto-inject site can't silently bypass the
-// compliant filter (a revert to detectSkills won't resolve there). detectSkills
-// stays exported from skills/index.ts for its other callers.
+// detectSkills + visibleSkills, composed here (not agent.ts) so an auto-inject
+// site imports only the filtered wrapper — raw detectSkills won't resolve there.
 export const detectVisibleSkills = (
   ctx: Parameters<typeof detectSkills>[0],
   state: Parameters<typeof detectSkills>[1],
   compliant: boolean,
 ): SkillId[] => visibleSkills(detectSkills(ctx, state), compliant);
 
-// The compliant agent's description is the de-fanged system prompt
-// COMPLIANT_AGENT_SYSTEM_PROMPT (see skills/system-prompt.ts) — the full ReAct
-// loop minus the prohibited/impersonation surface, not a barebone blurb.
-
+// The compliant agent description is COMPLIANT_AGENT_SYSTEM_PROMPT (system-prompt.ts).
 export const COMPLIANT_SEARCH_DESCRIPTION =
   'Search the web using Browserless. Performs web searches via SearXNG ' +
   'and returns results from web, news, or images. Useful for research, ' +

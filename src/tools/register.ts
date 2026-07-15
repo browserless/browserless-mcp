@@ -15,21 +15,9 @@ import { registerStatusResource } from '../resources/status.js';
 import { registerScrapeUrlPrompt } from '../prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../prompts/extract-content.js';
 
-// Registers the advertised MCP surface — tools, resources, and prompts — so the
-// compliance gate covers everything a directory reviewer can list, not just
-// tools. Compliant mode omits smartscraper/function/map/crawl and their
-// smartscraper-specific api-docs resource + scrape-url/extract-content prompts:
-// the api-docs resource documents the prohibited proxy/captcha strategies, and
-// the prompts instruct the model to call browserless_smartscraper (gated out).
-// index.ts and the surface-guard spec both call this, so the test exercises the
-// real gating.
-// Every registrable surface item carries an explicit `surface` classification —
-// there is no positional "unconditional" section a newly added tool could fall
-// into and ship on the directory listing by accident. `'both'` = full +
-// compliant; `'full'` = full only (dropped from the compliant surface). A new
-// entry must state its surface, and the exact-set spec guards the compliant list
-// against drift. `browserless_agent`/`browserless_skill` (both `'both'`) reduce
-// their OWN shape via isCompliant internally.
+// Registers the whole surface (tools/resources/prompts) so the compliance gate
+// covers all a reviewer lists. Each item declares 'both'|'full' — no positional
+// "unconditional" block a new tool could ship on the directory by accident.
 type Surface = 'both' | 'full';
 
 export function registerSurface(
@@ -60,9 +48,8 @@ export function registerSurface(
     },
     // Generic service status — safe on both (it reports the active surface).
     { surface: 'both', register: () => registerStatusResource(server, config) },
-    // Full-surface only: scraping/code tools, plus the api-docs resource
-    // (documents proxy/captcha strategies) and the two prompts (instruct the
-    // model to call browserless_smartscraper).
+    // Full only: scraping/code tools + the api-docs resource and scrape prompts
+    // (they document proxy/captcha and steer the model to smartscraper).
     {
       surface: 'full',
       register: () => registerSmartScraperTool(server, config, analytics),

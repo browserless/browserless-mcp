@@ -266,27 +266,16 @@ export const markFired = (
   }
 };
 
-// A skill body carries two surface-specific markers so one file serves both:
-//   <!-- compliant-omit -->…<!-- /compliant-omit -->  full-only (evaluate
-//     techniques, captcha selectors) — dropped in compliant render.
-//   <!-- compliant-only -->…<!-- /compliant-only -->  compliant-only — the
-//     replacement guidance for what the omit removed (e.g. `screenshot`/`html`
-//     instead of `evaluate`), so the reduced recipe stays coherent; dropped in
-//     full render.
-// Each render drops the other surface's blocks and strips its own markers.
-// compliance-mode.spec.ts asserts the compliant render of every allowlisted
-// skill contains no evaluate/captcha content.
+// One file, two surfaces: <!-- compliant-omit -->…(full-only) and
+// <!-- compliant-only -->…(compliant replacement). Each render drops the other's blocks + strips markers.
 const COMPLIANT_OMIT_BLOCK =
   /<!-- compliant-omit -->[\s\S]*?<!-- \/compliant-omit -->\n*/g;
 const COMPLIANT_ONLY_BLOCK =
   /<!-- compliant-only -->[\s\S]*?<!-- \/compliant-only -->\n*/g;
 const MARKER_LINE = /[ \t]*<!-- \/?compliant-(?:omit|only) -->\n?/g;
 
-// The block strippers only match EXACT, balanced markers. A malformed one — a
-// typo, stray spacing, an unclosed/mismatched/nested pair — silently leaves the
-// block in place (prohibited content retained in the compliant render) and the
-// MARKER_LINE pass then erases the orphan marker, hiding the evidence. Validate
-// at skill-load so any anomaly fails closed at boot rather than leaking later.
+// The strippers match only exact, balanced markers; a malformed one would
+// silently leave a prohibited block in the compliant render. Validate at load, fail closed.
 const VALID_MARKER = /^<!-- \/?compliant-(?:omit|only) -->$/;
 const SUSPECT_MARKER = /<!--[^>]*compliant[^>]*-->/gi;
 const MARKER_TOKEN = /<!-- (\/?)compliant-(omit|only) -->/g;

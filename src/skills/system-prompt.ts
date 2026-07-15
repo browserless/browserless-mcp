@@ -133,13 +133,8 @@ Never retry same failed action without re-snapshot.
 
 `;
 
-// Compliant-surface system prompt: the full ReAct loop, de-fanged for the
-// OpenAI/Anthropic directory listing. Keeps everything that makes the agent
-// effective (loop, snapshot/selector rules, iframes, tabs, batching, error
-// recovery) and strips everything the vendors prohibit or that impersonates a
-// human: no evaluate (arbitrary code), no proxy, no auth/autonomous-login, no
-// CAPTCHA solving, no site-recipe discovery, no file upload/download. Kept in
-// sync with AGENT_SYSTEM_PROMPT above.
+// The full ReAct loop de-fanged for the directory listing: keeps what makes the
+// agent effective, strips evaluate/proxy/auth/CAPTCHA/site-recipes/file-I/O. Sync with AGENT_SYSTEM_PROMPT.
 export const COMPLIANT_AGENT_SYSTEM_PROMPT = `Drive a browser to complete a user-directed task on a page the user specifies. Use only for content the user is authorized to access. Do not use to bypass access controls or bot protection, solve CAPTCHAs, evade detection, route around IP/geo restrictions, or access content in violation of a site's terms of service.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
