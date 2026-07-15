@@ -5,6 +5,14 @@ captured from a live agent session and replayed on future sessions that connect
 with `profile=<name>`. Use it whenever a task needs the browser to start
 already signed in.
 
+## Recipe — reusing an existing profile
+
+Before creating a new profile, call `browserless_profiles` to list the profiles
+already saved for this token. If one matches the site you need, reuse it by
+passing its `name` as `profile` to the tool you're running — no new login
+needed. Only fall through to the creation recipe below when no suitable profile
+exists.
+
 ## Recipe — creating a profile
 
 1. **Open a creation session.** Call `browserless_agent` with a top-level

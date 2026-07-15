@@ -9,11 +9,13 @@ import type {
   ExportRequest,
   FunctionRequest,
   GenericApiResult,
+  ListProfilesRequest,
   MapRequest,
   MapResponse,
   McpConfig,
   PerformanceRequest,
   PerformanceResponse,
+  ProfileSummary,
   SearchRequest,
   SearchResponse,
   SmartScrapeRequest,
@@ -266,6 +268,17 @@ export function createApiClient(
         timeout,
         profile: params.profile,
         handleResponse: readGeneric,
+      });
+    },
+
+    async listProfiles(
+      params?: ListProfilesRequest,
+    ): Promise<ProfileSummary[]> {
+      return apiFetch<ProfileSummary[]>(config, {
+        path: '/profiles',
+        method: 'GET',
+        query: { limit: params?.limit, offset: params?.offset },
+        timeout: config.requestTimeout,
       });
     },
 

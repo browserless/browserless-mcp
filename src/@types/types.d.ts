@@ -553,6 +553,22 @@ export interface CrawlCancelResponse {
   status: 'cancelled';
 }
 
+/** A single authentication profile as returned by `GET /profiles`. */
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  cookieCount: number;
+  originCount: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListProfilesRequest {
+  limit?: number;
+  offset?: number;
+}
+
 export interface ApiClient {
   smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -564,5 +580,6 @@ export interface ApiClient {
   crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
+  listProfiles(params?: ListProfilesRequest): Promise<ProfileSummary[]>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
