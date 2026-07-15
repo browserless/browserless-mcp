@@ -15,6 +15,10 @@ import {
   validateMarkers,
 } from '../../src/skills/index.js';
 import { buildSurfaceExtras } from '../../src/tools/agent.js';
+import {
+  hydrateRemoteSkills,
+  __resetRemoteSkillsForTesting,
+} from '../../src/skills/sites.js';
 import { COMPLIANT_AGENT_SYSTEM_PROMPT } from '../../src/skills/system-prompt.js';
 import type { McpConfig, SkillId } from '../../src/@types/types.js';
 
@@ -882,7 +886,31 @@ describe('compliance mode — compliant tool surface', () => {
   // pure builder locks both call-sites' `compliant` threading without a live
   // session (a regression flipping either to the wrong branch fails here).
   describe('agent reply extras respect the surface', () => {
-    const RECIPE_URL = 'https://airbnb.com'; // a host with a bundled site recipe
+    const RECIPE_URL = 'https://airbnb.com'; // a host with a site recipe
+
+    // Recipes now come from the remote skill bucket, so seed the host the way a
+    // live GET /skills would before exercising the notice path.
+    beforeEach(() =>
+      hydrateRemoteSkills(
+        RECIPE_URL,
+        'https://api.example.com',
+        'test-token',
+        (async () =>
+          ({
+            ok: true,
+            json: async () => [
+              {
+                task: 'search-listings',
+                title: 'Airbnb Search',
+                skill_md:
+                  '---\nname: search-listings\ntitle: Airbnb Search\nwebsite: airbnb.com\n---\n# Airbnb Search\n## Purpose\nx',
+              },
+            ],
+          }) as unknown as Response) as typeof fetch,
+      ),
+    );
+
+    afterEach(() => __resetRemoteSkillsForTesting());
 
     it('compliant: de-fangs skills + suppresses site recipes', () => {
       const { skills, siteNotice } = buildSurfaceExtras(
