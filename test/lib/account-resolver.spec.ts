@@ -106,24 +106,56 @@ describe('account-resolver', () => {
     expect(fetchStub.firstCall.args[0]).to.include('/auth/v1/user');
   });
 
-  it('returns cached result on second call (no repeat Supabase Auth or PostgREST)', async () => {
+  it('re-verifies every call but caches the account lookup', async () => {
     const jwt = buildFakeJwt({
       sub: 'user-uuid',
       app_metadata: { accountId: 'acc-456' },
     });
 
-    fetchStub.onFirstCall().resolves(supabaseUser({ accountId: 'acc-456' }));
+    // call 1: verify + PostgREST ; call 2: verify again, PostgREST from cache.
+    fetchStub.onCall(0).resolves(supabaseUser({ accountId: 'acc-456' }));
     fetchStub
-      .onSecondCall()
+      .onCall(1)
       .resolves(
         postgrestRows([{ api_key: 'cached-key', email: 'cached@example.com' }]),
       );
+    fetchStub.onCall(2).resolves(supabaseUser({ accountId: 'acc-456' }));
 
     await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
     const result = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
 
     expect(result.apiKey).to.equal('cached-key');
-    expect(fetchStub.callCount).to.equal(2); // Supabase Auth + PostgREST once, then cache hit
+    // Verification is NOT skipped on a cache hit — only the PostgREST account
+    // lookup is cached. So 2 calls = verify(x2) + PostgREST(x1).
+    const authCalls = fetchStub
+      .getCalls()
+      .filter((c) => String(c.args[0]).includes('/auth/v1/user'));
+    const restCalls = fetchStub
+      .getCalls()
+      .filter((c) => String(c.args[0]).includes('/rest/v1/accounts'));
+    expect(authCalls.length).to.equal(2);
+    expect(restCalls.length).to.equal(1);
+  });
+
+  it('bounds every Supabase call with an abort signal (timeout guard)', async () => {
+    const jwt = buildFakeJwt({
+      sub: 'user-uuid',
+      app_metadata: { accountId: 'acc-signal' },
+    });
+    fetchStub.onCall(0).resolves(supabaseUser({ accountId: 'acc-signal' }));
+    fetchStub
+      .onCall(1)
+      .resolves(postgrestRows([{ api_key: 'k', email: 'e@example.com' }]));
+
+    await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+
+    // A hung Supabase must not stall these fetches — both carry an AbortSignal.
+    for (const call of fetchStub.getCalls()) {
+      expect(
+        call.args[1]?.signal,
+        `missing signal on ${call.args[0]}`,
+      ).to.be.an('AbortSignal');
+    }
   });
 
   it('throws when the verified user has no app_metadata.accountId', async () => {

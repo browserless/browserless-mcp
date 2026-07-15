@@ -1,5 +1,4 @@
 import { ResponseCache } from './cache.js';
-import { hashToken } from './utils.js';
 import type { SupabaseJwtPayload } from '../@types/types.js';
 
 interface ResolvedAccount {
@@ -9,6 +8,24 @@ interface ResolvedAccount {
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const cache = new ResponseCache(CACHE_TTL_MS);
+
+// Upper bound on any single Supabase call. Without it a slow/unresponsive
+// Supabase would hang the whole auth path (and the request holding it) forever.
+const SUPABASE_TIMEOUT_MS = 5000;
+
+/** `fetch` bounded by an AbortController so it can never hang indefinitely. */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUPABASE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Verify a Supabase access token by presenting it to Supabase Auth's
@@ -31,7 +48,7 @@ async function verifyAccessToken(
     throw new Error('Invalid JWT format');
   }
 
-  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+  const response = await fetchWithTimeout(`${supabaseUrl}/auth/v1/user`, {
     headers: {
       apikey: serviceRoleKey,
       Authorization: `Bearer ${accessToken}`,
@@ -67,23 +84,26 @@ export async function resolveApiKey(
   serviceRoleKey: string,
   accessToken: string,
 ): Promise<ResolvedAccount> {
-  // Cache on the token itself: only tokens that already passed Supabase Auth
-  // verification populate the cache, so a forged token can never hit a warm
-  // entry keyed on an account it doesn't own.
-  const cacheKey = `token:${hashToken(accessToken)}`;
-  const cached = cache.get<ResolvedAccount>(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
+  // Verify on EVERY call — the cache must never let a token skip verification,
+  // otherwise a token revoked/expired at Supabase would keep resolving until
+  // the entry aged out. Only the account lookup (below) is cached.
   const accountId = await verifyAccessToken(
     supabaseUrl,
     serviceRoleKey,
     accessToken,
   );
 
+  // Cache the stable accountId -> {apiKey,email} PostgREST lookup, keyed by the
+  // verified account UUID (no token material in the key, so no hash-truncation
+  // or collision surface).
+  const cacheKey = `account:${accountId}`;
+  const cached = cache.get<ResolvedAccount>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const url = `${supabaseUrl}/rest/v1/accounts?account_id=eq.${encodeURIComponent(accountId)}&select=api_key,email`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       apikey: serviceRoleKey,
       Authorization: `Bearer ${serviceRoleKey}`,
