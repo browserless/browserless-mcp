@@ -106,35 +106,34 @@ describe('account-resolver', () => {
     expect(fetchStub.firstCall.args[0]).to.include('/auth/v1/user');
   });
 
-  it('re-verifies every call but caches the account lookup', async () => {
+  it('caches verification + lookup within the TTL (2nd call hits neither Supabase endpoint)', async () => {
     const jwt = buildFakeJwt({
       sub: 'user-uuid',
       app_metadata: { accountId: 'acc-456' },
     });
 
-    // call 1: verify + PostgREST ; call 2: verify again, PostgREST from cache.
+    // call 1: verify + PostgREST ; call 2: served entirely from cache.
     fetchStub.onCall(0).resolves(supabaseUser({ accountId: 'acc-456' }));
     fetchStub
       .onCall(1)
       .resolves(
         postgrestRows([{ api_key: 'cached-key', email: 'cached@example.com' }]),
       );
-    fetchStub.onCall(2).resolves(supabaseUser({ accountId: 'acc-456' }));
 
     await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
     const result = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
 
     expect(result.apiKey).to.equal('cached-key');
-    // Verification is NOT skipped on a cache hit — only the PostgREST account
-    // lookup is cached. So 2 calls = verify(x2) + PostgREST(x1).
+    // 2nd call reuses the verify cache AND the account cache -> no new fetches.
     const authCalls = fetchStub
       .getCalls()
       .filter((c) => String(c.args[0]).includes('/auth/v1/user'));
     const restCalls = fetchStub
       .getCalls()
       .filter((c) => String(c.args[0]).includes('/rest/v1/accounts'));
-    expect(authCalls.length).to.equal(2);
+    expect(authCalls.length).to.equal(1);
     expect(restCalls.length).to.equal(1);
+    expect(fetchStub.callCount).to.equal(2);
   });
 
   it('bounds every Supabase call with an abort signal (timeout guard)', async () => {

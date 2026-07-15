@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ResponseCache } from './cache.js';
 import type { SupabaseJwtPayload } from '../@types/types.js';
 
@@ -7,7 +8,21 @@ interface ResolvedAccount {
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// accountId -> {apiKey,email}: the (stable, non-security) PostgREST row lookup.
 const cache = new ResponseCache(CACHE_TTL_MS);
+
+// full-token-hash -> verified accountId: caches the Supabase verification so a
+// token that keeps hitting the server isn't re-verified on every request.
+// TRADEOFF: a token revoked/expired at Supabase keeps resolving for up to this
+// TTL before the entry ages out and the next request re-verifies. 5 min is an
+// accepted window (access tokens are short-lived); shorten it if faster
+// revocation propagation is ever needed. Key is a FULL SHA-256 (not truncated)
+// so distinct tokens can't collide onto the same verified accountId.
+const verifyCache = new ResponseCache(CACHE_TTL_MS);
+
+const fullHash = (s: string): string =>
+  createHash('sha256').update(s).digest('hex');
 
 // Upper bound on any single Supabase call. Without it a slow/unresponsive
 // Supabase would hang the whole auth path (and the request holding it) forever.
@@ -84,18 +99,18 @@ export async function resolveApiKey(
   serviceRoleKey: string,
   accessToken: string,
 ): Promise<ResolvedAccount> {
-  // Verify on EVERY call — the cache must never let a token skip verification,
-  // otherwise a token revoked/expired at Supabase would keep resolving until
-  // the entry aged out. Only the account lookup (below) is cached.
-  const accountId = await verifyAccessToken(
-    supabaseUrl,
-    serviceRoleKey,
-    accessToken,
-  );
+  // Resolve the verified accountId from the token — from the short-lived verify
+  // cache if warm, otherwise by calling Supabase Auth. A failed verification
+  // throws and is never cached, so a forged token can't poison the cache.
+  const verifyKey = fullHash(accessToken);
+  let accountId = verifyCache.get<string>(verifyKey);
+  if (!accountId) {
+    accountId = await verifyAccessToken(supabaseUrl, serviceRoleKey, accessToken);
+    verifyCache.set(verifyKey, accountId);
+  }
 
   // Cache the stable accountId -> {apiKey,email} PostgREST lookup, keyed by the
-  // verified account UUID (no token material in the key, so no hash-truncation
-  // or collision surface).
+  // verified account UUID.
   const cacheKey = `account:${accountId}`;
   const cached = cache.get<ResolvedAccount>(cacheKey);
   if (cached) {
@@ -138,6 +153,7 @@ export async function resolveApiKey(
 
 export function clearResolverCache(): void {
   cache.clear();
+  verifyCache.clear();
 }
 
 /**
