@@ -6,6 +6,17 @@ import { FastMCP, OAuthProvider } from 'fastmcp';
 import { OAuthProxy } from 'fastmcp/auth';
 import { getConfig, classifyComplianceInput } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
+import { registerSmartScraperTool } from './tools/smartscraper.js';
+import { registerFunctionTool } from './tools/function.js';
+import { registerExportTool } from './tools/export.js';
+import { registerAgentTools } from './tools/agent.js';
+import { registerSearchTool } from './tools/search.js';
+import { registerMapTool } from './tools/map.js';
+import { registerCrawlTool } from './tools/crawl.js';
+import { registerPerformanceTool } from './tools/performance.js';
+import { registerProfilesTool } from './tools/profiles.js';
+import { registerApiDocsResource } from './resources/api-docs.js';
+import { registerStatusResource } from './resources/status.js';
 import { registerSurface } from './tools/register.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
@@ -119,6 +130,17 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
+registerSmartScraperTool(server, config, analytics);
+registerFunctionTool(server, config, analytics);
+registerExportTool(server, config, analytics);
+registerAgentTools(server, config, analytics);
+registerSearchTool(server, config, analytics);
+registerMapTool(server, config, analytics);
+registerCrawlTool(server, config, analytics);
+registerPerformanceTool(server, config, analytics);
+registerProfilesTool(server, config, analytics);
+registerApiDocsResource(server, config);
+registerStatusResource(server, config);
 registerSurface(server, config, analytics);
 // Log the active surface (both transports) so it's visible in the boot logs.
 // Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
