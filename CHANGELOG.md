@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.13.0](https://github.com/browserless/browserless-mcp/compare/v1.12.0...v1.13.0) (2026-07-16)
+
+
+### Features
+
+* add prompt field for telemetry AUTO-248 ([#180](https://github.com/browserless/browserless-mcp/issues/180)) ([9a2119c](https://github.com/browserless/browserless-mcp/commit/9a2119cfbfa363a947f4ddb98962665f2840fcd2))
+* force updating tool list on client connect AUTO-245 ([#181](https://github.com/browserless/browserless-mcp/issues/181)) ([3f526c0](https://github.com/browserless/browserless-mcp/commit/3f526c022212a8e093db2986441ca8c828d1e91c))
+* get browserless profiles [AUTO-240] ([#179](https://github.com/browserless/browserless-mcp/issues/179)) ([8928462](https://github.com/browserless/browserless-mcp/commit/892846226613eb5bdea3ed1e4d38b0306488a328))
+
 ## [1.12.0](https://github.com/browserless/browserless-mcp/compare/v1.11.0...v1.12.0) (2026-07-15)
 
 
