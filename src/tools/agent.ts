@@ -36,6 +36,7 @@ import {
   loadSiteSkill,
   renderSiteSkillList,
   siteRecipeNotice,
+  hydrateRemoteSkills,
 } from '../skills/sites.js';
 import { AgentParamsSchema } from './schemas.js';
 import {
@@ -469,6 +470,12 @@ export function registerAgentTools(
       if (compliant && !COMPLIANT_SKILLS.has(id as SkillId)) {
         throw new UserError(`Skill "${id}" is not available on this endpoint.`);
       }
+      // Site recipes live in the remote bucket; hydrate the host before lookup.
+      const siteHost =
+        params.site ?? (id.includes('/') ? id.split('/')[0] : '');
+      if (!compliant && siteHost) {
+        await hydrateRemoteSkills(`https://${siteHost}`, apiUrl, token);
+      }
       const body = compliant
         ? renderSkill(id as SkillId, true)
         : params.site !== undefined
@@ -858,6 +865,9 @@ export function registerAgentTools(
           lastSnapshot?.url ??
           (lastResult as { url?: string } | undefined)?.url ??
           crossOriginBaseline;
+        if (!compliant) {
+          await hydrateRemoteSkills(currentUrl, apiUrl, token);
+        }
         const { skills: renderedSkills, siteNotice } = buildSurfaceExtras(
           compliant,
           triggered,
