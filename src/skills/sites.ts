@@ -15,7 +15,6 @@ const sitesDir = join(dirname(fileURLToPath(import.meta.url)), 'sites');
 
 // Minimal reader for the fields we emit (name/title/description), including
 // folded scalars (`>-`, `|`). Not general YAML.
-// ponytail: swap for a YAML lib if the frontmatter ever grows nested structures.
 const parseFrontmatter = (raw: string): Record<string, string> => {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
