@@ -165,6 +165,10 @@ console.error(`[browserless-mcp] Tool surface: ${complianceSurface}`);
 server.on('connect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   console.error(`[browserless-mcp] Client connected: ${id}`);
+  // force the client to refresh its tool list on connect
+  void event.session.triggerListChangedNotification(
+    'notifications/tools/list_changed',
+  );
 });
 
 server.on('disconnect', (event) => {

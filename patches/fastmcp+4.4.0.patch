@@ -1,0 +1,26 @@
+diff --git a/node_modules/fastmcp/dist/chunk-3YTRRGCE.cjs b/node_modules/fastmcp/dist/chunk-3YTRRGCE.cjs
+index c34c637..b4e8abf 100644
+--- a/node_modules/fastmcp/dist/chunk-3YTRRGCE.cjs
++++ b/node_modules/fastmcp/dist/chunk-3YTRRGCE.cjs
+@@ -383,7 +383,7 @@ var FastMCPSession = class extends FastMCPSessionEventEmitter {
+     this.#sessionId = sessionId;
+     this.#needsEventLoopFlush = transportType === "httpStream";
+     if (tools.length) {
+-      this.#capabilities.tools = {};
++      this.#capabilities.tools = { listChanged: true };
+     }
+     if (resources.length || resourcesTemplates.length) {
+       this.#capabilities.resources = {};
+diff --git a/node_modules/fastmcp/dist/chunk-MDIESGNI.js b/node_modules/fastmcp/dist/chunk-MDIESGNI.js
+index 290200b..0d9eeca 100644
+--- a/node_modules/fastmcp/dist/chunk-MDIESGNI.js
++++ b/node_modules/fastmcp/dist/chunk-MDIESGNI.js
+@@ -383,7 +383,7 @@ var FastMCPSession = class extends FastMCPSessionEventEmitter {
+     this.#sessionId = sessionId;
+     this.#needsEventLoopFlush = transportType === "httpStream";
+     if (tools.length) {
+-      this.#capabilities.tools = {};
++      this.#capabilities.tools = { listChanged: true };
+     }
+     if (resources.length || resourcesTemplates.length) {
+       this.#capabilities.resources = {};

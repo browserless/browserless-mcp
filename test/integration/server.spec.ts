@@ -1,6 +1,9 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { createServer } from 'node:net';
 import { FastMCP } from 'fastmcp';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
@@ -63,4 +66,35 @@ describe('MCP Server Integration', () => {
     await server.stop();
     expect(server.serverState).to.equal('stopped');
   });
+
+  // patches/fastmcp+4.4.0.patch makes it `{ listChanged: true }`. Fails if a bump drops it.
+  it('advertises tools.listChanged so clients auto-refresh the tool list', async () => {
+    const port = await freePort();
+    server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
+    registerSmartScraperTool(server, mockConfig);
+    await server.start({ transportType: 'httpStream', httpStream: { port } });
+
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://localhost:${port}/mcp`),
+    );
+    try {
+      await client.connect(transport);
+      const caps = client.getServerCapabilities();
+      expect(caps?.tools).to.deep.include({ listChanged: true });
+    } finally {
+      await client.close().catch(() => {});
+      await server.stop();
+    }
+  });
 });
+
+const freePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.on('error', reject);
+    probe.listen(0, () => {
+      const { port } = probe.address() as { port: number };
+      probe.close(() => resolve(port));
+    });
+  });
