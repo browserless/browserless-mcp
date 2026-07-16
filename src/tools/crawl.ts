@@ -251,6 +251,7 @@ export function registerCrawlTool(
       prompt,
       log,
       analytics,
+      mcpSource,
       token,
       apiUrl,
       reportProgress,
@@ -260,6 +261,7 @@ export function registerCrawlTool(
         limit: params.limit ?? 100,
         api_url: apiUrl,
         profile_used: !!params.profile,
+        ...mcpSource,
         ...(prompt ? { _prompt: prompt } : {}),
       };
 

@@ -21,6 +21,27 @@ export function djb2(str: string): number {
   return hash >>> 0;
 }
 
+export interface McpSourceProps {
+  source: string;
+  client_name?: string;
+  client_version?: string;
+}
+
+/**
+ * Origin tag for analytics: our callers' `x-browserless-mcp-source` header wins;
+ * external clients fall back to (spoofable) MCP clientInfo.name → `mcp_client`.
+ */
+export function resolveMcpSource(
+  headerSource: string | undefined,
+  clientInfo: { name?: string; version?: string } | undefined,
+): McpSourceProps {
+  return {
+    source: headerSource || (clientInfo?.name ? 'mcp_client' : 'unknown'),
+    client_name: clientInfo?.name,
+    client_version: clientInfo?.version,
+  };
+}
+
 /** Content-Types that should be treated as text (not base64-encoded). */
 export const TEXT_CONTENT_TYPES = [
   'text/',
