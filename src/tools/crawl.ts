@@ -248,6 +248,7 @@ export function registerCrawlTool(
     run: async ({
       client,
       params,
+      prompt,
       log,
       analytics,
       token,
@@ -259,6 +260,7 @@ export function registerCrawlTool(
         limit: params.limit ?? 100,
         api_url: apiUrl,
         profile_used: !!params.profile,
+        ...(prompt ? { _prompt: prompt } : {}),
       };
 
       // Start the crawl (ProfileNotFoundError propagates to defineTool)

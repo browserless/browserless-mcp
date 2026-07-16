@@ -14,6 +14,7 @@ import type {
   SearchParamsSchema,
 } from '../tools/search.js';
 import type { SitemapModeSchema, MapParamsSchema } from '../tools/map.js';
+import type { ListProfilesParamsSchema } from '../tools/profiles.js';
 import type {
   LighthouseCategorySchema,
   PerformanceParamsSchema,
@@ -316,6 +317,7 @@ export type TimeBasedOptions = z.infer<typeof TimeBasedOptionsSchema>;
 export type SearchParams = z.infer<typeof SearchParamsSchema>;
 export type SitemapMode = z.infer<typeof SitemapModeSchema>;
 export type MapParams = z.infer<typeof MapParamsSchema>;
+export type ListProfilesRequest = z.infer<typeof ListProfilesParamsSchema>;
 export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
 export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
 export type CrawlStatus = z.infer<typeof CrawlStatusSchema>;
@@ -561,6 +563,17 @@ export interface CrawlCancelResponse {
   status: 'cancelled';
 }
 
+/** A single authentication profile as returned by `GET /profiles`. */
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  cookieCount: number;
+  originCount: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ApiClient {
   smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -572,5 +585,6 @@ export interface ApiClient {
   crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
+  listProfiles(params?: ListProfilesRequest): Promise<ProfileSummary[]>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }

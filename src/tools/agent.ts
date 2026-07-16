@@ -520,6 +520,7 @@ export function registerAgentTools(
     },
     run: async ({
       params,
+      prompt,
       log,
       analytics,
       token,
@@ -569,6 +570,7 @@ export function registerAgentTools(
 
       const sendAnalytics = (success: boolean) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
+          ...(prompt ? { _prompt: prompt } : {}),
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           api_url: apiUrl,
