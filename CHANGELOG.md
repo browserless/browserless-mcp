@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.14.0](https://github.com/browserless/browserless-mcp/compare/v1.13.0...v1.14.0) (2026-07-17)
+
+
+### Features
+
+* add source tracking for analytics ([#184](https://github.com/browserless/browserless-mcp/issues/184)) ([d4ebc83](https://github.com/browserless/browserless-mcp/commit/d4ebc83b5a1594f3c98c7f1cf237ad8fb1deee4a))
+
+
+### Bug Fixes
+
+* register all MCP tools via registerSurface so /mcp/connector stays compliant ([#186](https://github.com/browserless/browserless-mcp/issues/186)) ([78417cc](https://github.com/browserless/browserless-mcp/commit/78417cc6ca57de37f657e2f7816dfe2915203b9c))
+
 ## [1.13.0](https://github.com/browserless/browserless-mcp/compare/v1.12.0...v1.13.0) (2026-07-16)
 
 
