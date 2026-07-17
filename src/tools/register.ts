@@ -67,8 +67,7 @@ export function registerSurface(
       surface: 'full',
       register: () => registerCrawlTool(server, config, analytics),
     },
-    // Auth-profile listing is full-only: the compliant surface exposes no profile
-    // capability (the agent rejects `profile`), so it must not advertise profiles.
+    // Full-only: the compliant surface has no profile capability (agent rejects `profile`).
     {
       surface: 'full',
       register: () => registerProfilesTool(server, config, analytics),

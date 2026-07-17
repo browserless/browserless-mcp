@@ -117,11 +117,8 @@ describe('compliance mode — compliant tool surface', () => {
   // see that). Lock index.ts to registerSurface as the sole registration path.
   it('index.ts registers the surface only via registerSurface (no direct tool calls)', () => {
     const src = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8');
-    // Any register<X>Tool(s)/Resource/Prompt CALL in index.ts bypasses the
-    // registerSurface compliance gate — that is exactly how #179 regressed. Match
-    // generically (not a fixed denylist) so a brand-new tool registered directly
-    // here also fails. `registerSurface` and the route helpers
-    // (registerUploadRoute/registerDownloadRoute) are not surface registrars.
+    // A register*Tool/Resource/Prompt call in index.ts bypasses the registerSurface
+    // gate (how #179 regressed); generic match catches any new tool, not a fixed list.
     const directCalls = [
       ...src.matchAll(/\bregister\w+(?:Tools?|Resource|Prompt)\s*\(/g),
     ].map((m) => m[0]);
