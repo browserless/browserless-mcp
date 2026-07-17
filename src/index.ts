@@ -117,6 +117,9 @@ const hybridAuthenticate =
             sessionIdHeader: request.headers['x-browserless-session-id'] as
               string | undefined,
             sessionIdQuery: params.get('browserlessSessionId') || undefined,
+            sourceHeader: request.headers['x-browserless-mcp-source'] as
+              string | undefined,
+            sourceQuery: params.get('mcpSource') || undefined,
           },
           config,
         )) as BrowserlessSession;

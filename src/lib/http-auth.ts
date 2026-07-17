@@ -6,6 +6,7 @@ export interface ResolvedBrowserlessAuth {
   token: string;
   apiUrl: string;
   attachSessionId?: string;
+  source?: string;
 }
 
 export interface AuthInput {
@@ -15,6 +16,8 @@ export interface AuthInput {
   browserlessUrlQuery?: string;
   sessionIdHeader?: string;
   sessionIdQuery?: string;
+  sourceHeader?: string;
+  sourceQuery?: string;
 }
 
 /**
@@ -39,6 +42,9 @@ export const resolveBrowserlessAuth = async (
   // own POST /profile.
   const attachSessionId = input.sessionIdHeader ?? input.sessionIdQuery;
 
+  // Analytics-only origin tag set by our own callers; absent for external LLMs.
+  const source = input.sourceHeader ?? input.sourceQuery;
+
   const headerToken = input.authHeader?.startsWith('Bearer ')
     ? input.authHeader.slice(7)
     : input.authHeader;
@@ -49,7 +55,7 @@ export const resolveBrowserlessAuth = async (
   // A plain key (header or ?token=) is used directly and wins over JWT exchange.
   const plainKey = (isJwt ? undefined : headerToken) ?? input.tokenQuery;
   if (plainKey) {
-    return { token: plainKey, apiUrl, attachSessionId };
+    return { token: plainKey, apiUrl, attachSessionId, source };
   }
 
   // A JWT is exchanged for the account's Browserless API key via PostgREST.
@@ -59,7 +65,7 @@ export const resolveBrowserlessAuth = async (
       config.supabaseServiceRoleKey,
       headerToken,
     );
-    return { token: apiKey, apiUrl, attachSessionId };
+    return { token: apiKey, apiUrl, attachSessionId, source };
   }
 
   throw new Error(

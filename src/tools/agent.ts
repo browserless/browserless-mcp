@@ -462,7 +462,7 @@ export function registerAgentTools(
       destructiveHint: false,
       openWorldHint: false,
     },
-    run: async ({ params, analytics, token, apiUrl }) => {
+    run: async ({ params, analytics, mcpSource, token, apiUrl }) => {
       const id = params.id ?? '';
       // Compliant: no `site` recipes; only allowlisted in-house skills. The enum
       // already blocks other ids — this guard is defense-in-depth for a bypass.
@@ -477,6 +477,7 @@ export function registerAgentTools(
       analytics?.fireSkill(token, {
         ...buildSkillEventProps(params, body),
         api_url: apiUrl,
+        ...mcpSource,
       });
       return body;
     },
@@ -516,6 +517,7 @@ export function registerAgentTools(
       prompt,
       log,
       analytics,
+      mcpSource,
       token,
       apiUrl,
       sessionId: mcpSessionId,
@@ -563,6 +565,7 @@ export function registerAgentTools(
 
       const sendAnalytics = (success: boolean) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
+          ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
@@ -876,6 +879,7 @@ export function registerAgentTools(
               host,
               success: true,
               api_url: apiUrl,
+              ...mcpSource,
             });
           } catch {
             // malformed URL — nothing to report

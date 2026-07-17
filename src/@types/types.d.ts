@@ -44,6 +44,8 @@ export interface BrowserlessSession extends Record<string, unknown> {
    * resulting id instead of letting the model open a `createProfile` session.
    */
   attachSessionId?: string;
+  /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
+  source?: string;
 }
 
 export interface SupabaseJwtPayload {
