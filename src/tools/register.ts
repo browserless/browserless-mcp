@@ -9,6 +9,7 @@ import { registerPerformanceTool } from './performance.js';
 import { registerFunctionTool } from './function.js';
 import { registerMapTool } from './map.js';
 import { registerCrawlTool } from './crawl.js';
+import { registerProfilesTool } from './profiles.js';
 import { isCompliant } from './compliance.js';
 import { registerApiDocsResource } from '../resources/api-docs.js';
 import { registerStatusResource } from '../resources/status.js';
@@ -65,6 +66,12 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerCrawlTool(server, config, analytics),
+    },
+    // Auth-profile listing is full-only: the compliant surface exposes no profile
+    // capability (the agent rejects `profile`), so it must not advertise profiles.
+    {
+      surface: 'full',
+      register: () => registerProfilesTool(server, config, analytics),
     },
     {
       surface: 'full',
