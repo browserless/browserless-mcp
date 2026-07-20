@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.1](https://github.com/browserless/browserless-mcp/compare/v1.14.0...v1.14.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* publish patches and make patch-package a runtime dependency ([#187](https://github.com/browserless/browserless-mcp/issues/187)) ([969156d](https://github.com/browserless/browserless-mcp/commit/969156df70883686f8e5cb2cd69feb0ce2dc7d26))
+
 ## [1.14.0](https://github.com/browserless/browserless-mcp/compare/v1.13.0...v1.14.0) (2026-07-17)
 
 
