@@ -28,25 +28,25 @@ describe('package integrity — installable by --omit=dev consumers', () => {
   });
 
   it('ships the patches directory in the published package', () => {
-    expect(
-      (pkg.files || []).some((f: string) => f.includes('patches')),
-      'files[] must include a patches glob',
-    ).to.be.true;
+    expect(pkg.files, 'files[] must publish patches/*.patch').to.include(
+      'patches/*.patch',
+    );
   });
 
   it('pins fastmcp to the exact version each patch targets', () => {
-    const patches = readdirSync(join(root, 'patches')).filter((f) =>
-      f.endsWith('.patch'),
-    );
-    expect(patches.length, 'at least one patch expected').to.be.greaterThan(0);
-    for (const p of patches) {
-      const m = p.match(/^fastmcp\+(\d+\.\d+\.\d+)\.patch$/);
-      if (!m) continue;
+    const fastmcpPatches = readdirSync(join(root, 'patches'))
+      .map((f) => f.match(/^fastmcp\+(\d+\.\d+\.\d+)\.patch$/))
+      .filter((m): m is RegExpMatchArray => m !== null);
+    expect(
+      fastmcpPatches.length,
+      'a fastmcp+<version>.patch must exist',
+    ).to.be.greaterThan(0);
+    for (const m of fastmcpPatches) {
       // patch-package matches patches by the installed version in the filename;
       // a caret range could resolve to a version the patch can't apply to.
       expect(
         pkg.dependencies?.fastmcp,
-        `fastmcp must be pinned exactly to ${m[1]} to match ${p}`,
+        `fastmcp must be pinned exactly to ${m[1]} to match ${m[0]}`,
       ).to.equal(m[1]);
     }
   });
