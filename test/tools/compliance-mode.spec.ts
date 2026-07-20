@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import { registerSurface } from '../../src/tools/register.js';
@@ -93,7 +95,7 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full mode registers exactly the 9 tools (regression guard)', () => {
+  it('full mode registers exactly the 10 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_agent',
@@ -102,10 +104,35 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_function',
       'browserless_map',
       'browserless_performance',
+      'browserless_profiles',
       'browserless_search',
       'browserless_skill',
       'browserless_smartscraper',
     ]);
+  });
+
+  it('browserless_profiles is full-only (excluded from the compliant surface)', () => {
+    expect(captureTools(true).byName.has('browserless_profiles')).to.be.false;
+    expect(captureTools(false).byName.has('browserless_profiles')).to.be.true;
+  });
+
+  // #179 broke compliance by re-adding direct register*() calls in index.ts,
+  // bypassing the registerSurface gate (the register.ts-driven tests above can't
+  // see that). Lock index.ts to registerSurface as the sole registration path.
+  it('index.ts registers the surface only via registerSurface (no direct tool calls)', () => {
+    const src = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8');
+    // A register*Tool/Resource/Prompt call in index.ts bypasses the registerSurface
+    // gate (how #179 regressed); generic match catches any new tool, not a fixed list.
+    const directCalls = [
+      ...src.matchAll(/\bregister\w+(?:Tools?|Resource|Prompt)\s*\(/g),
+    ].map((m) => m[0]);
+    expect(
+      directCalls,
+      'register via registerSurface, not directly in index.ts',
+    ).to.deep.equal([]);
+    expect(src, 'index.ts must call registerSurface').to.include(
+      'registerSurface(',
+    );
   });
 
   describe('non-tool surface (prompts + resources)', () => {

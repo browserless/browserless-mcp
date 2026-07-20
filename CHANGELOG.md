@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.14.3](https://github.com/browserless/browserless-mcp/compare/v1.14.2...v1.14.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* add scripts directory copy in Dockerfile for build process ([a460e14](https://github.com/browserless/browserless-mcp/commit/a460e14fd513d1188a0f43889be5f8ec4b3a5cea))
+
+## [1.14.2](https://github.com/browserless/browserless-mcp/compare/v1.14.1...v1.14.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* resolve hoisted fastmcp in postinstall so npm ci installs cleanly ([#189](https://github.com/browserless/browserless-mcp/issues/189)) ([6e1a5e2](https://github.com/browserless/browserless-mcp/commit/6e1a5e23c8ce71d859491ba88a799e493a0f65f7))
+
+## [1.14.1](https://github.com/browserless/browserless-mcp/compare/v1.14.0...v1.14.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* publish patches and make patch-package a runtime dependency ([#187](https://github.com/browserless/browserless-mcp/issues/187)) ([969156d](https://github.com/browserless/browserless-mcp/commit/969156df70883686f8e5cb2cd69feb0ce2dc7d26))
+
+## [1.14.0](https://github.com/browserless/browserless-mcp/compare/v1.13.0...v1.14.0) (2026-07-17)
+
+
+### Features
+
+* add source tracking for analytics ([#184](https://github.com/browserless/browserless-mcp/issues/184)) ([d4ebc83](https://github.com/browserless/browserless-mcp/commit/d4ebc83b5a1594f3c98c7f1cf237ad8fb1deee4a))
+
+
+### Bug Fixes
+
+* register all MCP tools via registerSurface so /mcp/connector stays compliant ([#186](https://github.com/browserless/browserless-mcp/issues/186)) ([78417cc](https://github.com/browserless/browserless-mcp/commit/78417cc6ca57de37f657e2f7816dfe2915203b9c))
+
 ## [1.13.0](https://github.com/browserless/browserless-mcp/compare/v1.12.0...v1.13.0) (2026-07-16)
 
 

@@ -41,6 +41,20 @@ describe('resolveBrowserlessAuth', () => {
     expect(auth.apiUrl).to.equal('https://eu.example.com');
   });
 
+  it('passes the mcp source through from header then query', async () => {
+    const fromHeader = await resolveBrowserlessAuth(
+      { tokenQuery: 't', sourceHeader: 'cli_agent', sourceQuery: 'autologin' },
+      config,
+    );
+    expect(fromHeader.source).to.equal('cli_agent');
+
+    const fromQuery = await resolveBrowserlessAuth(
+      { tokenQuery: 't', sourceQuery: 'autologin' },
+      config,
+    );
+    expect(fromQuery.source).to.equal('autologin');
+  });
+
   it('throws when no token is present', async () => {
     let threw = false;
     try {

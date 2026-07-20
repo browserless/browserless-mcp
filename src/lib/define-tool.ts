@@ -2,7 +2,11 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
-import { redactSecrets } from './utils.js';
+import {
+  redactSecrets,
+  resolveMcpSource,
+  type McpSourceProps,
+} from './utils.js';
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import type {
@@ -52,6 +56,8 @@ export interface ToolRunContext<P> {
   log: ToolLog;
   /** For tools that fire analytics from inside their own logic (e.g. crawl polling). */
   analytics?: AnalyticsHelper;
+  /** Origin tag + raw clientInfo, spread into any analytics event this tool fires. */
+  mcpSource: McpSourceProps;
   token: string;
   apiUrl: string;
   reportProgress: (progress: {
@@ -128,7 +134,10 @@ export function defineTool<P, R>(
     description: def.description,
     parameters,
     annotations: def.annotations,
-    execute: async (args, { reportProgress, session, sessionId, log }) => {
+    execute: async (
+      args,
+      { reportProgress, session, sessionId, log, client: mcpClient },
+    ) => {
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
       const prompt =
@@ -138,6 +147,7 @@ export function defineTool<P, R>(
       // for the unconstrained generic. Tools see the typed session via this helper
       // and never cast token/apiUrl themselves.
       const s = session as BrowserlessSession | undefined;
+      const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
 
       const token = s?.token ?? config.browserlessToken;
       if (!token) {
@@ -170,6 +180,7 @@ export function defineTool<P, R>(
           prompt,
           log,
           analytics,
+          mcpSource,
           token,
           apiUrl,
           reportProgress,
@@ -191,6 +202,7 @@ export function defineTool<P, R>(
       if (analytics && def.analyticsProps) {
         analytics.fireToolRequest(token, def.name, {
           api_url: apiUrl,
+          ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
           ...def.analyticsProps(params, result),
         });
