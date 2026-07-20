@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -23,25 +24,40 @@ try {
   // fastmcp's "." export resolves to dist/FastMCP.cjs; its sibling chunks hold
   // the FastMCPSession definition we edit.
   dist = dirname(require.resolve('fastmcp'));
-} catch {
-  // fastmcp is not installed (e.g. an install that excludes it). Nothing to do.
-  process.exit(0);
+} catch (err) {
+  // fastmcp genuinely absent (e.g. an install that excludes it): nothing to
+  // do. Any other resolution failure is a broken install — surface it rather
+  // than silently shipping with tools.listChanged disabled.
+  if (err.code === 'MODULE_NOT_FOUND') process.exit(0);
+  throw err;
 }
 
-const files = readdirSync(dist).filter((f) => /\.(cjs|js)$/.test(f));
-const applied = files.filter((f) => {
-  const path = join(dist, f);
+let changed = 0;
+let alreadyEnabled = false;
+for (const file of readdirSync(dist).filter((f) => /\.(cjs|js)$/.test(f))) {
+  const path = join(dist, file);
   const src = readFileSync(path, 'utf8');
-  if (!src.includes(FROM)) return false;
-  writeFileSync(path, src.replaceAll(FROM, TO));
-  return true;
-});
+  if (src.includes(FROM)) {
+    writeFileSync(path, src.replaceAll(FROM, TO));
+    changed++;
+  } else if (src.includes(TO)) {
+    alreadyEnabled = true;
+  }
+}
 
-if (applied.length) {
-  console.log(
-    `[patch-fastmcp] enabled tools.listChanged in ${applied.length} file(s)`,
+if (changed) {
+  process.stdout.write(
+    `[patch-fastmcp] enabled tools.listChanged in ${changed} file(s)\n`,
   );
+} else if (alreadyEnabled) {
+  // Idempotent: a previous run already replaced FROM with TO.
+  process.stdout.write('[patch-fastmcp] tools.listChanged already enabled\n');
 } else {
-  // Idempotent: a second run finds FROM already replaced — not an error.
-  console.log('[patch-fastmcp] tools.listChanged already enabled');
+  // Neither the unpatched nor the patched snippet exists anywhere in dist:
+  // fastmcp's build layout changed and this patch no longer matches. Fail
+  // loudly instead of leaving tools.listChanged silently disabled.
+  throw new Error(
+    '[patch-fastmcp] tools.listChanged target not found in fastmcp; the ' +
+      'fastmcp build may have changed — update scripts/patch-fastmcp.mjs',
+  );
 }
