@@ -49,7 +49,7 @@
     "build/src/**/*.d.ts",
     "build/src/**/*.md",
     "bin/*",
-    "patches/*.patch",
+    "scripts/*.mjs",
     "README.md"
   ],
   "scripts": {
@@ -64,7 +64,7 @@
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
     "prepack": "npm run build",
-    "postinstall": "patch-package",
+    "postinstall": "node scripts/patch-fastmcp.mjs",
     "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
   },
@@ -78,7 +78,6 @@
     "@aws-sdk/client-sqs": "^3.1053.0",
     "fastmcp": "4.4.0",
     "ioredis": "^5.10.1",
-    "patch-package": "^8.0.1",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
