@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.3](https://github.com/browserless/browserless-mcp/compare/v1.14.2...v1.14.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* add scripts directory copy in Dockerfile for build process ([a460e14](https://github.com/browserless/browserless-mcp/commit/a460e14fd513d1188a0f43889be5f8ec4b3a5cea))
+
 ## [1.14.2](https://github.com/browserless/browserless-mcp/compare/v1.14.1...v1.14.2) (2026-07-20)
 
 
