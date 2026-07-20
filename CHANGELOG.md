@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.2](https://github.com/browserless/browserless-mcp/compare/v1.14.1...v1.14.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* resolve hoisted fastmcp in postinstall so npm ci installs cleanly ([#189](https://github.com/browserless/browserless-mcp/issues/189)) ([6e1a5e2](https://github.com/browserless/browserless-mcp/commit/6e1a5e23c8ce71d859491ba88a799e493a0f65f7))
+
 ## [1.14.1](https://github.com/browserless/browserless-mcp/compare/v1.14.0...v1.14.1) (2026-07-20)
 
 
