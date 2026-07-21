@@ -177,6 +177,59 @@ describe('site skills', function () {
       expect(listSiteSkillsForHost('f.example')).to.deep.equal([]);
     });
 
+    it('retries after a failure instead of caching it for the process', async function () {
+      let calls = 0;
+      const flaky: typeof fetch = async () => {
+        calls++;
+        if (calls === 1) throw new Error('transient');
+        return {
+          ok: true,
+          json: async () => [
+            { task: 'search', title: 'Shop Search', skill_md: SKILL_BODY },
+          ],
+        } as unknown as Response;
+      };
+      await hydrateRemoteSkills(
+        'https://r.example',
+        'https://api.test',
+        'tok',
+        flaky,
+      );
+      expect(listSiteSkillsForHost('r.example')).to.deep.equal([]);
+      // Second goto retries (the failed attempt was not cached) and succeeds.
+      await hydrateRemoteSkills(
+        'https://r.example',
+        'https://api.test',
+        'tok',
+        flaky,
+      );
+      expect(calls).to.equal(2);
+      expect(
+        listSiteSkillsForHost('r.example').map((s) => s.slug),
+      ).to.deep.equal(['search']);
+    });
+
+    it('caches a successful empty response (no per-goto refetch storm)', async function () {
+      let calls = 0;
+      const emptyOk: typeof fetch = async () => {
+        calls++;
+        return { ok: true, json: async () => [] } as unknown as Response;
+      };
+      await hydrateRemoteSkills(
+        'https://e.example',
+        'https://api.test',
+        'tok',
+        emptyOk,
+      );
+      await hydrateRemoteSkills(
+        'https://e.example',
+        'https://api.test',
+        'tok',
+        emptyOk,
+      );
+      expect(calls).to.equal(1);
+    });
+
     it('is a no-op without a url, apiUrl, or token', async function () {
       await hydrateRemoteSkills(
         undefined,

@@ -109,7 +109,7 @@ const fetchAndMerge = async (
   apiUrl: string,
   token: string,
   fetchImpl: typeof fetch,
-): Promise<void> => {
+): Promise<boolean> => {
   const endpoint = `${apiUrl.replace(/\/+$/, '')}/skills?domain=${encodeURIComponent(
     host,
   )}&token=${encodeURIComponent(token)}`;
@@ -118,11 +118,13 @@ const fetchAndMerge = async (
   const timeout = setTimeout(() => controller.abort(), REMOTE_SKILL_TIMEOUT_MS);
   try {
     const res = await fetchImpl(endpoint, { signal: controller.signal });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const skills = (await res.json()) as RemoteSkill[];
     if (Array.isArray(skills) && skills.length) mergeRemoteSkills(key, skills);
+    return true;
   } catch {
-    // network error / timeout / bad JSON — nothing to serve for this host
+    // network error / timeout / bad JSON — transient, let the next goto retry
+    return false;
   } finally {
     clearTimeout(timeout);
   }
@@ -147,8 +149,10 @@ export const hydrateRemoteSkills = (
   const inflight = hydrations.get(key);
   if (inflight) return inflight;
 
-  const p = fetchAndMerge(key, host, apiUrl, token, fetchImpl);
-  hydrations.set(key, p); // kept after settle → one fetch per host per process
+  const p = fetchAndMerge(key, host, apiUrl, token, fetchImpl).then((ok) => {
+    if (!ok) hydrations.delete(key);
+  });
+  hydrations.set(key, p);
   return p;
 };
 
