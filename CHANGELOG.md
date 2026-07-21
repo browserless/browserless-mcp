@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/browserless/browserless-mcp/compare/v1.14.3...v1.15.0) (2026-07-21)
+
+
+### Features
+
+* pull skills from cloud ([#182](https://github.com/browserless/browserless-mcp/issues/182)) ([255dcc5](https://github.com/browserless/browserless-mcp/commit/255dcc58555307a4f9eac4a0fd4db2a5d93c128d))
+
 ## [1.14.3](https://github.com/browserless/browserless-mcp/compare/v1.14.2...v1.14.3) (2026-07-20)
 
 
