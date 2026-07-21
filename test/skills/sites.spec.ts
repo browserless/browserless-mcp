@@ -4,43 +4,69 @@ import {
   loadSiteSkill,
   renderSiteSkillList,
   siteRecipeNotice,
+  hydrateRemoteSkills,
+  __resetRemoteSkillsForTesting,
 } from '../../src/skills/sites.js';
 
+const SKILL_BODY = [
+  '---',
+  'name: search',
+  'title: Shop Search',
+  'website: shop.example',
+  '---',
+  '# Shop Search',
+  '## Purpose',
+  'Search the catalog.',
+].join('\n');
+
+const fakeFetch =
+  (skills: unknown, ok = true): typeof fetch =>
+  async () =>
+    ({ ok, json: async () => skills }) as unknown as Response;
+
+// Populate the manifest for shop.example the way a live fetch would.
+const seedShop = () =>
+  hydrateRemoteSkills(
+    'https://shop.example/x',
+    'https://api.test',
+    'tok',
+    fakeFetch([{ task: 'search', title: 'Shop Search', skill_md: SKILL_BODY }]),
+  );
+
 describe('site skills', function () {
-  it('lists recipes for a known host', function () {
-    const skills = listSiteSkillsForHost('ebay.com');
-    expect(skills.length).to.be.greaterThan(0);
-    expect(skills[0].id).to.match(/^ebay\.com\//);
-    expect(skills[0].description).to.be.a('string').with.length.greaterThan(0);
+  beforeEach(() => __resetRemoteSkillsForTesting());
+
+  it('has no skills for a host until it is hydrated', function () {
+    expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
+    expect(renderSiteSkillList('shop.example')).to.equal('');
   });
 
-  it('matches a host regardless of www. prefix', function () {
-    const bare = listSiteSkillsForHost('ebay.com').length;
-    expect(listSiteSkillsForHost('www.ebay.com').length).to.equal(bare);
+  it('lists recipes once a host is hydrated', async function () {
+    await seedShop();
+    const skills = listSiteSkillsForHost('shop.example');
+    expect(skills.map((s) => s.id)).to.deep.equal(['shop.example/search']);
   });
 
-  it('strips a port before matching', function () {
-    const bare = listSiteSkillsForHost('ebay.com').length;
-    expect(listSiteSkillsForHost('ebay.com:443').length).to.equal(bare);
+  it('matches a host regardless of www. prefix or port', async function () {
+    await seedShop();
+    const base = listSiteSkillsForHost('shop.example').length;
+    expect(listSiteSkillsForHost('www.shop.example').length).to.equal(base);
+    expect(listSiteSkillsForHost('shop.example:443').length).to.equal(base);
   });
 
-  it('returns empty string for a host with no recipe', function () {
-    expect(renderSiteSkillList('no-such-host.example')).to.equal('');
-    expect(listSiteSkillsForHost('no-such-host.example')).to.deep.equal([]);
-  });
-
-  it('renders pointers, not the skill body', function () {
-    const text = renderSiteSkillList('ebay.com');
-    expect(text).to.include('SITE RECIPES for ebay.com');
+  it('renders pointers, not the skill body', async function () {
+    await seedShop();
+    const text = renderSiteSkillList('shop.example');
+    expect(text).to.include('SITE RECIPES for shop.example');
     expect(text).to.include('browserless_skill { id:');
     expect(text).to.not.include('## Purpose');
   });
 
-  it('loads a full skill body by id', function () {
-    const id = listSiteSkillsForHost('ebay.com')[0].id;
-    const body = loadSiteSkill(id);
-    expect(body).to.be.a('string');
+  it('loads a full skill body by id', async function () {
+    await seedShop();
+    const body = loadSiteSkill('shop.example/search');
     expect(body).to.include('SITE SKILL:');
+    expect(body).to.include('## Purpose');
   });
 
   it('returns null for an unknown id', function () {
@@ -48,18 +74,20 @@ describe('site skills', function () {
   });
 
   describe('siteRecipeNotice (proactive injection)', function () {
-    it('surfaces a pointer for a known host, once per session', function () {
+    it('surfaces a pointer for a hydrated host, once per session', async function () {
+      await seedShop();
       const seen = new Set<string>();
-      const first = siteRecipeNotice('https://www.ebay.com/sch/i.html', seen);
-      expect(first).to.include('SITE RECIPE(S) available for ebay.com');
+      const first = siteRecipeNotice('https://www.shop.example/a', seen);
+      expect(first).to.include('SITE RECIPE(S) available for shop.example');
       expect(first).to.include('browserless_skill { id:');
-      // Same host again in the same session → suppressed (no nagging).
-      expect(siteRecipeNotice('https://ebay.com/itm/123', seen)).to.equal('');
+      expect(siteRecipeNotice('https://shop.example/b', seen)).to.equal('');
     });
 
-    it('does not inject the recipe body, only the pointer', function () {
-      const notice = siteRecipeNotice('https://ebay.com', new Set());
-      expect(notice).to.not.include('## Purpose');
+    it('does not inject the recipe body, only the pointer', async function () {
+      await seedShop();
+      expect(
+        siteRecipeNotice('https://shop.example', new Set()),
+      ).to.not.include('## Purpose');
     });
 
     it('returns empty for a host with no recipe (and marks it seen)', function () {
@@ -74,6 +102,154 @@ describe('site skills', function () {
       const seen = new Set<string>();
       expect(siteRecipeNotice(undefined, seen)).to.equal('');
       expect(siteRecipeNotice('not a url', seen)).to.equal('');
+    });
+  });
+
+  describe('hydrateRemoteSkills (enterprise GET /skills)', function () {
+    it('merges remote skills into the manifest for a new host', async function () {
+      expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
+      await seedShop();
+      expect(loadSiteSkill('shop.example/search')).to.include('# Shop Search');
+    });
+
+    it('fetches at most once per host', async function () {
+      let calls = 0;
+      const counting: typeof fetch = async () => {
+        calls++;
+        return { ok: true, json: async () => [] } as unknown as Response;
+      };
+      await hydrateRemoteSkills(
+        'https://c.example',
+        'https://api.test',
+        'tok',
+        counting,
+      );
+      await hydrateRemoteSkills(
+        'https://c.example',
+        'https://api.test',
+        'tok',
+        counting,
+      );
+      expect(calls).to.equal(1);
+    });
+
+    it('shares the in-flight fetch across concurrent callers', async function () {
+      let calls = 0;
+      const slow: typeof fetch = async () => {
+        calls++;
+        return {
+          ok: true,
+          json: async () => [
+            { task: 'search', title: 'Shop Search', skill_md: SKILL_BODY },
+          ],
+        } as unknown as Response;
+      };
+      await Promise.all([
+        hydrateRemoteSkills(
+          'https://shop.example/a',
+          'https://api.test',
+          'tok',
+          slow,
+        ),
+        hydrateRemoteSkills(
+          'https://shop.example/b',
+          'https://api.test',
+          'tok',
+          slow,
+        ),
+      ]);
+      expect(calls).to.equal(1);
+      expect(
+        listSiteSkillsForHost('shop.example').map((s) => s.slug),
+      ).to.deep.equal(['search']);
+    });
+
+    it('never throws and leaves the host empty on fetch failure', async function () {
+      const throwing: typeof fetch = async () => {
+        throw new Error('network down');
+      };
+      await hydrateRemoteSkills(
+        'https://f.example',
+        'https://api.test',
+        'tok',
+        throwing,
+      );
+      expect(listSiteSkillsForHost('f.example')).to.deep.equal([]);
+    });
+
+    it('retries after a failure instead of caching it for the process', async function () {
+      let calls = 0;
+      const flaky: typeof fetch = async () => {
+        calls++;
+        if (calls === 1) throw new Error('transient');
+        return {
+          ok: true,
+          json: async () => [
+            { task: 'search', title: 'Shop Search', skill_md: SKILL_BODY },
+          ],
+        } as unknown as Response;
+      };
+      await hydrateRemoteSkills(
+        'https://r.example',
+        'https://api.test',
+        'tok',
+        flaky,
+      );
+      expect(listSiteSkillsForHost('r.example')).to.deep.equal([]);
+      // Second goto retries (the failed attempt was not cached) and succeeds.
+      await hydrateRemoteSkills(
+        'https://r.example',
+        'https://api.test',
+        'tok',
+        flaky,
+      );
+      expect(calls).to.equal(2);
+      expect(
+        listSiteSkillsForHost('r.example').map((s) => s.slug),
+      ).to.deep.equal(['search']);
+    });
+
+    it('caches a successful empty response (no per-goto refetch storm)', async function () {
+      let calls = 0;
+      const emptyOk: typeof fetch = async () => {
+        calls++;
+        return { ok: true, json: async () => [] } as unknown as Response;
+      };
+      await hydrateRemoteSkills(
+        'https://e.example',
+        'https://api.test',
+        'tok',
+        emptyOk,
+      );
+      await hydrateRemoteSkills(
+        'https://e.example',
+        'https://api.test',
+        'tok',
+        emptyOk,
+      );
+      expect(calls).to.equal(1);
+    });
+
+    it('is a no-op without a url, apiUrl, or token', async function () {
+      await hydrateRemoteSkills(
+        undefined,
+        'https://api.test',
+        'tok',
+        fakeFetch([]),
+      );
+      await hydrateRemoteSkills(
+        'https://x.example',
+        undefined,
+        'tok',
+        fakeFetch([]),
+      );
+      await hydrateRemoteSkills(
+        'https://x.example',
+        'https://api.test',
+        undefined,
+        fakeFetch([]),
+      );
+      expect(listSiteSkillsForHost('x.example')).to.deep.equal([]);
     });
   });
 });

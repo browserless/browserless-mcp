@@ -1,99 +1,25 @@
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 export interface SiteSkill {
   id: string; // `${host}/${slug}` — the loadable id
   host: string;
   slug: string;
   title: string;
   description: string;
-  path: string; // absolute path to SKILL.md
+  body: string; // in-memory SKILL.md fetched from the enterprise skill bucket
 }
 
-const sitesDir = join(dirname(fileURLToPath(import.meta.url)), 'sites');
+// Skills are served by the enterprise API, not bundled; the manifest fills in
+// as hydrateRemoteSkills fetches each host.
+const manifest = new Map<string, SiteSkill[]>();
+const byId = new Map<string, SiteSkill>();
 
-// Minimal reader for the fields we emit (name/title/description), including
-// folded scalars (`>-`, `|`). Not general YAML.
-const parseFrontmatter = (raw: string): Record<string, string> => {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return {};
-  const out: Record<string, string> = {};
-  const folded: string[] = [];
-  let foldedKey = '';
-  const flush = () => {
-    if (foldedKey) out[foldedKey] = folded.join(' ').trim();
-    folded.length = 0;
-    foldedKey = '';
-  };
-  for (const line of match[1].split('\n')) {
-    const kv = /^([A-Za-z][\w-]*):\s?(.*)$/.exec(line);
-    if (kv && !/^\s/.test(line)) {
-      flush();
-      const [, k, v] = kv;
-      if (v === '>' || v === '>-' || v === '|' || v === '|-') {
-        foldedKey = k;
-      } else {
-        out[k] = v.replace(/^['"]|['"]$/g, '');
-      }
-    } else if (foldedKey && /^\s/.test(line)) {
-      folded.push(line.trim());
-    }
-  }
-  flush();
-  return out;
-};
+const bareHost = (host: string): string =>
+  host
+    .toLowerCase()
+    .replace(/:\d+$/, '')
+    .replace(/^www\./, '');
 
-const buildManifest = (): Map<string, SiteSkill[]> => {
-  const byHost = new Map<string, SiteSkill[]>();
-  if (!existsSync(sitesDir)) return byHost;
-
-  const hosts = readdirSync(sitesDir, { withFileTypes: true }).filter((d) =>
-    d.isDirectory(),
-  );
-  for (const hostDir of hosts) {
-    const host = hostDir.name.toLowerCase();
-    const hostPath = join(sitesDir, hostDir.name);
-    const slugs = readdirSync(hostPath, { withFileTypes: true }).filter((d) =>
-      d.isDirectory(),
-    );
-    for (const slugDir of slugs) {
-      const skillPath = join(hostPath, slugDir.name, 'SKILL.md');
-      if (!existsSync(skillPath)) continue;
-      const fm = parseFrontmatter(readFileSync(skillPath, 'utf-8'));
-      const slug = slugDir.name;
-      const entry: SiteSkill = {
-        id: `${hostDir.name}/${slug}`,
-        host,
-        slug,
-        title: fm.title || fm.name || slug,
-        description: fm.description || '',
-        path: skillPath,
-      };
-      const list = byHost.get(host);
-      if (list) list.push(entry);
-      else byHost.set(host, [entry]);
-    }
-  }
-  return byHost;
-};
-
-const manifest = buildManifest();
-const byId = new Map<string, SiteSkill>(
-  [...manifest.values()].flat().map((s) => [s.id.toLowerCase(), s]),
-);
-
-// A page host may carry a `www.` prefix the skill directory doesn't (or vice
-// versa); try the host as given, then toggle the prefix.
-export const listSiteSkillsForHost = (host: string): SiteSkill[] => {
-  const h = host.toLowerCase().replace(/:\d+$/, '');
-  return (
-    manifest.get(h) ??
-    manifest.get(h.replace(/^www\./, '')) ??
-    manifest.get(`www.${h}`) ??
-    []
-  );
-};
+export const listSiteSkillsForHost = (host: string): SiteSkill[] =>
+  manifest.get(bareHost(host)) ?? [];
 
 export const renderSiteSkillList = (host: string): string => {
   const skills = listSiteSkillsForHost(host);
@@ -142,7 +68,96 @@ export const loadSiteSkill = (id: string): string | null => {
   if (!skill) return null;
   return [
     `--- SITE SKILL: ${skill.id} ---`,
-    readFileSync(skill.path, 'utf-8').trimEnd(),
+    skill.body.trimEnd(),
     '--- END SITE SKILL ---',
   ].join('\n');
+};
+
+// Skills live in the enterprise API (GET /skills): fetch a host's skills into
+// the manifest on first goto. A slow or failed fetch is a no-op, never a stall.
+
+const REMOTE_SKILL_TIMEOUT_MS = 2500;
+const hydrations = new Map<string, Promise<void>>();
+
+interface RemoteSkill {
+  task?: string;
+  title?: string;
+  skill_md?: string;
+}
+
+const mergeRemoteSkills = (key: string, remote: RemoteSkill[]): void => {
+  const entries: SiteSkill[] = [];
+  for (const { task, title, skill_md } of remote) {
+    if (!task || !skill_md) continue;
+    const entry: SiteSkill = {
+      id: `${key}/${task}`,
+      host: key,
+      slug: task,
+      title: title || task,
+      description: '',
+      body: skill_md,
+    };
+    entries.push(entry);
+    byId.set(entry.id.toLowerCase(), entry);
+  }
+  manifest.set(key, entries);
+};
+
+const fetchAndMerge = async (
+  key: string,
+  host: string,
+  apiUrl: string,
+  token: string,
+  fetchImpl: typeof fetch,
+): Promise<boolean> => {
+  const endpoint = `${apiUrl.replace(/\/+$/, '')}/skills?domain=${encodeURIComponent(
+    host,
+  )}&token=${encodeURIComponent(token)}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REMOTE_SKILL_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(endpoint, { signal: controller.signal });
+    if (!res.ok) return false;
+    const skills = (await res.json()) as RemoteSkill[];
+    if (Array.isArray(skills) && skills.length) mergeRemoteSkills(key, skills);
+    return true;
+  } catch {
+    // network error / timeout / bad JSON — transient, let the next goto retry
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+export const hydrateRemoteSkills = (
+  url: string | undefined,
+  apiUrl: string | undefined,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> => {
+  if (!url || !apiUrl || !token) return Promise.resolve();
+
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return Promise.resolve();
+  }
+
+  const key = bareHost(host);
+  const inflight = hydrations.get(key);
+  if (inflight) return inflight;
+
+  const p = fetchAndMerge(key, host, apiUrl, token, fetchImpl).then((ok) => {
+    if (!ok) hydrations.delete(key);
+  });
+  hydrations.set(key, p);
+  return p;
+};
+
+export const __resetRemoteSkillsForTesting = (): void => {
+  hydrations.clear();
+  manifest.clear();
+  byId.clear();
 };

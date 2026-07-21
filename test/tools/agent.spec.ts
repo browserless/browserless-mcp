@@ -28,9 +28,25 @@ import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
+  hydrateRemoteSkills,
+  __resetRemoteSkillsForTesting,
+} from '../../src/skills/sites.js';
+import {
   makeRejectingServer,
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
+
+const seedSiteSkill = (host: string, task: string, body: string) =>
+  hydrateRemoteSkills(
+    `https://${host}`,
+    'https://api.example.com',
+    'test-token',
+    (async () =>
+      ({
+        ok: true,
+        json: async () => [{ task, title: task, skill_md: body }],
+      }) as unknown as Response) as typeof fetch,
+  );
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -70,6 +86,7 @@ describe('browserless_skill tool', () => {
   let addToolSpy: sinon.SinonSpy;
 
   beforeEach(() => {
+    __resetRemoteSkillsForTesting();
     server = new FastMCP({ name: 'test', version: '0.1.0' });
     addToolSpy = sinon.spy(server, 'addTool');
     registerAgentTools(server, mockConfig);
@@ -77,6 +94,7 @@ describe('browserless_skill tool', () => {
 
   afterEach(() => {
     sinon.restore();
+    __resetRemoteSkillsForTesting();
   });
 
   it('registers both browserless_skill and browserless_agent', () => {
@@ -126,6 +144,11 @@ describe('browserless_skill tool', () => {
   });
 
   it('lists site recipes for a known host without injecting the body', async () => {
+    await seedSiteSkill(
+      'ebay.com',
+      'find-a-product',
+      '---\nname: find-a-product\ntitle: Find\nwebsite: ebay.com\n---\n# Find\n## Purpose\nx',
+    );
     const skillCall = addToolSpy
       .getCalls()
       .find((c) => c.args[0].name === 'browserless_skill');
