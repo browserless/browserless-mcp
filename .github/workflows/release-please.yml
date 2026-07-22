@@ -12,6 +12,15 @@ on:
   push:
     branches: [main]
 
+# Prevent concurrent release-please runs from racing: a burst of pushes to main
+# would otherwise run in parallel, and the last force-push to the release branch
+# wins — which can be a run that read a stale tree, reverting whatever the newer
+# run already wrote to the release PR (e.g. dependency bumps). cancel-in-progress
+# cancels older in-flight runs, keeping only the newest (latest main) run.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
