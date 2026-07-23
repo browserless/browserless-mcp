@@ -678,6 +678,7 @@ export function registerAgentTools(
         // else the first URL seen this batch — so [goto A, goto B, snapshot]
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
+        let promptSent = false;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
             closeSession(
@@ -705,6 +706,12 @@ export function registerAgentTools(
           if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
             outboundParams = { ...cmd.params };
             delete (outboundParams as Record<string, unknown>).toDisk;
+          }
+          // Cascade the self-reported prompt once per session so the server can
+          // author a first-party skill from the run (server keeps the first).
+          if (prompt && !promptSent) {
+            outboundParams = { ...outboundParams, _prompt: prompt };
+            promptSent = true;
           }
 
           let resp;
