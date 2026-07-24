@@ -486,6 +486,7 @@ const connect = (
   profile?: string,
   sessionId?: string,
   compliant = false,
+  source?: string,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -496,7 +497,12 @@ const connect = (
       sessionId,
       compliant,
     );
-    const ws = new WebSocket(wsUrl);
+    // Forward the origin on the upgrade so the server can attribute captured
+    // skills; reuses the same header the MCP already receives on its inbound.
+    const ws = new WebSocket(
+      wsUrl,
+      source ? { headers: { 'x-browserless-mcp-source': source } } : undefined,
+    );
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -621,6 +627,7 @@ export const getOrCreateSession = async (
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   compliant = false,
+  source?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
   const key = getSessionKey(
@@ -673,6 +680,7 @@ export const getOrCreateSession = async (
       profile,
       creationSessionId,
       compliant,
+      source,
     );
     const session: ActiveSession = {
       ws,
@@ -683,6 +691,7 @@ export const getOrCreateSession = async (
       profile,
       createProfile,
       creationSessionId,
+      source,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -732,6 +741,8 @@ export const send = async (
         session.proxy,
         session.profile,
         session.creationSessionId,
+        false,
+        session.source,
       ).finally(() => {
         session.reconnecting = undefined;
       });

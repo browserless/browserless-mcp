@@ -628,6 +628,7 @@ export function registerAgentTools(
             createProfile,
             attachSessionId,
             compliant,
+            mcpSource.source,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false);
@@ -652,6 +653,7 @@ export function registerAgentTools(
             createProfile,
             attachSessionId,
             compliant,
+            mcpSource.source,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
