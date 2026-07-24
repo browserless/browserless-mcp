@@ -628,6 +628,7 @@ export function registerAgentTools(
             createProfile,
             attachSessionId,
             compliant,
+            mcpSource.source,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false);
@@ -652,6 +653,7 @@ export function registerAgentTools(
             createProfile,
             attachSessionId,
             compliant,
+            mcpSource.source,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -678,6 +680,7 @@ export function registerAgentTools(
         // else the first URL seen this batch — so [goto A, goto B, snapshot]
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
+        let promptSent = false;
         for (const cmd of commands) {
           if (cmd.method === 'close') {
             closeSession(
@@ -692,6 +695,14 @@ export function registerAgentTools(
             closedDuringBatch = true;
             break;
           }
+          if (cmd.method === 'reportSkillOutcome') {
+            try {
+              await send(agentSession, cmd.method, cmd.params);
+            } catch {
+              // noop
+            }
+            continue;
+          }
 
           log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
 
@@ -705,6 +716,12 @@ export function registerAgentTools(
           if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
             outboundParams = { ...cmd.params };
             delete (outboundParams as Record<string, unknown>).toDisk;
+          }
+          // Cascade the self-reported prompt once per session so the server can
+          // author a first-party skill from the run (server keeps the first).
+          if (prompt && !promptSent) {
+            outboundParams = { ...outboundParams, _prompt: prompt };
+            promptSent = true;
           }
 
           let resp;
@@ -813,6 +830,16 @@ export function registerAgentTools(
         // If the batch ended with close, format the result around the
         // command before close (close itself has no useful payload).
         const reportable = closedDuringBatch ? results.slice(0, -1) : results;
+        // Nothing user-facing ran (batch was only close and/or an internal
+        // reportSkillOutcome) — the deref below would throw, so short-circuit.
+        if (reportable.length === 0) {
+          return [
+            {
+              type: 'text' as const,
+              text: closedDuringBatch ? 'Browser session closed.' : 'Done.',
+            },
+          ];
+        }
         const last = reportable[reportable.length - 1];
         const lastResult = last.result as Record<string, unknown>;
         const lastCmd = commands[reportable.length - 1];
