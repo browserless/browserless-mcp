@@ -695,6 +695,14 @@ export function registerAgentTools(
             closedDuringBatch = true;
             break;
           }
+          if (cmd.method === 'reportSkillOutcome') {
+            try {
+              await send(agentSession, cmd.method, cmd.params);
+            } catch {
+              // noop
+            }
+            continue;
+          }
 
           log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
 
@@ -822,6 +830,16 @@ export function registerAgentTools(
         // If the batch ended with close, format the result around the
         // command before close (close itself has no useful payload).
         const reportable = closedDuringBatch ? results.slice(0, -1) : results;
+        // Nothing user-facing ran (batch was only close and/or an internal
+        // reportSkillOutcome) — the deref below would throw, so short-circuit.
+        if (reportable.length === 0) {
+          return [
+            {
+              type: 'text' as const,
+              text: closedDuringBatch ? 'Browser session closed.' : 'Done.',
+            },
+          ];
+        }
         const last = reportable[reportable.length - 1];
         const lastResult = last.result as Record<string, unknown>;
         const lastCmd = commands[reportable.length - 1];

@@ -198,6 +198,7 @@ export interface ActiveSession {
   // Origin tag forwarded to the browser WS as `x-browserless-mcp-source` so the
   // server can attribute captured skills (mcp_client, cli_agent, …).
   readonly source?: string;
+  readonly compliant: boolean;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;

@@ -640,7 +640,11 @@ export const getOrCreateSession = async (
   );
   const existing = sessions.get(key);
 
-  if (existing && existing.ws.readyState === WebSocket.OPEN) {
+  if (
+    existing &&
+    existing.ws.readyState === WebSocket.OPEN &&
+    existing.source === source
+  ) {
     existing.lastUsedAt = Date.now();
     return existing;
   }
@@ -692,6 +696,7 @@ export const getOrCreateSession = async (
       createProfile,
       creationSessionId,
       source,
+      compliant,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -741,7 +746,7 @@ export const send = async (
         session.proxy,
         session.profile,
         session.creationSessionId,
-        false,
+        session.compliant,
         session.source,
       ).finally(() => {
         session.reconnecting = undefined;
