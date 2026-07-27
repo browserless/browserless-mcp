@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/browserless/browserless-mcp/compare/v1.15.0...v1.16.0) (2026-07-27)
+
+
+### Features
+
+* self-reported prompts, client and used skills ([#205](https://github.com/browserless/browserless-mcp/issues/205)) ([ee4f11a](https://github.com/browserless/browserless-mcp/commit/ee4f11aebfb181b7e454a8a547c5caa051c8bc17))
+
 ## [1.15.0](https://github.com/browserless/browserless-mcp/compare/v1.14.3...v1.15.0) (2026-07-21)
 
 
