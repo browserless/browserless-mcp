@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto';
 import { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastMCP } from 'fastmcp';
 import type { BrowserlessSession } from '../@types/types.js';
-import { djb2 } from './utils.js';
 
 export type AmplitudeFactory = (
   apiKey: string,
@@ -106,7 +106,9 @@ export const instrumentFastMcpTools = (
 export const getAmplitudeIdentity = (
   session: BrowserlessSession | undefined,
   token: string,
-): string => session?.accountId ?? `token-${djb2(token)}`;
+): string =>
+  session?.accountId ??
+  `token-${createHash('sha256').update(token).digest('base64url')}`;
 
 export const shutdownAmplitudeAnalytics = async (
   analytics: AmplitudeMCPAnalytics | undefined,

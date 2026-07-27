@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { createHash } from 'node:crypto';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { FastMCP } from 'fastmcp';
@@ -9,7 +10,6 @@ import {
   instrumentFastMcpTools,
   resetAmplitudeAnalyticsForTests,
 } from '../../src/lib/amplitude-analytics.js';
-import { djb2 } from '../../src/lib/utils.js';
 import { z } from 'zod';
 
 describe('Amplitude MCP analytics', () => {
@@ -37,7 +37,9 @@ describe('Amplitude MCP analytics', () => {
     const token = 'plain-browserless-token';
     expect(
       getAmplitudeIdentity({ token, apiUrl: 'https://example.com' }, token),
-    ).to.equal(`token-${djb2(token)}`);
+    ).to.equal(
+      `token-${createHash('sha256').update(token).digest('base64url')}`,
+    );
     expect(
       getAmplitudeIdentity(
         { token, apiUrl: 'https://example.com', accountId: 'account-123' },
