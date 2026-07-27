@@ -1,13 +1,8 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import type { ToolDefinition } from '../lib/define-tool.js';
-import {
-  defineTool as defineToolBase,
-  validateHttpUrl,
-} from '../lib/define-tool.js';
+import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type { MapParams, MapResponse, McpConfig } from '../@types/types.js';
 
 export const SitemapModeSchema = z.enum(['include', 'skip', 'only']);
@@ -53,15 +48,7 @@ export function registerMapTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
-  amplitude?: AmplitudeMCPAnalytics,
 ): void {
-  const defineTool = <P, R>(
-    toolServer: FastMCP,
-    toolConfig: McpConfig,
-    toolAnalytics: AnalyticsHelper | undefined,
-    def: ToolDefinition<P, R>,
-  ): void =>
-    defineToolBase(toolServer, toolConfig, toolAnalytics, def, amplitude);
   defineTool<MapParams, MapResponse>(server, config, analytics, {
     name: 'browserless_map',
     description:

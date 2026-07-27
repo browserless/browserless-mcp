@@ -1,11 +1,9 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import type { ToolDefinition } from '../lib/define-tool.js';
-import { defineTool as defineToolBase } from '../lib/define-tool.js';
+import { defineTool } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   FunctionParams,
   GenericApiResult,
@@ -118,15 +116,7 @@ export function registerFunctionTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
-  amplitude?: AmplitudeMCPAnalytics,
 ): void {
-  const defineTool = <P, R>(
-    toolServer: FastMCP,
-    toolConfig: McpConfig,
-    toolAnalytics: AnalyticsHelper | undefined,
-    def: ToolDefinition<P, R>,
-  ): void =>
-    defineToolBase(toolServer, toolConfig, toolAnalytics, def, amplitude);
   defineTool<FunctionParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_function',
     description:

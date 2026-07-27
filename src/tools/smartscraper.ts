@@ -1,15 +1,10 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import type { ToolDefinition } from '../lib/define-tool.js';
-import {
-  defineTool as defineToolBase,
-  validateHttpUrl,
-} from '../lib/define-tool.js';
+import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { ResponseCache } from '../lib/cache.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   McpConfig,
   SmartScrapeResult,
@@ -65,15 +60,7 @@ export function registerSmartScraperTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
-  amplitude?: AmplitudeMCPAnalytics,
 ): void {
-  const defineTool = <P, R>(
-    toolServer: FastMCP,
-    toolConfig: McpConfig,
-    toolAnalytics: AnalyticsHelper | undefined,
-    def: ToolDefinition<P, R>,
-  ): void =>
-    defineToolBase(toolServer, toolConfig, toolAnalytics, def, amplitude);
   const cache = new ResponseCache(config.cacheTtlMs);
 
   defineTool<SmartScraperParams, SmartScrapeResult>(server, config, analytics, {

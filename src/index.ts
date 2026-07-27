@@ -18,6 +18,7 @@ import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
 import { Redis } from 'ioredis';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
+  instrumentFastMcpTools,
   initializeAmplitudeAnalytics,
   shutdownAmplitudeAnalytics,
 } from './lib/amplitude-analytics.js';
@@ -131,7 +132,8 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
-registerSurface(server, config, analytics, amplitudeAnalytics);
+instrumentFastMcpTools(server, amplitudeAnalytics);
+registerSurface(server, config, analytics);
 // Log the active surface (both transports) so it's visible in the boot logs.
 // Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
 // on a directory deploy) from opt-out, and warn on an unrecognized value (typo).

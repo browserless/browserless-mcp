@@ -1,9 +1,7 @@
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
-import type { ToolDefinition } from '../lib/define-tool.js';
-import { defineTool as defineToolBase } from '../lib/define-tool.js';
+import { defineTool } from '../lib/define-tool.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   ListProfilesRequest,
   McpConfig,
@@ -30,15 +28,7 @@ export function registerProfilesTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
-  amplitude?: AmplitudeMCPAnalytics,
 ): void {
-  const defineTool = <P, R>(
-    toolServer: FastMCP,
-    toolConfig: McpConfig,
-    toolAnalytics: AnalyticsHelper | undefined,
-    def: ToolDefinition<P, R>,
-  ): void =>
-    defineToolBase(toolServer, toolConfig, toolAnalytics, def, amplitude);
   defineTool<ListProfilesRequest, ProfileSummary[]>(server, config, analytics, {
     name: 'browserless_profiles',
     description:

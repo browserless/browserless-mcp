@@ -1,6 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content, Context } from 'fastmcp';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+  getCurrentContext,
+  setIdentity,
+  setRationale,
+} from '@amplitude/mcp-analytics';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import {
@@ -11,7 +16,6 @@ import {
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import { getAmplitudeIdentity } from './amplitude-analytics.js';
-import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -124,7 +128,6 @@ export function defineTool<P, R>(
   config: McpConfig,
   analytics: AnalyticsHelper | undefined,
   def: ToolDefinition<P, R>,
-  amplitude?: AmplitudeMCPAnalytics,
 ): void {
   // Not on the compliant surface: it's a strict allowlist / privacy gate, so
   // we don't ask the model to self-report user prompts there.
@@ -164,10 +167,10 @@ export function defineTool<P, R>(
     }
     const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
 
-    if (amplitude) {
+    if (getCurrentContext()) {
       try {
-        amplitude.setIdentity({ userId: getAmplitudeIdentity(s, token) });
-        if (prompt !== undefined) amplitude.setRationale(prompt);
+        setIdentity({ userId: getAmplitudeIdentity(s, token) });
+        if (prompt !== undefined) setRationale(prompt);
       } catch (error) {
         console.error(
           '[browserless-mcp] Amplitude tool context failed:',
@@ -235,8 +238,6 @@ export function defineTool<P, R>(
     description: def.description,
     parameters,
     annotations: def.annotations,
-    execute: amplitude
-      ? amplitude.instrumentTool(execute, { name: def.name })
-      : execute,
+    execute,
   });
 }
