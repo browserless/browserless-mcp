@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import { createHash } from 'node:crypto';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { FastMCP } from 'fastmcp';
@@ -9,6 +8,7 @@ import {
   initializeAmplitudeAnalytics,
   instrumentFastMcpTools,
   resetAmplitudeAnalyticsForTests,
+  shutdownAmplitudeAnalytics,
 } from '../../src/lib/amplitude-analytics.js';
 import { z } from 'zod';
 
@@ -37,9 +37,7 @@ describe('Amplitude MCP analytics', () => {
     const token = 'plain-browserless-token';
     expect(
       getAmplitudeIdentity({ token, apiUrl: 'https://example.com' }, token),
-    ).to.equal(
-      `token-${createHash('sha256').update(token).digest('base64url')}`,
-    );
+    ).to.equal('token-Hv-TiXSqe4TOtrWa7FLy8hqVC8ermzWq7wKnBgIHrX8');
     expect(
       getAmplitudeIdentity(
         { token, apiUrl: 'https://example.com', accountId: 'account-123' },
@@ -116,5 +114,31 @@ describe('Amplitude MCP analytics', () => {
 
     expect(disabledInstrumentTool.notCalled).to.equal(true);
     expect(disabledAddTool.firstCall.args[0].execute).to.equal(disabledExecute);
+  });
+
+  it('awaits successful Amplitude shutdown', async () => {
+    const mock = new MockAmplitudeMCPAnalytics({
+      serverName: 'browserless-mcp',
+      serverVersion: '1.0.0',
+    });
+    const shutdown = sinon.stub(mock, 'shutdown').resolves();
+
+    await shutdownAmplitudeAnalytics(mock);
+
+    expect(shutdown.calledOnce).to.equal(true);
+  });
+
+  it('swallows rejected Amplitude shutdown', async () => {
+    const mock = new MockAmplitudeMCPAnalytics({
+      serverName: 'browserless-mcp',
+      serverVersion: '1.0.0',
+    });
+    const shutdown = sinon
+      .stub(mock, 'shutdown')
+      .rejects(new Error('flush failed'));
+
+    await shutdownAmplitudeAnalytics(mock);
+
+    expect(shutdown.calledOnce).to.equal(true);
   });
 });
