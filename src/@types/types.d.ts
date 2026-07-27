@@ -195,6 +195,10 @@ export interface ActiveSession {
   // The creation session id returned by POST /profile. Reconnects attach to it
   // via /chromium/agent?sessionId rather than launching a new browser.
   creationSessionId?: string;
+  // Origin tag forwarded to the browser WS as `x-browserless-mcp-source` so the
+  // server can attribute captured skills (mcp_client, cli_agent, …).
+  readonly source?: string;
+  readonly compliant: boolean;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
   lastUsedAt: number;
