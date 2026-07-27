@@ -12,6 +12,16 @@ import {
 } from '../../src/lib/amplitude-analytics.js';
 import { z } from 'zod';
 
+const createDeferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe('Amplitude MCP analytics', () => {
   const originalConnect = Server.prototype.connect;
 
@@ -121,9 +131,19 @@ describe('Amplitude MCP analytics', () => {
       serverName: 'browserless-mcp',
       serverVersion: '1.0.0',
     });
-    const shutdown = sinon.stub(mock, 'shutdown').resolves();
+    const deferred = createDeferred<void>();
+    const shutdown = sinon.stub(mock, 'shutdown') as sinon.SinonStub;
+    shutdown.returns(deferred.promise);
+    const result = shutdownAmplitudeAnalytics(mock);
 
-    await shutdownAmplitudeAnalytics(mock);
+    expect(
+      await Promise.race([
+        result.then(() => 'settled'),
+        Promise.resolve('pending'),
+      ]),
+    ).to.equal('pending');
+    deferred.resolve();
+    await result;
 
     expect(shutdown.calledOnce).to.equal(true);
   });
@@ -133,11 +153,19 @@ describe('Amplitude MCP analytics', () => {
       serverName: 'browserless-mcp',
       serverVersion: '1.0.0',
     });
-    const shutdown = sinon
-      .stub(mock, 'shutdown')
-      .rejects(new Error('flush failed'));
+    const deferred = createDeferred<void>();
+    const shutdown = sinon.stub(mock, 'shutdown') as sinon.SinonStub;
+    shutdown.returns(deferred.promise);
+    const result = shutdownAmplitudeAnalytics(mock);
 
-    await shutdownAmplitudeAnalytics(mock);
+    expect(
+      await Promise.race([
+        result.then(() => 'settled'),
+        Promise.resolve('pending'),
+      ]),
+    ).to.equal('pending');
+    deferred.reject(new Error('flush failed'));
+    await result;
 
     expect(shutdown.calledOnce).to.equal(true);
   });
