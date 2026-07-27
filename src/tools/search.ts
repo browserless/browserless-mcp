@@ -1,9 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool } from '../lib/define-tool.js';
+import type { ToolDefinition } from '../lib/define-tool.js';
+import { defineTool as defineToolBase } from '../lib/define-tool.js';
 import { isCompliant, COMPLIANT_SEARCH_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   McpConfig,
   SearchParams,
@@ -99,7 +101,15 @@ export function registerSearchTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
+  amplitude?: AmplitudeMCPAnalytics,
 ): void {
+  const defineTool = <P, R>(
+    toolServer: FastMCP,
+    toolConfig: McpConfig,
+    toolAnalytics: AnalyticsHelper | undefined,
+    def: ToolDefinition<P, R>,
+  ): void =>
+    defineToolBase(toolServer, toolConfig, toolAnalytics, def, amplitude);
   const compliant = isCompliant(config);
 
   defineTool<SearchParams, SearchResponse>(server, config, analytics, {

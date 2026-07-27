@@ -1,14 +1,21 @@
 import { expect } from 'chai';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import sinon from 'sinon';
 import {
-  getAmplitudeAnalytics,
   getAmplitudeIdentity,
   initializeAmplitudeAnalytics,
+  resetAmplitudeAnalyticsForTests,
 } from '../../src/lib/amplitude-analytics.js';
 import { djb2 } from '../../src/lib/utils.js';
 
 describe('Amplitude MCP analytics', () => {
+  const originalConnect = Server.prototype.connect;
+
+  afterEach(() => {
+    resetAmplitudeAnalyticsForTests(originalConnect);
+  });
+
   it('is disabled without an API key', () => {
     let constructed = false;
     const analytics = initializeAmplitudeAnalytics(undefined, '1.0.0', () => {
@@ -16,7 +23,7 @@ describe('Amplitude MCP analytics', () => {
       return new MockAmplitudeMCPAnalytics({
         serverName: 'test',
         serverVersion: '1.0.0',
-      }) as never;
+      });
     });
 
     expect(analytics).to.equal(undefined);
@@ -27,7 +34,7 @@ describe('Amplitude MCP analytics', () => {
     const token = 'plain-browserless-token';
     expect(
       getAmplitudeIdentity({ token, apiUrl: 'https://example.com' }, token),
-    ).to.equal(String(djb2(token)));
+    ).to.equal(`token-${djb2(token)}`);
     expect(
       getAmplitudeIdentity(
         { token, apiUrl: 'https://example.com', accountId: 'account-123' },
@@ -44,7 +51,10 @@ describe('Amplitude MCP analytics', () => {
       serverName: 'browserless-mcp',
       serverVersion: '1.0.0',
     });
-    initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock as never);
+    const instrumentServer = sinon.spy(mock, 'instrumentServer');
+    const connect = sinon.spy(originalConnect);
+    Server.prototype.connect = connect;
+    initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
 
     const server = new Server({ name: 'test', version: '1.0.0' });
     await server.connect({
@@ -53,15 +63,7 @@ describe('Amplitude MCP analytics', () => {
       send: async () => undefined,
     });
 
-    const wrapped = mock.instrumentTool(
-      async (_args: Record<string, unknown>, _extra: unknown) => ({
-        content: [{ type: 'text', text: 'ok' }],
-      }),
-      { name: 'search' },
-    );
-    await wrapped({}, { sessionId: 'session-1' } as never);
-
-    expect(getAmplitudeAnalytics()).to.equal(mock);
-    expect(mock.getEvents('[MCP] Tool Call Response')).to.have.length(1);
+    expect(instrumentServer.calledOnceWithExactly(server)).to.equal(true);
+    expect(connect.calledOnce).to.equal(true);
   });
 });

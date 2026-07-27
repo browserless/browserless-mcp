@@ -131,7 +131,7 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
-registerSurface(server, config, analytics);
+registerSurface(server, config, analytics, amplitudeAnalytics);
 // Log the active surface (both transports) so it's visible in the boot logs.
 // Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
 // on a directory deploy) from opt-out, and warn on an unrecognized value (typo).
@@ -174,13 +174,19 @@ server.on('connect', (event) => {
 
 if (amplitudeAnalytics) {
   let amplitudeShutdown = false;
-  const shutdown = (): void => {
+  const shutdown = (exitCode: number): void => {
     if (amplitudeShutdown) return;
     amplitudeShutdown = true;
-    shutdownAmplitudeAnalytics(amplitudeAnalytics);
+    void (async () => {
+      try {
+        await shutdownAmplitudeAnalytics(amplitudeAnalytics);
+      } finally {
+        process.exit(exitCode);
+      }
+    })();
   };
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', () => shutdown(143));
+  process.once('SIGINT', () => shutdown(130));
 }
 
 server.on('disconnect', (event) => {

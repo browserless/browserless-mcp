@@ -1,9 +1,14 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import type { ToolDefinition } from '../lib/define-tool.js';
+import {
+  defineTool as defineToolBase,
+  validateHttpUrl,
+} from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   CrawlPageResult,
   CrawlParams,
@@ -221,7 +226,15 @@ export function registerCrawlTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
+  amplitude?: AmplitudeMCPAnalytics,
 ): void {
+  const defineTool = <P, R>(
+    toolServer: FastMCP,
+    toolConfig: McpConfig,
+    toolAnalytics: AnalyticsHelper | undefined,
+    def: ToolDefinition<P, R>,
+  ): void =>
+    defineToolBase(toolServer, toolConfig, toolAnalytics, def, amplitude);
   defineTool<CrawlParams, CrawlRunResult>(server, config, analytics, {
     name: 'browserless_crawl',
     description:

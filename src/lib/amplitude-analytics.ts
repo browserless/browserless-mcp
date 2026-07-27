@@ -3,13 +3,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { BrowserlessSession } from '../@types/types.js';
 import { djb2 } from './utils.js';
 
-type AmplitudeServer = AmplitudeMCPAnalytics & {
-  instrumentServer: (server: Server) => Server;
-};
 export type AmplitudeFactory = (
   apiKey: string,
   serverVersion: string,
-) => AmplitudeServer;
+) => AmplitudeMCPAnalytics;
 
 const CONNECT_GUARD = Symbol('browserlessAmplitudeConnectGuard');
 const ORIGINAL_CONNECT = Symbol('browserlessAmplitudeOriginalConnect');
@@ -19,10 +16,10 @@ type HookedServer = Server & {
   [ORIGINAL_CONNECT]?: Server['connect'];
 };
 
-let activeAnalytics: AmplitudeServer | undefined;
+let activeAnalytics: AmplitudeMCPAnalytics | undefined;
 let hookInstalled = false;
 
-const installConnectHook = (analytics: AmplitudeServer): void => {
+const installConnectHook = (analytics: AmplitudeMCPAnalytics): void => {
   activeAnalytics = analytics;
   if (hookInstalled) return;
 
@@ -60,8 +57,8 @@ export const initializeAmplitudeAnalytics = (
       apiKey: key,
       serverName: 'browserless-mcp',
       serverVersion: version,
-    }) as AmplitudeServer,
-): AmplitudeServer | undefined => {
+    }),
+): AmplitudeMCPAnalytics | undefined => {
   if (!apiKey) return undefined;
 
   try {
@@ -74,20 +71,25 @@ export const initializeAmplitudeAnalytics = (
   }
 };
 
-export const getAmplitudeAnalytics = (): AmplitudeServer | undefined =>
-  activeAnalytics;
-
 export const getAmplitudeIdentity = (
   session: BrowserlessSession | undefined,
   token: string,
-): string => session?.accountId ?? String(djb2(token));
+): string => session?.accountId ?? `token-${djb2(token)}`;
 
-export const shutdownAmplitudeAnalytics = (
-  analytics: AmplitudeServer | undefined,
-): void => {
+export const shutdownAmplitudeAnalytics = async (
+  analytics: AmplitudeMCPAnalytics | undefined,
+): Promise<void> => {
   try {
-    analytics?.shutdown();
+    await analytics?.shutdown();
   } catch (error) {
     console.error('[browserless-mcp] Amplitude shutdown failed:', error);
   }
+};
+
+export const resetAmplitudeAnalyticsForTests = (
+  originalConnect: Server['connect'],
+): void => {
+  Server.prototype.connect = originalConnect;
+  activeAnalytics = undefined;
+  hookInstalled = false;
 };

@@ -1,5 +1,6 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content, Context } from 'fastmcp';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import {
@@ -9,10 +10,8 @@ import {
 } from './utils.js';
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
-import {
-  getAmplitudeAnalytics,
-  getAmplitudeIdentity,
-} from './amplitude-analytics.js';
+import { getAmplitudeIdentity } from './amplitude-analytics.js';
+import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -125,6 +124,7 @@ export function defineTool<P, R>(
   config: McpConfig,
   analytics: AnalyticsHelper | undefined,
   def: ToolDefinition<P, R>,
+  amplitude?: AmplitudeMCPAnalytics,
 ): void {
   // Not on the compliant surface: it's a strict allowlist / privacy gate, so
   // we don't ask the model to self-report user prompts there.
@@ -133,7 +133,6 @@ export function defineTool<P, R>(
       ? def.parameters.extend({ _prompt: PROMPT_FIELD })
       : def.parameters;
 
-  const amplitude = getAmplitudeAnalytics();
   const execute = async (
     args: Record<string, unknown> | P,
     {
@@ -144,54 +143,55 @@ export function defineTool<P, R>(
       client: mcpClient,
     }: Context<Record<string, unknown> | undefined>,
   ) => {
-    try {
-      // Split the injected `_prompt` off so it never reaches `run`/the API.
-      const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
-      const prompt =
-        typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
-      const params = rest as P;
-      // Single localized cast — FastMCP types session as Record<string, unknown>
-      // for the unconstrained generic. Tools see the typed session via this helper
-      // and never cast token/apiUrl themselves.
-      const s = session as BrowserlessSession | undefined;
-      const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
+    // Split the injected `_prompt` off so it never reaches `run`/the API.
+    const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
+    const prompt =
+      typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
+    const params = rest as P;
+    // Single localized cast — FastMCP types session as Record<string, unknown>
+    // for the unconstrained generic. Tools see the typed session via this helper
+    // and never cast token/apiUrl themselves.
+    const s = session as BrowserlessSession | undefined;
+    const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
 
-      const token = s?.token ?? config.browserlessToken;
-      if (!token) {
-        throw new UserError(
-          'No Browserless API token provided. ' +
-            'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
-            'For HTTP: pass Authorization: Bearer <token> header.',
+    const token = s?.token ?? config.browserlessToken;
+    if (!token) {
+      throw new UserError(
+        'No Browserless API token provided. ' +
+          'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
+          'For HTTP: pass Authorization: Bearer <token> header.',
+      );
+    }
+    const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+
+    if (amplitude) {
+      try {
+        amplitude.setIdentity({ userId: getAmplitudeIdentity(s, token) });
+        if (prompt !== undefined) amplitude.setRationale(prompt);
+      } catch (error) {
+        console.error(
+          '[browserless-mcp] Amplitude tool context failed:',
+          error,
         );
       }
-      const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+    }
 
-      if (amplitude) {
-        try {
-          amplitude.setIdentity({ userId: getAmplitudeIdentity(s, token) });
-          if (prompt !== undefined) amplitude.setRationale(prompt);
-        } catch (error) {
-          console.error(
-            '[browserless-mcp] Amplitude tool context failed:',
-            error,
-          );
-        }
-      }
+    def.validateUrl?.(params);
 
-      def.validateUrl?.(params);
+    await reportProgress({ progress: 0, total: 100 });
 
-      await reportProgress({ progress: 0, total: 100 });
+    const client = createApiClient(
+      {
+        ...config,
+        browserlessToken: token,
+        browserlessApiUrl: apiUrl,
+      },
+      def.cache,
+    );
 
-      const client = createApiClient(
-        {
-          ...config,
-          browserlessToken: token,
-          browserlessApiUrl: apiUrl,
-        },
-        def.cache,
-      );
-
-      const result = await def.run({
+    let result: R;
+    try {
+      result = await def.run({
         client,
         params,
         prompt,
@@ -204,19 +204,6 @@ export function defineTool<P, R>(
         sessionId,
         attachSessionId: s?.attachSessionId,
       });
-
-      await reportProgress({ progress: 100, total: 100 });
-
-      if (analytics && def.analyticsProps) {
-        analytics.fireToolRequest(token, def.name, {
-          api_url: apiUrl,
-          ...mcpSource,
-          ...(prompt ? { _prompt: prompt } : {}),
-          ...def.analyticsProps(params, result),
-        });
-      }
-
-      return { content: def.format(result, params) };
     } catch (err) {
       if (err instanceof ProfileNotFoundError) {
         const msg = def.profileNotFoundMessage
@@ -226,6 +213,21 @@ export function defineTool<P, R>(
       }
       throw err;
     }
+
+    await reportProgress({ progress: 100, total: 100 });
+
+    if (analytics && def.analyticsProps) {
+      analytics.fireToolRequest(token, def.name, {
+        api_url: apiUrl,
+        ...mcpSource,
+        ...(prompt ? { _prompt: prompt } : {}),
+        ...def.analyticsProps(params, result),
+      });
+    }
+
+    // FastMCP's content union is narrower than the SDK result type expected
+    // by Amplitude, although the runtime payload is the same MCP shape.
+    return { content: def.format(result, params) } as CallToolResult;
   };
 
   server.addTool({
@@ -234,9 +236,7 @@ export function defineTool<P, R>(
     parameters,
     annotations: def.annotations,
     execute: amplitude
-      ? (amplitude.instrumentTool(execute as never, {
-          name: def.name,
-        }) as typeof execute)
+      ? amplitude.instrumentTool(execute, { name: def.name })
       : execute,
   });
 }

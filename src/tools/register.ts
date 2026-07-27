@@ -1,6 +1,7 @@
 import { FastMCP } from 'fastmcp';
 import type { McpConfig } from '../@types/types.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import type { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
 import { registerSmartScraperTool } from './smartscraper.js';
 import { registerExportTool } from './export.js';
 import { registerAgentTools } from './agent.js';
@@ -25,6 +26,7 @@ export function registerSurface(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
+  amplitude?: AmplitudeMCPAnalytics,
 ): void {
   const registrations: ReadonlyArray<{
     surface: Surface;
@@ -32,20 +34,21 @@ export function registerSurface(
   }> = [
     {
       surface: 'both',
-      register: () => registerExportTool(server, config, analytics),
+      register: () => registerExportTool(server, config, analytics, amplitude),
     },
     // agent + skill tools
     {
       surface: 'both',
-      register: () => registerAgentTools(server, config, analytics),
+      register: () => registerAgentTools(server, config, analytics, amplitude),
     },
     {
       surface: 'both',
-      register: () => registerSearchTool(server, config, analytics),
+      register: () => registerSearchTool(server, config, analytics, amplitude),
     },
     {
       surface: 'both',
-      register: () => registerPerformanceTool(server, config, analytics),
+      register: () =>
+        registerPerformanceTool(server, config, analytics, amplitude),
     },
     // Generic service status — safe on both (it reports the active surface).
     { surface: 'both', register: () => registerStatusResource(server, config) },
@@ -53,24 +56,27 @@ export function registerSurface(
     // (they document proxy/captcha and steer the model to smartscraper).
     {
       surface: 'full',
-      register: () => registerSmartScraperTool(server, config, analytics),
+      register: () =>
+        registerSmartScraperTool(server, config, analytics, amplitude),
     },
     {
       surface: 'full',
-      register: () => registerFunctionTool(server, config, analytics),
+      register: () =>
+        registerFunctionTool(server, config, analytics, amplitude),
     },
     {
       surface: 'full',
-      register: () => registerMapTool(server, config, analytics),
+      register: () => registerMapTool(server, config, analytics, amplitude),
     },
     {
       surface: 'full',
-      register: () => registerCrawlTool(server, config, analytics),
+      register: () => registerCrawlTool(server, config, analytics, amplitude),
     },
     // Full-only: the compliant surface has no profile capability (agent rejects `profile`).
     {
       surface: 'full',
-      register: () => registerProfilesTool(server, config, analytics),
+      register: () =>
+        registerProfilesTool(server, config, analytics, amplitude),
     },
     {
       surface: 'full',
