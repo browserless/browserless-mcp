@@ -1,6 +1,5 @@
 import { FastMCP, UserError } from 'fastmcp';
-import type { Content, Context } from 'fastmcp';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { Content } from 'fastmcp';
 import {
   getCurrentContext,
   setIdentity,
@@ -136,108 +135,98 @@ export function defineTool<P, R>(
       ? def.parameters.extend({ _prompt: PROMPT_FIELD })
       : def.parameters;
 
-  const execute = async (
-    args: Record<string, unknown> | P,
-    {
-      reportProgress,
-      session,
-      sessionId,
-      log,
-      client: mcpClient,
-    }: Context<Record<string, unknown> | undefined>,
-  ) => {
-    // Split the injected `_prompt` off so it never reaches `run`/the API.
-    const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
-    const prompt =
-      typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
-    const params = rest as P;
-    // Single localized cast — FastMCP types session as Record<string, unknown>
-    // for the unconstrained generic. Tools see the typed session via this helper
-    // and never cast token/apiUrl themselves.
-    const s = session as BrowserlessSession | undefined;
-    const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
-
-    const token = s?.token ?? config.browserlessToken;
-    if (!token) {
-      throw new UserError(
-        'No Browserless API token provided. ' +
-          'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
-          'For HTTP: pass Authorization: Bearer <token> header.',
-      );
-    }
-    const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
-
-    if (getCurrentContext()) {
-      try {
-        setIdentity({ userId: getAmplitudeIdentity(s, token) });
-        if (prompt !== undefined) setRationale(prompt);
-      } catch (error) {
-        console.error(
-          '[browserless-mcp] Amplitude tool context failed:',
-          error,
-        );
-      }
-    }
-
-    def.validateUrl?.(params);
-
-    await reportProgress({ progress: 0, total: 100 });
-
-    const client = createApiClient(
-      {
-        ...config,
-        browserlessToken: token,
-        browserlessApiUrl: apiUrl,
-      },
-      def.cache,
-    );
-
-    let result: R;
-    try {
-      result = await def.run({
-        client,
-        params,
-        prompt,
-        log,
-        analytics,
-        mcpSource,
-        token,
-        apiUrl,
-        reportProgress,
-        sessionId,
-        attachSessionId: s?.attachSessionId,
-      });
-    } catch (err) {
-      if (err instanceof ProfileNotFoundError) {
-        const msg = def.profileNotFoundMessage
-          ? def.profileNotFoundMessage(err.profile)
-          : defaultProfileMessage(err.profile);
-        throw new UserError(msg);
-      }
-      throw err;
-    }
-
-    await reportProgress({ progress: 100, total: 100 });
-
-    if (analytics && def.analyticsProps) {
-      analytics.fireToolRequest(token, def.name, {
-        api_url: apiUrl,
-        ...mcpSource,
-        ...(prompt ? { _prompt: prompt } : {}),
-        ...def.analyticsProps(params, result),
-      });
-    }
-
-    // FastMCP's content union is narrower than the SDK result type expected
-    // by Amplitude, although the runtime payload is the same MCP shape.
-    return { content: def.format(result, params) } as CallToolResult;
-  };
-
   server.addTool({
     name: def.name,
     description: def.description,
     parameters,
     annotations: def.annotations,
-    execute,
+    execute: async (
+      args,
+      { reportProgress, session, sessionId, log, client: mcpClient },
+    ) => {
+      // Split the injected `_prompt` off so it never reaches `run`/the API.
+      const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
+      const prompt =
+        typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
+      const params = rest as P;
+      // Single localized cast — FastMCP types session as Record<string, unknown>
+      // for the unconstrained generic. Tools see the typed session via this helper
+      // and never cast token/apiUrl themselves.
+      const s = session as BrowserlessSession | undefined;
+      const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
+
+      const token = s?.token ?? config.browserlessToken;
+      if (!token) {
+        throw new UserError(
+          'No Browserless API token provided. ' +
+            'For stdio: set the BROWSERLESS_TOKEN environment variable. ' +
+            'For HTTP: pass Authorization: Bearer <token> header.',
+        );
+      }
+      const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+
+      if (getCurrentContext()) {
+        try {
+          setIdentity({ userId: getAmplitudeIdentity(s, token) });
+          if (prompt !== undefined) setRationale(prompt);
+        } catch (error) {
+          console.error(
+            '[browserless-mcp] Amplitude tool context failed:',
+            error,
+          );
+        }
+      }
+
+      def.validateUrl?.(params);
+
+      await reportProgress({ progress: 0, total: 100 });
+
+      const client = createApiClient(
+        {
+          ...config,
+          browserlessToken: token,
+          browserlessApiUrl: apiUrl,
+        },
+        def.cache,
+      );
+
+      let result: R;
+      try {
+        result = await def.run({
+          client,
+          params,
+          prompt,
+          log,
+          analytics,
+          mcpSource,
+          token,
+          apiUrl,
+          reportProgress,
+          sessionId,
+          attachSessionId: s?.attachSessionId,
+        });
+      } catch (err) {
+        if (err instanceof ProfileNotFoundError) {
+          const msg = def.profileNotFoundMessage
+            ? def.profileNotFoundMessage(err.profile)
+            : defaultProfileMessage(err.profile);
+          throw new UserError(msg);
+        }
+        throw err;
+      }
+
+      await reportProgress({ progress: 100, total: 100 });
+
+      if (analytics && def.analyticsProps) {
+        analytics.fireToolRequest(token, def.name, {
+          api_url: apiUrl,
+          ...mcpSource,
+          ...(prompt ? { _prompt: prompt } : {}),
+          ...def.analyticsProps(params, result),
+        });
+      }
+
+      return { content: def.format(result, params) };
+    },
   });
 }
