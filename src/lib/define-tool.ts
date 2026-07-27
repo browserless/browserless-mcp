@@ -1,5 +1,5 @@
 import { FastMCP, UserError } from 'fastmcp';
-import type { Content } from 'fastmcp';
+import type { Content, Context } from 'fastmcp';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import {
@@ -9,6 +9,10 @@ import {
 } from './utils.js';
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
+import {
+  getAmplitudeAnalytics,
+  getAmplitudeIdentity,
+} from './amplitude-analytics.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -129,15 +133,18 @@ export function defineTool<P, R>(
       ? def.parameters.extend({ _prompt: PROMPT_FIELD })
       : def.parameters;
 
-  server.addTool({
-    name: def.name,
-    description: def.description,
-    parameters,
-    annotations: def.annotations,
-    execute: async (
-      args,
-      { reportProgress, session, sessionId, log, client: mcpClient },
-    ) => {
+  const amplitude = getAmplitudeAnalytics();
+  const execute = async (
+    args: Record<string, unknown> | P,
+    {
+      reportProgress,
+      session,
+      sessionId,
+      log,
+      client: mcpClient,
+    }: Context<Record<string, unknown> | undefined>,
+  ) => {
+    try {
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
       const prompt =
@@ -159,6 +166,18 @@ export function defineTool<P, R>(
       }
       const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
 
+      if (amplitude) {
+        try {
+          amplitude.setIdentity({ userId: getAmplitudeIdentity(s, token) });
+          if (prompt !== undefined) amplitude.setRationale(prompt);
+        } catch (error) {
+          console.error(
+            '[browserless-mcp] Amplitude tool context failed:',
+            error,
+          );
+        }
+      }
+
       def.validateUrl?.(params);
 
       await reportProgress({ progress: 0, total: 100 });
@@ -172,30 +191,19 @@ export function defineTool<P, R>(
         def.cache,
       );
 
-      let result: R;
-      try {
-        result = await def.run({
-          client,
-          params,
-          prompt,
-          log,
-          analytics,
-          mcpSource,
-          token,
-          apiUrl,
-          reportProgress,
-          sessionId,
-          attachSessionId: s?.attachSessionId,
-        });
-      } catch (err) {
-        if (err instanceof ProfileNotFoundError) {
-          const msg = def.profileNotFoundMessage
-            ? def.profileNotFoundMessage(err.profile)
-            : defaultProfileMessage(err.profile);
-          throw new UserError(msg);
-        }
-        throw err;
-      }
+      const result = await def.run({
+        client,
+        params,
+        prompt,
+        log,
+        analytics,
+        mcpSource,
+        token,
+        apiUrl,
+        reportProgress,
+        sessionId,
+        attachSessionId: s?.attachSessionId,
+      });
 
       await reportProgress({ progress: 100, total: 100 });
 
@@ -209,6 +217,26 @@ export function defineTool<P, R>(
       }
 
       return { content: def.format(result, params) };
-    },
+    } catch (err) {
+      if (err instanceof ProfileNotFoundError) {
+        const msg = def.profileNotFoundMessage
+          ? def.profileNotFoundMessage(err.profile)
+          : defaultProfileMessage(err.profile);
+        throw new UserError(msg);
+      }
+      throw err;
+    }
+  };
+
+  server.addTool({
+    name: def.name,
+    description: def.description,
+    parameters,
+    annotations: def.annotations,
+    execute: amplitude
+      ? (amplitude.instrumentTool(execute as never, {
+          name: def.name,
+        }) as typeof execute)
+      : execute,
   });
 }

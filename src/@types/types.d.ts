@@ -44,6 +44,8 @@ export interface BrowserlessSession extends Record<string, unknown> {
    * resulting id instead of letting the model open a `createProfile` session.
    */
   attachSessionId?: string;
+  /** Verified account id for OAuth/Supabase-authenticated sessions. */
+  accountId?: string;
   /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
   source?: string;
 }
@@ -69,6 +71,7 @@ export interface McpConfig {
   maxRetries: number;
   cacheTtlMs: number;
   analyticsEnabled: boolean;
+  amplitudeApiKey?: string;
   // Required (not optional): the compliant surface is a security gate, so every
   // McpConfig must choose explicitly — an omitted field must not default to the
   // fuller/prohibited surface.

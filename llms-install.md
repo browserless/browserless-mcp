@@ -45,7 +45,8 @@ If the user needs a local-only / air-gapped install, use the npm package over st
       "command": "npx",
       "args": ["browserless-mcp"],
       "env": {
-        "BROWSERLESS_TOKEN": "<BROWSERLESS_TOKEN>"
+        "BROWSERLESS_TOKEN": "<BROWSERLESS_TOKEN>",
+        "AMPLITUDE_API_KEY": "<optional-AMPLITUDE_API_KEY>"
       },
       "disabled": false,
       "autoApprove": []

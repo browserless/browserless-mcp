@@ -235,6 +235,7 @@ Then point your MCP client at `http://localhost:8080/mcp` using the same header/
 | `BROWSERLESS_TIMEOUT`     | No       | `30000`                                 | Request timeout in milliseconds                                                                                      |
 | `BROWSERLESS_MAX_RETRIES` | No       | `3`                                     | Max retry attempts for failed requests                                                                               |
 | `BROWSERLESS_CACHE_TTL`   | No       | `60000`                                 | Cache TTL in milliseconds (0 to disable)                                                                             |
+| `AMPLITUDE_API_KEY`       | No       | —                                       | Amplitude project API key for MCP usage analytics                                                                    |
 | `MCP_COMPLIANCE_MODE`     | No       | unset (full surface)                    | Serve the reduced, directory-compliant surface. Fails closed: any set value except `false`/`0`/`no`/`off` enables it |
 
 ## MCP Resources

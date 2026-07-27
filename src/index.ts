@@ -16,6 +16,11 @@ import { resolveBrowserlessAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
 import { Redis } from 'ioredis';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import {
+  initializeAmplitudeAnalytics,
+  shutdownAmplitudeAnalytics,
+} from './lib/amplitude-analytics.js';
 
 const pkg = JSON.parse(
   readFileSync(
@@ -37,6 +42,10 @@ const analytics = new AnalyticsHelper(
   config.analyticsEnabled,
   config.sqsQueueUrl,
   config.sqsRegion,
+);
+const amplitudeAnalytics = initializeAmplitudeAnalytics(
+  config.amplitudeApiKey,
+  pkg.version,
 );
 
 // Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
@@ -143,14 +152,36 @@ const complianceSurface = config.complianceMode
     : 'full (explicit opt-out)';
 console.error(`[browserless-mcp] Tool surface: ${complianceSurface}`);
 
+let warnedAboutServerIdentity = false;
 server.on('connect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   console.error(`[browserless-mcp] Client connected: ${id}`);
+  if (
+    amplitudeAnalytics &&
+    !warnedAboutServerIdentity &&
+    !(event.session.server instanceof Server)
+  ) {
+    warnedAboutServerIdentity = true;
+    console.error(
+      '[browserless-mcp] WARNING: FastMCP session server is not an MCP SDK Server; Amplitude instrumentation may be disabled.',
+    );
+  }
   // force the client to refresh its tool list on connect
   void event.session.triggerListChangedNotification(
     'notifications/tools/list_changed',
   );
 });
+
+if (amplitudeAnalytics) {
+  let amplitudeShutdown = false;
+  const shutdown = (): void => {
+    if (amplitudeShutdown) return;
+    amplitudeShutdown = true;
+    shutdownAmplitudeAnalytics(amplitudeAnalytics);
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+}
 
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
