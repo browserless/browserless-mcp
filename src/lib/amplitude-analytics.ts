@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { AmplitudeMCPAnalytics } from '@amplitude/mcp-analytics';
+import {
+  AmplitudeMCPAnalytics,
+  getCurrentContext,
+  setIdentity,
+  setRationale,
+} from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastMCP } from 'fastmcp';
@@ -13,6 +18,7 @@ export type AmplitudeFactory = (
 const CONNECT_GUARD = Symbol('browserlessAmplitudeConnectGuard');
 const ORIGINAL_CONNECT = Symbol('browserlessAmplitudeOriginalConnect');
 const ADD_TOOL_HOOK = Symbol('browserlessAmplitudeAddToolHook');
+const AMPLITUDE_SHUTDOWN_TIMEOUT_MS = 2_000;
 
 type HookedServer = Server & {
   [CONNECT_GUARD]?: boolean;
@@ -110,13 +116,38 @@ export const getAmplitudeIdentity = (
   session?.accountId ??
   `token-${createHash('sha256').update(token).digest('base64url')}`;
 
+export const setAmplitudeToolContext = (
+  session: BrowserlessSession | undefined,
+  token: string,
+  prompt: string | undefined,
+): void => {
+  if (!activeAnalytics) return;
+
+  try {
+    if (!getCurrentContext()) return;
+    setIdentity({ userId: getAmplitudeIdentity(session, token) });
+    if (prompt !== undefined) setRationale(prompt);
+  } catch (error) {
+    console.error('[browserless-mcp] Amplitude tool context failed:', error);
+  }
+};
+
 export const shutdownAmplitudeAnalytics = async (
   analytics: AmplitudeMCPAnalytics | undefined,
 ): Promise<void> => {
+  let timeout: NodeJS.Timeout | undefined;
   try {
-    await analytics?.shutdown();
+    await Promise.race([
+      analytics?.shutdown(),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, AMPLITUDE_SHUTDOWN_TIMEOUT_MS);
+        timeout.unref();
+      }),
+    ]);
   } catch (error) {
     console.error('[browserless-mcp] Amplitude shutdown failed:', error);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 };
 

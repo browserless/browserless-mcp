@@ -1,10 +1,5 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import {
-  getCurrentContext,
-  setIdentity,
-  setRationale,
-} from '@amplitude/mcp-analytics';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import {
@@ -14,7 +9,7 @@ import {
 } from './utils.js';
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
-import { getAmplitudeIdentity } from './amplitude-analytics.js';
+import { setAmplitudeToolContext } from './amplitude-analytics.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -165,17 +160,7 @@ export function defineTool<P, R>(
       }
       const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
 
-      if (getCurrentContext()) {
-        try {
-          setIdentity({ userId: getAmplitudeIdentity(s, token) });
-          if (prompt !== undefined) setRationale(prompt);
-        } catch (error) {
-          console.error(
-            '[browserless-mcp] Amplitude tool context failed:',
-            error,
-          );
-        }
-      }
+      setAmplitudeToolContext(s, token, prompt);
 
       def.validateUrl?.(params);
 

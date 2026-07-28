@@ -10,6 +10,8 @@ import {
   resetAmplitudeAnalyticsForTests,
   shutdownAmplitudeAnalytics,
 } from '../../src/lib/amplitude-analytics.js';
+import { defineTool } from '../../src/lib/define-tool.js';
+import type { McpConfig } from '../../src/@types/types.js';
 import { z } from 'zod';
 
 const createDeferred = <T>() => {
@@ -126,6 +128,45 @@ describe('Amplitude MCP analytics', () => {
     expect(disabledAddTool.firstCall.args[0].execute).to.equal(disabledExecute);
   });
 
+  it('executes a defined tool normally when analytics is disabled', async () => {
+    const server = new FastMCP({ name: 'disabled-test', version: '1.0.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    const config = {
+      browserlessApiUrl: 'https://example.com',
+      complianceMode: true,
+    } as McpConfig;
+
+    defineTool(server, config, undefined, {
+      name: 'disabled_tool',
+      description: 'Disabled analytics test',
+      parameters: z.object({}),
+      run: async () => 'ok',
+      format: (result) => [{ type: 'text', text: result }],
+    });
+
+    const tool = addTool.firstCall.args[0];
+    const result = await tool.execute(
+      {},
+      {
+        reportProgress: async () => undefined,
+        session: { token: 'test-token', apiUrl: 'https://example.com' },
+        sessionId: undefined,
+        log: {
+          debug: () => undefined,
+          error: () => undefined,
+          info: () => undefined,
+          warn: () => undefined,
+        },
+        client: { version: { name: 'test-client', version: '1.0.0' } },
+        streamContent: async () => undefined,
+      },
+    );
+
+    expect(result).to.deep.equal({
+      content: [{ type: 'text', text: 'ok' }],
+    });
+  });
+
   it('awaits successful Amplitude shutdown', async () => {
     const mock = new MockAmplitudeMCPAnalytics({
       serverName: 'browserless-mcp',
@@ -167,6 +208,20 @@ describe('Amplitude MCP analytics', () => {
     deferred.reject(new Error('flush failed'));
     await result;
 
+    expect(shutdown.calledOnce).to.equal(true);
+  });
+
+  it('resolves when Amplitude shutdown never settles', async () => {
+    const mock = new MockAmplitudeMCPAnalytics({
+      serverName: 'browserless-mcp',
+      serverVersion: '1.0.0',
+    });
+    const shutdown = sinon.stub(mock, 'shutdown') as sinon.SinonStub;
+    shutdown.returns(new Promise<void>(() => {}));
+
+    const result = await shutdownAmplitudeAnalytics(mock);
+
+    expect(result).to.equal(undefined);
     expect(shutdown.calledOnce).to.equal(true);
   });
 });
