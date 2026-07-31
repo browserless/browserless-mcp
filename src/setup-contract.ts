@@ -1,10 +1,7 @@
 export type SurfaceAvailability = 'both' | 'full';
 export type SurfaceKind = 'tool' | 'resource' | 'prompt';
 
-/**
- * Canonical public MCP inventory. Runtime registration and the committed setup
- * export both consume this registry so the two surfaces cannot drift silently.
- */
+// Runtime registration and the public export share this inventory to prevent drift.
 export const MCP_SURFACE_REGISTRY = [
   { kind: 'tool', id: 'browserless_export', surface: 'both' },
   { kind: 'tool', id: 'browserless_agent', surface: 'both' },
