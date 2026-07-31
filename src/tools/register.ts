@@ -15,73 +15,34 @@ import { registerApiDocsResource } from '../resources/api-docs.js';
 import { registerStatusResource } from '../resources/status.js';
 import { registerScrapeUrlPrompt } from '../prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../prompts/extract-content.js';
-
-// Registers the whole surface (tools/resources/prompts) so the compliance gate
-// covers all a reviewer lists. Each item declares 'both'|'full' — no positional
-// "unconditional" block a new tool could ship on the directory by accident.
-type Surface = 'both' | 'full';
+import { MCP_SURFACE_REGISTRY, type McpSurfaceId } from '../setup-contract.js';
 
 export function registerSurface(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
-  const registrations: ReadonlyArray<{
-    surface: Surface;
-    register: () => void;
-  }> = [
-    {
-      surface: 'both',
-      register: () => registerExportTool(server, config, analytics),
-    },
-    // agent + skill tools
-    {
-      surface: 'both',
-      register: () => registerAgentTools(server, config, analytics),
-    },
-    {
-      surface: 'both',
-      register: () => registerSearchTool(server, config, analytics),
-    },
-    {
-      surface: 'both',
-      register: () => registerPerformanceTool(server, config, analytics),
-    },
-    // Generic service status — safe on both (it reports the active surface).
-    { surface: 'both', register: () => registerStatusResource(server, config) },
-    // Full only: scraping/code tools + the api-docs resource and scrape prompts
-    // (they document proxy/captcha and steer the model to smartscraper).
-    {
-      surface: 'full',
-      register: () => registerSmartScraperTool(server, config, analytics),
-    },
-    {
-      surface: 'full',
-      register: () => registerFunctionTool(server, config, analytics),
-    },
-    {
-      surface: 'full',
-      register: () => registerMapTool(server, config, analytics),
-    },
-    {
-      surface: 'full',
-      register: () => registerCrawlTool(server, config, analytics),
-    },
-    // Full-only: the compliant surface has no profile capability (agent rejects `profile`).
-    {
-      surface: 'full',
-      register: () => registerProfilesTool(server, config, analytics),
-    },
-    {
-      surface: 'full',
-      register: () => registerApiDocsResource(server, config),
-    },
-    { surface: 'full', register: () => registerScrapeUrlPrompt(server) },
-    { surface: 'full', register: () => registerExtractContentPrompt(server) },
-  ];
+  const registrations: Record<McpSurfaceId, () => void> = {
+    browserless_export: () => registerExportTool(server, config, analytics),
+    browserless_agent: () => registerAgentTools(server, config, analytics),
+    browserless_skill: () => {}, // registered together with browserless_agent
+    browserless_search: () => registerSearchTool(server, config, analytics),
+    browserless_performance: () =>
+      registerPerformanceTool(server, config, analytics),
+    'browserless://status': () => registerStatusResource(server, config),
+    browserless_smartscraper: () =>
+      registerSmartScraperTool(server, config, analytics),
+    browserless_function: () => registerFunctionTool(server, config, analytics),
+    browserless_map: () => registerMapTool(server, config, analytics),
+    browserless_crawl: () => registerCrawlTool(server, config, analytics),
+    browserless_profiles: () => registerProfilesTool(server, config, analytics),
+    'browserless://api-docs': () => registerApiDocsResource(server, config),
+    'scrape-url': () => registerScrapeUrlPrompt(server),
+    'extract-content': () => registerExtractContentPrompt(server),
+  };
 
   const compliant = isCompliant(config);
-  for (const { surface, register } of registrations) {
-    if (surface === 'both' || !compliant) register();
+  for (const { id, surface } of MCP_SURFACE_REGISTRY) {
+    if (surface === 'both' || !compliant) registrations[id]();
   }
 }

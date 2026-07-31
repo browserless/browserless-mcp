@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "name": "@browserless.io/mcp",
+    "version": "1.16.0",
+    "engines": { "node": ">=24", "npm": ">=11.10.0" },
+    "stdio": { "command": "npx", "args": ["-y", "@browserless.io/mcp"] }
+  },
+  "endpoint": {
+    "url": "https://mcp.browserless.io/mcp",
+    "transport": "streamable-http"
+  },
+  "auth": {
+    "generatedDefault": "oauth",
+    "methods": [
+      { "id": "oauth", "priority": 1, "generatedByDefault": true },
+      {
+        "id": "bearer-header",
+        "priority": 2,
+        "generatedByDefault": false,
+        "headerName": "Authorization",
+        "valueTemplate": "Bearer <BROWSERLESS_TOKEN>"
+      }
+    ],
+    "forbiddenGeneratedMethods": ["query-token"]
+  },
+  "surfaces": {
+    "full": {
+      "tools": [
+        "browserless_agent",
+        "browserless_crawl",
+        "browserless_export",
+        "browserless_function",
+        "browserless_map",
+        "browserless_performance",
+        "browserless_profiles",
+        "browserless_search",
+        "browserless_skill",
+        "browserless_smartscraper"
+      ],
+      "resources": ["browserless://api-docs", "browserless://status"],
+      "prompts": ["extract-content", "scrape-url"]
+    },
+    "compliant": {
+      "tools": [
+        "browserless_agent",
+        "browserless_export",
+        "browserless_performance",
+        "browserless_search",
+        "browserless_skill"
+      ],
+      "resources": ["browserless://status"],
+      "prompts": []
+    }
+  },
+  "clients": [
+    {
+      "id": "codex",
+      "label": "Codex",
+      "setupKind": "cli",
+      "oauth": true,
+      "instructions": [
+        "Run: codex mcp add browserless --url https://mcp.browserless.io/mcp",
+        "Run: codex mcp login browserless"
+      ]
+    },
+    {
+      "id": "claude-desktop",
+      "label": "Claude Desktop",
+      "setupKind": "ui",
+      "oauth": true,
+      "instructions": [
+        "Open Settings > Connectors.",
+        "Add a custom connector with https://mcp.browserless.io/mcp.",
+        "Select Connect and finish OAuth in the browser."
+      ]
+    },
+    {
+      "id": "claude-code",
+      "label": "Claude Code",
+      "setupKind": "cli",
+      "oauth": true,
+      "instructions": [
+        "Run: claude mcp add --transport http browserless https://mcp.browserless.io/mcp",
+        "Run: claude mcp login browserless"
+      ]
+    },
+    {
+      "id": "cursor",
+      "label": "Cursor",
+      "setupKind": "json",
+      "configPath": "~/.cursor/mcp.json or .cursor/mcp.json",
+      "oauth": true,
+      "defaultConfig": {
+        "mcpServers": {
+          "browserless": { "url": "https://mcp.browserless.io/mcp" }
+        }
+      },
+      "instructions": ["Reload MCP servers, then complete OAuth when prompted."]
+    },
+    {
+      "id": "vscode",
+      "label": "VS Code",
+      "setupKind": "json",
+      "configPath": ".vscode/mcp.json (workspace) or the user profile MCP config",
+      "oauth": true,
+      "defaultConfig": {
+        "servers": {
+          "browserless": {
+            "type": "http",
+            "url": "https://mcp.browserless.io/mcp"
+          }
+        }
+      },
+      "instructions": [
+        "Run MCP: List Servers, start Browserless, and authenticate."
+      ]
+    },
+    {
+      "id": "windsurf",
+      "label": "Windsurf",
+      "setupKind": "json",
+      "configPath": "~/.codeium/windsurf/mcp_config.json",
+      "oauth": true,
+      "defaultConfig": {
+        "mcpServers": {
+          "browserless": { "serverUrl": "https://mcp.browserless.io/mcp" }
+        }
+      },
+      "instructions": [
+        "Refresh MCP servers, then complete OAuth when prompted."
+      ]
+    }
+  ],
+  "verification": {
+    "tool": "browserless_smartscraper",
+    "arguments": { "url": "https://example.com", "formats": ["markdown"] }
+  }
+}

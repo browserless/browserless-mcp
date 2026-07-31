@@ -42,6 +42,13 @@
     "./format": {
       "types": "./build/src/lib/agent-format.d.ts",
       "import": "./build/src/lib/agent-format.js"
+    },
+    "./setup": {
+      "types": "./build/src/setup-contract.d.ts",
+      "import": "./build/src/setup-contract.js"
+    },
+    "./setup/browserless-mcp-setup.json": {
+      "default": "./setup/browserless-mcp-setup.json"
     }
   },
   "files": [
@@ -50,20 +57,23 @@
     "build/src/**/*.md",
     "bin/*",
     "scripts/*.mjs",
-    "README.md"
+    "README.md",
+    "setup/*.json"
   ],
   "scripts": {
     "build": "tsc && npm run build:skills && npm run build:types",
     "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
     "build:types": "mkdir -p build/src/@types && cp src/@types/*.d.ts build/src/@types/",
+    "generate:setup": "npm run build && node scripts/generate-setup-contract.mjs",
+    "check:setup": "node scripts/generate-setup-contract.mjs --check",
     "clean": "rm -rf build",
     "dev": "BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-test} node --watch build/src/index.js",
     "lint": "eslint src test",
-    "test": "npm run build && mocha",
+    "test": "npm run build && npm run check:setup && mocha",
     "coverage": "npm run build && c8 --reporter=text --reporter=html --reporter=lcov --check-coverage --lines 80 --branches 70 --functions 80 mocha",
     "start": "node build/src/index.js",
     "start:http": "TRANSPORT=httpStream PORT=8080 node build/src/index.js",
-    "prepack": "npm run build",
+    "prepack": "npm run build && npm run check:setup",
     "postinstall": "node scripts/patch-fastmcp.mjs",
     "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"

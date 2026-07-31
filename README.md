@@ -6,13 +6,13 @@ MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io)
 
 ## Quick Start
 
-Get an API token from [browserless.io](https://browserless.io) (free tier available), then point your MCP client at the hosted server:
+Point your MCP client at the hosted server, then complete OAuth in the client:
 
 ```json
 {
   "mcpServers": {
     "browserless": {
-      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
+      "url": "https://mcp.browserless.io/mcp"
     }
   }
 }
@@ -33,6 +33,7 @@ No local install — see [Configuration](#configuration) for per-client snippets
 | `browserless_export`       | Export a webpage via the Browserless `/export` API. Fetches the URL and returns its native content (HTML, PDF, image, etc.) with automatic content-type detection.                                                                                                                                                                                                                 |
 | `browserless_agent`        | Drive a persistent browser session via a ReAct loop: snapshot the page, plan, batch interactions (click, type, scroll, evaluate, etc.), and re-snapshot. Uses ref-based selectors derived from snapshots, supports multi-tab workflows, screenshots, captcha solving, live URLs, and file upload/download (captured downloads auto-surface as handles; bytes never enter context). |
 | `browserless_skill`        | Load an on-demand recipe for a non-trivial page mechanic (shadow DOM, cookie consent, modals, captchas, dynamic content, snapshot misses, screenshots, tabs). Companion to `browserless_agent`.                                                                                                                                                                                    |
+| `browserless_profiles`     | List authenticated browser profiles available to the current Browserless Cloud account. Available on the full surface only; do not assume profile management exists in self-hosted deployments.                                                                                                                                                                                    |
 
 ## Skills
 
@@ -100,11 +101,14 @@ The `proxy` object is read once at session creation. To change it, call `close` 
 
 ## Configuration
 
-The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter.
+The server is hosted at `https://mcp.browserless.io/mcp`. Use OAuth by default;
+use an `Authorization: Bearer <token>` header when OAuth is unavailable. The
+runtime accepts `?token=` as a legacy fallback, but generated setup never uses
+query-token URLs because URLs can leak through logs and copied configuration.
 
 Installing via an AI agent? See [install.md](install.md) for agent-readable setup instructions.
 
-**Using headers** (recommended for clients that support them):
+**Bearer-header fallback:**
 
 ```json
 {
@@ -117,12 +121,6 @@ Installing via an AI agent? See [install.md](install.md) for agent-readable setu
     }
   }
 }
-```
-
-**Using URL query parameters** (for clients like Claude.ai custom connectors that only accept a URL):
-
-```text
-https://mcp.browserless.io/mcp?token=your-token-here
 ```
 
 To connect to a specific Browserless regional endpoint, add the `x-browserless-api-url` header or the `browserlessUrl` query parameter:
@@ -142,71 +140,16 @@ To connect to a specific Browserless regional endpoint, add the `x-browserless-a
 ```
 
 ```text
-https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://production-lon.browserless.io
+https://mcp.browserless.io/mcp?browserlessUrl=https://production-lon.browserless.io
 ```
 
-When both headers and query parameters are present, headers take precedence.
+For duplicate API-key or regional overrides, the corresponding header takes
+precedence over its query parameter. Generated setup never combines OAuth with
+the legacy query-token fallback.
 
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "browserless": {
-      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
-    }
-  }
-}
-```
-
-### Cursor
-
-Add to your Cursor MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "browserless": {
-      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
-    }
-  }
-}
-```
-
-### VS Code
-
-Add to your VS Code settings (`settings.json`):
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "browserless": {
-        "url": "https://mcp.browserless.io/mcp",
-        "headers": {
-          "Authorization": "Bearer your-token-here"
-        }
-      }
-    }
-  }
-}
-```
-
-### Windsurf
-
-Add to your Windsurf MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "browserless": {
-      "url": "https://mcp.browserless.io/mcp?token=your-token-here"
-    }
-  }
-}
-```
+For current Codex, Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf setup
+syntax, see the canonical [agent installation guide](install.md). Its exact
+machine-readable source is [`setup/browserless-mcp-setup.json`](setup/browserless-mcp-setup.json).
 
 ## Self-Hosting
 
@@ -218,6 +161,7 @@ docker build -f docker/Dockerfile -t browserless-mcp .
 docker run \
   -e BROWSERLESS_TOKEN=your-token \
   -e BROWSERLESS_API_URL=https://your-browserless-instance.example.com \
+  -e TRANSPORT=httpStream \
   -p 8080:8080 \
   browserless-mcp
 ```
