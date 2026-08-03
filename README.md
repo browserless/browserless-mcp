@@ -6,7 +6,9 @@ MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io)
 
 ## Quick Start
 
-Point your MCP client at the hosted server, then complete OAuth in the client:
+Point your MCP client at the hosted server, then complete OAuth in the client.
+This example is the Cursor JSON shape; use the versioned `clients` export linked
+below for the exact VS Code, Windsurf, Claude Desktop, or other client syntax.
 
 ```json
 {
