@@ -21,11 +21,17 @@ const expected = await format(
 );
 
 if (process.argv.includes('--check')) {
-  const actual = await readFile(outputPath, 'utf8').catch((error) => {
-    if (error.code === 'ENOENT') return '';
-    throw error;
-  });
-  if (actual !== expected) {
+  let actual;
+  try {
+    actual = await readFile(outputPath, 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    console.error(
+      'setup/browserless-mcp-setup.json is missing; restore the tracked file or run npm run generate:setup',
+    );
+    process.exitCode = 1;
+  }
+  if (actual !== undefined && actual !== expected) {
     console.error(
       'setup/browserless-mcp-setup.json is stale; run npm run generate:setup',
     );

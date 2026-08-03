@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { spawnSync } from 'node:child_process';
 import {
+  cpSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
@@ -409,16 +410,12 @@ describe('Browserless MCP setup contract', () => {
 
     try {
       mkdirSync(join(fixture, 'scripts'), { recursive: true });
-      mkdirSync(join(fixture, 'build/src'), { recursive: true });
       mkdirSync(join(fixture, 'setup'), { recursive: true });
       copyFileSync(
         join(root, 'scripts/generate-setup-contract.mjs'),
         scriptPath,
       );
-      copyFileSync(
-        join(root, 'build/src/setup-contract.js'),
-        join(fixture, 'build/src/setup-contract.js'),
-      );
+      cpSync(join(root, 'build'), join(fixture, 'build'), { recursive: true });
       copyFileSync(join(root, 'package.json'), join(fixture, 'package.json'));
       copyFileSync(join(root, 'setup/browserless-mcp-setup.json'), outputPath);
       symlinkSync(
@@ -438,7 +435,7 @@ describe('Browserless MCP setup contract', () => {
       unlinkSync(outputPath);
       const missing = runGenerator('--check');
       expect(missing.status).to.equal(1);
-      expect(missing.stderr).to.include('is stale');
+      expect(missing.stderr).to.include('is missing');
 
       expect(runGenerator().status).to.equal(0);
       expect(readFileSync(outputPath, 'utf8')).to.equal(baseline);
@@ -476,10 +473,28 @@ describe('Browserless MCP setup contract', () => {
             `^${expected.endpoint.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
           ),
         );
+        for (const parameter of new URL(url).searchParams.keys()) {
+          expect(
+            parameter.toLowerCase(),
+            'agent-facing docs must not put Browserless tokens in URLs',
+          ).not.to.equal('token');
+        }
       }
     }
     expect(hostedUrlCount).to.be.greaterThan(0);
     expect(readme).to.include(expected.auth.methods[1].headerName);
+    for (const entry of MCP_SURFACE_REGISTRY) {
+      const row = readme
+        .split('\n')
+        .find((line) => line.startsWith(`| \`${entry.id}\``));
+      expect(row, `README must document ${entry.kind} ${entry.id}`).to.be.a(
+        'string',
+      );
+      expect(row?.includes('Available on the full surface only')).to.equal(
+        entry.surface === 'full-only',
+        `README availability for ${entry.id} must match MCP_SURFACE_REGISTRY`,
+      );
+    }
     for (const duplicatedInstruction of [
       'codex mcp add browserless',
       'claude mcp add --transport http browserless',
