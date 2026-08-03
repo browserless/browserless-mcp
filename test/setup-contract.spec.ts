@@ -104,6 +104,7 @@ describe('Browserless MCP setup contract', () => {
     // `npm run check:setup` owns the separate byte-level generated-file gate.
     expect(generated).to.deep.equal(expected);
     expect(expected.endpoint.url).to.equal('https://mcp.browserless.io/mcp');
+    expect(expected.endpoint.transport).to.equal('streamable-http');
     expect(expected.package).not.to.have.property('version');
     expect(expected.package.name).to.equal('@browserless.io/mcp');
     expect(expected.package.engines).to.deep.equal({
@@ -119,19 +120,30 @@ describe('Browserless MCP setup contract', () => {
   });
 
   it('rejects incomplete package metadata at the untyped generator boundary', () => {
-    expect(() =>
-      createSetupContract({ name: '', engines: pkg.engines }),
-    ).to.throw('package name, engines.node, and engines.npm are required');
+    const invalidMetadata = [
+      { name: '', engines: pkg.engines },
+      { name: pkg.name, engines: { node: '   ', npm: pkg.engines.npm } },
+      { name: pkg.name, engines: { node: pkg.engines.node, npm: 11 } },
+    ];
+    for (const metadata of invalidMetadata) {
+      expect(() =>
+        createSetupContract(metadata as unknown as PackageTruth),
+      ).to.throw('package name, engines.node, and engines.npm are required');
+    }
   });
 
   it('publishes only normalized package fields from untrusted metadata', () => {
     const contract = createSetupContract({
       name: '  @browserless.io/mcp  ',
-      engines: pkg.engines,
+      engines: { node: '  >=24  ', npm: '  >=11.10.0  ' },
       description: 'must not leak',
     } as PackageTruth & { description: string });
 
     expect(contract.package.name).to.equal('@browserless.io/mcp');
+    expect(contract.package.engines).to.deep.equal({
+      node: '>=24',
+      npm: '>=11.10.0',
+    });
     expect(contract.package.stdio.args).to.deep.equal([
       '-y',
       '@browserless.io/mcp',
@@ -190,15 +202,87 @@ describe('Browserless MCP setup contract', () => {
       instructions: string[];
       defaultConfig?: unknown;
     }>;
-    expect(
-      clients.map(({ id, setupKind }) => ({ id, setupKind })),
-    ).to.deep.equal([
-      { id: 'codex', setupKind: 'cli' },
-      { id: 'claude-desktop', setupKind: 'ui' },
-      { id: 'claude-code', setupKind: 'cli' },
-      { id: 'cursor', setupKind: 'json' },
-      { id: 'vscode', setupKind: 'json' },
-      { id: 'windsurf', setupKind: 'json' },
+    expect(clients).to.deep.equal([
+      {
+        id: 'codex',
+        label: 'Codex',
+        setupKind: 'cli',
+        oauth: true,
+        instructions: [
+          'Run: codex mcp add browserless --url https://mcp.browserless.io/mcp',
+          'Run: codex mcp login browserless',
+        ],
+      },
+      {
+        id: 'claude-desktop',
+        label: 'Claude Desktop',
+        setupKind: 'ui',
+        oauth: true,
+        instructions: [
+          'Open Settings > Connectors.',
+          'Add a custom connector with https://mcp.browserless.io/mcp.',
+          'Select Connect and finish OAuth in the browser.',
+        ],
+      },
+      {
+        id: 'claude-code',
+        label: 'Claude Code',
+        setupKind: 'cli',
+        oauth: true,
+        instructions: [
+          'Run: claude mcp add --transport http browserless https://mcp.browserless.io/mcp',
+          'Run: claude mcp login browserless',
+        ],
+      },
+      {
+        id: 'cursor',
+        label: 'Cursor',
+        setupKind: 'json',
+        configPath: '~/.cursor/mcp.json or .cursor/mcp.json',
+        oauth: true,
+        defaultConfig: {
+          mcpServers: {
+            browserless: { url: 'https://mcp.browserless.io/mcp' },
+          },
+        },
+        instructions: [
+          'Reload MCP servers, then complete OAuth when prompted.',
+        ],
+      },
+      {
+        id: 'vscode',
+        label: 'VS Code',
+        setupKind: 'json',
+        configPath:
+          '.vscode/mcp.json (workspace) or the user profile MCP config',
+        oauth: true,
+        defaultConfig: {
+          servers: {
+            browserless: {
+              type: 'http',
+              url: 'https://mcp.browserless.io/mcp',
+            },
+          },
+        },
+        instructions: [
+          'Run MCP: List Servers, start Browserless, and authenticate.',
+        ],
+      },
+      {
+        id: 'windsurf',
+        label: 'Windsurf',
+        setupKind: 'json',
+        configPath: '~/.codeium/windsurf/mcp_config.json',
+        oauth: true,
+        defaultConfig: {
+          mcpServers: {
+            browserless: { serverUrl: 'https://mcp.browserless.io/mcp' },
+          },
+        },
+        instructions: [
+          'Refresh MCP servers, then complete OAuth when prompted.',
+        ],
+      },
     ]);
     for (const client of clients) {
       expect(client.oauth, `${client.id} must support OAuth`).to.equal(true);
@@ -259,6 +343,13 @@ describe('Browserless MCP setup contract', () => {
       'bearer-header',
     ]);
     expect(expected.auth.generatedDefault).to.equal('oauth');
+    expect(expected.auth.methods[1]).to.deep.equal({
+      id: 'bearer-header',
+      priority: 2,
+      generatedByDefault: false,
+      headerName: 'Authorization',
+      valueTemplate: 'Bearer <BROWSERLESS_TOKEN>',
+    });
     expect(
       JSON.stringify(expected),
       'the generated contract must never embed query-token auth',

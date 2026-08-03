@@ -49,21 +49,26 @@ const HOSTED_URL = 'https://mcp.browserless.io/mcp';
 
 export const createSetupContract = (packageTruth: PackageTruth) => {
   if (
-    !packageTruth.name?.trim() ||
-    !packageTruth.engines?.node ||
-    !packageTruth.engines?.npm
+    typeof packageTruth.name !== 'string' ||
+    !packageTruth.name.trim() ||
+    typeof packageTruth.engines?.node !== 'string' ||
+    !packageTruth.engines.node.trim() ||
+    typeof packageTruth.engines?.npm !== 'string' ||
+    !packageTruth.engines.npm.trim()
   ) {
     throw new Error('package name, engines.node, and engines.npm are required');
   }
   const packageName = packageTruth.name.trim();
+  const nodeEngine = packageTruth.engines.node.trim();
+  const npmEngine = packageTruth.engines.npm.trim();
 
   return {
     schemaVersion: 1,
     package: {
       name: packageName,
       engines: {
-        node: packageTruth.engines.node,
-        npm: packageTruth.engines.npm,
+        node: nodeEngine,
+        npm: npmEngine,
       },
       stdio: {
         command: 'npx',
