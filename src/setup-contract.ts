@@ -1,4 +1,4 @@
-export type SurfaceAvailability = 'both' | 'full';
+export type SurfaceAvailability = 'both' | 'full-only';
 export type SurfaceKind = 'tool' | 'resource' | 'prompt';
 
 // Keep the complete surface in one inventory so compliance review covers every
@@ -11,17 +11,17 @@ export const MCP_SURFACE_REGISTRY = [
   { kind: 'tool', id: 'browserless_performance', surface: 'both' },
   // Status is safe on both surfaces because it reports which surface is active.
   { kind: 'resource', id: 'browserless://status', surface: 'both' },
-  { kind: 'tool', id: 'browserless_smartscraper', surface: 'full' },
-  { kind: 'tool', id: 'browserless_function', surface: 'full' },
-  { kind: 'tool', id: 'browserless_map', surface: 'full' },
-  { kind: 'tool', id: 'browserless_crawl', surface: 'full' },
+  { kind: 'tool', id: 'browserless_smartscraper', surface: 'full-only' },
+  { kind: 'tool', id: 'browserless_function', surface: 'full-only' },
+  { kind: 'tool', id: 'browserless_map', surface: 'full-only' },
+  { kind: 'tool', id: 'browserless_crawl', surface: 'full-only' },
   // Compliant mode rejects profiles, so profile management stays full-only.
-  { kind: 'tool', id: 'browserless_profiles', surface: 'full' },
+  { kind: 'tool', id: 'browserless_profiles', surface: 'full-only' },
   // API docs and prompts describe proxy/CAPTCHA behavior and steer callers to
   // smartscraper, which is intentionally unavailable on the compliant surface.
-  { kind: 'resource', id: 'browserless://api-docs', surface: 'full' },
-  { kind: 'prompt', id: 'scrape-url', surface: 'full' },
-  { kind: 'prompt', id: 'extract-content', surface: 'full' },
+  { kind: 'resource', id: 'browserless://api-docs', surface: 'full-only' },
+  { kind: 'prompt', id: 'scrape-url', surface: 'full-only' },
+  { kind: 'prompt', id: 'extract-content', surface: 'full-only' },
 ] as const satisfies ReadonlyArray<{
   kind: SurfaceKind;
   id: string;

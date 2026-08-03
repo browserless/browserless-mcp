@@ -19,7 +19,7 @@ Point your MCP client at the hosted server, then complete OAuth in the client:
 ```
 
 No local install. Start with the canonical
-[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md),
+[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.1/SKILL.md),
 then use the MCP export's
 [`clients`](setup/browserless-mcp-setup.json) entries for per-client syntax.
 
@@ -110,7 +110,7 @@ runtime accepts `?token=` as a legacy fallback, but generated setup never uses
 query-token URLs because URLs can leak through logs and copied configuration.
 
 Installing via an AI agent? Start with the canonical
-[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md),
+[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.1/SKILL.md),
 then use the MCP export's
 [`clients`](setup/browserless-mcp-setup.json) entries for current syntax.
 

@@ -104,6 +104,7 @@ describe('Browserless MCP setup contract', () => {
       args: ['-y', '@browserless.io/mcp'],
       env: { BROWSERLESS_TOKEN: '<BROWSERLESS_TOKEN>' },
     });
+    expect(Object.keys(pkg.bin)).to.deep.equal(['browserless-mcp']);
   });
 
   it('rejects incomplete package metadata at the untyped generator boundary', () => {
@@ -233,9 +234,8 @@ describe('Browserless MCP setup contract', () => {
 
   it('keeps agent-facing docs as pointers to one canonical setup skill', () => {
     const canonicalSkill =
-      'https://www.browserless.io/agent-setup/v1.0.0/SKILL.md';
-    const machineExport =
-      'https://raw.githubusercontent.com/browserless/browserless-mcp/main/setup/browserless-mcp-setup.json';
+      'https://www.browserless.io/agent-setup/v1.0.1/SKILL.md';
+    const machineExport = './setup/browserless-mcp-setup.json';
     const install = readFileSync(join(root, 'install.md'), 'utf8');
     const llmsInstall = readFileSync(join(root, 'llms-install.md'), 'utf8');
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
