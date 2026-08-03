@@ -17,6 +17,12 @@ import { resolveBrowserlessAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
 import { Redis } from 'ioredis';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import {
+  instrumentFastMcpTools,
+  initializeAmplitudeAnalytics,
+  shutdownAmplitudeAnalytics,
+} from './lib/amplitude-analytics.js';
 
 const pkg = JSON.parse(
   readFileSync(
@@ -38,6 +44,10 @@ const analytics = new AnalyticsHelper(
   config.analyticsEnabled,
   config.sqsQueueUrl,
   config.sqsRegion,
+);
+const amplitudeAnalytics = initializeAmplitudeAnalytics(
+  config.amplitudeApiKey,
+  pkg.version,
 );
 
 // Passthrough OAuth provider: disables FastMCP's token-swap mode so the MCP client
@@ -123,6 +133,7 @@ const server = new FastMCP<BrowserlessSession>({
   authenticate: hybridAuthenticate,
 });
 
+instrumentFastMcpTools(server, amplitudeAnalytics);
 registerSurface(server, config, analytics);
 // Log the active surface (both transports) so it's visible in the boot logs.
 // Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
@@ -144,14 +155,42 @@ const complianceSurface = config.complianceMode
     : 'full (explicit opt-out)';
 console.error(`[browserless-mcp] Tool surface: ${complianceSurface}`);
 
+let warnedAboutServerIdentity = false;
 server.on('connect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   console.error(`[browserless-mcp] Client connected: ${id}`);
+  if (
+    amplitudeAnalytics &&
+    !warnedAboutServerIdentity &&
+    !(event.session.server instanceof Server)
+  ) {
+    warnedAboutServerIdentity = true;
+    console.error(
+      '[browserless-mcp] WARNING: FastMCP session server is not an MCP SDK Server; Amplitude instrumentation may be disabled.',
+    );
+  }
   // force the client to refresh its tool list on connect
   void event.session.triggerListChangedNotification(
     'notifications/tools/list_changed',
   );
 });
+
+if (amplitudeAnalytics) {
+  let amplitudeShutdown = false;
+  const shutdown = (exitCode: number): void => {
+    if (amplitudeShutdown) return;
+    amplitudeShutdown = true;
+    void (async () => {
+      try {
+        await shutdownAmplitudeAnalytics(amplitudeAnalytics);
+      } finally {
+        process.exit(exitCode);
+      }
+    })();
+  };
+  process.once('SIGTERM', () => shutdown(143));
+  process.once('SIGINT', () => shutdown(130));
+}
 
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';

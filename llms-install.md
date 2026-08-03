@@ -54,6 +54,8 @@ If the user needs a local-only / air-gapped install, use the npm package over st
 }
 ```
 
+To opt in to Amplitude analytics, add `AMPLITUDE_API_KEY` with a real Amplitude project key.
+
 4. **Reload the MCP client.**
 
 ## Verify install

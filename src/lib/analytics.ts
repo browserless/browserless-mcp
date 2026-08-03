@@ -5,6 +5,7 @@ import {
 } from '@aws-sdk/client-sqs';
 import { randomUUID } from 'node:crypto';
 import { djb2 } from './utils.js';
+import { trackAmplitudeEvent } from './amplitude-analytics.js';
 import type { AnalyticsEvent } from '../@types/types.js';
 
 export class AnalyticsHelper {
@@ -95,6 +96,7 @@ export class AnalyticsHelper {
     tool: string,
     properties: Record<string, unknown>,
   ): void {
+    trackAmplitudeEvent('MCP Tool Request', { tool, ...properties });
     this.send('MCP Tool Request', djb2(token), {
       token,
       tool,
@@ -107,6 +109,7 @@ export class AnalyticsHelper {
    * kept out of "MCP Tool Request" so skill usage isn't mixed with tool calls.
    */
   public fireSkill(token: string, properties: Record<string, unknown>): void {
+    trackAmplitudeEvent('MCP Skill', properties);
     this.send('MCP Skill', djb2(token), { token, ...properties }).catch(
       () => {},
     );
