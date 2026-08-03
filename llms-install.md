@@ -1,8 +1,9 @@
 # Installing Browserless MCP
 
-The canonical agent-readable instructions are in [`install.md`](install.md).
-Machine-readable, versioned setup truth is in
+The one canonical agent-readable setup file is the immutable
+[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md).
+Machine-readable, versioned MCP endpoint, client, surface, auth, and verification
+truth is in
 [`setup/browserless-mcp-setup.json`](setup/browserless-mcp-setup.json).
 
-Use OAuth against `https://mcp.browserless.io/mcp` by default. Use a Bearer
-header only when OAuth is unavailable. Do not generate query-token URLs.
+[`install.md`](install.md) is a compatibility pointer to these same sources.

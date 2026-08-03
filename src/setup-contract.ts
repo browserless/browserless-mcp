@@ -55,14 +55,19 @@ export const createSetupContract = (packageTruth: PackageTruth) => {
   ) {
     throw new Error('package name, engines.node, and engines.npm are required');
   }
+  const packageName = packageTruth.name.trim();
 
   return {
     schemaVersion: 1,
     package: {
-      ...packageTruth,
+      name: packageName,
+      engines: {
+        node: packageTruth.engines.node,
+        npm: packageTruth.engines.npm,
+      },
       stdio: {
         command: 'npx',
-        args: ['-y', packageTruth.name],
+        args: ['-y', packageName],
       },
     },
     endpoint: {
@@ -180,7 +185,7 @@ export const createSetupContract = (packageTruth: PackageTruth) => {
         url: 'https://example.com',
       },
     },
-  } as const;
+  };
 };
 
 export type BrowserlessMcpSetupContract = ReturnType<

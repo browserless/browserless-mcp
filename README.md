@@ -18,8 +18,9 @@ Point your MCP client at the hosted server, then complete OAuth in the client:
 }
 ```
 
-No local install — see the canonical [agent installation guide](install.md) for
-per-client setup.
+No local install. Start with the canonical
+[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md),
+then use the [MCP client supplement](install.md) for per-client syntax.
 
 ## Tools
 
@@ -107,7 +108,9 @@ use an `Authorization: Bearer <token>` header when OAuth is unavailable. The
 runtime accepts `?token=` as a legacy fallback, but generated setup never uses
 query-token URLs because URLs can leak through logs and copied configuration.
 
-Installing via an AI agent? See [install.md](install.md) for agent-readable setup instructions.
+Installing via an AI agent? Start with the canonical
+[Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md),
+then use [install.md](install.md) for MCP-specific client syntax.
 
 **Bearer-header fallback:**
 
@@ -150,7 +153,7 @@ token takes precedence over an OAuth JWT. Generated setup never combines OAuth
 with the legacy query-token fallback.
 
 For current Codex, Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf setup
-syntax, see the canonical [agent installation guide](install.md). The same owner
+syntax, see the [MCP client supplement](install.md). The same MCP-specific owner
 truth is published machine-readably in
 [`setup/browserless-mcp-setup.json`](setup/browserless-mcp-setup.json).
 
@@ -169,7 +172,10 @@ docker run \
   browserless-mcp
 ```
 
-Then point your MCP client at `http://localhost:8080/mcp` using the same header/query-parameter auth as above.
+Then point your MCP client at `http://localhost:8080/mcp` with an
+`Authorization: Bearer <token>` header. If a URL-only self-hosted client
+requires the legacy `?token=` fallback, treat the URL as a credential: obtain
+explicit approval, keep it ephemeral, and redact it from output and logs.
 
 ### Self-hosted environment variables
 

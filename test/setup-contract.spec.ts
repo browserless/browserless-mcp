@@ -7,6 +7,7 @@ import {
   createSetupContract,
   MCP_SURFACE_REGISTRY,
 } from '../src/setup-contract.js';
+import type { PackageTruth } from '../src/setup-contract.js';
 import { registerSurface } from '../src/tools/register.js';
 import type { McpConfig } from '../src/@types/types.js';
 
@@ -67,6 +68,7 @@ describe('Browserless MCP setup contract', () => {
 
   it('keeps the committed generated export byte-for-value current', () => {
     expect(generated).to.deep.equal(expected);
+    expect(expected.endpoint.url).to.equal('https://mcp.browserless.io/mcp');
     expect(expected.package).not.to.have.property('version');
     expect(expected.package.name).to.equal('@browserless.io/mcp');
     expect(expected.package.engines).to.deep.equal({
@@ -81,7 +83,27 @@ describe('Browserless MCP setup contract', () => {
     ).to.throw('package name, engines.node, and engines.npm are required');
   });
 
-  it('locks the public full and compliant tool inventories', () => {
+  it('publishes only normalized package fields from untrusted metadata', () => {
+    const contract = createSetupContract({
+      name: '  @browserless.io/mcp  ',
+      engines: pkg.engines,
+      description: 'must not leak',
+    } as PackageTruth & { description: string });
+
+    expect(contract.package.name).to.equal('@browserless.io/mcp');
+    expect(contract.package.stdio.args).to.deep.equal([
+      '-y',
+      '@browserless.io/mcp',
+    ]);
+    expect(contract.package).to.not.have.property('description');
+    expect(Object.keys(contract.package)).to.deep.equal([
+      'name',
+      'engines',
+      'stdio',
+    ]);
+  });
+
+  it('locks the public full and compliant inventories', () => {
     expect(expected.surfaces.full.tools).to.deep.equal([
       'browserless_agent',
       'browserless_crawl',
@@ -101,6 +123,18 @@ describe('Browserless MCP setup contract', () => {
       'browserless_search',
       'browserless_skill',
     ]);
+    expect(expected.surfaces.full.resources).to.deep.equal([
+      'browserless://api-docs',
+      'browserless://status',
+    ]);
+    expect(expected.surfaces.compliant.resources).to.deep.equal([
+      'browserless://status',
+    ]);
+    expect(expected.surfaces.full.prompts).to.deep.equal([
+      'extract-content',
+      'scrape-url',
+    ]);
+    expect(expected.surfaces.compliant.prompts).to.deep.equal([]);
     expect(expected.surfaces.full.tools).to.include(expected.verification.tool);
     expect(expected.surfaces.compliant.tools).to.include(
       expected.verification.tool,
@@ -137,5 +171,28 @@ describe('Browserless MCP setup contract', () => {
       './setup/browserless-mcp-setup.json',
     );
     expect(pkg.files).to.include('setup/*.json');
+  });
+
+  it('keeps agent-facing docs as pointers to one canonical setup skill', () => {
+    const canonicalSkill =
+      'https://www.browserless.io/agent-setup/v1.0.0/SKILL.md';
+    const install = readFileSync(join(root, 'install.md'), 'utf8');
+    const llmsInstall = readFileSync(join(root, 'llms-install.md'), 'utf8');
+    const readme = readFileSync(join(root, 'README.md'), 'utf8');
+
+    for (const source of [install, llmsInstall, readme]) {
+      expect(source).to.include(canonicalSkill);
+    }
+    for (const duplicatedInstruction of [
+      'codex mcp add browserless',
+      'claude mcp add --transport http browserless',
+      'Settings > Connectors',
+      '~/.cursor/mcp.json',
+      '.vscode/mcp.json',
+      '~/.codeium/windsurf/mcp_config.json',
+    ]) {
+      expect(install).to.not.include(duplicatedInstruction);
+      expect(llmsInstall).to.not.include(duplicatedInstruction);
+    }
   });
 });
