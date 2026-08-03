@@ -22,6 +22,26 @@ export function profileField(whenLoaded: string, extra = '') {
     .describe(description);
 }
 
+// Feeds the session-cache key (see getSessionKey), so it carries the same NUL
+// guard as `profile` — a NUL would let a caller forge extra key segments.
+const sessionIdField = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((v) => !v.includes(NUL), {
+    message: 'sessionId must not contain NUL characters',
+  })
+  .optional()
+  .describe(
+    'The `sessionId` returned by your previous browserless_agent call in this ' +
+      'conversation. Echo it back on EVERY subsequent call — it binds this ' +
+      'conversation to its live browser and its page state (current URL, ' +
+      'cookies, filled forms, open tabs). Omit it only on the first call; ' +
+      'omitting it later abandons the current browser and starts a blank one, ' +
+      'losing everything the session had done. Only ever pass a value the ' +
+      'server returned — never invent one.',
+  );
+
 const WaitUntilSchema = z.enum([
   'load',
   'domcontentloaded',
@@ -740,6 +760,7 @@ export const AgentParamsSchema = z
           'credentials. Include exactly one per `browserless_agent` call, even ' +
           'when batching commands.',
       ),
+    sessionId: sessionIdField,
   })
   .refine((v) => !(v.profile && v.createProfile), {
     message:
@@ -803,6 +824,7 @@ export const CompliantAgentParamsSchema = z
       .describe(
         'Short user-facing reason for this call (<=50 chars, present-continuous).',
       ),
+    sessionId: sessionIdField,
   })
   .strict();
 

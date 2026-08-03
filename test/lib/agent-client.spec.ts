@@ -3,9 +3,11 @@ import sinon from 'sinon';
 import {
   buildAgentWsUrl,
   getOrCreateSession,
+  getSessionKey,
   isRetryableUpgradeError,
   ProfileNotFoundError,
   proxyFingerprint,
+  sessionHandle,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
 import type { ProxyOptions } from '../../src/@types/types.js';
@@ -527,6 +529,71 @@ describe('agent-client session-cache isolation', () => {
         'profile-a',
       );
       expect(sessAAgain.ws).to.equal(sessA.ws);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('agent-client session handle', () => {
+  const key = (
+    handle: string,
+    token = 'tok',
+    sid: string | undefined = 'mcp-1',
+  ) =>
+    getSessionKey(
+      sid,
+      token,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      handle,
+    );
+
+  it('keys the same handle to one browser regardless of the MCP session id', () => {
+    expect(key('handle-1', 'tok', 'mcp-1')).to.equal(
+      key('handle-1', 'tok', 'mcp-2'),
+    );
+  });
+
+  it('scopes an echoed handle to its token so it cannot cross accounts', () => {
+    expect(key('handle-1', 'tok-a')).to.not.equal(key('handle-1', 'tok-b'));
+  });
+
+  it('still separates conversations that echo different handles', () => {
+    expect(key('handle-1')).to.not.equal(key('handle-2'));
+  });
+
+  it('falls back to the MCP session id, then to the token, when nothing is echoed', () => {
+    expect(sessionHandle('mcp-1', 'tok')).to.equal('mcp-1');
+    expect(sessionHandle(undefined, 'tok')).to.match(/^stdio:/);
+  });
+
+  it('reuses the live browser across an MCP session change when the handle is echoed', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const first = await getOrCreateSession('mcp-1', server.url, 'tok');
+      expect(first.handle).to.equal('mcp-1');
+
+      // The client re-initialized: new MCP session id, same conversation.
+      const churned = await getOrCreateSession(
+        'mcp-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        first.handle,
+      );
+      expect(churned.ws).to.equal(first.ws);
+
+      // Same churned session id, but the handle was dropped — a new browser.
+      const dropped = await getOrCreateSession('mcp-2', server.url, 'tok');
+      expect(dropped.ws).to.not.equal(first.ws);
     } finally {
       await server.close();
     }

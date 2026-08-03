@@ -258,6 +258,33 @@ export const fileTransferModeNote = (
       `  \`curl -s -F file=@"/abs/file" "${mcpBaseUrl}/upload?token=<YOUR_TOKEN>"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
       `**Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
 
+// HTTP-only: a remote client's MCP session id isn't stable across turns, so the
+// browser is bound to the echoed `sessionId`. stdio's key is already stable.
+export const sessionContinuityNote = (
+  transport: 'stdio' | 'httpStream',
+): string =>
+  transport === 'stdio'
+    ? ''
+    : `\n\n## Session continuity (REQUIRED)\n` +
+      `Every response ends with \`sessionId: <handle>\`. Pass that value as the \`sessionId\` ` +
+      `argument on EVERY following call in this conversation — it is what keeps you on the ` +
+      `same browser, with its current page, cookies, and filled-in forms. ` +
+      `Drop it and you silently get a fresh blank browser: snapshots come back \`about:blank\`, ` +
+      `form values vanish, and \`getTabs\` shows one empty tab. ` +
+      `If that happens, re-issue the call WITH the last \`sessionId\` you were given before ` +
+      `concluding the page or the site is broken.\n` +
+      `Treat the handle as conversation state, not a one-off: the moment you receive it, ` +
+      `record it wherever you keep working notes for this task (memory, scratchpad, plan, ` +
+      `todo list) so it survives context trimming or a summary. Re-read it from there rather ` +
+      `than scrolling back for it.\n` +
+      `**Only ever send a handle the server gave you.** Never invent, guess, shorten, or ` +
+      `derive one — a made-up value opens a different browser, and a guessable one can ` +
+      `collide with another conversation. The handle stays the right value to send for the ` +
+      `whole task even if a call failed or the browser was reclaimed: re-sending it is how ` +
+      `you get back, so keep using it instead of starting over without it. The exception is ` +
+      `\`close\` — that ends the browser deliberately, so no \`sessionId\` comes back and a ` +
+      `later call with the old one starts a fresh, blank browser.`;
+
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.
 
 Two uses:
