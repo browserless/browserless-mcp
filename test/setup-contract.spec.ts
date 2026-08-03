@@ -20,6 +20,7 @@ import {
   MCP_SURFACE_REGISTRY,
 } from '../src/setup-contract.js';
 import { getConfig } from '../src/config.js';
+import { resolveBrowserlessAuth } from '../src/lib/http-auth.js';
 import type { PackageTruth } from '../src/setup-contract.js';
 import { registerSurface } from '../src/tools/register.js';
 import type { McpConfig } from '../src/@types/types.js';
@@ -106,7 +107,19 @@ describe('Browserless MCP setup contract', () => {
     // `npm run check:setup` owns the separate byte-level generated-file gate.
     expect(generated).to.deep.equal(expected);
     expect(expected.schemaVersion).to.equal(1);
-    expect(expected.endpoint.url).to.equal('https://mcp.browserless.io/mcp');
+    const originalMcpBaseUrl = process.env.MCP_BASE_URL;
+    try {
+      delete process.env.MCP_BASE_URL;
+      expect(expected.endpoint.url).to.equal(
+        new URL('/mcp', getConfig().mcpBaseUrl).href,
+      );
+    } finally {
+      if (originalMcpBaseUrl === undefined) {
+        delete process.env.MCP_BASE_URL;
+      } else {
+        process.env.MCP_BASE_URL = originalMcpBaseUrl;
+      }
+    }
     expect(expected.endpoint.transport).to.equal('streamable-http');
     expect(expected.package).not.to.have.property('version');
     expect(expected.package.name).to.equal('@browserless.io/mcp');
@@ -120,6 +133,26 @@ describe('Browserless MCP setup contract', () => {
       env: { BROWSERLESS_TOKEN: '<BROWSERLESS_TOKEN>' },
     });
     expect(Object.keys(pkg.bin)).to.deep.equal(['browserless-mcp']);
+  });
+
+  it('keeps the exported bearer-header template tied to runtime auth parsing', async () => {
+    const bearer = expected.auth.methods.find(
+      ({ id }) => id === 'bearer-header',
+    );
+    expect(bearer).to.include({
+      headerName: 'Authorization',
+      valueTemplate: 'Bearer <BROWSERLESS_TOKEN>',
+    });
+    expect(bearer).to.have.property('valueTemplate').that.is.a('string');
+    const token = 'contract-runtime-token';
+    const valueTemplate = (bearer as { valueTemplate: string }).valueTemplate;
+    const auth = await resolveBrowserlessAuth(
+      {
+        authHeader: valueTemplate.replace('<BROWSERLESS_TOKEN>', token),
+      },
+      baseConfig,
+    );
+    expect(auth.token).to.equal(token);
   });
 
   it('keeps the published stdio token variable tied to runtime config', () => {
@@ -473,11 +506,13 @@ describe('Browserless MCP setup contract', () => {
     for (const source of [install, llmsInstall]) {
       expect(source).to.include(machineExport);
     }
-    let hostedUrlCount = 0;
     for (const source of [install, llmsInstall, readme]) {
       const hostedUrls =
         source.match(/https:\/\/mcp\.browserless\.io[^\s`"')\]}]*/g) || [];
-      hostedUrlCount += hostedUrls.length;
+      expect(
+        hostedUrls,
+        'each agent-facing setup source must include the hosted endpoint',
+      ).not.to.be.empty;
       for (const url of hostedUrls) {
         expect(
           url,
@@ -495,7 +530,6 @@ describe('Browserless MCP setup contract', () => {
         }
       }
     }
-    expect(hostedUrlCount).to.be.greaterThan(0);
     expect(readme).to.include(expected.auth.methods[1].headerName);
     for (const entry of MCP_SURFACE_REGISTRY) {
       const row = readme

@@ -4,8 +4,8 @@ name: Publish to npm
 # merged. The same tag also triggers build-docker-image.yml, so one merge ships
 # the npm package and the Docker image together on the same version.
 #
-# Tests are NOT re-run here: they run via test.yml on the Release PR before it
-# is merged. This job only builds and publishes the package.
+# The tag is an independent release boundary, so this job re-runs the semantic
+# setup/runtime test suite before publishing.
 
 on:
   push:
@@ -49,6 +49,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Re-run semantic setup and runtime tests
+        run: npm test
 
       # `npm publish` runs the prepack hook (`check:setup`), which compiles
       # TypeScript, checks the committed setup export, and assembles the

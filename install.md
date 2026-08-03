@@ -10,5 +10,6 @@ When that skill selects Browserless MCP, use the MCP-owned machine export at
 current hosted endpoint, runtime requirements, client syntax, authentication
 order, full/compliant surface inventories, and verification call. This is the
 current repository export, also shipped at
-`@browserless.io/mcp/setup/browserless-mcp-setup.json`. This guide is only a
+`@browserless.io/mcp/setup/browserless-mcp-setup.json`; its hosted transport is
+`https://mcp.browserless.io/mcp`. This guide is only a
 compatibility pointer; it intentionally does not duplicate those instructions.
