@@ -15,8 +15,9 @@ set -euo pipefail
 : "${TAG:?TAG must be set}"
 : "${RELEASE_URL:?RELEASE_URL must be set}"
 : "${SLACK_WEBHOOK_URL:?SLACK_WEBHOOK_URL must be set}"
+: "${PUBLISH_STATUS:?PUBLISH_STATUS must be set}"
 
-publish_status="${PUBLISH_STATUS:-success}"
+publish_status="$PUBLISH_STATUS"
 if [[ "$publish_status" == "success" ]]; then
   message=":package: *<$RELEASE_URL|$TAG>* of @browserless.io/mcp published to npm."
 else

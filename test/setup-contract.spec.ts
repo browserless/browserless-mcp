@@ -577,7 +577,7 @@ describe('Browserless MCP setup contract', () => {
     );
     expect(workflow).to.include('if: always()');
     expect(workflow).to.include('PUBLISH_STATUS: ${{ job.status }}');
-    expect(notifier).to.include('PUBLISH_STATUS:-success');
+    expect(notifier).to.include('PUBLISH_STATUS:?PUBLISH_STATUS must be set');
     expect(notifier).to.include('Docker image workflow runs independently');
   });
 });
