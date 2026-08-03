@@ -1,19 +1,24 @@
 export type SurfaceAvailability = 'both' | 'full';
 export type SurfaceKind = 'tool' | 'resource' | 'prompt';
 
-// Runtime registration and the public export share this inventory to prevent drift.
+// Keep the complete surface in one inventory so compliance review covers every
+// registered capability and the public export cannot drift from runtime.
 export const MCP_SURFACE_REGISTRY = [
   { kind: 'tool', id: 'browserless_export', surface: 'both' },
   { kind: 'tool', id: 'browserless_agent', surface: 'both' },
   { kind: 'tool', id: 'browserless_skill', surface: 'both' },
   { kind: 'tool', id: 'browserless_search', surface: 'both' },
   { kind: 'tool', id: 'browserless_performance', surface: 'both' },
+  // Status is safe on both surfaces because it reports which surface is active.
   { kind: 'resource', id: 'browserless://status', surface: 'both' },
   { kind: 'tool', id: 'browserless_smartscraper', surface: 'full' },
   { kind: 'tool', id: 'browserless_function', surface: 'full' },
   { kind: 'tool', id: 'browserless_map', surface: 'full' },
   { kind: 'tool', id: 'browserless_crawl', surface: 'full' },
+  // Compliant mode rejects profiles, so profile management stays full-only.
   { kind: 'tool', id: 'browserless_profiles', surface: 'full' },
+  // API docs and prompts describe proxy/CAPTCHA behavior and steer callers to
+  // smartscraper, which is intentionally unavailable on the compliant surface.
   { kind: 'resource', id: 'browserless://api-docs', surface: 'full' },
   { kind: 'prompt', id: 'scrape-url', surface: 'full' },
   { kind: 'prompt', id: 'extract-content', surface: 'full' },
@@ -34,7 +39,6 @@ const idsFor = (kind: SurfaceKind, compliant: boolean): string[] =>
 
 export interface PackageTruth {
   name: string;
-  version: string;
   engines: {
     node: string;
     npm: string;

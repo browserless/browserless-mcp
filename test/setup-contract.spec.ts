@@ -17,7 +17,6 @@ const generated = JSON.parse(
 );
 const expected = createSetupContract({
   name: pkg.name,
-  version: pkg.version,
   engines: pkg.engines,
 });
 
@@ -68,6 +67,7 @@ describe('Browserless MCP setup contract', () => {
 
   it('keeps the committed generated export byte-for-value current', () => {
     expect(generated).to.deep.equal(expected);
+    expect(expected.package).not.to.have.property('version');
   });
 
   it('locks the public full and compliant tool inventories', () => {

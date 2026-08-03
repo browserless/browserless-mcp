@@ -14,7 +14,6 @@ const expected = await format(
   JSON.stringify(
     createSetupContract({
       name: pkg.name,
-      version: pkg.version,
       engines: pkg.engines,
     }),
   ),

@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "package": {
     "name": "@browserless.io/mcp",
-    "version": "1.16.0",
     "engines": { "node": ">=24", "npm": ">=11.10.0" },
     "stdio": { "command": "npx", "args": ["-y", "@browserless.io/mcp"] }
   },
