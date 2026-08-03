@@ -798,7 +798,8 @@ export function registerAgentTools(
 
           if (resp.error) {
             const err = resp.error;
-            if (err.code && FATAL_CODES.has(err.code)) {
+            const fatal = !!err.code && FATAL_CODES.has(err.code);
+            if (fatal) {
               destroySession(
                 mcpSessionId,
                 token,
@@ -851,7 +852,14 @@ export function registerAgentTools(
             );
             markFired(agentSession.skillState, triggered);
 
-            throw new UserError(appendSkills(body, triggered, compliant));
+            throw new UserError(
+              [
+                appendSkills(body, triggered, compliant),
+                fatal ? '' : sessionLine(agentSession, config.transport),
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            );
           }
 
           // Capture the first URL we observe in the batch as a fallback

@@ -32,6 +32,7 @@ import {
   __resetRemoteSkillsForTesting,
 } from '../../src/skills/sites.js';
 import {
+  AgentErrorFrame,
   makeRejectingServer,
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
@@ -871,10 +872,15 @@ describe('formatConnectError with proxy-injected errors', () => {
 
 const getAgentExecute = (
   apiUrl: string,
+  transport: McpConfig['transport'] = 'stdio',
 ): ((args: unknown, ctx: unknown) => unknown) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  registerAgentTools(server, { ...mockConfig, browserlessApiUrl: apiUrl });
+  registerAgentTools(server, {
+    ...mockConfig,
+    browserlessApiUrl: apiUrl,
+    transport,
+  });
   const agentCall = addToolSpy
     .getCalls()
     .find((c) => c.args[0].name === 'browserless_agent');
@@ -1041,5 +1047,60 @@ describe('browserless_agent _prompt capture', () => {
       complianceMode: true,
     });
     expect((added.parameters as any).shape).to.not.have.property('_prompt');
+  });
+});
+
+describe('browserless_agent session handle on errors', () => {
+  afterEach(() => sinon.restore());
+
+  const textOf = (result: unknown) =>
+    ((result as { content: Array<{ text?: string }> }).content ?? [])
+      .map((c) => c.text ?? '')
+      .join('\n');
+
+  it('returns the handle on a non-fatal error and reuses that browser', async () => {
+    // goto fails non-fatally (session retained); snapshot then succeeds.
+    const srv = await makeRespondingServer((method) =>
+      method === 'goto'
+        ? new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'no such element',
+          })
+        : {
+            url: 'https://example.com/',
+            title: 'Example',
+            elements: [],
+            time: 1,
+          },
+    );
+    try {
+      const execute = getAgentExecute(srv.url, 'httpStream');
+      let handle: string | undefined;
+
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'err-handle-1' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg, 'error keeps the sessionId contract').to.include(
+          'sessionId: ',
+        );
+        handle = /sessionId: (\S+)/.exec(msg)?.[1];
+      }
+      expect(handle).to.equal('err-handle-1');
+
+      // A churned MCP session echoing that handle must land on the same browser.
+      const after = await execute(
+        { method: 'snapshot', params: {}, sessionId: handle },
+        { ...mockContext, sessionId: 'err-handle-2' },
+      );
+      expect(textOf(after)).to.include('Example');
+      expect(srv.hits(), 'no second browser was opened').to.equal(1);
+    } finally {
+      await srv.close();
+    }
   });
 });
