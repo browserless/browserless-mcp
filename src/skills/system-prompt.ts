@@ -281,7 +281,9 @@ export const sessionContinuityNote = (
       `derive one — a made-up value opens a different browser, and a guessable one can ` +
       `collide with another conversation. The handle stays the right value to send for the ` +
       `whole task even if a call failed or the browser was reclaimed: re-sending it is how ` +
-      `you get back, so keep using it instead of starting over without it.`;
+      `you get back, so keep using it instead of starting over without it. The exception is ` +
+      `\`close\` — that ends the browser deliberately, so no \`sessionId\` comes back and a ` +
+      `later call with the old one starts a fresh, blank browser.`;
 
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.
 

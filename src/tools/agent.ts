@@ -949,7 +949,7 @@ export function registerAgentTools(
           }
         }
         const extraText = [
-          sessionLine(agentSession, config.transport),
+          closedDuringBatch ? '' : sessionLine(agentSession, config.transport),
           renderedSkills,
           siteNotice,
         ]
