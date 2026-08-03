@@ -422,6 +422,11 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
   params?: Record<string, unknown>;
 };
 
+const CLOSE_REMINDER =
+  `This browser stays open and holds a concurrency slot until you end it. ` +
+  `When the task is done, send \`{ "method": "close" }\` as its own call — or, if ` +
+  `the user may want to keep browsing, ask them before leaving it open.`;
+
 // httpStream only: the handle has to travel through the conversation to pin the
 // browser, while a stdio client's key is already stable for its process life.
 const sessionLine = (
@@ -430,8 +435,9 @@ const sessionLine = (
 ): string =>
   transport === 'httpStream'
     ? `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
-      `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one.`
-    : '';
+      `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one. ` +
+      CLOSE_REMINDER
+    : CLOSE_REMINDER;
 
 export function registerAgentTools(
   server: FastMCP,
