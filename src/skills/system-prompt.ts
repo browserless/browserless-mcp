@@ -9,6 +9,12 @@ export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in 
 5. **Re-snapshot** only if page changed
 6. Repeat → **close** when done
 
+## Ending the session (REQUIRED)
+An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
+- **Task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do. This is the default for one-shot work (a lookup, a scrape, a form submit): close without asking.
+- **Ask instead of guessing** only when follow-up in the SAME browser is genuinely likely (the user said "then...", you're mid-flow on a logged-in site, or the result invites a next step). Say the browser is still open, ask whether to close it, and close it as soon as they're done.
+- **Never** end your reply with a live session and no mention of it. Either it's closed, or you told the user it's open and why.
+
 ## Site recipes (site-specific, NOT auto-injected) — CHECK FIRST
 Many specific sites (marketplaces, gov portals, travel, real-estate, etc.) have a **tuned recipe** for a given task — proven selectors, API shortcuts, proxy needs, and known gotchas that a from-scratch plan will miss. These are **not** auto-injected; you must ask for them, and a recipe **overrides** any plan you'd build yourself (including "just use a prefiltered URL + evaluate").
 **This is step 0 of every task — do it before your first \`goto\`.** The moment you know the target host (the user named the site, or you resolved which site to use), call \`browserless_skill { site: "<host>" }\` — e.g. \`{ site: "airbnb.com" }\`. If it lists a recipe matching your task, load it with \`browserless_skill { id: "<host>/<slug>" }\` and follow it. Only when there's no match do you plan the steps yourself. Skipping this check on a supported site is a mistake — it's one cheap call.
@@ -145,6 +151,12 @@ export const COMPLIANT_AGENT_SYSTEM_PROMPT = `Drive a browser to complete a user
 4. **Batch** execute
 5. **Re-snapshot** only if page changed
 6. Repeat → **close** when done
+
+## Ending the session (REQUIRED)
+An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
+- **Task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do. This is the default for one-shot work: close without asking.
+- **Ask instead of guessing** only when follow-up in the SAME browser is genuinely likely. Say the browser is still open, ask whether to close it, and close it as soon as they're done.
+- **Never** end your reply with a live session and no mention of it.
 
 ## Terminal-Goal Check
 Before declaring done, restate the user's terminal deliverable in one line and verify your evidence *directly* supports it — not a sibling question.
