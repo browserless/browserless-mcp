@@ -396,6 +396,14 @@ describe('Browserless MCP setup contract', () => {
       './setup/browserless-mcp-setup.json',
     );
     expect(pkg.files).to.include('setup/*.json');
+    expect(pkg.scripts['generate:setup']).to.equal(
+      'npm run build && node scripts/generate-setup-contract.mjs',
+    );
+    expect(pkg.scripts['check:setup']).to.equal(
+      'npm run build && node scripts/generate-setup-contract.mjs --check',
+    );
+    expect(pkg.scripts.test).to.match(/^npm run check:setup\b/);
+    expect(pkg.scripts.prepack).to.equal('npm run check:setup');
   });
 
   it('fails closed across every setup generator CLI path', () => {
@@ -428,6 +436,12 @@ describe('Browserless MCP setup contract', () => {
       expect(runGenerator('--check').status).to.equal(0);
 
       writeFileSync(outputPath, 'stale\n');
+      for (const args of [['--chek'], ['--check=true'], ['--check', 'extra']]) {
+        const unknown = runGenerator(...args);
+        expect(unknown.status).to.equal(1);
+        expect(unknown.stderr).to.include('Usage:');
+        expect(readFileSync(outputPath, 'utf8')).to.equal('stale\n');
+      }
       const stale = runGenerator('--check');
       expect(stale.status).to.equal(1);
       expect(stale.stderr).to.include('is stale');

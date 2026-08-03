@@ -3,6 +3,18 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { format, resolveConfig } from 'prettier';
 
+const args = process.argv.slice(2);
+const mode =
+  args.length === 0
+    ? 'write'
+    : args.length === 1 && args[0] === '--check'
+      ? 'check'
+      : null;
+if (!mode) {
+  console.error('Usage: node scripts/generate-setup-contract.mjs [--check]');
+  process.exit(1);
+}
+
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const { createSetupContract } = await import(
@@ -20,7 +32,7 @@ const expected = await format(
   { ...prettierConfig, parser: 'json' },
 );
 
-if (process.argv.includes('--check')) {
+if (mode === 'check') {
   let actual;
   try {
     actual = await readFile(outputPath, 'utf8');
