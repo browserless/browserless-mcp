@@ -3,7 +3,11 @@
   "package": {
     "name": "@browserless.io/mcp",
     "engines": { "node": ">=24", "npm": ">=11.10.0" },
-    "stdio": { "command": "npx", "args": ["-y", "@browserless.io/mcp"] }
+    "stdio": {
+      "command": "npx",
+      "args": ["-y", "@browserless.io/mcp"],
+      "env": { "BROWSERLESS_TOKEN": "<BROWSERLESS_TOKEN>" }
+    }
   },
   "endpoint": {
     "url": "https://mcp.browserless.io/mcp",

@@ -20,7 +20,8 @@ Point your MCP client at the hosted server, then complete OAuth in the client:
 
 No local install. Start with the canonical
 [Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md),
-then use the [MCP client supplement](install.md) for per-client syntax.
+then use the MCP export's
+[`clients`](setup/browserless-mcp-setup.json) entries for per-client syntax.
 
 ## Tools
 
@@ -110,7 +111,8 @@ query-token URLs because URLs can leak through logs and copied configuration.
 
 Installing via an AI agent? Start with the canonical
 [Browserless setup skill](https://www.browserless.io/agent-setup/v1.0.0/SKILL.md),
-then use [install.md](install.md) for MCP-specific client syntax.
+then use the MCP export's
+[`clients`](setup/browserless-mcp-setup.json) entries for current syntax.
 
 **Bearer-header fallback:**
 
@@ -153,8 +155,7 @@ token takes precedence over an OAuth JWT. Generated setup never combines OAuth
 with the legacy query-token fallback.
 
 For current Codex, Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf setup
-syntax, see the [MCP client supplement](install.md). The same MCP-specific owner
-truth is published machine-readably in
+syntax, use the `clients` entries in the machine-readable MCP owner export at
 [`setup/browserless-mcp-setup.json`](setup/browserless-mcp-setup.json).
 
 ## Self-Hosting

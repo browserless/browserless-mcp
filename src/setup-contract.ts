@@ -68,6 +68,9 @@ export const createSetupContract = (packageTruth: PackageTruth) => {
       stdio: {
         command: 'npx',
         args: ['-y', packageName],
+        env: {
+          BROWSERLESS_TOKEN: '<BROWSERLESS_TOKEN>',
+        },
       },
     },
     endpoint: {

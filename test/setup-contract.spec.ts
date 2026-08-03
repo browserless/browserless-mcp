@@ -63,6 +63,16 @@ const captureSurface = (complianceMode: boolean) => {
   };
 };
 
+const captureToolDefinition = (complianceMode: boolean, name: string) => {
+  const server = new FastMCP({ name: 'test', version: '0.1.0' });
+  const tools = sinon.spy(server, 'addTool');
+  registerSurface(server, { ...baseConfig, complianceMode });
+  return tools
+    .getCalls()
+    .map((call) => call.args[0] as { name: string; parameters: unknown })
+    .find((definition) => definition.name === name);
+};
+
 describe('Browserless MCP setup contract', () => {
   afterEach(() => sinon.restore());
 
@@ -74,6 +84,11 @@ describe('Browserless MCP setup contract', () => {
     expect(expected.package.engines).to.deep.equal({
       node: '>=24',
       npm: '>=11.10.0',
+    });
+    expect(expected.package.stdio).to.deep.equal({
+      command: 'npx',
+      args: ['-y', '@browserless.io/mcp'],
+      env: { BROWSERLESS_TOKEN: '<BROWSERLESS_TOKEN>' },
     });
   });
 
@@ -147,6 +162,26 @@ describe('Browserless MCP setup contract', () => {
     expect(new Set(MCP_SURFACE_REGISTRY.map(({ id }) => id)).size).to.equal(
       MCP_SURFACE_REGISTRY.length,
     );
+  });
+
+  it('keeps the verification fixture valid on both real tool schemas', () => {
+    for (const complianceMode of [false, true]) {
+      const definition = captureToolDefinition(
+        complianceMode,
+        expected.verification.tool,
+      ) as {
+        parameters: {
+          safeParse: (value: unknown) => { success: boolean };
+        };
+      };
+      expect(
+        definition.parameters.safeParse(expected.verification.arguments)
+          .success,
+      ).to.equal(true);
+      expect(
+        definition.parameters.safeParse({ uri: 'https://example.com' }).success,
+      ).to.equal(false);
+    }
   });
 
   it('generates OAuth first, bearer second, and never a query-token default', () => {
