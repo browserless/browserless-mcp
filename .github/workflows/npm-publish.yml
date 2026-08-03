@@ -50,8 +50,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # `npm publish` runs the prepack hook (build), which compiles TypeScript and
-      # assembles the published artifacts. Provenance is attached automatically
+      # `npm publish` runs the prepack hook (`check:setup`), which compiles
+      # TypeScript, regenerates and checks setup exports, and assembles the
+      # published artifacts. Provenance is attached automatically
       # via npm trusted publishing (OIDC, id-token: write).
       - name: Publish to npm
         run: npm publish --access public
