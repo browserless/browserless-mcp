@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/browserless/browserless-mcp/compare/v1.17.0...v1.18.0) (2026-08-03)
+
+
+### Features
+
+* add session closing reminders to system prompts and agent tools ([#222](https://github.com/browserless/browserless-mcp/issues/222)) ([ece33bc](https://github.com/browserless/browserless-mcp/commit/ece33bce9796a4e54ab37559e4d56742ef27431b))
+
 ## [1.17.0](https://github.com/browserless/browserless-mcp/compare/v1.16.0...v1.17.0) (2026-08-03)
 
 
