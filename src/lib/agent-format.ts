@@ -140,6 +140,7 @@ const formatElement = (
   }
 
   if (el.value) parts.push(`value="${el.value}"`);
+  if (el.options?.length) parts.push(`options=[${el.options.join(', ')}]`);
 
   const flags: string[] = [];
   if (el.disabled) flags.push('disabled');
@@ -204,6 +205,7 @@ const SIGNATURE_FIELDS: Array<keyof SnapshotElement> = [
   'ariaLabel',
   'tag',
   'frameId',
+  'options',
 ];
 
 const elementSignature = (el: SnapshotElement): string =>

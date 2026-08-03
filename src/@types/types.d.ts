@@ -152,6 +152,7 @@ export interface SnapshotElement {
   required?: boolean;
   ariaLabel?: string;
   frameId?: string;
+  options?: string[];
 }
 
 export interface TabInfo {

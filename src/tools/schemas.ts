@@ -196,7 +196,14 @@ const SelectCommandSchema = z.object({
   method: z.literal('select'),
   params: z.object({
     selector: z.string().describe('CSS selector of the select element'),
-    value: z.string().describe('Option value to select'),
+    value: z
+      .string()
+      .describe(
+        "Option value to select. The snapshot lists a select's accepted " +
+          'values as options=[label=value, …] (bare entries have label === ' +
+          'value) — take the value from there instead of guessing or reading ' +
+          'the DOM with evaluate.',
+      ),
   }),
 });
 
