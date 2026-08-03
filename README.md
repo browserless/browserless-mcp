@@ -6,6 +6,8 @@ MCP (Model Context Protocol) server for [Browserless.io](https://browserless.io)
 
 ## Quick Start
 
+Create or confirm your Browserless account first; OAuth signs an existing
+Browserless account into MCP and does not provision account access.
 Point your MCP client at the hosted server, then complete OAuth in the client.
 This example is the Cursor JSON shape; use the versioned `clients` export linked
 below for the exact VS Code, Windsurf, Claude Desktop, or other client syntax.
@@ -196,17 +198,17 @@ explicit approval, keep it ephemeral, and redact it from output and logs.
 
 ## MCP Resources
 
-| Resource URI             | Description                     |
-| ------------------------ | ------------------------------- |
-| `browserless://api-docs` | Smart scraper API documentation |
-| `browserless://status`   | Live service health status      |
+| Resource URI             | Description                                                          |
+| ------------------------ | -------------------------------------------------------------------- |
+| `browserless://api-docs` | Smart scraper API documentation. Available on the full surface only. |
+| `browserless://status`   | Live service health status                                           |
 
 ## MCP Prompts
 
-| Prompt            | Description                                 |
-| ----------------- | ------------------------------------------- |
-| `scrape-url`      | Scrape a webpage and summarize its content  |
-| `extract-content` | Extract specific information from a webpage |
+| Prompt            | Description                                                                      |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `scrape-url`      | Scrape a webpage and summarize its content. Available on the full surface only.  |
+| `extract-content` | Extract specific information from a webpage. Available on the full surface only. |
 
 ## Development
 

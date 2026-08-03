@@ -5,7 +5,7 @@
 # `prepack`, or stray internal docs / sourcemaps / raw sources creeping
 # back in.
 #
-# Runs `npm pack` (which triggers `prepack` → `npm run build`) and then
+# Runs `npm pack` (which triggers `prepack` → `npm run check:setup`) and then
 # greps the resulting tar listing for known-bad patterns. Tarball entries
 # are prefixed with `package/`, so patterns are anchored accordingly:
 #   - `.spec.`            — compiled test specs
