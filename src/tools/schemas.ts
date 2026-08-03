@@ -38,7 +38,8 @@ const sessionIdField = z
       'conversation to its live browser and its page state (current URL, ' +
       'cookies, filled forms, open tabs). Omit it only on the first call; ' +
       'omitting it later abandons the current browser and starts a blank one, ' +
-      'losing everything the session had done.',
+      'losing everything the session had done. Only ever pass a value the ' +
+      'server returned — never invent one.',
   );
 
 const WaitUntilSchema = z.enum([
