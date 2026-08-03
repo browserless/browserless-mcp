@@ -52,6 +52,7 @@ export function getConfig(): McpConfig {
     maxRetries: parseInt(process.env.BROWSERLESS_MAX_RETRIES ?? '3', 10),
     cacheTtlMs: parseInt(process.env.BROWSERLESS_CACHE_TTL ?? '60000', 10),
     analyticsEnabled: process.env.ANALYTICS_ENABLED === 'true',
+    amplitudeApiKey: process.env.AMPLITUDE_API_KEY,
     // Per-process toggle for the compliant surface used by the OpenAI/Anthropic
     // directory listings: registers fewer tools and de-fangs the agent (see
     // tools/compliance.ts). Fails closed — see parseComplianceMode.

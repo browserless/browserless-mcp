@@ -9,6 +9,7 @@ import {
 } from './utils.js';
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
+import { setAmplitudeToolContext } from './amplitude-analytics.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -158,6 +159,8 @@ export function defineTool<P, R>(
         );
       }
       const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+
+      setAmplitudeToolContext(s, token, prompt);
 
       def.validateUrl?.(params);
 

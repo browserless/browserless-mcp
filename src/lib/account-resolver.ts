@@ -5,6 +5,7 @@ import type { SupabaseJwtPayload } from '../@types/types.js';
 interface ResolvedAccount {
   apiKey: string;
   email: string;
+  accountId: string;
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -149,6 +150,7 @@ export async function resolveApiKey(
   const resolved: ResolvedAccount = {
     apiKey: account.api_key,
     email: account.email,
+    accountId,
   };
 
   cache.set(cacheKey, resolved);
