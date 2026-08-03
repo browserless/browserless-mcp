@@ -10,6 +10,7 @@ import { registerSurface } from './tools/register.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
 import { clearSession } from './lib/download-store.js';
+import { dropMcpSession } from './lib/agent-client.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessAuth } from './lib/http-auth.js';
@@ -156,6 +157,7 @@ server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   // Drop any files staged/captured for this session (TTL is the backstop).
   clearSession(event.session.sessionId);
+  dropMcpSession(event.session.sessionId);
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
 });
 
