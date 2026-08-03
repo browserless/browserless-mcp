@@ -46,7 +46,20 @@ const captureSurface = (complianceMode: boolean) => {
   const tools = sinon.spy(server, 'addTool');
   const resources = sinon.spy(server, 'addResource');
   const prompts = sinon.spy(server, 'addPrompt');
+  const alternateRegistrationSpies = [
+    sinon.spy(server, 'addTools'),
+    sinon.spy(server, 'addResources'),
+    sinon.spy(server, 'addPrompts'),
+    sinon.spy(server, 'addResourceTemplate'),
+    sinon.spy(server, 'addResourceTemplates'),
+  ];
   registerSurface(server, { ...baseConfig, complianceMode });
+  for (const registration of alternateRegistrationSpies) {
+    expect(
+      registration.callCount,
+      'runtime registration must stay visible to the singular surface spies',
+    ).to.equal(0);
+  }
   return {
     tools: tools
       .getCalls()
@@ -76,7 +89,8 @@ const captureToolDefinition = (complianceMode: boolean, name: string) => {
 describe('Browserless MCP setup contract', () => {
   afterEach(() => sinon.restore());
 
-  it('keeps the committed generated export byte-for-value current', () => {
+  it('keeps the committed generated export structurally current', () => {
+    // `npm run check:setup` owns the separate byte-level generated-file gate.
     expect(generated).to.deep.equal(expected);
     expect(expected.endpoint.url).to.equal('https://mcp.browserless.io/mcp');
     expect(expected.package).not.to.have.property('version');
@@ -178,9 +192,7 @@ describe('Browserless MCP setup contract', () => {
         definition.parameters.safeParse(expected.verification.arguments)
           .success,
       ).to.equal(true);
-      expect(
-        definition.parameters.safeParse({ uri: 'https://example.com' }).success,
-      ).to.equal(false);
+      expect(definition.parameters.safeParse({}).success).to.equal(false);
     }
   });
 
@@ -191,9 +203,20 @@ describe('Browserless MCP setup contract', () => {
     ]);
     expect(expected.auth.generatedDefault).to.equal('oauth');
     expect(
-      JSON.stringify(expected.clients),
-      'generated client defaults must never embed query-token auth',
-    ).to.not.include('?token=');
+      JSON.stringify(expected),
+      'the generated contract must never embed query-token auth',
+    ).not.to.match(/[?&]token=/i);
+    for (const client of expected.clients) {
+      const urls =
+        JSON.stringify(client).match(/https?:\/\/[^\s"'<>)}\]]+/g) || [];
+      for (const rawUrl of urls) {
+        const url = new URL(rawUrl.replace(/[.,]$/, ''));
+        expect(
+          url.search,
+          `${client.id} generated URLs must not contain query authentication`,
+        ).to.equal('');
+      }
+    }
     expect(expected.auth.forbiddenGeneratedMethods).to.include('query-token');
   });
 
@@ -211,12 +234,17 @@ describe('Browserless MCP setup contract', () => {
   it('keeps agent-facing docs as pointers to one canonical setup skill', () => {
     const canonicalSkill =
       'https://www.browserless.io/agent-setup/v1.0.0/SKILL.md';
+    const machineExport =
+      'https://raw.githubusercontent.com/browserless/browserless-mcp/main/setup/browserless-mcp-setup.json';
     const install = readFileSync(join(root, 'install.md'), 'utf8');
     const llmsInstall = readFileSync(join(root, 'llms-install.md'), 'utf8');
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
 
     for (const source of [install, llmsInstall, readme]) {
       expect(source).to.include(canonicalSkill);
+    }
+    for (const source of [install, llmsInstall]) {
+      expect(source).to.include(machineExport);
     }
     for (const duplicatedInstruction of [
       'codex mcp add browserless',
@@ -226,8 +254,9 @@ describe('Browserless MCP setup contract', () => {
       '.vscode/mcp.json',
       '~/.codeium/windsurf/mcp_config.json',
     ]) {
-      expect(install).to.not.include(duplicatedInstruction);
-      expect(llmsInstall).to.not.include(duplicatedInstruction);
+      for (const source of [install, llmsInstall, readme]) {
+        expect(source).to.not.include(duplicatedInstruction);
+      }
     }
   });
 });
