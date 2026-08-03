@@ -272,7 +272,16 @@ export const sessionContinuityNote = (
       `Drop it and you silently get a fresh blank browser: snapshots come back \`about:blank\`, ` +
       `form values vanish, and \`getTabs\` shows one empty tab. ` +
       `If that happens, re-issue the call WITH the last \`sessionId\` you were given before ` +
-      `concluding the page or the site is broken.`;
+      `concluding the page or the site is broken.\n` +
+      `Treat the handle as conversation state, not a one-off: the moment you receive it, ` +
+      `record it wherever you keep working notes for this task (memory, scratchpad, plan, ` +
+      `todo list) so it survives context trimming or a summary. Re-read it from there rather ` +
+      `than scrolling back for it.\n` +
+      `**Only ever send a handle the server gave you.** Never invent, guess, shorten, or ` +
+      `derive one — a made-up value opens a different browser, and a guessable one can ` +
+      `collide with another conversation. The handle stays the right value to send for the ` +
+      `whole task even if a call failed or the browser was reclaimed: re-sending it is how ` +
+      `you get back, so keep using it instead of starting over without it.`;
 
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.
 
