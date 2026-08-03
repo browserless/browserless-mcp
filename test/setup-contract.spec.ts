@@ -18,6 +18,7 @@ import {
   createSetupContract,
   MCP_SURFACE_REGISTRY,
 } from '../src/setup-contract.js';
+import { getConfig } from '../src/config.js';
 import type { PackageTruth } from '../src/setup-contract.js';
 import { registerSurface } from '../src/tools/register.js';
 import type { McpConfig } from '../src/@types/types.js';
@@ -103,6 +104,7 @@ describe('Browserless MCP setup contract', () => {
   it('keeps the committed generated export structurally current', () => {
     // `npm run check:setup` owns the separate byte-level generated-file gate.
     expect(generated).to.deep.equal(expected);
+    expect(expected.schemaVersion).to.equal(1);
     expect(expected.endpoint.url).to.equal('https://mcp.browserless.io/mcp');
     expect(expected.endpoint.transport).to.equal('streamable-http');
     expect(expected.package).not.to.have.property('version');
@@ -117,6 +119,22 @@ describe('Browserless MCP setup contract', () => {
       env: { BROWSERLESS_TOKEN: '<BROWSERLESS_TOKEN>' },
     });
     expect(Object.keys(pkg.bin)).to.deep.equal(['browserless-mcp']);
+  });
+
+  it('keeps the published stdio token variable tied to runtime config', () => {
+    const originalToken = process.env.BROWSERLESS_TOKEN;
+    try {
+      process.env.BROWSERLESS_TOKEN = 'contract-runtime-token';
+      const [tokenVariable] = Object.keys(expected.package.stdio.env);
+      expect(tokenVariable).to.equal('BROWSERLESS_TOKEN');
+      expect(getConfig().browserlessToken).to.equal(process.env[tokenVariable]);
+    } finally {
+      if (originalToken === undefined) {
+        delete process.env.BROWSERLESS_TOKEN;
+      } else {
+        process.env.BROWSERLESS_TOKEN = originalToken;
+      }
+    }
   });
 
   it('rejects incomplete package metadata at the untyped generator boundary', () => {
@@ -432,7 +450,8 @@ describe('Browserless MCP setup contract', () => {
   it('keeps agent-facing docs as pointers to one canonical setup skill', () => {
     const canonicalSkill =
       'https://www.browserless.io/agent-setup/v1.0.1/SKILL.md';
-    const machineExport = './setup/browserless-mcp-setup.json';
+    const machineExport =
+      'https://raw.githubusercontent.com/browserless/browserless-mcp/main/setup/browserless-mcp-setup.json';
     const install = readFileSync(join(root, 'install.md'), 'utf8');
     const llmsInstall = readFileSync(join(root, 'llms-install.md'), 'utf8');
     const readme = readFileSync(join(root, 'README.md'), 'utf8');

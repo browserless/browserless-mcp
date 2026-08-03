@@ -63,7 +63,7 @@ export const createSetupContract = (packageTruth: PackageTruth) => {
   const npmEngine = packageTruth.engines.npm.trim();
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 1 as const,
     package: {
       name: packageName,
       engines: {

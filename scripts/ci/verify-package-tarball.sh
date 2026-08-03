@@ -28,6 +28,19 @@ tarball="/tmp/${pack_name}"
 listing=$(tar -tzf "$tarball")
 echo "$listing"
 
+required=(
+  "package/setup/browserless-mcp-setup.json"
+  "package/build/src/setup-contract.js"
+  "package/build/src/setup-contract.d.ts"
+)
+
+for entry in "${required[@]}"; do
+  if ! grep -qxF "$entry" <<< "$listing"; then
+    echo "::error::Required setup export is missing from npm tarball: $entry"
+    exit 1
+  fi
+done
+
 forbidden=$(echo "$listing" | grep -E '(\.spec\.|^package/src/|^package/build/test/|^package/CLAUDE\.md$|^package/REFACTOR\.md$|\.map$)' || true)
 
 # Raw TypeScript sources should never ship — only compiled `.js` and
