@@ -462,6 +462,24 @@ describe('Browserless MCP setup contract', () => {
     for (const source of [install, llmsInstall]) {
       expect(source).to.include(machineExport);
     }
+    let hostedUrlCount = 0;
+    for (const source of [install, llmsInstall, readme]) {
+      const hostedUrls =
+        source.match(/https:\/\/mcp\.browserless\.io[^\s`"')\]}]*/g) || [];
+      hostedUrlCount += hostedUrls.length;
+      for (const url of hostedUrls) {
+        expect(
+          url,
+          `agent-facing docs must derive hosted URLs from ${expected.endpoint.url}`,
+        ).to.match(
+          new RegExp(
+            `^${expected.endpoint.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+          ),
+        );
+      }
+    }
+    expect(hostedUrlCount).to.be.greaterThan(0);
+    expect(readme).to.include(expected.auth.methods[1].headerName);
     for (const duplicatedInstruction of [
       'codex mcp add browserless',
       'claude mcp add --transport http browserless',
