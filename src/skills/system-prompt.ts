@@ -258,6 +258,22 @@ export const fileTransferModeNote = (
       `  \`curl -s -F file=@"/abs/file" "${mcpBaseUrl}/upload?token=<YOUR_TOKEN>"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
       `**Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
 
+// HTTP-only: a remote client's MCP session id isn't stable across turns, so the
+// browser is bound to the echoed `sessionId`. stdio's key is already stable.
+export const sessionContinuityNote = (
+  transport: 'stdio' | 'httpStream',
+): string =>
+  transport === 'stdio'
+    ? ''
+    : `\n\n## Session continuity (REQUIRED)\n` +
+      `Every response ends with \`sessionId: <handle>\`. Pass that value as the \`sessionId\` ` +
+      `argument on EVERY following call in this conversation — it is what keeps you on the ` +
+      `same browser, with its current page, cookies, and filled-in forms. ` +
+      `Drop it and you silently get a fresh blank browser: snapshots come back \`about:blank\`, ` +
+      `form values vanish, and \`getTabs\` shows one empty tab. ` +
+      `If that happens, re-issue the call WITH the last \`sessionId\` you were given before ` +
+      `concluding the page or the site is broken.`;
+
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.
 
 Two uses:

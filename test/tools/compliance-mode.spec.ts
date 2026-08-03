@@ -654,7 +654,9 @@ describe('compliance mode — compliant tool surface', () => {
     // edit that adds ANY top-level field (evasion or not, any name) to a
     // compliant tool fails here, regardless of what it's called.
     const EXPECTED_KEYS: Record<string, string[]> = {
-      browserless_agent: ['commands', 'rationale'],
+      // `sessionId` re-binds the caller to the browser it already had — a
+      // continuity handle, not a capability.
+      browserless_agent: ['commands', 'rationale', 'sessionId'],
       browserless_export: [
         'bestAttempt',
         'gotoOptions',
