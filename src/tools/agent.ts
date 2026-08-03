@@ -52,6 +52,7 @@ import {
   COMPLIANT_AGENT_SYSTEM_PROMPT,
   SKILL_TOOL_DESCRIPTION,
   fileTransferModeNote,
+  sessionContinuityNote,
 } from '../skills/system-prompt.js';
 import {
   buildCrossOriginNotice,
@@ -421,6 +422,17 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
   params?: Record<string, unknown>;
 };
 
+// httpStream only: the handle has to travel through the conversation to pin the
+// browser, while a stdio client's key is already stable for its process life.
+const sessionLine = (
+  session: { handle: string },
+  transport: McpConfig['transport'],
+): string =>
+  transport === 'httpStream'
+    ? `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
+      `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one.`
+    : '';
+
 export function registerAgentTools(
   server: FastMCP,
   config: McpConfig,
@@ -504,10 +516,12 @@ export function registerAgentTools(
 
   defineTool<AgentToolParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
-    description: compliant
-      ? COMPLIANT_AGENT_SYSTEM_PROMPT
-      : AGENT_SYSTEM_PROMPT +
-        fileTransferModeNote(config.transport, config.mcpBaseUrl),
+    description:
+      (compliant
+        ? COMPLIANT_AGENT_SYSTEM_PROMPT
+        : AGENT_SYSTEM_PROMPT +
+          fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
+      sessionContinuityNote(config.transport),
     // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
     // supertypes both schemas; FastMCP's runtime schema + compliance spec are the real guards.
     parameters: (compliant
@@ -569,6 +583,7 @@ export function registerAgentTools(
       const proxy = params.proxy;
       const profile = params.profile;
       const createProfile = params.createProfile;
+      const echoedSessionId = params.sessionId;
 
       const sendAnalytics = (success: boolean) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
@@ -608,6 +623,7 @@ export function registerAgentTools(
           profile,
           createProfile,
           attachSessionId,
+          echoedSessionId,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -618,8 +634,9 @@ export function registerAgentTools(
       // make the agent route reject it as `Missing required id/method`, so just
       // open (or reuse) the session and report it's ready for follow-up commands.
       if (commands.length === 1 && !commands[0].method) {
+        let opened;
         try {
-          await getOrCreateSession(
+          opened = await getOrCreateSession(
             mcpSessionId,
             apiUrl,
             token,
@@ -629,6 +646,7 @@ export function registerAgentTools(
             attachSessionId,
             compliant,
             mcpSource.source,
+            echoedSessionId,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false);
@@ -638,7 +656,10 @@ export function registerAgentTools(
         const text = createProfile
           ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
           : 'Browser session is open. Send commands to drive it.';
-        return [{ type: 'text' as const, text }];
+        const line = sessionLine(opened, config.transport);
+        return [
+          { type: 'text' as const, text: line ? `${text}\n\n${line}` : text },
+        ];
       }
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
@@ -654,6 +675,7 @@ export function registerAgentTools(
             attachSessionId,
             compliant,
             mcpSource.source,
+            echoedSessionId,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -669,6 +691,7 @@ export function registerAgentTools(
             profile,
             createProfile,
             attachSessionId,
+            echoedSessionId,
           );
           return runCommands(true);
         }
@@ -690,6 +713,7 @@ export function registerAgentTools(
               profile,
               createProfile,
               attachSessionId,
+              echoedSessionId,
             );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
@@ -735,6 +759,7 @@ export function registerAgentTools(
               profile,
               createProfile,
               attachSessionId,
+              echoedSessionId,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -768,6 +793,7 @@ export function registerAgentTools(
                 profile,
                 createProfile,
                 attachSessionId,
+                echoedSessionId,
               );
               if (!isRetry) {
                 return runCommands(true);
@@ -922,7 +948,11 @@ export function registerAgentTools(
             // malformed URL — nothing to report
           }
         }
-        const extraText = [renderedSkills, siteNotice]
+        const extraText = [
+          sessionLine(agentSession, config.transport),
+          renderedSkills,
+          siteNotice,
+        ]
           .filter(Boolean)
           .join('\n\n');
         const appendExtra = (base: string): string =>

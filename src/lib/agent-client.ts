@@ -229,18 +229,29 @@ export const proxyFingerprint = (proxy?: ProxyOptions): string => {
   return parts.length ? KEY_SEP + parts.join('&') : '';
 };
 
-// Hash the profile rather than serialize it raw: like externalProxyServer,
-// the eviction-logged session key may otherwise leak a user-identifying
-// profile name. Hashing keeps per-profile distinctness without that leak.
-const getSessionKey = (
+// Remote clients mint a fresh MCP session per turn and after every 401, so the
+// MCP session id alone can't pin a browser — an echoed handle survives churn.
+export const sessionHandle = (
+  mcpSessionId: string | undefined,
+  token: string,
+  echoed?: string,
+): string => echoed ?? mcpSessionId ?? `stdio:${hashToken(token)}`;
+
+// Profile is hashed so the eviction-logged key can't leak a user-identifying
+// name; token-prefixed so a caller can't echo another account's handle.
+export const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
   proxy?: ProxyOptions,
   profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
+  echoedSessionId?: string,
 ): string =>
-  (mcpSessionId ?? `stdio:${hashToken(token)}`) +
+  `t:${hashToken(token)}` +
+  KEY_SEP +
+  'conv#' +
+  sessionHandle(mcpSessionId, token, echoedSessionId) +
   proxyFingerprint(proxy) +
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
@@ -628,8 +639,12 @@ export const getOrCreateSession = async (
   attachSessionId?: string,
   compliant = false,
   source?: string,
+  echoedSessionId?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
+  // Resolving up front keeps the key and the session's own handle identical
+  // (sessionHandle is idempotent once the handle is known).
+  const handle = sessionHandle(mcpSessionId, token, echoedSessionId);
   const key = getSessionKey(
     mcpSessionId,
     token,
@@ -637,6 +652,7 @@ export const getOrCreateSession = async (
     profile,
     createProfile,
     attachSessionId,
+    handle,
   );
   const existing = sessions.get(key);
 
@@ -697,6 +713,7 @@ export const getOrCreateSession = async (
       creationSessionId,
       source,
       compliant,
+      handle,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -786,6 +803,7 @@ export const closeSession = (
   profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
+  echoedSessionId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -794,6 +812,7 @@ export const closeSession = (
     profile,
     createProfile,
     attachSessionId,
+    echoedSessionId,
   );
   const session = sessions.get(key);
   if (session) {
@@ -818,6 +837,7 @@ export const destroySession = (
   profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
+  echoedSessionId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -826,6 +846,7 @@ export const destroySession = (
     profile,
     createProfile,
     attachSessionId,
+    echoedSessionId,
   );
   const session = sessions.get(key);
   if (session) {
