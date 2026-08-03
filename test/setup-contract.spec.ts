@@ -1,6 +1,17 @@
 import { expect } from 'chai';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import {
@@ -171,6 +182,51 @@ describe('Browserless MCP setup contract', () => {
     );
   });
 
+  it('locks every supported client installation shape', () => {
+    const clients = expected.clients as Array<{
+      id: string;
+      setupKind: string;
+      oauth: boolean;
+      instructions: string[];
+      defaultConfig?: unknown;
+    }>;
+    expect(
+      clients.map(({ id, setupKind }) => ({ id, setupKind })),
+    ).to.deep.equal([
+      { id: 'codex', setupKind: 'cli' },
+      { id: 'claude-desktop', setupKind: 'ui' },
+      { id: 'claude-code', setupKind: 'cli' },
+      { id: 'cursor', setupKind: 'json' },
+      { id: 'vscode', setupKind: 'json' },
+      { id: 'windsurf', setupKind: 'json' },
+    ]);
+    for (const client of clients) {
+      expect(client.oauth, `${client.id} must support OAuth`).to.equal(true);
+      expect(
+        client.instructions,
+        `${client.id} needs setup instructions`,
+      ).to.be.an('array').that.is.not.empty;
+      expect(
+        client.instructions.every((instruction) => instruction.trim()),
+      ).to.equal(true);
+    }
+
+    const byId = Object.fromEntries(
+      clients.map((client) => [client.id, client]),
+    );
+    expect(byId.cursor.defaultConfig).to.deep.equal({
+      mcpServers: { browserless: { url: expected.endpoint.url } },
+    });
+    expect(byId.vscode.defaultConfig).to.deep.equal({
+      servers: {
+        browserless: { type: 'http', url: expected.endpoint.url },
+      },
+    });
+    expect(byId.windsurf.defaultConfig).to.deep.equal({
+      mcpServers: { browserless: { serverUrl: expected.endpoint.url } },
+    });
+  });
+
   it('derives the real runtime surface from the same typed registry', () => {
     expect(captureSurface(false)).to.deep.equal(expected.surfaces.full);
     expect(captureSurface(true)).to.deep.equal(expected.surfaces.compliant);
@@ -230,6 +286,56 @@ describe('Browserless MCP setup contract', () => {
       './setup/browserless-mcp-setup.json',
     );
     expect(pkg.files).to.include('setup/*.json');
+  });
+
+  it('fails closed across every setup generator CLI path', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'browserless-mcp-setup-'));
+    const scriptPath = join(fixture, 'scripts/generate-setup-contract.mjs');
+    const outputPath = join(fixture, 'setup/browserless-mcp-setup.json');
+    const runGenerator = (...args: string[]) =>
+      spawnSync(process.execPath, [scriptPath, ...args], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+
+    try {
+      mkdirSync(join(fixture, 'scripts'), { recursive: true });
+      mkdirSync(join(fixture, 'build/src'), { recursive: true });
+      mkdirSync(join(fixture, 'setup'), { recursive: true });
+      copyFileSync(
+        join(root, 'scripts/generate-setup-contract.mjs'),
+        scriptPath,
+      );
+      copyFileSync(
+        join(root, 'build/src/setup-contract.js'),
+        join(fixture, 'build/src/setup-contract.js'),
+      );
+      copyFileSync(join(root, 'package.json'), join(fixture, 'package.json'));
+      copyFileSync(join(root, 'setup/browserless-mcp-setup.json'), outputPath);
+      symlinkSync(
+        join(root, 'node_modules'),
+        join(fixture, 'node_modules'),
+        'dir',
+      );
+
+      const baseline = readFileSync(outputPath, 'utf8');
+      expect(runGenerator('--check').status).to.equal(0);
+
+      writeFileSync(outputPath, 'stale\n');
+      const stale = runGenerator('--check');
+      expect(stale.status).to.equal(1);
+      expect(stale.stderr).to.include('is stale');
+
+      unlinkSync(outputPath);
+      const missing = runGenerator('--check');
+      expect(missing.status).to.equal(1);
+      expect(missing.stderr).to.include('is stale');
+
+      expect(runGenerator().status).to.equal(0);
+      expect(readFileSync(outputPath, 'utf8')).to.equal(baseline);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it('keeps agent-facing docs as pointers to one canonical setup skill', () => {
