@@ -143,9 +143,10 @@ To connect to a specific Browserless regional endpoint, add the `x-browserless-a
 https://mcp.browserless.io/mcp?browserlessUrl=https://production-lon.browserless.io
 ```
 
-For duplicate API-key or regional overrides, the corresponding header takes
-precedence over its query parameter. Generated setup never combines OAuth with
-the legacy query-token fallback.
+For regional overrides, the header takes precedence over its query parameter.
+For duplicate auth, a plain API-key header takes precedence; the legacy query
+token takes precedence over an OAuth JWT. Generated setup never combines OAuth
+with the legacy query-token fallback.
 
 For current Codex, Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf setup
 syntax, see the canonical [agent installation guide](install.md). Its exact

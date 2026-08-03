@@ -132,7 +132,7 @@
     }
   ],
   "verification": {
-    "tool": "browserless_smartscraper",
-    "arguments": { "url": "https://example.com", "formats": ["markdown"] }
+    "tool": "browserless_export",
+    "arguments": { "url": "https://example.com" }
   }
 }

@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sinon from 'sinon';
@@ -68,6 +69,26 @@ describe('Browserless MCP setup contract', () => {
   it('keeps the committed generated export byte-for-value current', () => {
     expect(generated).to.deep.equal(expected);
     expect(expected.package).not.to.have.property('version');
+    expect(expected.package.name).to.equal('@browserless.io/mcp');
+    expect(expected.package.engines).to.deep.equal({
+      node: '>=24',
+      npm: '>=11.10.0',
+    });
+  });
+
+  it('keeps the standalone generated-export gate runnable', () => {
+    const npmCli = process.env.npm_execpath;
+    if (!npmCli) {
+      throw new Error(
+        'npm_execpath is required to exercise npm run check:setup',
+      );
+    }
+    expect(() =>
+      execFileSync(process.execPath, [npmCli, 'run', 'check:setup'], {
+        cwd: root,
+        stdio: 'pipe',
+      }),
+    ).not.to.throw();
   });
 
   it('locks the public full and compliant tool inventories', () => {
@@ -90,6 +111,10 @@ describe('Browserless MCP setup contract', () => {
       'browserless_search',
       'browserless_skill',
     ]);
+    expect(expected.surfaces.full.tools).to.include(expected.verification.tool);
+    expect(expected.surfaces.compliant.tools).to.include(
+      expected.verification.tool,
+    );
   });
 
   it('derives the real runtime surface from the same typed registry', () => {

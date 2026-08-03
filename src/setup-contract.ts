@@ -47,125 +47,137 @@ export interface PackageTruth {
 
 const HOSTED_URL = 'https://mcp.browserless.io/mcp';
 
-export const createSetupContract = (packageTruth: PackageTruth) => ({
-  schemaVersion: 1,
-  package: {
-    ...packageTruth,
-    stdio: {
-      command: 'npx',
-      args: ['-y', packageTruth.name],
+export const createSetupContract = (packageTruth: PackageTruth) => {
+  if (!packageTruth.engines?.node || !packageTruth.engines?.npm) {
+    throw new Error('package engines.node and engines.npm are required');
+  }
+
+  return {
+    schemaVersion: 1,
+    package: {
+      ...packageTruth,
+      stdio: {
+        command: 'npx',
+        args: ['-y', packageTruth.name],
+      },
     },
-  },
-  endpoint: {
-    url: HOSTED_URL,
-    transport: 'streamable-http',
-  },
-  auth: {
-    generatedDefault: 'oauth',
-    methods: [
+    endpoint: {
+      url: HOSTED_URL,
+      transport: 'streamable-http',
+    },
+    auth: {
+      generatedDefault: 'oauth',
+      methods: [
+        {
+          id: 'oauth',
+          priority: 1,
+          generatedByDefault: true,
+        },
+        {
+          id: 'bearer-header',
+          priority: 2,
+          generatedByDefault: false,
+          headerName: 'Authorization',
+          valueTemplate: 'Bearer <BROWSERLESS_TOKEN>',
+        },
+      ],
+      forbiddenGeneratedMethods: ['query-token'],
+    },
+    surfaces: {
+      full: {
+        tools: idsFor('tool', false),
+        resources: idsFor('resource', false),
+        prompts: idsFor('prompt', false),
+      },
+      compliant: {
+        tools: idsFor('tool', true),
+        resources: idsFor('resource', true),
+        prompts: idsFor('prompt', true),
+      },
+    },
+    clients: [
       {
-        id: 'oauth',
-        priority: 1,
-        generatedByDefault: true,
+        id: 'codex',
+        label: 'Codex',
+        setupKind: 'cli',
+        oauth: true,
+        instructions: [
+          `Run: codex mcp add browserless --url ${HOSTED_URL}`,
+          'Run: codex mcp login browserless',
+        ],
       },
       {
-        id: 'bearer-header',
-        priority: 2,
-        generatedByDefault: false,
-        headerName: 'Authorization',
-        valueTemplate: 'Bearer <BROWSERLESS_TOKEN>',
+        id: 'claude-desktop',
+        label: 'Claude Desktop',
+        setupKind: 'ui',
+        oauth: true,
+        instructions: [
+          'Open Settings > Connectors.',
+          `Add a custom connector with ${HOSTED_URL}.`,
+          'Select Connect and finish OAuth in the browser.',
+        ],
+      },
+      {
+        id: 'claude-code',
+        label: 'Claude Code',
+        setupKind: 'cli',
+        oauth: true,
+        instructions: [
+          `Run: claude mcp add --transport http browserless ${HOSTED_URL}`,
+          'Run: claude mcp login browserless',
+        ],
+      },
+      {
+        id: 'cursor',
+        label: 'Cursor',
+        setupKind: 'json',
+        configPath: '~/.cursor/mcp.json or .cursor/mcp.json',
+        oauth: true,
+        defaultConfig: {
+          mcpServers: { browserless: { url: HOSTED_URL } },
+        },
+        instructions: [
+          'Reload MCP servers, then complete OAuth when prompted.',
+        ],
+      },
+      {
+        id: 'vscode',
+        label: 'VS Code',
+        setupKind: 'json',
+        configPath:
+          '.vscode/mcp.json (workspace) or the user profile MCP config',
+        oauth: true,
+        defaultConfig: {
+          servers: { browserless: { type: 'http', url: HOSTED_URL } },
+        },
+        instructions: [
+          'Run MCP: List Servers, start Browserless, and authenticate.',
+        ],
+      },
+      {
+        id: 'windsurf',
+        label: 'Windsurf',
+        setupKind: 'json',
+        configPath: '~/.codeium/windsurf/mcp_config.json',
+        oauth: true,
+        defaultConfig: {
+          mcpServers: { browserless: { serverUrl: HOSTED_URL } },
+        },
+        instructions: [
+          'Refresh MCP servers, then complete OAuth when prompted.',
+        ],
       },
     ],
-    forbiddenGeneratedMethods: ['query-token'],
-  },
-  surfaces: {
-    full: {
-      tools: idsFor('tool', false),
-      resources: idsFor('resource', false),
-      prompts: idsFor('prompt', false),
-    },
-    compliant: {
-      tools: idsFor('tool', true),
-      resources: idsFor('resource', true),
-      prompts: idsFor('prompt', true),
-    },
-  },
-  clients: [
-    {
-      id: 'codex',
-      label: 'Codex',
-      setupKind: 'cli',
-      oauth: true,
-      instructions: [
-        `Run: codex mcp add browserless --url ${HOSTED_URL}`,
-        'Run: codex mcp login browserless',
-      ],
-    },
-    {
-      id: 'claude-desktop',
-      label: 'Claude Desktop',
-      setupKind: 'ui',
-      oauth: true,
-      instructions: [
-        'Open Settings > Connectors.',
-        `Add a custom connector with ${HOSTED_URL}.`,
-        'Select Connect and finish OAuth in the browser.',
-      ],
-    },
-    {
-      id: 'claude-code',
-      label: 'Claude Code',
-      setupKind: 'cli',
-      oauth: true,
-      instructions: [
-        `Run: claude mcp add --transport http browserless ${HOSTED_URL}`,
-        'Run: claude mcp login browserless',
-      ],
-    },
-    {
-      id: 'cursor',
-      label: 'Cursor',
-      setupKind: 'json',
-      configPath: '~/.cursor/mcp.json or .cursor/mcp.json',
-      oauth: true,
-      defaultConfig: {
-        mcpServers: { browserless: { url: HOSTED_URL } },
+    verification: {
+      // Export is present on both surfaces, so this smoke test is valid even
+      // for compliance-mode installs that intentionally omit smart scraping.
+      tool: 'browserless_export',
+      arguments: {
+        url: 'https://example.com',
       },
-      instructions: ['Reload MCP servers, then complete OAuth when prompted.'],
     },
-    {
-      id: 'vscode',
-      label: 'VS Code',
-      setupKind: 'json',
-      configPath: '.vscode/mcp.json (workspace) or the user profile MCP config',
-      oauth: true,
-      defaultConfig: {
-        servers: { browserless: { type: 'http', url: HOSTED_URL } },
-      },
-      instructions: [
-        'Run MCP: List Servers, start Browserless, and authenticate.',
-      ],
-    },
-    {
-      id: 'windsurf',
-      label: 'Windsurf',
-      setupKind: 'json',
-      configPath: '~/.codeium/windsurf/mcp_config.json',
-      oauth: true,
-      defaultConfig: {
-        mcpServers: { browserless: { serverUrl: HOSTED_URL } },
-      },
-      instructions: ['Refresh MCP servers, then complete OAuth when prompted.'],
-    },
-  ],
-  verification: {
-    tool: 'browserless_smartscraper',
-    arguments: {
-      url: 'https://example.com',
-      formats: ['markdown'],
-    },
-  },
-});
+  } as const;
+};
 
 export type BrowserlessMcpSetupContract = ReturnType<
   typeof createSetupContract
