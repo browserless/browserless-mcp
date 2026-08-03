@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
+import { createToolContext, runWithContext } from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { FastMCP } from 'fastmcp';
 import sinon from 'sinon';
@@ -11,6 +12,7 @@ import {
   shutdownAmplitudeAnalytics,
 } from '../../src/lib/amplitude-analytics.js';
 import { defineTool } from '../../src/lib/define-tool.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import { z } from 'zod';
 
@@ -167,14 +169,15 @@ describe('Amplitude MCP analytics', () => {
     });
   });
 
-  it('awaits successful Amplitude shutdown', async () => {
+  it('awaits the Amplitude flush, then shuts the client down', async () => {
     const mock = new MockAmplitudeMCPAnalytics({
       serverName: 'browserless-mcp',
       serverVersion: '1.0.0',
     });
     const deferred = createDeferred<void>();
+    const flush = sinon.stub(mock, 'flush') as sinon.SinonStub;
+    flush.returns({ promise: deferred.promise });
     const shutdown = sinon.stub(mock, 'shutdown') as sinon.SinonStub;
-    shutdown.returns(deferred.promise);
     const result = shutdownAmplitudeAnalytics(mock);
 
     expect(
@@ -183,20 +186,23 @@ describe('Amplitude MCP analytics', () => {
         Promise.resolve('pending'),
       ]),
     ).to.equal('pending');
+    expect(shutdown.notCalled).to.equal(true);
     deferred.resolve();
     await result;
 
+    expect(flush.calledOnce).to.equal(true);
     expect(shutdown.calledOnce).to.equal(true);
   });
 
-  it('swallows rejected Amplitude shutdown', async () => {
+  it('swallows a rejected Amplitude flush', async () => {
     const mock = new MockAmplitudeMCPAnalytics({
       serverName: 'browserless-mcp',
       serverVersion: '1.0.0',
     });
     const deferred = createDeferred<void>();
+    const flush = sinon.stub(mock, 'flush') as sinon.SinonStub;
+    flush.returns({ promise: deferred.promise });
     const shutdown = sinon.stub(mock, 'shutdown') as sinon.SinonStub;
-    shutdown.returns(deferred.promise);
     const result = shutdownAmplitudeAnalytics(mock);
 
     expect(
@@ -208,20 +214,103 @@ describe('Amplitude MCP analytics', () => {
     deferred.reject(new Error('flush failed'));
     await result;
 
+    expect(flush.calledOnce).to.equal(true);
     expect(shutdown.calledOnce).to.equal(true);
   });
 
-  it('resolves when Amplitude shutdown never settles', async () => {
+  it('resolves when the Amplitude flush never settles', async () => {
     const mock = new MockAmplitudeMCPAnalytics({
       serverName: 'browserless-mcp',
       serverVersion: '1.0.0',
     });
+    const flush = sinon.stub(mock, 'flush') as sinon.SinonStub;
+    flush.returns({ promise: new Promise<void>(() => {}) });
     const shutdown = sinon.stub(mock, 'shutdown') as sinon.SinonStub;
-    shutdown.returns(new Promise<void>(() => {}));
 
     const result = await shutdownAmplitudeAnalytics(mock);
 
     expect(result).to.equal(undefined);
+    expect(flush.calledOnce).to.equal(true);
     expect(shutdown.calledOnce).to.equal(true);
+  });
+
+  describe('custom events', () => {
+    const toolCtx = () =>
+      createToolContext(
+        {
+          server: { name: 'browserless-mcp', version: '1.0.0' },
+          transport: 'stdio',
+          identity: { userId: 'account-123', resolvedFrom: 'explicit' },
+        },
+        { name: 'browserless_scrape' },
+      );
+
+    it('routes MCP Tool Request through the Amplitude client', () => {
+      const mock = new MockAmplitudeMCPAnalytics({
+        serverName: 'browserless-mcp',
+        serverVersion: '1.0.0',
+      });
+      const trackToolEvent = sinon.spy(mock, 'trackToolEvent');
+      initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+      const helper = new AnalyticsHelper(false);
+
+      runWithContext(toolCtx(), () => {
+        helper.fireToolRequest('plain-token', 'browserless_scrape', {
+          api_url: 'https://example.com',
+          success: true,
+          _prompt: 'why the agent called this',
+        });
+      });
+
+      expect(trackToolEvent.calledOnce).to.equal(true);
+      expect(trackToolEvent.firstCall.args[1]).to.equal('MCP Tool Request');
+      const props = trackToolEvent.firstCall.args[2] as Record<string, unknown>;
+      // Raw token never leaves via Amplitude; rationale rides `[MCP] Rationale`.
+      expect(props).to.deep.equal({
+        tool: 'browserless_scrape',
+        api_url: 'https://example.com',
+        success: true,
+      });
+    });
+
+    it('routes MCP Skill through the Amplitude client', () => {
+      const mock = new MockAmplitudeMCPAnalytics({
+        serverName: 'browserless-mcp',
+        serverVersion: '1.0.0',
+      });
+      const trackToolEvent = sinon.spy(mock, 'trackToolEvent');
+      initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+      const helper = new AnalyticsHelper(false);
+
+      runWithContext(toolCtx(), () => {
+        helper.fireSkill('plain-token', { skill: 'autonomous-login' });
+      });
+
+      expect(trackToolEvent.calledOnce).to.equal(true);
+      expect(trackToolEvent.firstCall.args[1]).to.equal('MCP Skill');
+      expect(trackToolEvent.firstCall.args[2]).to.deep.equal({
+        skill: 'autonomous-login',
+      });
+    });
+
+    it('emits nothing when Amplitude is disabled or outside a tool frame', () => {
+      const mock = new MockAmplitudeMCPAnalytics({
+        serverName: 'browserless-mcp',
+        serverVersion: '1.0.0',
+      });
+      const trackToolEvent = sinon.spy(mock, 'trackToolEvent');
+      const helper = new AnalyticsHelper(false);
+
+      // Disabled: no client was ever initialized.
+      runWithContext(toolCtx(), () => {
+        helper.fireToolRequest('plain-token', 'browserless_scrape', {});
+      });
+      expect(trackToolEvent.notCalled).to.equal(true);
+
+      // Enabled, but no ambient context (e.g. a non-tool code path).
+      initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+      helper.fireToolRequest('plain-token', 'browserless_scrape', {});
+      expect(trackToolEvent.notCalled).to.equal(true);
+    });
   });
 });

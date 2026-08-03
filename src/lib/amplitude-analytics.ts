@@ -5,6 +5,7 @@ import {
   setIdentity,
   setRationale,
 } from '@amplitude/mcp-analytics';
+import type { McpToolContext } from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastMCP } from 'fastmcp';
@@ -132,13 +133,52 @@ export const setAmplitudeToolContext = (
   }
 };
 
+/**
+ * Emit one of our own (non-SDK) events — `MCP Tool Request`, `MCP Skill` —
+ * through the same Amplitude client the SDK uses, so they inherit the identity,
+ * session anchor, client/server fields and transport the SDK already resolved
+ * instead of carrying a parallel set of our own. No-op when Amplitude is
+ * disabled or when called outside an instrumented frame. The raw Browserless
+ * token is never a property here: identity comes from `setIdentity`, which
+ * resolves to the account id or a hash.
+ */
+export const trackAmplitudeEvent = (
+  eventName: string,
+  properties: Record<string, unknown>,
+): void => {
+  if (!activeAnalytics) return;
+
+  try {
+    const ctx = getCurrentContext();
+    if (!ctx) return;
+
+    const props = { ...properties };
+    // Already emitted as the reserved `[MCP] Rationale` via setRationale.
+    delete props._prompt;
+
+    if ('tool' in ctx) {
+      activeAnalytics.trackToolEvent(ctx as McpToolContext, eventName, props);
+    } else {
+      activeAnalytics.trackServerEvent(ctx, eventName, props);
+    }
+  } catch (error) {
+    console.error('[browserless-mcp] Amplitude custom event failed:', error);
+  }
+};
+
+/** `flush()` hands back an `AmplitudeReturn`, typed as `unknown` by the SDK. */
+type AmplitudeFlushResult = { promise?: Promise<unknown> } | undefined;
+
 export const shutdownAmplitudeAnalytics = async (
   analytics: AmplitudeMCPAnalytics | undefined,
 ): Promise<void> => {
   let timeout: NodeJS.Timeout | undefined;
   try {
+    // `shutdown()` is synchronous and returns void — only `flush()` yields an
+    // awaitable, so awaiting shutdown alone resolves on the next tick and
+    // `process.exit()` drops whatever is still in flight.
     await Promise.race([
-      analytics?.shutdown(),
+      (analytics?.flush() as AmplitudeFlushResult)?.promise,
       new Promise<void>((resolve) => {
         timeout = setTimeout(resolve, AMPLITUDE_SHUTDOWN_TIMEOUT_MS);
         timeout.unref();
@@ -148,6 +188,11 @@ export const shutdownAmplitudeAnalytics = async (
     console.error('[browserless-mcp] Amplitude shutdown failed:', error);
   } finally {
     if (timeout) clearTimeout(timeout);
+    try {
+      analytics?.shutdown();
+    } catch (error) {
+      console.error('[browserless-mcp] Amplitude shutdown failed:', error);
+    }
   }
 };
 
