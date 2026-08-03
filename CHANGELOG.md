@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.17.0](https://github.com/browserless/browserless-mcp/compare/v1.16.0...v1.17.0) (2026-08-03)
+
+
+### Features
+
+* add options field to SnapshotElement and update select command value description ([fcbcf18](https://github.com/browserless/browserless-mcp/commit/fcbcf18a52e68187e41812b35fe3095fef6a92fe))
+* add session closing reminders to system prompts and agent tools AUTO-279 ([#219](https://github.com/browserless/browserless-mcp/issues/219)) ([8cc8fd1](https://github.com/browserless/browserless-mcp/commit/8cc8fd142e9b86d246389a7c9d0d83e03c1b1019))
+* **analytics:** AUTO-265 emit MCP usage events to Amplitude via @amplitude/mcp-analytics ([#206](https://github.com/browserless/browserless-mcp/issues/206)) ([7028be6](https://github.com/browserless/browserless-mcp/commit/7028be66393ef9daf86e9b065c5776d34f01a8b4))
+* enhance session continuity by attaching sessions to browserIds and not mcpSessions ([#218](https://github.com/browserless/browserless-mcp/issues/218)) ([44dd101](https://github.com/browserless/browserless-mcp/commit/44dd101608286e5a386ed6318996bbac08f01701))
+
 ## [1.16.0](https://github.com/browserless/browserless-mcp/compare/v1.15.0...v1.16.0) (2026-07-27)
 
 
