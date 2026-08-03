@@ -21,7 +21,10 @@ const expected = await format(
 );
 
 if (process.argv.includes('--check')) {
-  const actual = await readFile(outputPath, 'utf8').catch(() => '');
+  const actual = await readFile(outputPath, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
   if (actual !== expected) {
     console.error(
       'setup/browserless-mcp-setup.json is stale; run npm run generate:setup',

@@ -18,7 +18,8 @@ Point your MCP client at the hosted server, then complete OAuth in the client:
 }
 ```
 
-No local install — see [Configuration](#configuration) for per-client snippets.
+No local install — see the canonical [agent installation guide](install.md) for
+per-client setup.
 
 ## Tools
 
@@ -149,8 +150,9 @@ token takes precedence over an OAuth JWT. Generated setup never combines OAuth
 with the legacy query-token fallback.
 
 For current Codex, Claude Desktop, Claude Code, Cursor, VS Code, and Windsurf setup
-syntax, see the canonical [agent installation guide](install.md). Its exact
-machine-readable source is [`setup/browserless-mcp-setup.json`](setup/browserless-mcp-setup.json).
+syntax, see the canonical [agent installation guide](install.md). The same owner
+truth is published machine-readably in
+[`setup/browserless-mcp-setup.json`](setup/browserless-mcp-setup.json).
 
 ## Self-Hosting
 

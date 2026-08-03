@@ -48,8 +48,12 @@ export interface PackageTruth {
 const HOSTED_URL = 'https://mcp.browserless.io/mcp';
 
 export const createSetupContract = (packageTruth: PackageTruth) => {
-  if (!packageTruth.engines?.node || !packageTruth.engines?.npm) {
-    throw new Error('package engines.node and engines.npm are required');
+  if (
+    !packageTruth.name?.trim() ||
+    !packageTruth.engines?.node ||
+    !packageTruth.engines?.npm
+  ) {
+    throw new Error('package name, engines.node, and engines.npm are required');
   }
 
   return {

@@ -128,13 +128,12 @@ This launches the package over stdio. For a self-hosted HTTP server, set
 ## Verify
 
 First list tools and compare them with the full or compliant inventory in
-`setup/browserless-mcp-setup.json`. Then call `browserless_smartscraper` on the
-full surface with:
+`setup/browserless-mcp-setup.json`. Then call the contract's cross-surface
+`browserless_export` verification tool with:
 
 ```json
 {
-  "url": "https://example.com",
-  "formats": ["markdown"]
+  "url": "https://example.com"
 }
 ```
 

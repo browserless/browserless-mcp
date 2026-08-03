@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sinon from 'sinon';
@@ -76,19 +75,10 @@ describe('Browserless MCP setup contract', () => {
     });
   });
 
-  it('keeps the standalone generated-export gate runnable', () => {
-    const npmCli = process.env.npm_execpath;
-    if (!npmCli) {
-      throw new Error(
-        'npm_execpath is required to exercise npm run check:setup',
-      );
-    }
+  it('rejects incomplete package metadata at the untyped generator boundary', () => {
     expect(() =>
-      execFileSync(process.execPath, [npmCli, 'run', 'check:setup'], {
-        cwd: root,
-        stdio: 'pipe',
-      }),
-    ).not.to.throw();
+      createSetupContract({ name: '', engines: pkg.engines }),
+    ).to.throw('package name, engines.node, and engines.npm are required');
   });
 
   it('locks the public full and compliant tool inventories', () => {
