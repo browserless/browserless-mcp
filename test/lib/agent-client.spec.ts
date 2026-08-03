@@ -8,6 +8,7 @@ import {
   ProfileNotFoundError,
   proxyFingerprint,
   sessionHandle,
+  dropMcpSession,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
 import type { ProxyOptions } from '../../src/@types/types.js';
@@ -594,6 +595,81 @@ describe('agent-client session handle', () => {
       // Same churned session id, but the handle was dropped — a new browser.
       const dropped = await getOrCreateSession('mcp-2', server.url, 'tok');
       expect(dropped.ws).to.not.equal(first.ws);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('agent-client orphan adoption', () => {
+  const open = async (sid: string, url: string) =>
+    getOrCreateSession(sid, url, 'tok');
+
+  it('adopts the orphaned browser when the previous MCP session went quiet', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const first = await open('mcp-a', server.url);
+      dropMcpSession('mcp-a');
+
+      // Same conversation, re-initialized, model did NOT echo the handle.
+      const churned = await open('mcp-b', server.url);
+      expect(churned.ws).to.equal(first.ws);
+      expect(churned.handle).to.equal('mcp-b');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('leaves a live conversation alone', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const live = await open('mcp-live', server.url);
+      // No dropMcpSession: mcp-live was just seen, so it is still driving.
+      const other = await open('mcp-new', server.url);
+      expect(other.ws).to.not.equal(live.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('refuses to guess when two orphans are candidates', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const one = await open('mcp-1', server.url);
+      const two = await open('mcp-2', server.url);
+      dropMcpSession('mcp-1');
+      dropMcpSession('mcp-2');
+
+      const third = await open('mcp-3', server.url);
+      expect(third.ws).to.not.equal(one.ws);
+      expect(third.ws).to.not.equal(two.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('prefers an echoed handle over adoption', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const target = await open('mcp-x', server.url);
+      const decoy = await open('mcp-y', server.url);
+      dropMcpSession('mcp-x');
+      dropMcpSession('mcp-y');
+
+      const resumed = await getOrCreateSession(
+        'mcp-z',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'mcp-x',
+      );
+      expect(resumed.ws).to.equal(target.ws);
+      expect(resumed.ws).to.not.equal(decoy.ws);
     } finally {
       await server.close();
     }

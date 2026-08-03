@@ -168,6 +168,21 @@ const pending = new Map<string, Promise<ActiveSession>>();
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;
+// How long an MCP session id must go unused before its browser is adoptable.
+// Churn abandons the old id instantly; a live conversation re-uses it per turn.
+const ADOPT_AFTER_IDLE_MS = 30_000;
+
+// mcp session id -> last time a request arrived on it. `disconnect` is the
+// primary signal, but a client that abandons a transport never sends one.
+const mcpSeenAt = new Map<string, number>();
+
+export const noteMcpSession = (id: string | undefined): void => {
+  if (id) mcpSeenAt.set(id, Date.now());
+};
+
+export const dropMcpSession = (id: string | undefined): void => {
+  if (id) mcpSeenAt.delete(id);
+};
 
 const closeAndDelete = (key: string, reason: string): void => {
   const session = sessions.get(key);
@@ -629,6 +644,45 @@ const sendMessage = (
     ws.send(JSON.stringify(msg));
   });
 
+/**
+ * Re-key an orphaned browser onto the caller's new MCP session id.
+ */
+const adoptOrphan = (
+  key: string,
+  mcpSessionId: string | undefined,
+  handle: string,
+  source: string | undefined,
+): ActiveSession | undefined => {
+  if (!mcpSessionId || handle !== mcpSessionId) return;
+
+  const marker = KEY_SEP + 'conv#';
+  const at = key.indexOf(marker);
+  if (at === -1) return;
+  const prefix = key.slice(0, at + marker.length);
+  const suffix = key.slice(prefix.length + handle.length);
+
+  const now = Date.now();
+  const candidates = [...sessions.entries()].filter(([k, s]) => {
+    if (k === key || !k.startsWith(prefix) || !k.endsWith(suffix)) return false;
+    if (s.ws.readyState !== WebSocket.OPEN || s.source !== source) return false;
+    const owner = k.slice(prefix.length, k.length - suffix.length);
+    if (owner === mcpSessionId) return false;
+    const seen = mcpSeenAt.get(owner);
+    return !seen || now - seen > ADOPT_AFTER_IDLE_MS;
+  });
+
+  if (candidates.length !== 1) return;
+
+  const [oldKey, session] = candidates[0];
+  sessions.delete(oldKey);
+  session.handle = handle;
+  sessions.set(key, session);
+  console.error(
+    `[agent-client] adopted orphaned browser from mcp session ${oldKey.slice(prefix.length, oldKey.length - suffix.length)} into ${mcpSessionId}`,
+  );
+  return session;
+};
+
 export const getOrCreateSession = async (
   mcpSessionId: string | undefined,
   apiUrl: string,
@@ -654,7 +708,12 @@ export const getOrCreateSession = async (
     attachSessionId,
     handle,
   );
-  const existing = sessions.get(key);
+  noteMcpSession(mcpSessionId);
+  const existing =
+    sessions.get(key) ??
+    (echoedSessionId
+      ? undefined
+      : adoptOrphan(key, mcpSessionId, handle, source));
 
   if (
     existing &&
@@ -725,9 +784,10 @@ export const getOrCreateSession = async (
           `[agent-client] WebSocket closed unexpectedly: code=${code} reason=${reason?.toString('utf8') || 'none'}`,
         );
       }
-      const current = sessions.get(key);
-      if (current?.ws === ws) {
-        sessions.delete(key);
+      // Delete by identity, not by the captured key: adoption re-keys a live
+      // session, so the key this closure saw may no longer be the current one.
+      for (const [k, s] of sessions) {
+        if (s.ws === ws) sessions.delete(k);
       }
     });
 

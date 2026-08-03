@@ -590,6 +590,13 @@ export function registerAgentTools(
       const profile = params.profile;
       const createProfile = params.createProfile;
       const echoedSessionId = params.sessionId;
+      // Whether the caller threaded the handle is the difference between one
+      // browser per conversation and one per call — log it, don't infer it.
+      if (config.transport === 'httpStream') {
+        console.error(
+          `[agent] handle ${echoedSessionId ? `echoed=${echoedSessionId}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
+        );
+      }
 
       const sendAnalytics = (success: boolean) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
@@ -791,7 +798,8 @@ export function registerAgentTools(
 
           if (resp.error) {
             const err = resp.error;
-            if (err.code && FATAL_CODES.has(err.code)) {
+            const fatal = !!err.code && FATAL_CODES.has(err.code);
+            if (fatal) {
               destroySession(
                 mcpSessionId,
                 token,
@@ -844,7 +852,14 @@ export function registerAgentTools(
             );
             markFired(agentSession.skillState, triggered);
 
-            throw new UserError(appendSkills(body, triggered, compliant));
+            throw new UserError(
+              [
+                appendSkills(body, triggered, compliant),
+                fatal ? '' : sessionLine(agentSession, config.transport),
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            );
           }
 
           // Capture the first URL we observe in the batch as a fallback
@@ -955,9 +970,9 @@ export function registerAgentTools(
           }
         }
         const extraText = [
-          closedDuringBatch ? '' : sessionLine(agentSession, config.transport),
           renderedSkills,
           siteNotice,
+          closedDuringBatch ? '' : sessionLine(agentSession, config.transport),
         ]
           .filter(Boolean)
           .join('\n\n');

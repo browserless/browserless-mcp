@@ -11,6 +11,16 @@ export interface RejectingServerHandle extends UpgradeServerHandle {
   hits: () => number;
 }
 
+export class AgentErrorFrame {
+  constructor(
+    public readonly error: {
+      code?: string;
+      message: string;
+      suggestion?: string;
+    },
+  ) {}
+}
+
 // Write a non-101 HTTP response on a raw socket, mirroring the wire shape a
 // production server emits when a WS upgrade is refused. Header order/values
 // match what `writeResponse` in the backend produces: no Content-Length, a
@@ -108,10 +118,12 @@ export const makeStallingServer = async (
 // for tests only
 export const makeRespondingServer = async (
   responder: (method: string, params: unknown) => unknown,
-): Promise<UpgradeServerHandle> => {
+): Promise<RejectingServerHandle> => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
+  let upgrades = 0;
   server.on('upgrade', (req, socket, head) => {
+    upgrades++;
     socket.on('error', () => {});
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.on('message', (data: Buffer) => {
@@ -120,11 +132,13 @@ export const makeRespondingServer = async (
           method: string;
           params: unknown;
         };
+        const out = responder(msg.method, msg.params);
         ws.send(
-          JSON.stringify({
-            id: msg.id,
-            result: responder(msg.method, msg.params),
-          }),
+          JSON.stringify(
+            out instanceof AgentErrorFrame
+              ? { id: msg.id, error: out.error }
+              : { id: msg.id, result: out },
+          ),
         );
       });
     });
@@ -133,6 +147,7 @@ export const makeRespondingServer = async (
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}`,
+    hits: () => upgrades,
     close: () =>
       new Promise<void>((r) => {
         wss.clients.forEach((c) => c.terminate());
