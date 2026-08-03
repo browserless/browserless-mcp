@@ -60,11 +60,13 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public
 
-      # The package is already published by this point; a Slack hiccup must not
-      # mark the release as failed.
-      - name: Notify Slack
-        if: success()
+      # The Docker image publishes in a separate same-tag workflow, so report
+      # npm failures as well as success. A Slack hiccup must not alter release
+      # status.
+      - name: Notify Slack of npm publish result
+        if: always()
         continue-on-error: true
         run: bash scripts/ci/notify-slack.sh
         env:
+          PUBLISH_STATUS: ${{ job.status }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASES_WEBHOOK }}

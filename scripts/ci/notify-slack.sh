@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Post an npm-publish notification to the Slack webhook. Called from
-# .github/workflows/npm-publish.yml after a successful publish.
+# Post an npm-publish result to the Slack webhook.
 #
 # Required env vars (the workflow injects these):
 #   TAG                  — the git tag that triggered the publish (e.g. v1.7.0)
 #   RELEASE_URL          — GitHub Releases URL for that tag
 #   SLACK_WEBHOOK_URL    — the Slack incoming webhook (treat as secret)
+#   PUBLISH_STATUS       — GitHub job status (`success` or a failure state)
 #
 # Uses jq to build the payload so message content with shell-metacharacters
 # can't break the JSON structure.
@@ -16,10 +16,16 @@ set -euo pipefail
 : "${RELEASE_URL:?RELEASE_URL must be set}"
 : "${SLACK_WEBHOOK_URL:?SLACK_WEBHOOK_URL must be set}"
 
+publish_status="${PUBLISH_STATUS:-success}"
+if [[ "$publish_status" == "success" ]]; then
+  message=":package: *<$RELEASE_URL|$TAG>* of @browserless.io/mcp published to npm."
+else
+  message=":warning: npm publish for *<$RELEASE_URL|$TAG>* failed; the same-tag Docker image workflow runs independently."
+fi
+
 payload=$(jq -n \
-  --arg release_url "$RELEASE_URL" \
-  --arg tag "$TAG" \
-  '{text: ":package: *<\($release_url)|\($tag)>* of @browserless.io/mcp published to npm."}')
+  --arg message "$message" \
+  '{text: $message}')
 
 curl --fail-with-body \
   --connect-timeout 10 \

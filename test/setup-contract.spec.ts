@@ -496,6 +496,8 @@ describe('Browserless MCP setup contract', () => {
       'https://www.browserless.io/agent-setup/v1.0.1/SKILL.md';
     const machineExport =
       'https://raw.githubusercontent.com/browserless/browserless-mcp/main/setup/browserless-mcp-setup.json';
+    const packageExport =
+      '@browserless.io/mcp/setup/browserless-mcp-setup.json';
     const install = readFileSync(join(root, 'install.md'), 'utf8');
     const llmsInstall = readFileSync(join(root, 'llms-install.md'), 'utf8');
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
@@ -505,6 +507,10 @@ describe('Browserless MCP setup contract', () => {
     }
     for (const source of [install, llmsInstall]) {
       expect(source).to.include(machineExport);
+      expect(source).to.include(packageExport);
+      expect(source.indexOf(packageExport)).to.be.lessThan(
+        source.indexOf(machineExport),
+      );
     }
     for (const source of [install, llmsInstall, readme]) {
       const hostedUrls =
@@ -555,5 +561,23 @@ describe('Browserless MCP setup contract', () => {
         expect(source).to.not.include(duplicatedInstruction);
       }
     }
+  });
+
+  it('reports both npm publish success and failure after the semantic tag gate', () => {
+    const workflow = readFileSync(
+      join(root, '.github/workflows/npm-publish.yml'),
+      'utf8',
+    );
+    const notifier = readFileSync(
+      join(root, 'scripts/ci/notify-slack.sh'),
+      'utf8',
+    );
+    expect(workflow.indexOf('run: npm test')).to.be.lessThan(
+      workflow.indexOf('run: npm publish --access public'),
+    );
+    expect(workflow).to.include('if: always()');
+    expect(workflow).to.include('PUBLISH_STATUS: ${{ job.status }}');
+    expect(notifier).to.include('PUBLISH_STATUS:-success');
+    expect(notifier).to.include('Docker image workflow runs independently');
   });
 });
