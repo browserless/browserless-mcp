@@ -80,7 +80,7 @@
     "@aws-sdk/client-sqs": "^3.1053.0",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "fastmcp": "4.4.0",
-    "ioredis": "^5.10.1",
+    "ioredis": "^6.0.0",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
