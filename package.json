@@ -76,7 +76,7 @@
   },
   "dependencies": {
     "@amplitude/analytics-node": "^1.5.68",
-    "@amplitude/mcp-analytics": "^0.3.0",
+    "@amplitude/mcp-analytics": "^0.4.0",
     "@aws-sdk/client-sqs": "^3.1053.0",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "fastmcp": "4.4.0",
