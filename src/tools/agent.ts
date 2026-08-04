@@ -19,11 +19,16 @@ import {
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
+  ErrorCategory,
   McpConfig,
   SkillId,
   SnapshotResult,
 } from '../@types/types.js';
-import { classifyAgentError } from '../lib/error-classifier.js';
+import {
+  categorizeThrown,
+  classifyAgentError,
+  toAnalyticsCategory,
+} from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
@@ -598,7 +603,9 @@ export function registerAgentTools(
         );
       }
 
-      const sendAnalytics = (success: boolean) => {
+      let lastCategory: ErrorCategory | undefined;
+
+      const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
@@ -606,6 +613,13 @@ export function registerAgentTools(
           command_count: commands.length,
           api_url: apiUrl,
           success,
+          ...(success
+            ? {}
+            : {
+                error_category: lastCategory
+                  ? toAnalyticsCategory(lastCategory)
+                  : categorizeThrown(err),
+              }),
           proxy_tier: proxy?.proxy ?? null,
           proxy_country: proxy?.proxyCountry ?? null,
           proxy_sticky: !!proxy?.proxySticky,
@@ -621,6 +635,7 @@ export function registerAgentTools(
 
       const proxyCmd = commands.find((c) => c.method === 'proxy');
       if (proxyCmd) {
+        lastCategory = 'INVALID_PARAMS';
         sendAnalytics(false);
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
@@ -662,7 +677,7 @@ export function registerAgentTools(
             echoedSessionId,
           );
         } catch (connErr: unknown) {
-          sendAnalytics(false);
+          sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
         sendAnalytics(true);
@@ -786,6 +801,7 @@ export function registerAgentTools(
               err: { message: errMessage },
               cmd,
             });
+            lastCategory = classified.category;
             throw new UserError(
               formatErrorMessage({
                 category: classified.category,
@@ -815,6 +831,7 @@ export function registerAgentTools(
             }
 
             const classified = classifyAgentError({ err, cmd });
+            lastCategory = classified.category;
 
             const prefix =
               commands.length > 1
@@ -1138,7 +1155,7 @@ export function registerAgentTools(
         sendAnalytics(true);
         return result;
       } catch (err) {
-        sendAnalytics(false);
+        sendAnalytics(false, err);
         throw err;
       }
     },

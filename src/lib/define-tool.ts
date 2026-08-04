@@ -10,6 +10,7 @@ import {
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import { setAmplitudeToolContext } from './amplitude-analytics.js';
+import { categorizeThrown, categoryFromStatus } from './error-classifier.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -49,6 +50,12 @@ const PROMPT_FIELD = z
       'tokens, or other credentials. Omit if unavailable.',
   );
 
+/** Narrower than `AnalyticsHelper` so the per-invocation wrapper is assignable. */
+export type ToolAnalytics = Pick<
+  AnalyticsHelper,
+  'fireToolRequest' | 'fireSkill'
+>;
+
 export interface ToolRunContext<P> {
   client: ApiClient;
   params: P;
@@ -56,7 +63,7 @@ export interface ToolRunContext<P> {
   prompt?: string;
   log: ToolLog;
   /** For tools that fire analytics from inside their own logic (e.g. crawl polling). */
-  analytics?: AnalyticsHelper;
+  analytics?: ToolAnalytics;
   /** Origin tag + raw clientInfo, spread into any analytics event this tool fires. */
   mcpSource: McpSourceProps;
   token: string;
@@ -94,13 +101,22 @@ export interface ToolDefinition<P, R> {
   /** Render the result into MCP content blocks. May throw UserError. */
   format: (result: R, params: P) => Content[];
   /**
-   * Extra analytics properties beyond the base `{ token, tool, api_url }`.
-   * Fired AFTER `run` completes and BEFORE `format` runs — so analytics
-   * still fire if `format` throws (e.g. on `!response.ok`). Omit when the
-   * tool fires its own intra-execution events.
+   * Extra event properties. Read between `run` and `format`, so a `format`
+   * that throws on `!response.ok` still reports `ok`/`status_code`.
    */
   analyticsProps?: (params: P, result: R) => Record<string, unknown>;
 }
+
+// v2 = every invocation emits. Quality charts must filter on it; v1 series
+// are a success-only sample.
+const ANALYTICS_VERSION = 2;
+
+/** Collapse the three outcome conventions tools use onto one `success` flag. */
+const normalizeSuccess = (props: Record<string, unknown>): boolean => {
+  if (typeof props.success === 'boolean') return props.success;
+  if (typeof props.ok === 'boolean') return props.ok;
+  return true;
+};
 
 const defaultProfileMessage = (profile: string): string =>
   `Profile "${profile}" was not found for the configured API token. ` +
@@ -162,27 +178,67 @@ export function defineTool<P, R>(
 
       setAmplitudeToolContext(s, token, prompt);
 
-      def.validateUrl?.(params);
+      const startedAt = Date.now();
+      let fired = false;
+      // Held so a `format` that throws still reports the run's `ok`/`status_code`.
+      let resultProps: Record<string, unknown> | undefined;
 
-      await reportProgress({ progress: 0, total: 100 });
+      const enrich = (props: Record<string, unknown>) => {
+        const success = normalizeSuccess(props);
+        return {
+          ...props,
+          success,
+          duration_ms: Date.now() - startedAt,
+          analytics_version: ANALYTICS_VERSION,
+          ...(success
+            ? {}
+            : {
+                error_category:
+                  categoryFromStatus(props.status_code) ??
+                  props.error_category ??
+                  'unknown',
+              }),
+        };
+      };
 
-      const client = createApiClient(
-        {
-          ...config,
-          browserlessToken: token,
-          browserlessApiUrl: apiUrl,
+      // Tools emitting mid-run (agent, crawl) share this latch, so one
+      // invocation reports once however it ends.
+      const toolAnalytics: ToolAnalytics = {
+        fireToolRequest: (t, tool, props) => {
+          fired = true;
+          analytics?.fireToolRequest(t, tool, enrich(props));
         },
-        def.cache,
-      );
+        fireSkill: (t, props) => analytics?.fireSkill(t, props),
+      };
 
-      let result: R;
+      const emit = (props: Record<string, unknown>) =>
+        toolAnalytics.fireToolRequest(token, def.name, {
+          api_url: apiUrl,
+          ...mcpSource,
+          ...(prompt ? { _prompt: prompt } : {}),
+          ...props,
+        });
+
       try {
-        result = await def.run({
+        def.validateUrl?.(params);
+
+        await reportProgress({ progress: 0, total: 100 });
+
+        const client = createApiClient(
+          {
+            ...config,
+            browserlessToken: token,
+            browserlessApiUrl: apiUrl,
+          },
+          def.cache,
+        );
+
+        const result = await def.run({
           client,
           params,
           prompt,
           log,
-          analytics,
+          analytics: toolAnalytics,
           mcpSource,
           token,
           apiUrl,
@@ -190,28 +246,39 @@ export function defineTool<P, R>(
           sessionId,
           attachSessionId: s?.attachSessionId,
         });
-      } catch (err) {
-        if (err instanceof ProfileNotFoundError) {
-          const msg = def.profileNotFoundMessage
-            ? def.profileNotFoundMessage(err.profile)
-            : defaultProfileMessage(err.profile);
-          throw new UserError(msg);
+
+        await reportProgress({ progress: 100, total: 100 });
+        resultProps = def.analyticsProps?.(params, result) ?? {};
+        const content = def.format(result, params);
+
+        if (!fired) {
+          emit(resultProps);
         }
-        throw err;
+
+        return { content };
+      } catch (err) {
+        const error =
+          err instanceof ProfileNotFoundError
+            ? new UserError(
+                def.profileNotFoundMessage
+                  ? def.profileNotFoundMessage(err.profile)
+                  : defaultProfileMessage(err.profile),
+              )
+            : err;
+
+        if (!fired) {
+          emit({
+            ...resultProps,
+            success: false,
+            error_category:
+              error instanceof UserError
+                ? 'user_error'
+                : categorizeThrown(error),
+          });
+        }
+
+        throw error;
       }
-
-      await reportProgress({ progress: 100, total: 100 });
-
-      if (analytics && def.analyticsProps) {
-        analytics.fireToolRequest(token, def.name, {
-          api_url: apiUrl,
-          ...mcpSource,
-          ...(prompt ? { _prompt: prompt } : {}),
-          ...def.analyticsProps(params, result),
-        });
-      }
-
-      return { content: def.format(result, params) };
     },
   });
 }

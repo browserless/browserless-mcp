@@ -243,8 +243,8 @@ export function registerCrawlTool(
       `token. Create the profile with Browserless.saveProfile in a ` +
       `live session first, or omit the profile parameter to crawl ` +
       `anonymously.`,
-    // crawl fires its own analytics events at multiple points (start failure,
-    // timeout, async-return, success), so we skip defineTool's end-of-run fire.
+    // Emits its own event at whichever point it exits (start failure, timeout,
+    // async-return, success); defineTool's latch keeps that the only one.
     run: async ({
       client,
       params,
@@ -286,6 +286,7 @@ export function registerCrawlTool(
         analytics?.fireToolRequest(token, 'browserless_crawl', {
           ...analyticsBase,
           success: false,
+          error_category: 'api_error',
           error: startResponse.error ?? 'Unknown error',
         });
         throw new UserError(
@@ -319,6 +320,7 @@ export function registerCrawlTool(
           analytics?.fireToolRequest(token, 'browserless_crawl', {
             ...analyticsBase,
             success: false,
+            error_category: 'timeout',
             crawl_id: crawlId,
             timeout: true,
           });
@@ -360,16 +362,6 @@ export function registerCrawlTool(
         nextUrl = nextResponse.next;
       }
 
-      analytics?.fireToolRequest(token, 'browserless_crawl', {
-        ...analyticsBase,
-        success: statusResponse.status === 'completed',
-        crawl_id: crawlId,
-        status: statusResponse.status,
-        total_pages: statusResponse.total,
-        completed_pages: statusResponse.completed,
-        failed_pages: statusResponse.failed,
-      });
-
       // Fetch page content for completed pages (so format() stays sync)
       const completedPages = allPages.filter((p) => p.status === 'completed');
       const pagesToFetch = completedPages.slice(0, MAX_CONTENT_PAGES);
@@ -390,6 +382,19 @@ export function registerCrawlTool(
         page,
         content: fetchedByUrl.get(page) ?? null,
       }));
+
+      analytics?.fireToolRequest(token, 'browserless_crawl', {
+        ...analyticsBase,
+        success: statusResponse.status === 'completed',
+        ...(statusResponse.status === 'completed'
+          ? {}
+          : { error_category: 'api_error' }),
+        crawl_id: crawlId,
+        status: statusResponse.status,
+        total_pages: statusResponse.total,
+        completed_pages: statusResponse.completed,
+        failed_pages: statusResponse.failed,
+      });
 
       log.debug(`Crawl completed: id=${crawlId}, pages=${allPages.length}`);
       return { kind: 'completed', crawlId, statusResponse, pages };

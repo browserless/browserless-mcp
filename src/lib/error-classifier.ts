@@ -1,4 +1,5 @@
 import type {
+  AnalyticsErrorCategory,
   ClassifiedError,
   ClassifyInput,
   ErrorCategory,
@@ -6,6 +7,7 @@ import type {
 
 // Re-export the classifier types consumers of `@browserless.io/mcp/errors` need.
 export type {
+  AnalyticsErrorCategory,
   ErrorCategory,
   ClassifiedError,
   ClassifyInput,
@@ -154,6 +156,58 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   }
 
   return { category: 'UNKNOWN', code, recovery: RECOVERY.UNKNOWN };
+};
+
+export const categoryFromStatus = (
+  status: unknown,
+): AnalyticsErrorCategory | undefined => {
+  if (typeof status !== 'number') return undefined;
+  if (status === 408 || status === 504) return 'timeout';
+  if (status >= 500) return 'api_error';
+  if (status >= 400) return 'user_error';
+  return undefined;
+};
+
+const ANALYTICS_CATEGORY: Record<
+  ErrorCategory,
+  AnalyticsErrorCategory | number
+> = {
+  SELECTOR_MISS: 'user_error',
+  INVALID_PARAMS: 'user_error',
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  SERVER_ERROR: 500,
+  SESSION_LOST: 'network',
+  NAVIGATION_FAILED: 'network',
+  TIMEOUT: 'timeout',
+  UNKNOWN: 'unknown',
+};
+
+/** Collapse the 10 agent categories onto the 5 reported to analytics. */
+export const toAnalyticsCategory = (
+  category?: ErrorCategory,
+): AnalyticsErrorCategory => {
+  const mapped = category && ANALYTICS_CATEGORY[category];
+  if (!mapped) return 'unknown';
+  return typeof mapped === 'number'
+    ? (categoryFromStatus(mapped) ?? 'unknown')
+    : mapped;
+};
+
+/**
+ * Category for any thrown value: the classifier's message patterns (net::ERR_,
+ * timeouts, `Server error 5xx`) fit every tool's errors, not just BQL.
+ */
+export const categorizeThrown = (err: unknown): AnalyticsErrorCategory => {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string } | null)?.code;
+  return toAnalyticsCategory(
+    classifyAgentError({
+      err: { code, message },
+      cmd: { method: '', params: {} },
+    }).category,
+  );
 };
 
 export const formatClassifiedError = (
