@@ -19,11 +19,15 @@ import {
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
+  ErrorCategory,
   McpConfig,
   SkillId,
   SnapshotResult,
 } from '../@types/types.js';
-import { classifyAgentError } from '../lib/error-classifier.js';
+import {
+  classifyAgentError,
+  toAnalyticsCategory,
+} from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
@@ -598,6 +602,10 @@ export function registerAgentTools(
         );
       }
 
+      // Failures are rethrown as UserErrors carrying only a formatted message,
+      // so the classified category has to be stashed as it happens.
+      let lastCategory: ErrorCategory | undefined;
+
       const sendAnalytics = (success: boolean) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
@@ -606,6 +614,9 @@ export function registerAgentTools(
           command_count: commands.length,
           api_url: apiUrl,
           success,
+          ...(success
+            ? {}
+            : { error_category: toAnalyticsCategory(lastCategory) }),
           proxy_tier: proxy?.proxy ?? null,
           proxy_country: proxy?.proxyCountry ?? null,
           proxy_sticky: !!proxy?.proxySticky,
@@ -621,6 +632,7 @@ export function registerAgentTools(
 
       const proxyCmd = commands.find((c) => c.method === 'proxy');
       if (proxyCmd) {
+        lastCategory = 'INVALID_PARAMS';
         sendAnalytics(false);
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
@@ -662,6 +674,13 @@ export function registerAgentTools(
             echoedSessionId,
           );
         } catch (connErr: unknown) {
+          lastCategory = classifyAgentError({
+            err: {
+              message:
+                connErr instanceof Error ? connErr.message : String(connErr),
+            },
+            cmd: { method: '', params: {} },
+          }).category;
           sendAnalytics(false);
           throw new UserError(formatConnectError(connErr));
         }
@@ -786,6 +805,7 @@ export function registerAgentTools(
               err: { message: errMessage },
               cmd,
             });
+            lastCategory = classified.category;
             throw new UserError(
               formatErrorMessage({
                 category: classified.category,
@@ -815,6 +835,7 @@ export function registerAgentTools(
             }
 
             const classified = classifyAgentError({ err, cmd });
+            lastCategory = classified.category;
 
             const prefix =
               commands.length > 1

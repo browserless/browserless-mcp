@@ -1041,6 +1041,42 @@ describe('browserless_agent _prompt capture', () => {
     expect(props._prompt).to.include('bob');
   });
 
+  it('fires exactly one enriched event on the success path', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+
+    await execute(
+      { method: 'close' },
+      { ...mockContext, sessionId: 'analytics-success' },
+    );
+
+    expect(fire.calledOnce).to.be.true;
+    const props = fire.firstCall.args[2] as Record<string, unknown>;
+    expect(props).to.include({ success: true, analytics_version: 2 });
+    expect(props.duration_ms).to.be.a('number');
+    expect(props).to.not.have.property('error_category');
+  });
+
+  it('fires exactly one event carrying the classified category on failure', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+
+    try {
+      await execute(
+        { commands: [{ method: 'proxy', params: {} }] },
+        { ...mockContext, sessionId: 'analytics-failure' },
+      );
+      expect.fail('should have thrown');
+    } catch {
+      // The event, not the error, is what this test is about.
+    }
+
+    expect(fire.calledOnce).to.be.true;
+    expect(fire.firstCall.args[2]).to.include({
+      success: false,
+      error_category: 'user_error',
+      analytics_version: 2,
+    });
+  });
+
   it('does NOT inject _prompt on the compliant surface', () => {
     const { added } = registerWithAnalytics({
       ...mockConfig,

@@ -1,4 +1,5 @@
 import type {
+  AnalyticsErrorCategory,
   ClassifiedError,
   ClassifyInput,
   ErrorCategory,
@@ -6,6 +7,7 @@ import type {
 
 // Re-export the classifier types consumers of `@browserless.io/mcp/errors` need.
 export type {
+  AnalyticsErrorCategory,
   ErrorCategory,
   ClassifiedError,
   ClassifyInput,
@@ -154,6 +156,40 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   }
 
   return { category: 'UNKNOWN', code, recovery: RECOVERY.UNKNOWN };
+};
+
+const ANALYTICS_CATEGORY: Record<ErrorCategory, AnalyticsErrorCategory> = {
+  SELECTOR_MISS: 'user_error',
+  INVALID_PARAMS: 'user_error',
+  UNAUTHORIZED: 'api_error',
+  FORBIDDEN: 'api_error',
+  NOT_FOUND: 'api_error',
+  SERVER_ERROR: 'api_error',
+  SESSION_LOST: 'network',
+  NAVIGATION_FAILED: 'network',
+  TIMEOUT: 'timeout',
+  UNKNOWN: 'unknown',
+};
+
+/** Collapse the 10 agent categories onto the 5 reported to analytics. */
+export const toAnalyticsCategory = (
+  category?: ErrorCategory,
+): AnalyticsErrorCategory =>
+  category ? ANALYTICS_CATEGORY[category] : 'unknown';
+
+/**
+ * Category for any thrown value: the classifier's message patterns (net::ERR_,
+ * timeouts, `Server error 5xx`) fit every tool's errors, not just BQL.
+ */
+export const categorizeThrown = (err: unknown): AnalyticsErrorCategory => {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string } | null)?.code;
+  return toAnalyticsCategory(
+    classifyAgentError({
+      err: { code, message },
+      cmd: { method: '', params: {} },
+    }).category,
+  );
 };
 
 export const formatClassifiedError = (

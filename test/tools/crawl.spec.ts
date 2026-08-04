@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerCrawlTool } from '../../src/tools/crawl.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -381,6 +382,41 @@ describe('browserless_crawl tool', () => {
       expect(err).to.be.instanceOf(UserError);
       expect((err as Error).message).to.include('Failed to start crawl');
     }
+  });
+
+  it('fires exactly one enriched analytics event when the crawl fails to start', async () => {
+    fetchStub.onCall(0).resolves(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Maximum concurrent crawls reached',
+        }),
+        { status: 429, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addToolSpy = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerCrawlTool(server, mockConfig, analytics);
+    const execute = addToolSpy.firstCall.args[0].execute;
+
+    try {
+      await execute({ url: 'https://example.com' }, mockContext);
+      expect.fail('should have thrown');
+    } catch {
+      // The event, not the error, is what this test is about.
+    }
+
+    expect(fire.calledOnce).to.be.true;
+    const props = fire.firstCall.args[2] as Record<string, unknown>;
+    expect(props).to.include({
+      success: false,
+      error_category: 'api_error',
+      analytics_version: 2,
+    });
+    expect(props.duration_ms).to.be.a('number');
   });
 
   it('throws UserError for non-http protocol', async () => {

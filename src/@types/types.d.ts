@@ -232,6 +232,10 @@ export type ErrorCategory =
   | 'INVALID_PARAMS'
   | 'UNKNOWN';
 
+/** Coarse outcome taxonomy on analytics events — routes failures to docs vs platform. */
+export type AnalyticsErrorCategory =
+  'user_error' | 'api_error' | 'timeout' | 'network' | 'unknown';
+
 export interface ClassifiedError {
   category: ErrorCategory;
   code?: string;
