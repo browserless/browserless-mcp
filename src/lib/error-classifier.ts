@@ -158,13 +158,26 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   return { category: 'UNKNOWN', code, recovery: RECOVERY.UNKNOWN };
 };
 
-const ANALYTICS_CATEGORY: Record<ErrorCategory, AnalyticsErrorCategory> = {
+export const categoryFromStatus = (
+  status: unknown,
+): AnalyticsErrorCategory | undefined => {
+  if (typeof status !== 'number') return undefined;
+  if (status === 408 || status === 504) return 'timeout';
+  if (status >= 500) return 'api_error';
+  if (status >= 400) return 'user_error';
+  return undefined;
+};
+
+const ANALYTICS_CATEGORY: Record<
+  ErrorCategory,
+  AnalyticsErrorCategory | number
+> = {
   SELECTOR_MISS: 'user_error',
   INVALID_PARAMS: 'user_error',
-  UNAUTHORIZED: 'api_error',
-  FORBIDDEN: 'api_error',
-  NOT_FOUND: 'api_error',
-  SERVER_ERROR: 'api_error',
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  SERVER_ERROR: 500,
   SESSION_LOST: 'network',
   NAVIGATION_FAILED: 'network',
   TIMEOUT: 'timeout',
@@ -174,8 +187,13 @@ const ANALYTICS_CATEGORY: Record<ErrorCategory, AnalyticsErrorCategory> = {
 /** Collapse the 10 agent categories onto the 5 reported to analytics. */
 export const toAnalyticsCategory = (
   category?: ErrorCategory,
-): AnalyticsErrorCategory =>
-  category ? ANALYTICS_CATEGORY[category] : 'unknown';
+): AnalyticsErrorCategory => {
+  const mapped = category && ANALYTICS_CATEGORY[category];
+  if (!mapped) return 'unknown';
+  return typeof mapped === 'number'
+    ? (categoryFromStatus(mapped) ?? 'unknown')
+    : mapped;
+};
 
 /**
  * Category for any thrown value: the classifier's message patterns (net::ERR_,

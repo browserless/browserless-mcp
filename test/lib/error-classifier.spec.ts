@@ -1,5 +1,9 @@
 import { expect } from 'chai';
-import { classifyAgentError } from '../../src/lib/error-classifier.js';
+import {
+  categoryFromStatus,
+  classifyAgentError,
+  toAnalyticsCategory,
+} from '../../src/lib/error-classifier.js';
 import type { ErrorCategory } from '../../src/@types/types.js';
 
 interface Row {
@@ -161,5 +165,34 @@ describe('classifyAgentError', () => {
     });
     expect(out.category).to.equal('FORBIDDEN');
     expect(out.status).to.equal(403);
+  });
+});
+
+describe('analytics categories', () => {
+  it('reports HTTP failures through the shared status policy', () => {
+    const cases: Array<[ErrorCategory, number]> = [
+      ['UNAUTHORIZED', 401],
+      ['FORBIDDEN', 403],
+      ['NOT_FOUND', 404],
+      ['SERVER_ERROR', 500],
+    ];
+    for (const [category, status] of cases) {
+      expect(toAnalyticsCategory(category)).to.equal(
+        categoryFromStatus(status),
+      );
+    }
+  });
+
+  it('collapses the non-HTTP categories', () => {
+    expect(toAnalyticsCategory('SELECTOR_MISS')).to.equal('user_error');
+    expect(toAnalyticsCategory('SESSION_LOST')).to.equal('network');
+    expect(toAnalyticsCategory('TIMEOUT')).to.equal('timeout');
+    expect(toAnalyticsCategory(undefined)).to.equal('unknown');
+  });
+
+  it('has no status to judge outside 4xx/5xx', () => {
+    expect(categoryFromStatus(200)).to.equal(undefined);
+    expect(categoryFromStatus(undefined)).to.equal(undefined);
+    expect(categoryFromStatus(504)).to.equal('timeout');
   });
 });

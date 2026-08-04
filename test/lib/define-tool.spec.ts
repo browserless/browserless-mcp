@@ -167,7 +167,7 @@ describe('defineTool analytics', () => {
     expect(props().error_category).to.equal('api_error');
   });
 
-  it('still fires exactly once when format throws after the event', async () => {
+  it('reports failure and keeps the run props when format throws', async () => {
     const { execute, fire, props } = register({
       analyticsProps: () => ({ ok: false, status_code: 500 }),
       format: () => {
@@ -178,7 +178,29 @@ describe('defineTool analytics', () => {
     const err = await rejects(execute({}, mockContext as never));
     expect(err.message).to.include('Request failed');
     expect(fire.calledOnce).to.be.true;
-    expect(props().success).to.be.false;
+    expect(props()).to.include({
+      success: false,
+      status_code: 500,
+      error_category: 'api_error',
+    });
+  });
+
+  it('reports failure when format throws on otherwise successful props', async () => {
+    const { execute, fire, props } = register({
+      analyticsProps: () => ({ pages: 3 }),
+      format: () => {
+        throw new UserError('Nothing to render');
+      },
+    });
+
+    const err = await rejects(execute({}, mockContext as never));
+    expect(err.message).to.include('Nothing to render');
+    expect(fire.calledOnce).to.be.true;
+    expect(props()).to.include({
+      success: false,
+      error_category: 'user_error',
+      pages: 3,
+    });
   });
 
   it('lets a tool self-emit once, enriched, and does not double-fire', async () => {

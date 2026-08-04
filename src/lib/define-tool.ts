@@ -10,9 +10,8 @@ import {
 import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import { setAmplitudeToolContext } from './amplitude-analytics.js';
-import { categorizeThrown } from './error-classifier.js';
+import { categorizeThrown, categoryFromStatus } from './error-classifier.js';
 import type {
-  AnalyticsErrorCategory,
   ApiClient,
   BrowserlessSession,
   McpConfig,
@@ -119,14 +118,6 @@ const normalizeSuccess = (props: Record<string, unknown>): boolean => {
   return true;
 };
 
-const categoryFromStatus = (status: unknown): AnalyticsErrorCategory => {
-  if (typeof status !== 'number') return 'unknown';
-  if (status === 408 || status === 504) return 'timeout';
-  if (status >= 500) return 'api_error';
-  if (status >= 400) return 'user_error';
-  return 'unknown';
-};
-
 const defaultProfileMessage = (profile: string): string =>
   `Profile "${profile}" was not found for the configured API token. ` +
   `Create the profile with Browserless.saveProfile in a live session first, ` +
@@ -189,6 +180,8 @@ export function defineTool<P, R>(
 
       const startedAt = Date.now();
       let fired = false;
+      // Held so a `format` that throws still reports the run's `ok`/`status_code`.
+      let resultProps: Record<string, unknown> | undefined;
 
       const enrich = (props: Record<string, unknown>) => {
         const success = normalizeSuccess(props);
@@ -201,7 +194,9 @@ export function defineTool<P, R>(
             ? {}
             : {
                 error_category:
-                  props.error_category ?? categoryFromStatus(props.status_code),
+                  categoryFromStatus(props.status_code) ??
+                  props.error_category ??
+                  'unknown',
               }),
         };
       };
@@ -253,12 +248,14 @@ export function defineTool<P, R>(
         });
 
         await reportProgress({ progress: 100, total: 100 });
+        resultProps = def.analyticsProps?.(params, result) ?? {};
+        const content = def.format(result, params);
 
         if (!fired) {
-          emit(def.analyticsProps?.(params, result) ?? {});
+          emit(resultProps);
         }
 
-        return { content: def.format(result, params) };
+        return { content };
       } catch (err) {
         const error =
           err instanceof ProfileNotFoundError
@@ -271,6 +268,7 @@ export function defineTool<P, R>(
 
         if (!fired) {
           emit({
+            ...resultProps,
             success: false,
             error_category:
               error instanceof UserError

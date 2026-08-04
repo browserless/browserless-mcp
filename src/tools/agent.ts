@@ -25,6 +25,7 @@ import type {
   SnapshotResult,
 } from '../@types/types.js';
 import {
+  categorizeThrown,
   classifyAgentError,
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
@@ -602,11 +603,9 @@ export function registerAgentTools(
         );
       }
 
-      // Failures are rethrown as UserErrors carrying only a formatted message,
-      // so the classified category has to be stashed as it happens.
       let lastCategory: ErrorCategory | undefined;
 
-      const sendAnalytics = (success: boolean) => {
+      const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
@@ -616,7 +615,11 @@ export function registerAgentTools(
           success,
           ...(success
             ? {}
-            : { error_category: toAnalyticsCategory(lastCategory) }),
+            : {
+                error_category: lastCategory
+                  ? toAnalyticsCategory(lastCategory)
+                  : categorizeThrown(err),
+              }),
           proxy_tier: proxy?.proxy ?? null,
           proxy_country: proxy?.proxyCountry ?? null,
           proxy_sticky: !!proxy?.proxySticky,
@@ -674,14 +677,7 @@ export function registerAgentTools(
             echoedSessionId,
           );
         } catch (connErr: unknown) {
-          lastCategory = classifyAgentError({
-            err: {
-              message:
-                connErr instanceof Error ? connErr.message : String(connErr),
-            },
-            cmd: { method: '', params: {} },
-          }).category;
-          sendAnalytics(false);
+          sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
         sendAnalytics(true);
@@ -1159,7 +1155,7 @@ export function registerAgentTools(
         sendAnalytics(true);
         return result;
       } catch (err) {
-        sendAnalytics(false);
+        sendAnalytics(false, err);
         throw err;
       }
     },
