@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/browserless/browserless-mcp/compare/v1.18.0...v1.19.0) (2026-08-04)
+
+
+### Features
+
+* **analytics:** enhance error categorization and enrich analytics events for tools ([#232](https://github.com/browserless/browserless-mcp/issues/232)) ([323ae67](https://github.com/browserless/browserless-mcp/commit/323ae673ecb6cc3d5bad1054dbe32f975c04b4c9))
+
 ## [1.18.0](https://github.com/browserless/browserless-mcp/compare/v1.17.0...v1.18.0) (2026-08-03)
 
 
