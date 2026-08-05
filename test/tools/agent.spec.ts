@@ -80,6 +80,7 @@ const mockContext = {
   session: undefined,
   client: { version: undefined },
   streamContent: sinon.stub().resolves(),
+  elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
 
 describe('browserless_skill tool', () => {

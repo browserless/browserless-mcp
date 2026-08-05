@@ -161,6 +161,7 @@ describe('Amplitude MCP analytics', () => {
         },
         client: { version: { name: 'test-client', version: '1.0.0' } },
         streamContent: async () => undefined,
+        elicit: async () => ({ action: 'cancel' as const }),
       },
     );
 

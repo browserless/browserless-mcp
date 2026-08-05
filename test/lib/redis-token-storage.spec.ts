@@ -2,8 +2,12 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import RedisMock from 'ioredis-mock';
 import type { Redis } from 'ioredis';
-import { OAuthProxyError, type OAuthProxyConfig } from 'fastmcp/auth';
-import { RedisOAuthProxy } from '../../src/lib/redis-oauth-proxy.js';
+import {
+  OAuthProxy,
+  OAuthProxyError,
+  type OAuthProxyConfig,
+} from 'fastmcp/auth';
+import { RedisTokenStorage } from '../../src/lib/redis-token-storage.js';
 
 const UPSTREAM_CLIENT_ID = 'upstream-client-id';
 const UPSTREAM_CLIENT_SECRET = 'upstream-client-secret';
@@ -33,10 +37,21 @@ function makeRedis(): Redis {
   return new RedisMock() as unknown as Redis;
 }
 
+// encryptionKey: false mirrors production (index.ts): the default
+// auto-generated key is per-process, which would break the multi-instance
+// scenarios these tests simulate.
+function makeProxy(redis: Redis): OAuthProxy {
+  return new OAuthProxy({
+    ...buildConfig(),
+    encryptionKey: false,
+    tokenStorage: new RedisTokenStorage(redis),
+  });
+}
+
 // DCR issues a random per-client client_id; clients authorize with THAT id, not
 // the upstream identity. Register first and use the returned id everywhere.
 async function dcr(
-  p: RedisOAuthProxy,
+  p: OAuthProxy,
   redirectUris: string[] = [LEGIT_REDIRECT],
 ): Promise<string> {
   const resp = await p.registerClient({ redirect_uris: redirectUris });
@@ -57,7 +72,7 @@ function baseAuthorizeParams(
     response_type: 'code',
     state: 'client-state',
     ...overrides,
-  } as Parameters<RedisOAuthProxy['authorize']>[0];
+  } as Parameters<OAuthProxy['authorize']>[0];
 }
 
 function mockUpstreamTokenFetch(
@@ -78,9 +93,9 @@ function mockUpstreamTokenFetch(
   );
 }
 
-describe('RedisOAuthProxy', () => {
+describe('OAuthProxy with RedisTokenStorage', () => {
   let redis: Redis;
-  let proxy: RedisOAuthProxy;
+  let proxy: OAuthProxy;
 
   beforeEach(async () => {
     redis = makeRedis();
@@ -88,7 +103,7 @@ describe('RedisOAuthProxy', () => {
     // to simulate a fresh Redis. Cross-instance sharing is still available within
     // a single test (that's what simulates the multi-instance deployment).
     await redis.flushall();
-    proxy = new RedisOAuthProxy(buildConfig(), redis);
+    proxy = makeProxy(redis);
   });
 
   afterEach(async () => {
@@ -97,44 +112,30 @@ describe('RedisOAuthProxy', () => {
     await redis.quit();
   });
 
-  describe('constructor', () => {
-    it('throws when consentRequired is true (unsupported in multi-instance)', () => {
-      expect(
-        () =>
-          new RedisOAuthProxy(buildConfig({ consentRequired: true }), redis),
-      ).to.throw(/consentRequired: false/);
-    });
-
-    it('throws when enableTokenSwap is true (token-swap not supported)', () => {
-      expect(
-        () =>
-          new RedisOAuthProxy(buildConfig({ enableTokenSwap: true }), redis),
-      ).to.throw(/enableTokenSwap: false/);
-    });
-  });
-
   describe('registerClient', () => {
-    it('stores the client redirect_uris under the client-id key', async () => {
+    it('persists the client registration under the client key', async () => {
       const resp = await proxy.registerClient({
         redirect_uris: [
           'https://client.example.com/a',
           'https://client.example.com/b',
         ],
       });
-      const stored = await redis.get(`mcp:oauth:client-id:${resp.client_id}`);
-      expect(JSON.parse(stored!)).to.deep.equal([
+      const stored = await redis.get(`mcp:oauth:client:${resp.client_id}`);
+      expect(stored).to.be.a('string');
+      const parsed = JSON.parse(stored!) as { redirectUris: string[] };
+      expect(parsed.redirectUris).to.deep.equal([
         'https://client.example.com/a',
         'https://client.example.com/b',
       ]);
     });
 
-    it('sets the 90-day client TTL on the registration key', async () => {
+    it('sets the 90-day default TTL on the registration key', async () => {
       const resp = await proxy.registerClient({
         redirect_uris: [LEGIT_REDIRECT],
       });
 
       const NINETY_DAYS = 90 * 24 * 60 * 60;
-      const idTtl = await redis.ttl(`mcp:oauth:client-id:${resp.client_id}`);
+      const idTtl = await redis.ttl(`mcp:oauth:client:${resp.client_id}`);
       expect(idTtl).to.be.closeTo(NINETY_DAYS, 60);
     });
 
@@ -233,14 +234,14 @@ describe('RedisOAuthProxy', () => {
 
     it('accepts a client registered on a different instance via shared Redis', async () => {
       // Instance A: DCR
-      const proxyA = new RedisOAuthProxy(buildConfig(), redis);
+      const proxyA = makeProxy(redis);
       const clientId = await dcr(proxyA);
       proxyA.destroy();
 
       // Instance B: authorize reads the DCR state from shared Redis. This is
       // the regression guard for the original bug — A's client_id must be
-      // recognized by B even though B's in-memory client Map is empty.
-      const proxyB = new RedisOAuthProxy(buildConfig(), redis);
+      // recognized by B even though B's in-memory client cache is empty.
+      const proxyB = makeProxy(redis);
       try {
         const response = await proxyB.authorize(
           baseAuthorizeParams({ client_id: clientId }),
@@ -263,7 +264,7 @@ describe('RedisOAuthProxy', () => {
       const upstreamUrl = new URL(response.headers.get('Location')!);
       const transactionId = upstreamUrl.searchParams.get('state')!;
 
-      const stored = await redis.get(`mcp:oauth:tx:${transactionId}`);
+      const stored = await redis.get(`mcp:oauth:transaction:${transactionId}`);
       expect(stored).to.be.a('string');
     });
   });
@@ -285,7 +286,7 @@ describe('RedisOAuthProxy', () => {
     });
 
     async function runToAuthorizationCode(
-      p: RedisOAuthProxy,
+      p: OAuthProxy,
     ): Promise<{ clientId: string; code: string }> {
       const clientId = await dcr(p);
       const authResp = await p.authorize(
@@ -305,7 +306,7 @@ describe('RedisOAuthProxy', () => {
     }
 
     async function mintPkceCode(
-      p: RedisOAuthProxy,
+      p: OAuthProxy,
       challenge: string,
       method = 'S256',
     ): Promise<{ clientId: string; code: string }> {
@@ -315,7 +316,7 @@ describe('RedisOAuthProxy', () => {
           client_id: clientId,
           code_challenge: challenge,
           code_challenge_method: method,
-        } as Parameters<RedisOAuthProxy['authorize']>[0]),
+        } as Parameters<OAuthProxy['authorize']>[0]),
       );
       const txId = new URL(authResp.headers.get('Location')!).searchParams.get(
         'state',
@@ -379,7 +380,7 @@ describe('RedisOAuthProxy', () => {
       mockUpstreamTokenFetch();
       const { clientId, code } = await runToAuthorizationCode(proxy);
 
-      const proxyB = new RedisOAuthProxy(buildConfig(), redis);
+      const proxyB = makeProxy(redis);
       try {
         const results = await Promise.allSettled([
           proxy.exchangeAuthorizationCode({
@@ -454,13 +455,13 @@ describe('RedisOAuthProxy', () => {
         .digest('base64url');
 
       mockUpstreamTokenFetch();
-      // Mint on instance A, redeem on instance B — PKCE is validated inline,
-      // with no dependency on the parent's process-local Map.
-      const proxyA = new RedisOAuthProxy(buildConfig(), redis);
+      // Mint on instance A, redeem on instance B — the code (with its PKCE
+      // challenge) round-trips through shared Redis.
+      const proxyA = makeProxy(redis);
       const { clientId, code } = await mintPkceCode(proxyA, challenge);
       proxyA.destroy();
 
-      const proxyB = new RedisOAuthProxy(buildConfig(), redis);
+      const proxyB = makeProxy(redis);
       try {
         const tokens = await proxyB.exchangeAuthorizationCode({
           client_id: clientId,
@@ -563,17 +564,22 @@ describe('RedisOAuthProxy', () => {
   });
 
   describe('read path fails closed on Redis error', () => {
+    // These use a SECOND instance: the registering instance caches the client
+    // in memory, so its own reads never hit Redis. A fresh instance must go to
+    // Redis, where the stubbed failure has to propagate (fail closed) rather
+    // than be treated as "no client".
     it('authorize rejects (does not fail open) when the client lookup errors', async () => {
       const clientId = await dcr(proxy);
-      // authorize reads the client's redirect_uris via GET; a Redis failure
-      // must propagate (fail closed), not be treated as "no client".
       sinon.stub(redis, 'get').rejects(new Error('redis unreachable'));
 
+      const proxyB = makeProxy(redis);
       try {
-        await proxy.authorize(baseAuthorizeParams({ client_id: clientId }));
+        await proxyB.authorize(baseAuthorizeParams({ client_id: clientId }));
         expect.fail('must not treat a Redis error as a registered client');
       } catch (err) {
         expect((err as Error).message).to.equal('redis unreachable');
+      } finally {
+        proxyB.destroy();
       }
     });
 
@@ -581,8 +587,9 @@ describe('RedisOAuthProxy', () => {
       const clientId = await dcr(proxy);
       sinon.stub(redis, 'get').rejects(new Error('redis unreachable'));
 
+      const proxyB = makeProxy(redis);
       try {
-        await proxy.exchangeAuthorizationCode({
+        await proxyB.exchangeAuthorizationCode({
           client_id: clientId,
           code: 'anything',
           grant_type: 'authorization_code',
@@ -591,12 +598,14 @@ describe('RedisOAuthProxy', () => {
         expect.fail('must not treat a Redis error as a registered client');
       } catch (err) {
         expect((err as Error).message).to.equal('redis unreachable');
+      } finally {
+        proxyB.destroy();
       }
     });
   });
 
   describe('registerClient Redis failure', () => {
-    it('does not leave any Redis state when the write fails', async () => {
+    it('does not leave usable cross-instance state when the write fails', async () => {
       const setStub = sinon.stub(redis, 'set').rejects(new Error('redis down'));
 
       try {
@@ -607,15 +616,18 @@ describe('RedisOAuthProxy', () => {
       }
       setStub.restore();
 
-      // Nothing registered → authorize rejects an unknown client.
+      // Nothing persisted → a fresh instance rejects an unknown client.
+      const proxyB = makeProxy(redis);
       try {
-        await proxy.authorize(
+        await proxyB.authorize(
           baseAuthorizeParams({ client_id: 'never-registered' }),
         );
         expect.fail('authorize should have rejected the unknown client');
       } catch (err) {
         expect(err).to.be.instanceOf(OAuthProxyError);
         expect((err as OAuthProxyError).code).to.equal('invalid_client');
+      } finally {
+        proxyB.destroy();
       }
     });
   });
@@ -624,10 +636,10 @@ describe('RedisOAuthProxy', () => {
     it('rejects when the transaction clientCallbackUrl is not in the registry and purges the transaction', async () => {
       // Simulates the multi-instance defense-in-depth scenario:
       //   Instance A: DCR + authorize (writes transaction + client to Redis)
-      //   DCR TTL expires (or client de-registered) — Redis client key deleted
-      //   Instance B: upstream callback arrives, local Map empty, Redis empty
-      //               → must reject and purge the transaction
-      const proxyA = new RedisOAuthProxy(buildConfig(), redis);
+      //   Client TTL expires (or client de-registered) — Redis client key deleted
+      //   Instance B: upstream callback arrives, local cache empty, Redis empty
+      //               → must reject and consume the transaction
+      const proxyA = makeProxy(redis);
       const clientId = await dcr(proxyA);
       const authResponse = await proxyA.authorize(
         baseAuthorizeParams({ client_id: clientId }),
@@ -638,10 +650,10 @@ describe('RedisOAuthProxy', () => {
       const transactionId = upstreamUrl.searchParams.get('state')!;
 
       // Revoke registration from the shared Redis store
-      await redis.del(`mcp:oauth:client-id:${clientId}`);
+      await redis.del(`mcp:oauth:client:${clientId}`);
 
       const fetchStub = mockUpstreamTokenFetch();
-      const proxyB = new RedisOAuthProxy(buildConfig(), redis);
+      const proxyB = makeProxy(redis);
       const cbReq = new Request(
         `http://localhost:4200/oauth/callback?code=UP_CODE&state=${encodeURIComponent(transactionId)}`,
       );
@@ -656,8 +668,8 @@ describe('RedisOAuthProxy', () => {
         proxyB.destroy();
       }
 
-      // Transaction purged so it cannot be replayed
-      const stored = await redis.get(`mcp:oauth:tx:${transactionId}`);
+      // Transaction consumed so it cannot be replayed
+      const stored = await redis.get(`mcp:oauth:transaction:${transactionId}`);
       expect(stored).to.equal(null);
       // Upstream token endpoint was never called
       expect(fetchStub.called).to.equal(false);
@@ -687,7 +699,7 @@ describe('RedisOAuthProxy', () => {
       expect(finalLocation.searchParams.get('state')).to.equal('client-state');
 
       // Transaction consumed
-      const stored = await redis.get(`mcp:oauth:tx:${transactionId}`);
+      const stored = await redis.get(`mcp:oauth:transaction:${transactionId}`);
       expect(stored).to.equal(null);
       // Authorization code persisted in Redis for the token exchange
       const clientCode = finalLocation.searchParams.get('code')!;
