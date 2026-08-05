@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/browserless/browserless-mcp/compare/v1.19.0...v1.20.0) (2026-08-05)
+
+
+### Features
+
+* **skills:** implement remote skill cache with TTL and update hydration logic ([befc898](https://github.com/browserless/browserless-mcp/commit/befc8985257775f9ba7a5ae74b731df8b4d15672))
+
 ## [1.19.0](https://github.com/browserless/browserless-mcp/compare/v1.18.0...v1.19.0) (2026-08-04)
 
 
