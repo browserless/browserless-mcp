@@ -6,6 +6,7 @@ import {
   siteRecipeNotice,
   hydrateRemoteSkills,
   __resetRemoteSkillsForTesting,
+  __setRemoteSkillTtlForTesting,
 } from '../../src/skills/sites.js';
 
 const SKILL_BODY = [
@@ -228,6 +229,61 @@ describe('site skills', function () {
         emptyOk,
       );
       expect(calls).to.equal(1);
+    });
+
+    it('refetches a host once the TTL lapses', async function () {
+      __setRemoteSkillTtlForTesting(0);
+      let calls = 0;
+      const counting: typeof fetch = async () => {
+        calls++;
+        return {
+          ok: true,
+          json: async () => [
+            { task: 'search', title: 'Shop Search', skill_md: SKILL_BODY },
+          ],
+        } as unknown as Response;
+      };
+      await hydrateRemoteSkills(
+        'https://t.example',
+        'https://api.test',
+        'tok',
+        counting,
+      );
+      await hydrateRemoteSkills(
+        'https://t.example',
+        'https://api.test',
+        'tok',
+        counting,
+      );
+      expect(calls).to.equal(2);
+    });
+
+    it('drops recipes deleted or renamed upstream on refetch', async function () {
+      __setRemoteSkillTtlForTesting(0);
+      await seedShop();
+      expect(loadSiteSkill('shop.example/search')).to.include('# Shop Search');
+
+      await hydrateRemoteSkills(
+        'https://shop.example/x',
+        'https://api.test',
+        'tok',
+        fakeFetch([
+          { task: 'browse', title: 'Shop Browse', skill_md: SKILL_BODY },
+        ]),
+      );
+      expect(
+        listSiteSkillsForHost('shop.example').map((s) => s.slug),
+      ).to.deep.equal(['browse']);
+      expect(loadSiteSkill('shop.example/search')).to.equal(null);
+
+      await hydrateRemoteSkills(
+        'https://shop.example/x',
+        'https://api.test',
+        'tok',
+        fakeFetch([]),
+      );
+      expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
+      expect(loadSiteSkill('shop.example/browse')).to.equal(null);
     });
 
     it('is a no-op without a url, apiUrl, or token', async function () {

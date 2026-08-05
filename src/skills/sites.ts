@@ -73,11 +73,16 @@ export const loadSiteSkill = (id: string): string | null => {
   ].join('\n');
 };
 
-// Skills live in the enterprise API (GET /skills): fetch a host's skills into
-// the manifest on first goto. A slow or failed fetch is a no-op, never a stall.
-
+// Skill cache values
 const REMOTE_SKILL_TIMEOUT_MS = 2500;
-const hydrations = new Map<string, Promise<void>>();
+const REMOTE_SKILL_TTL_MS = 5 * 60 * 1000;
+let ttlMs = REMOTE_SKILL_TTL_MS;
+
+interface Hydration {
+  promise: Promise<void>;
+  expiresAt: number;
+}
+const hydrations = new Map<string, Hydration>();
 
 interface RemoteSkill {
   task?: string;
@@ -86,6 +91,10 @@ interface RemoteSkill {
 }
 
 const mergeRemoteSkills = (key: string, remote: RemoteSkill[]): void => {
+  // Drop the previous cache
+  for (const prev of manifest.get(key) ?? [])
+    byId.delete(prev.id.toLowerCase());
+
   const entries: SiteSkill[] = [];
   for (const { task, title, skill_md } of remote) {
     if (!task || !skill_md) continue;
@@ -120,7 +129,8 @@ const fetchAndMerge = async (
     const res = await fetchImpl(endpoint, { signal: controller.signal });
     if (!res.ok) return false;
     const skills = (await res.json()) as RemoteSkill[];
-    if (Array.isArray(skills) && skills.length) mergeRemoteSkills(key, skills);
+    // Merge even an empty array: a refetch must clear recipes deleted upstream.
+    if (Array.isArray(skills)) mergeRemoteSkills(key, skills);
     return true;
   } catch {
     // network error / timeout / bad JSON — transient, let the next goto retry
@@ -146,18 +156,26 @@ export const hydrateRemoteSkills = (
   }
 
   const key = bareHost(host);
-  const inflight = hydrations.get(key);
-  if (inflight) return inflight;
+  const entry = hydrations.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.promise;
 
-  const p = fetchAndMerge(key, host, apiUrl, token, fetchImpl).then((ok) => {
-    if (!ok) hydrations.delete(key);
-  });
-  hydrations.set(key, p);
-  return p;
+  const promise = fetchAndMerge(key, host, apiUrl, token, fetchImpl).then(
+    (ok) => {
+      if (!ok && hydrations.get(key)?.promise === promise)
+        hydrations.delete(key);
+    },
+  );
+  hydrations.set(key, { promise, expiresAt: Date.now() + ttlMs });
+  return promise;
 };
 
 export const __resetRemoteSkillsForTesting = (): void => {
   hydrations.clear();
   manifest.clear();
   byId.clear();
+  ttlMs = REMOTE_SKILL_TTL_MS;
+};
+
+export const __setRemoteSkillTtlForTesting = (ms: number): void => {
+  ttlMs = ms;
 };
