@@ -15,7 +15,7 @@ import { AnalyticsHelper } from './lib/analytics.js';
 import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
-import { RedisOAuthProxy } from './lib/redis-oauth-proxy.js';
+import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { Redis } from 'ioredis';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
@@ -81,7 +81,11 @@ class PassthroughOAuthProvider extends OAuthProvider {
         this.genericConfig.tokenEndpointAuthMethod ?? 'client_secret_basic',
     };
     if (redisClient) {
-      return new RedisOAuthProxy(proxyConfig, redisClient);
+      return new OAuthProxy({
+        ...proxyConfig,
+        encryptionKey: false,
+        tokenStorage: new RedisTokenStorage(redisClient),
+      });
     }
     return new OAuthProxy(proxyConfig);
   }

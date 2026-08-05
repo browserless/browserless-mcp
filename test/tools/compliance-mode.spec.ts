@@ -489,6 +489,7 @@ describe('compliance mode — compliant tool surface', () => {
       },
       session: undefined,
       streamContent: sinon.stub().resolves(),
+      elicit: sinon.stub().resolves({ action: 'cancel' }),
     };
 
     // Bypasses schema validation by calling execute() directly — the "schema
