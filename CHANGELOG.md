@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/browserless/browserless-mcp/compare/v1.20.0...v1.20.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **amplitude:** add token validation and deduplication for events AUTO-277 ([#235](https://github.com/browserless/browserless-mcp/issues/235)) ([1061d7c](https://github.com/browserless/browserless-mcp/commit/1061d7c008bdc4d10526b8ac0e096b8ddca8bed3))
+
 ## [1.20.0](https://github.com/browserless/browserless-mcp/compare/v1.19.0...v1.20.0) (2026-08-05)
 
 
