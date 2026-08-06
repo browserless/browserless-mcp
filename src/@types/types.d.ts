@@ -99,6 +99,7 @@ export interface McpConfig {
 export interface AnalyticsEvent {
   event_type: string;
   time: number;
+  insert_id?: string;
   session_id?: number;
   event_properties: Record<string, unknown> & { token: string };
 }

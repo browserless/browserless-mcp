@@ -4,6 +4,9 @@ import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { djb2 } from '../../src/lib/utils.js';
 
+// send() rejects tokens shorter than 20 chars (consumer contract)
+const TOKEN = 'test-token-0123456789abcdef';
+
 describe('AnalyticsHelper', () => {
   let sqsSendStub: sinon.SinonStub;
 
@@ -22,7 +25,7 @@ describe('AnalyticsHelper', () => {
       'us-east-1',
     );
     // send should return false since disabled
-    return helper.send('Test Event', 123, { token: 'abc' }).then((result) => {
+    return helper.send('Test Event', 123, { token: TOKEN }).then((result) => {
       expect(result).to.be.false;
       expect(sqsSendStub.called).to.be.false;
     });
@@ -30,7 +33,7 @@ describe('AnalyticsHelper', () => {
 
   it('does not initialize when queue URL is missing', () => {
     const helper = new AnalyticsHelper(true, undefined, 'us-east-1');
-    return helper.send('Test Event', 123, { token: 'abc' }).then((result) => {
+    return helper.send('Test Event', 123, { token: TOKEN }).then((result) => {
       expect(result).to.be.false;
       expect(sqsSendStub.called).to.be.false;
     });
@@ -45,7 +48,7 @@ describe('AnalyticsHelper', () => {
       'us-east-1',
     );
     const result = await helper.send('MCP Tool Request', 12345, {
-      token: 'test-token',
+      token: TOKEN,
       tool: 'browserless_smartscraper',
       url: 'https://example.com',
     });
@@ -63,10 +66,22 @@ describe('AnalyticsHelper', () => {
     const event = JSON.parse(entries[0].MessageBody);
     expect(event.event_type).to.equal('MCP Tool Request');
     expect(event.session_id).to.equal(12345);
-    expect(event.event_properties.token).to.equal('test-token');
+    expect(event.event_properties.token).to.equal(TOKEN);
     expect(event.event_properties.tool).to.equal('browserless_smartscraper');
     expect(event.event_properties.url).to.equal('https://example.com');
     expect(event.time).to.be.a('number');
+    expect(event.insert_id).to.be.a('string');
+  });
+
+  it('rejects events whose token is missing or shorter than 20 chars', async () => {
+    const helper = new AnalyticsHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
+    expect(await helper.send('Test Event', 123, { token: 'abc' })).to.be.false;
+    expect(await helper.send('Test Event', 123, { token: '' })).to.be.false;
+    expect(sqsSendStub.called).to.be.false;
   });
 
   it('returns false when SQS reports failed entries', async () => {
@@ -79,7 +94,7 @@ describe('AnalyticsHelper', () => {
       'https://sqs.example.com/queue',
       'us-east-1',
     );
-    const result = await helper.send('Test Event', 123, { token: 'abc' });
+    const result = await helper.send('Test Event', 123, { token: TOKEN });
 
     expect(result).to.be.false;
   });
@@ -92,7 +107,7 @@ describe('AnalyticsHelper', () => {
       'https://sqs.example.com/queue',
       'us-east-1',
     );
-    const result = await helper.send('Test Event', 123, { token: 'abc' });
+    const result = await helper.send('Test Event', 123, { token: TOKEN });
 
     expect(result).to.be.false;
     // 3 retries
@@ -111,7 +126,7 @@ describe('AnalyticsHelper', () => {
       'https://sqs.example.com/queue',
       'us-east-1',
     );
-    const result = await helper.send('Test Event', 123, { token: 'abc' });
+    const result = await helper.send('Test Event', 123, { token: TOKEN });
 
     expect(result).to.be.true;
     expect(sqsSendStub.callCount).to.equal(2);
@@ -127,7 +142,7 @@ describe('AnalyticsHelper', () => {
     helper.initialize('https://other.example.com/queue', 'eu-west-1');
 
     sqsSendStub.resolves({ Failed: [] });
-    return helper.send('Test Event', 123, { token: 'abc' }).then(() => {
+    return helper.send('Test Event', 123, { token: TOKEN }).then(() => {
       const command = sqsSendStub.firstCall.args[0];
       // Should still use the original queue URL
       expect(command.input.QueueUrl).to.equal('https://sqs.example.com/queue');

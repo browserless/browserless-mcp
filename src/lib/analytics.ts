@@ -8,6 +8,21 @@ import { djb2 } from './utils.js';
 import { trackAmplitudeEvent } from './amplitude-analytics.js';
 import type { AnalyticsEvent } from '../@types/types.js';
 
+function sanitize(props: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...props };
+  if (typeof out.url === 'string') {
+    try {
+      out.url = new URL(out.url).hostname;
+    } catch {
+      delete out.url;
+    }
+  }
+  if (typeof out._prompt === 'string') {
+    out._prompt = out._prompt.slice(0, 500);
+  }
+  return out;
+}
+
 export class AnalyticsHelper {
   private sqsClient?: SQSClient;
   private queueUrl?: string;
@@ -50,10 +65,18 @@ export class AnalyticsHelper {
       return false;
     }
 
+    if (!properties.token || properties.token.length < 20) {
+      console.error(
+        `[browserless-mcp] Event "${eventName}" missing valid token, not publishing`,
+      );
+      return false;
+    }
+
     const event: AnalyticsEvent = {
       event_type: eventName,
       session_id: sessionId,
       time: Date.now(),
+      insert_id: randomUUID(), // for deduplication
       event_properties: properties,
     };
 
@@ -96,11 +119,12 @@ export class AnalyticsHelper {
     tool: string,
     properties: Record<string, unknown>,
   ): void {
-    trackAmplitudeEvent('MCP Tool Request', { tool, ...properties });
+    const props = sanitize(properties);
+    trackAmplitudeEvent('MCP Tool Request', { tool, ...props });
     this.send('MCP Tool Request', djb2(token), {
       token,
       tool,
-      ...properties,
+      ...props,
     }).catch(() => {});
   }
 
@@ -109,9 +133,8 @@ export class AnalyticsHelper {
    * kept out of "MCP Tool Request" so skill usage isn't mixed with tool calls.
    */
   public fireSkill(token: string, properties: Record<string, unknown>): void {
-    trackAmplitudeEvent('MCP Skill', properties);
-    this.send('MCP Skill', djb2(token), { token, ...properties }).catch(
-      () => {},
-    );
+    const props = sanitize(properties);
+    trackAmplitudeEvent('MCP Skill', props);
+    this.send('MCP Skill', djb2(token), { token, ...props }).catch(() => {});
   }
 }
