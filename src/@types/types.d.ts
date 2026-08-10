@@ -231,6 +231,8 @@ export type ErrorCategory =
   | 'NAVIGATION_FAILED'
   | 'TIMEOUT'
   | 'INVALID_PARAMS'
+  | 'UNKNOWN_METHOD'
+  | 'SCRIPT_ERROR'
   | 'UNKNOWN';
 
 /** Coarse outcome taxonomy on analytics events — routes failures to docs vs platform. */

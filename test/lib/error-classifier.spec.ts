@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   categoryFromStatus,
   classifyAgentError,
+  classifyNavigationResult,
   toAnalyticsCategory,
 } from '../../src/lib/error-classifier.js';
 import type { ErrorCategory } from '../../src/@types/types.js';
@@ -68,12 +69,45 @@ const ROWS: Row[] = [
     expected: 'INVALID_PARAMS',
   },
   {
-    name: 'waitForSelector + SELECTOR_NOT_FOUND → TIMEOUT',
+    name: 'waitForSelector + SELECTOR_NOT_FOUND → SELECTOR_MISS (same bucket as click)',
     err: {
       code: 'SELECTOR_NOT_FOUND',
       message: 'no element matched ".thing" within 5000ms',
     },
     cmd: cmd('waitForSelector', { selector: '.thing', timeout: 5000 }),
+    expected: 'SELECTOR_MISS',
+  },
+  {
+    name: 'UNKNOWN_METHOD code → UNKNOWN_METHOD',
+    err: { code: 'UNKNOWN_METHOD', message: 'Unknown method: explode' },
+    cmd: cmd('explode'),
+    expected: 'UNKNOWN_METHOD',
+  },
+  {
+    name: 'code-less "Unknown method" message → UNKNOWN_METHOD',
+    err: { message: 'Unknown method: explode' },
+    cmd: cmd('explode'),
+    expected: 'UNKNOWN_METHOD',
+  },
+  {
+    name: 'evaluate script throw → SCRIPT_ERROR',
+    err: {
+      code: 'INTERNAL_ERROR',
+      message: 'ReferenceError: x is not defined',
+    },
+    cmd: cmd('evaluate', { content: 'return x' }),
+    expected: 'SCRIPT_ERROR',
+  },
+  {
+    name: 'evaluate + target closed → SESSION_LOST, not SCRIPT_ERROR',
+    err: { message: 'WebSocket closed while waiting for "evaluate" response' },
+    cmd: cmd('evaluate', { content: 'return 1' }),
+    expected: 'SESSION_LOST',
+  },
+  {
+    name: 'evaluate + timeout → TIMEOUT, not SCRIPT_ERROR',
+    err: { message: 'Agent command "evaluate" timed out after 30000ms' },
+    cmd: cmd('evaluate', { content: 'return 1' }),
     expected: 'TIMEOUT',
   },
   {
@@ -158,6 +192,21 @@ describe('classifyAgentError', () => {
     expect(out.code).to.equal('SELECTOR_NOT_FOUND');
   });
 
+  it('gives waitForSelector wait-shaped recovery, click DOM-shaped recovery', () => {
+    const err = { code: 'SELECTOR_NOT_FOUND', message: 'no element matched' };
+    const wait = classifyAgentError({
+      err,
+      cmd: cmd('waitForSelector', { selector: '.thing' }),
+    });
+    const click = classifyAgentError({
+      err,
+      cmd: cmd('click', { selector: '.thing' }),
+    });
+    expect(wait.category).to.equal(click.category);
+    expect(wait.recovery).to.not.equal(click.recovery);
+    expect(wait.recovery).to.match(/wait expired/i);
+  });
+
   it('prefers explicit status over message regex', () => {
     const out = classifyAgentError({
       err: { message: 'unrelated 200 in text', status: 403 },
@@ -165,6 +214,59 @@ describe('classifyAgentError', () => {
     });
     expect(out.category).to.equal('FORBIDDEN');
     expect(out.status).to.equal(403);
+  });
+});
+
+describe('classifyNavigationResult', () => {
+  const CHROME_ERROR = 'chrome-error://chromewebdata/';
+
+  it('flags a goto that landed on the Chrome error page', () => {
+    const out = classifyNavigationResult(cmd('goto'), {
+      url: CHROME_ERROR,
+      status: null,
+      text: 'ok',
+      rejected: false,
+    });
+    expect(out?.category).to.equal('NAVIGATION_FAILED');
+    expect(toAnalyticsCategory(out?.category)).to.equal('network');
+    expect(out?.recovery).to.be.a('string').and.have.length.greaterThan(0);
+  });
+
+  it('flags a null status even when the URL survived', () => {
+    const out = classifyNavigationResult(cmd('reload'), {
+      url: 'https://example.com/',
+      status: null,
+    });
+    expect(out?.category).to.equal('NAVIGATION_FAILED');
+  });
+
+  it('ignores a document the caller aborted itself', () => {
+    expect(
+      classifyNavigationResult(cmd('goto'), {
+        url: CHROME_ERROR,
+        status: null,
+        rejected: true,
+      }),
+    ).to.equal(undefined);
+  });
+
+  it('ignores a successful navigation', () => {
+    expect(
+      classifyNavigationResult(cmd('goto'), {
+        url: 'https://example.com/',
+        status: 200,
+      }),
+    ).to.equal(undefined);
+  });
+
+  it('ignores non-navigation methods parked on an error page', () => {
+    expect(
+      classifyNavigationResult(cmd('snapshot'), { url: CHROME_ERROR }),
+    ).to.equal(undefined);
+  });
+
+  it('ignores an empty result (back/forward with no history)', () => {
+    expect(classifyNavigationResult(cmd('back'), null)).to.equal(undefined);
   });
 });
 
@@ -185,7 +287,10 @@ describe('analytics categories', () => {
 
   it('collapses the non-HTTP categories', () => {
     expect(toAnalyticsCategory('SELECTOR_MISS')).to.equal('user_error');
+    expect(toAnalyticsCategory('UNKNOWN_METHOD')).to.equal('user_error');
+    expect(toAnalyticsCategory('SCRIPT_ERROR')).to.equal('user_error');
     expect(toAnalyticsCategory('SESSION_LOST')).to.equal('network');
+    expect(toAnalyticsCategory('NAVIGATION_FAILED')).to.equal('network');
     expect(toAnalyticsCategory('TIMEOUT')).to.equal('timeout');
     expect(toAnalyticsCategory(undefined)).to.equal('unknown');
   });

@@ -32,8 +32,28 @@ const RECOVERY: Record<ErrorCategory, string> = {
     'The page or wait condition did not resolve in time. Try a longer waitFor, a different signal (waitForResponse with a known URL), or re-snapshot to confirm current state.',
   INVALID_PARAMS:
     'The parameters were rejected. The schema is authoritative — fix the params; do not blind-retry.',
+  UNKNOWN_METHOD:
+    'That method does not exist. Pick one from the command list in the tool schema and re-issue; do not retry the same name.',
+  SCRIPT_ERROR:
+    'Your script threw. The page is still alive — re-snapshot to confirm its state, then fix the script.',
   UNKNOWN: 'Re-snapshot and re-plan from the current page state.',
 };
+
+// A wait that expired is reported by the agent as SELECTOR_NOT_FOUND, so it
+// classifies as SELECTOR_MISS like any other miss — but "re-snapshot" is not the
+// move when the caller explicitly asked to wait.
+const SELECTOR_WAIT_RECOVERY =
+  'The wait expired without the element appearing. Try a longer timeout, a different signal (waitForResponse with a known URL), or re-snapshot to confirm the current state.';
+
+const NAVIGATION_RESULT_METHODS = new Set([
+  'goto',
+  'reload',
+  'back',
+  'forward',
+  'waitForNavigation',
+]);
+
+const CHROME_ERROR_URL_PREFIX = 'chrome-error://';
 
 const FATAL_SESSION_CODES = new Set(['BROWSER_CRASHED']);
 
@@ -82,18 +102,25 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   const code = (err as { code?: string }).code;
   const message = err.message ?? '';
 
-  // waitForSelector failures are timeouts in intent: the agent reports
-  // SELECTOR_NOT_FOUND, but the user asked to wait, so the actionable signal
-  // is "the wait expired", not "the element is missing right now".
-  if (cmd?.method === 'waitForSelector' && code === 'SELECTOR_NOT_FOUND') {
-    return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
-  }
-
+  // Every "the element never appeared" failure reports as SELECTOR_MISS —
+  // splitting waitForSelector into TIMEOUT would scatter one root cause across
+  // two analytics buckets. Only the recovery wording follows the intent.
   if (code === 'SELECTOR_NOT_FOUND') {
     return {
       category: 'SELECTOR_MISS',
       code,
-      recovery: RECOVERY.SELECTOR_MISS,
+      recovery:
+        cmd?.method === 'waitForSelector'
+          ? SELECTOR_WAIT_RECOVERY
+          : RECOVERY.SELECTOR_MISS,
+    };
+  }
+
+  if (code === 'UNKNOWN_METHOD' || /Unknown method/i.test(message)) {
+    return {
+      category: 'UNKNOWN_METHOD',
+      code,
+      recovery: RECOVERY.UNKNOWN_METHOD,
     };
   }
 
@@ -155,7 +182,45 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
     return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
   }
 
+  // Last, so an infrastructure failure that happened to occur during evaluate
+  // (target closed, timeout, 5xx) keeps its real category: whatever is left is
+  // the caller's own script throwing.
+  if (cmd?.method === 'evaluate') {
+    return { category: 'SCRIPT_ERROR', code, recovery: RECOVERY.SCRIPT_ERROR };
+  }
+
   return { category: 'UNKNOWN', code, recovery: RECOVERY.UNKNOWN };
+};
+
+/**
+ * A navigation that resolved onto Chrome's error page. DNS/TLS/refused failures
+ * never throw — goto returns `chrome-error://chromewebdata/` with a null status —
+ * so without this check a failed navigation reports as a success.
+ */
+export const classifyNavigationResult = (
+  cmd: { method: string },
+  result: unknown,
+): ClassifiedError | undefined => {
+  if (!NAVIGATION_RESULT_METHODS.has(cmd.method)) return undefined;
+  if (!result || typeof result !== 'object') return undefined;
+
+  const { url, status, rejected } = result as {
+    url?: unknown;
+    status?: unknown;
+    rejected?: unknown;
+  };
+  // The caller's own interceptor aborting the document is intentional, not a
+  // failure — the agent route flags it separately from a no-response error.
+  if (rejected === true) return undefined;
+
+  const erroredUrl =
+    typeof url === 'string' && url.startsWith(CHROME_ERROR_URL_PREFIX);
+  if (!erroredUrl && status !== null) return undefined;
+
+  return {
+    category: 'NAVIGATION_FAILED',
+    recovery: RECOVERY.NAVIGATION_FAILED,
+  };
 };
 
 export const categoryFromStatus = (
@@ -174,6 +239,8 @@ const ANALYTICS_CATEGORY: Record<
 > = {
   SELECTOR_MISS: 'user_error',
   INVALID_PARAMS: 'user_error',
+  UNKNOWN_METHOD: 'user_error',
+  SCRIPT_ERROR: 'user_error',
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,

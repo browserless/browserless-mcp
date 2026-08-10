@@ -27,6 +27,7 @@ import type {
 import {
   categorizeThrown,
   classifyAgentError,
+  classifyNavigationResult,
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -873,6 +874,24 @@ export function registerAgentTools(
               [
                 appendSkills(body, triggered, compliant),
                 fatal ? '' : sessionLine(agentSession, config.transport),
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            );
+          }
+
+          const navFailure = classifyNavigationResult(cmd, resp.result);
+          if (navFailure) {
+            lastCategory = navFailure.category;
+            throw new UserError(
+              [
+                formatErrorMessage({
+                  category: navFailure.category,
+                  prefix: `${cmd.method} failed: `,
+                  message: `the page did not load — the browser is on ${(resp.result as { url?: string }).url ?? 'an error page'}`,
+                  recovery: navFailure.recovery,
+                }),
+                sessionLine(agentSession, config.transport),
               ]
                 .filter(Boolean)
                 .join('\n\n'),

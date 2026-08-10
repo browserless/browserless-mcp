@@ -123,6 +123,8 @@ Errors tagged \`Category: <NAME>\`:
 - **NAVIGATION_FAILED** — verify URL
 - **TIMEOUT** — longer wait or different signal
 - **INVALID_PARAMS** — fix params (schema authoritative)
+- **UNKNOWN_METHOD** — no such method; pick one from the schema
+- **SCRIPT_ERROR** — your \`evaluate\` script threw; page still alive, fix the script
 - **UNKNOWN** — re-snapshot + re-plan
 
 \`! NOTICE: URL changed cross-origin\` = prior plan/refs invalid, re-plan.
