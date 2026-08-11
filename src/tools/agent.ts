@@ -886,7 +886,7 @@ export function registerAgentTools(
                   message: `the page did not load — the browser is on ${(resp.result as { url?: string }).url ?? 'an error page'}`,
                   recovery: navFailure.recovery,
                 }),
-                sessionLine(agentSession, config.transport),
+                sessionLine(agentSession),
               ]
                 .filter(Boolean)
                 .join('\n\n'),
