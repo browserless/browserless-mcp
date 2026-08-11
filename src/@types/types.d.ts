@@ -231,6 +231,8 @@ export type ErrorCategory =
   | 'NAVIGATION_FAILED'
   | 'TIMEOUT'
   | 'INVALID_PARAMS'
+  | 'UNKNOWN_METHOD'
+  | 'SCRIPT_ERROR'
   | 'UNKNOWN';
 
 /** Coarse outcome taxonomy on analytics events — routes failures to docs vs platform. */
@@ -300,6 +302,7 @@ export type Predicate =
   | { kind: 'error.code'; codes: string[] }
   | { kind: 'error.message-match'; regex: RegExp }
   | { kind: 'command.method'; methods: string[] }
+  | { kind: 'command.method-not'; methods: string[] }
   | { kind: 'command.method-prefix'; prefix: string }
   | { kind: 'command.selector-not-deep' };
 

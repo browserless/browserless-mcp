@@ -32,8 +32,25 @@ const RECOVERY: Record<ErrorCategory, string> = {
     'The page or wait condition did not resolve in time. Try a longer waitFor, a different signal (waitForResponse with a known URL), or re-snapshot to confirm current state.',
   INVALID_PARAMS:
     'The parameters were rejected. The schema is authoritative — fix the params; do not blind-retry.',
+  UNKNOWN_METHOD:
+    'That method does not exist. Pick one from the command list in the tool schema and re-issue; do not retry the same name.',
+  SCRIPT_ERROR:
+    'Your script threw. The page is still alive — re-snapshot to confirm its state, then fix the script.',
   UNKNOWN: 'Re-snapshot and re-plan from the current page state.',
 };
+
+// Same category as any other miss, but "re-snapshot" is not the move when the
+// caller explicitly asked to wait.
+const SELECTOR_WAIT_RECOVERY =
+  'The wait expired without the element appearing. Try a longer timeout, a different signal (waitForResponse with a known URL), or re-snapshot to confirm the current state.';
+
+const NAVIGATION_RESULT_METHODS = new Set([
+  'goto',
+  'reload',
+  'back',
+  'forward',
+  'waitForNavigation',
+]);
 
 const FATAL_SESSION_CODES = new Set(['BROWSER_CRASHED']);
 
@@ -82,18 +99,24 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   const code = (err as { code?: string }).code;
   const message = err.message ?? '';
 
-  // waitForSelector failures are timeouts in intent: the agent reports
-  // SELECTOR_NOT_FOUND, but the user asked to wait, so the actionable signal
-  // is "the wait expired", not "the element is missing right now".
-  if (cmd?.method === 'waitForSelector' && code === 'SELECTOR_NOT_FOUND') {
-    return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
-  }
-
+  // One bucket for "the element never appeared", whatever asked for it; only the
+  // recovery wording follows the caller's intent.
   if (code === 'SELECTOR_NOT_FOUND') {
     return {
       category: 'SELECTOR_MISS',
       code,
-      recovery: RECOVERY.SELECTOR_MISS,
+      recovery:
+        cmd?.method === 'waitForSelector'
+          ? SELECTOR_WAIT_RECOVERY
+          : RECOVERY.SELECTOR_MISS,
+    };
+  }
+
+  if (code === 'UNKNOWN_METHOD' || /Unknown method/i.test(message)) {
+    return {
+      category: 'UNKNOWN_METHOD',
+      code,
+      recovery: RECOVERY.UNKNOWN_METHOD,
     };
   }
 
@@ -155,7 +178,39 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
     return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
   }
 
+  // Last, so an infra failure during evaluate keeps its real category: what is
+  // left over is the caller's own script throwing.
+  if (cmd?.method === 'evaluate') {
+    return { category: 'SCRIPT_ERROR', code, recovery: RECOVERY.SCRIPT_ERROR };
+  }
+
   return { category: 'UNKNOWN', code, recovery: RECOVERY.UNKNOWN };
+};
+
+// DNS/TLS/refused never throws: goto resolves onto `chrome-error://chromewebdata/`
+// with a null status, so without this a failed navigation reports as a success.
+export const classifyNavigationResult = (
+  method: string,
+  result: unknown,
+): ClassifiedError | undefined => {
+  if (!NAVIGATION_RESULT_METHODS.has(method)) return undefined;
+  if (!result || typeof result !== 'object') return undefined;
+
+  const { url, status, rejected } = result as {
+    url?: unknown;
+    status?: unknown;
+    rejected?: unknown;
+  };
+  // A document the caller's own interceptor aborted is intentional, not a failure.
+  if (rejected === true) return undefined;
+  if (status !== null && !String(url).startsWith('chrome-error://')) {
+    return undefined;
+  }
+
+  return {
+    category: 'NAVIGATION_FAILED',
+    recovery: RECOVERY.NAVIGATION_FAILED,
+  };
 };
 
 export const categoryFromStatus = (
@@ -174,6 +229,8 @@ const ANALYTICS_CATEGORY: Record<
 > = {
   SELECTOR_MISS: 'user_error',
   INVALID_PARAMS: 'user_error',
+  UNKNOWN_METHOD: 'user_error',
+  SCRIPT_ERROR: 'user_error',
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
