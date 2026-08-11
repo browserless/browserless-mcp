@@ -27,6 +27,7 @@ import type {
 import {
   categorizeThrown,
   classifyAgentError,
+  classifyNavigationResult,
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -836,18 +837,18 @@ export function registerAgentTools(
             let suggestion: string | undefined;
             if (
               err.code === 'SELECTOR_NOT_FOUND' &&
-              cmd.params.selector &&
+              cmd.method !== 'waitForSelector' &&
               typeof cmd.params.selector === 'string' &&
               !cmd.params.selector.startsWith('< ')
             ) {
               suggestion = `Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`;
-            } else if (err.suggestion) {
+            } else if (err.suggestion && err.code !== 'SELECTOR_NOT_FOUND') {
               suggestion = err.suggestion;
             }
 
             const body = formatErrorMessage({
               category: classified.category,
-              code: err.code,
+              code: classified.category === 'UNKNOWN' ? err.code : undefined,
               prefix,
               message: err.message,
               suggestion,
@@ -868,6 +869,24 @@ export function registerAgentTools(
               [
                 appendSkills(body, triggered, compliant),
                 fatal ? '' : sessionLine(agentSession),
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            );
+          }
+
+          const navFailure = classifyNavigationResult(cmd.method, resp.result);
+          if (navFailure) {
+            lastCategory = navFailure.category;
+            throw new UserError(
+              [
+                formatErrorMessage({
+                  category: navFailure.category,
+                  prefix: `${cmd.method} failed: `,
+                  message: `the page did not load — the browser is on ${(resp.result as { url?: string }).url ?? 'an error page'}`,
+                  recovery: navFailure.recovery,
+                }),
+                sessionLine(agentSession, config.transport),
               ]
                 .filter(Boolean)
                 .join('\n\n'),

@@ -122,6 +122,20 @@ describe('skills/detectSkills - shadow-dom', () => {
     };
     expect(detectSkills(ctx, state)).to.not.include('shadow-dom');
   });
+
+  it('does not fire on an expired waitForSelector — dynamic-content covers it', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: {
+        code: 'SELECTOR_NOT_FOUND',
+        message: 'waiting for selector ".never" failed: timeout 30000ms',
+      },
+      cmd: { method: 'waitForSelector', params: { selector: '.never' } },
+    };
+    const fired = detectSkills(ctx, state);
+    expect(fired).to.not.include('shadow-dom');
+    expect(fired).to.include('dynamic-content');
+  });
 });
 
 describe('skills/detectSkills - cookie-consent', () => {
