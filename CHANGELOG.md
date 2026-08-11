@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.20.2](https://github.com/browserless/browserless-mcp/compare/v1.20.1...v1.20.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **agent:** ensure calls receive isolated browsers handle ([#249](https://github.com/browserless/browserless-mcp/issues/249)) ([f3fb119](https://github.com/browserless/browserless-mcp/commit/f3fb119cfcc705c5ff2da0949fb8d688fd7b6f2e))
+* fill error gaps with more useful error outcomes ([#238](https://github.com/browserless/browserless-mcp/issues/238)) ([2a043e6](https://github.com/browserless/browserless-mcp/commit/2a043e69c794413559b66d6be5d66146d8c8b1c5))
+
 ## [1.20.1](https://github.com/browserless/browserless-mcp/compare/v1.20.0...v1.20.1) (2026-08-06)
 
 
