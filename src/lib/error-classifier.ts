@@ -39,9 +39,8 @@ const RECOVERY: Record<ErrorCategory, string> = {
   UNKNOWN: 'Re-snapshot and re-plan from the current page state.',
 };
 
-// A wait that expired is reported by the agent as SELECTOR_NOT_FOUND, so it
-// classifies as SELECTOR_MISS like any other miss — but "re-snapshot" is not the
-// move when the caller explicitly asked to wait.
+// Same category as any other miss, but "re-snapshot" is not the move when the
+// caller explicitly asked to wait.
 const SELECTOR_WAIT_RECOVERY =
   'The wait expired without the element appearing. Try a longer timeout, a different signal (waitForResponse with a known URL), or re-snapshot to confirm the current state.';
 
@@ -52,8 +51,6 @@ const NAVIGATION_RESULT_METHODS = new Set([
   'forward',
   'waitForNavigation',
 ]);
-
-const CHROME_ERROR_URL_PREFIX = 'chrome-error://';
 
 const FATAL_SESSION_CODES = new Set(['BROWSER_CRASHED']);
 
@@ -102,9 +99,8 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   const code = (err as { code?: string }).code;
   const message = err.message ?? '';
 
-  // Every "the element never appeared" failure reports as SELECTOR_MISS —
-  // splitting waitForSelector into TIMEOUT would scatter one root cause across
-  // two analytics buckets. Only the recovery wording follows the intent.
+  // One bucket for "the element never appeared", whatever asked for it; only the
+  // recovery wording follows the caller's intent.
   if (code === 'SELECTOR_NOT_FOUND') {
     return {
       category: 'SELECTOR_MISS',
@@ -182,9 +178,8 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
     return { category: 'TIMEOUT', code, recovery: RECOVERY.TIMEOUT };
   }
 
-  // Last, so an infrastructure failure that happened to occur during evaluate
-  // (target closed, timeout, 5xx) keeps its real category: whatever is left is
-  // the caller's own script throwing.
+  // Last, so an infra failure during evaluate keeps its real category: what is
+  // left over is the caller's own script throwing.
   if (cmd?.method === 'evaluate') {
     return { category: 'SCRIPT_ERROR', code, recovery: RECOVERY.SCRIPT_ERROR };
   }
@@ -192,16 +187,13 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   return { category: 'UNKNOWN', code, recovery: RECOVERY.UNKNOWN };
 };
 
-/**
- * A navigation that resolved onto Chrome's error page. DNS/TLS/refused failures
- * never throw — goto returns `chrome-error://chromewebdata/` with a null status —
- * so without this check a failed navigation reports as a success.
- */
+// DNS/TLS/refused never throws: goto resolves onto `chrome-error://chromewebdata/`
+// with a null status, so without this a failed navigation reports as a success.
 export const classifyNavigationResult = (
-  cmd: { method: string },
+  method: string,
   result: unknown,
 ): ClassifiedError | undefined => {
-  if (!NAVIGATION_RESULT_METHODS.has(cmd.method)) return undefined;
+  if (!NAVIGATION_RESULT_METHODS.has(method)) return undefined;
   if (!result || typeof result !== 'object') return undefined;
 
   const { url, status, rejected } = result as {
@@ -209,13 +201,11 @@ export const classifyNavigationResult = (
     status?: unknown;
     rejected?: unknown;
   };
-  // The caller's own interceptor aborting the document is intentional, not a
-  // failure — the agent route flags it separately from a no-response error.
+  // A document the caller's own interceptor aborted is intentional, not a failure.
   if (rejected === true) return undefined;
-
-  const erroredUrl =
-    typeof url === 'string' && url.startsWith(CHROME_ERROR_URL_PREFIX);
-  if (!erroredUrl && status !== null) return undefined;
+  if (status !== null && !String(url).startsWith('chrome-error://')) {
+    return undefined;
+  }
 
   return {
     category: 'NAVIGATION_FAILED',

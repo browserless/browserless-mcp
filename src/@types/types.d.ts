@@ -302,6 +302,7 @@ export type Predicate =
   | { kind: 'error.code'; codes: string[] }
   | { kind: 'error.message-match'; regex: RegExp }
   | { kind: 'command.method'; methods: string[] }
+  | { kind: 'command.method-not'; methods: string[] }
   | { kind: 'command.method-prefix'; prefix: string }
   | { kind: 'command.selector-not-deep' };
 

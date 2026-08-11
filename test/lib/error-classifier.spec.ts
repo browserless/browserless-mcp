@@ -221,7 +221,7 @@ describe('classifyNavigationResult', () => {
   const CHROME_ERROR = 'chrome-error://chromewebdata/';
 
   it('flags a goto that landed on the Chrome error page', () => {
-    const out = classifyNavigationResult(cmd('goto'), {
+    const out = classifyNavigationResult('goto', {
       url: CHROME_ERROR,
       status: null,
       text: 'ok',
@@ -233,7 +233,7 @@ describe('classifyNavigationResult', () => {
   });
 
   it('flags a null status even when the URL survived', () => {
-    const out = classifyNavigationResult(cmd('reload'), {
+    const out = classifyNavigationResult('reload', {
       url: 'https://example.com/',
       status: null,
     });
@@ -242,7 +242,7 @@ describe('classifyNavigationResult', () => {
 
   it('ignores a document the caller aborted itself', () => {
     expect(
-      classifyNavigationResult(cmd('goto'), {
+      classifyNavigationResult('goto', {
         url: CHROME_ERROR,
         status: null,
         rejected: true,
@@ -252,7 +252,7 @@ describe('classifyNavigationResult', () => {
 
   it('ignores a successful navigation', () => {
     expect(
-      classifyNavigationResult(cmd('goto'), {
+      classifyNavigationResult('goto', {
         url: 'https://example.com/',
         status: 200,
       }),
@@ -261,12 +261,12 @@ describe('classifyNavigationResult', () => {
 
   it('ignores non-navigation methods parked on an error page', () => {
     expect(
-      classifyNavigationResult(cmd('snapshot'), { url: CHROME_ERROR }),
+      classifyNavigationResult('snapshot', { url: CHROME_ERROR }),
     ).to.equal(undefined);
   });
 
   it('ignores an empty result (back/forward with no history)', () => {
-    expect(classifyNavigationResult(cmd('back'), null)).to.equal(undefined);
+    expect(classifyNavigationResult('back', null)).to.equal(undefined);
   });
 });
 

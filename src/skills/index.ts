@@ -80,6 +80,8 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
       return !!ctx.error?.message && p.regex.test(ctx.error.message);
     case 'command.method':
       return !!ctx.cmd?.method && p.methods.includes(ctx.cmd.method);
+    case 'command.method-not':
+      return !!ctx.cmd?.method && !p.methods.includes(ctx.cmd.method);
     case 'command.method-prefix':
       return !!ctx.cmd?.method && ctx.cmd.method.startsWith(p.prefix);
     case 'command.selector-not-deep': {
@@ -97,10 +99,12 @@ const SKILL_SPECS: SkillSpec[] = [
     triggers: [
       // snapshot contains a deep-ref element
       [{ kind: 'snapshot.has-element', selectorPrefix: '< ' }],
-      // selector-not-found error on a non-deep selector
+      // Non-deep selector, but not an expired wait: the deep-selector retry
+      // costs another full timeout, and `dynamic-content` fires on that instead.
       [
         { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
         { kind: 'command.selector-not-deep' },
+        { kind: 'command.method-not', methods: ['waitForSelector'] },
       ],
     ],
   },

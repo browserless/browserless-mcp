@@ -842,18 +842,18 @@ export function registerAgentTools(
             let suggestion: string | undefined;
             if (
               err.code === 'SELECTOR_NOT_FOUND' &&
-              cmd.params.selector &&
+              cmd.method !== 'waitForSelector' &&
               typeof cmd.params.selector === 'string' &&
               !cmd.params.selector.startsWith('< ')
             ) {
               suggestion = `Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`;
-            } else if (err.suggestion) {
+            } else if (err.suggestion && err.code !== 'SELECTOR_NOT_FOUND') {
               suggestion = err.suggestion;
             }
 
             const body = formatErrorMessage({
               category: classified.category,
-              code: err.code,
+              code: classified.category === 'UNKNOWN' ? err.code : undefined,
               prefix,
               message: err.message,
               suggestion,
@@ -880,7 +880,7 @@ export function registerAgentTools(
             );
           }
 
-          const navFailure = classifyNavigationResult(cmd, resp.result);
+          const navFailure = classifyNavigationResult(cmd.method, resp.result);
           if (navFailure) {
             lastCategory = navFailure.category;
             throw new UserError(
