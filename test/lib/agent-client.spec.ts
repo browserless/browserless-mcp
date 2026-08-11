@@ -496,6 +496,103 @@ describe('agent-client connect (upgrade error handling)', () => {
   });
 });
 
+describe('agent-client bare-call isolation', () => {
+  const bare = (sid: string | undefined, url: string) =>
+    getOrCreateSession(sid, url, 'tok');
+  const echo = (sid: string | undefined, url: string, handle: string) =>
+    getOrCreateSession(
+      sid,
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      handle,
+    );
+
+  // Regression: tasks in one conversation hashed to one key, so every task after
+  // the first landed on the same browser AND page, each goto clobbering the others.
+  it('gives every bare caller its own browser, sequential or concurrent', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      // Never timing-dependent: a browser idle between commands was reusable too.
+      const first = await bare('mcp-parallel', server.url);
+      const second = await bare('mcp-parallel', server.url);
+      expect(second.ws).to.not.equal(first.ws);
+      expect(second.handle).to.not.equal(first.handle);
+
+      // Concurrent bare calls: no shared in-flight creation either.
+      const [a, b, c] = await Promise.all([
+        bare('mcp-parallel', server.url),
+        bare('mcp-parallel', server.url),
+        bare('mcp-parallel', server.url),
+      ]);
+      const sockets = new Set([first.ws, second.ws, a.ws, b.ws, c.ws]);
+      expect(sockets.size).to.equal(5);
+    } finally {
+      await server.close();
+    }
+  });
+
+  // stdio had no MCP session id, so its key was one process-wide slot — the worst
+  // case for parallel workers sharing a server process.
+  it('isolates bare callers on stdio, which has no MCP session id', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const [a, b] = await Promise.all([
+        bare(undefined, server.url),
+        bare(undefined, server.url),
+      ]);
+      expect(a.ws).to.not.equal(b.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns the same browser whenever its handle is echoed back', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await bare('mcp-echo', server.url);
+      const resumed = await echo('mcp-echo', server.url, opened.handle);
+      expect(resumed.ws).to.equal(opened.ws);
+
+      // Continuity follows the handle, not the MCP session id — remote clients
+      // mint a fresh id per turn, and stdio never had one.
+      const churned = await echo('mcp-echo-2', server.url, opened.handle);
+      expect(churned.ws).to.equal(opened.ws);
+      const onStdio = await echo(undefined, server.url, opened.handle);
+      expect(onStdio.ws).to.equal(opened.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps an echoed handle scoped to its own token', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const mine = await bare('mcp-tok', server.url);
+      const theirs = await getOrCreateSession(
+        'mcp-tok',
+        server.url,
+        'other-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        mine.handle,
+      );
+      expect(theirs.ws).to.not.equal(mine.ws);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe('agent-client session-cache isolation', () => {
   it('keeps distinct sessions for the same mcpSessionId+token with different profiles', async () => {
     const server = await makeAcceptingServer();
@@ -521,13 +618,19 @@ describe('agent-client session-cache isolation', () => {
       expect(sessA.profile).to.equal('profile-a');
       expect(sessB.profile).to.equal('profile-b');
 
-      // Asking for the same (sid, profile) again returns the cached session.
+      // The handle carries the session, not the profile name: a bare re-ask would
+      // open a third browser (see bare-call isolation).
       const sessAAgain = await getOrCreateSession(
         sidA,
         server.url,
         'tok',
         undefined,
         'profile-a',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessA.handle,
       );
       expect(sessAAgain.ws).to.equal(sessA.ws);
     } finally {
@@ -575,7 +678,9 @@ describe('agent-client session handle', () => {
     const server = await makeAcceptingServer();
     try {
       const first = await getOrCreateSession('mcp-1', server.url, 'tok');
-      expect(first.handle).to.equal('mcp-1');
+      // The handle is minted per task, not derived from the MCP session id —
+      // that id is shared by every concurrent task in the conversation.
+      expect(first.handle).to.not.equal('mcp-1');
 
       // The client re-initialized: new MCP session id, same conversation.
       const churned = await getOrCreateSession(
@@ -600,64 +705,24 @@ describe('agent-client session handle', () => {
     }
   });
 });
-
-describe('agent-client orphan adoption', () => {
-  const open = async (sid: string, url: string) =>
+describe('agent-client mcp-session churn', () => {
+  const bare = (sid: string, url: string) =>
     getOrCreateSession(sid, url, 'tok');
 
-  it('adopts the orphaned browser when the previous MCP session went quiet', async () => {
+  // "Orphan adoption" let a bare call recover a browser whose MCP session went
+  // quiet — the same guess that collided tasks. The handle is now the only way back.
+  it("does not hand a quiet session's browser to the next bare caller", async () => {
     const server = await makeAcceptingServer();
     try {
-      const first = await open('mcp-a', server.url);
+      const first = await bare('mcp-a', server.url);
       dropMcpSession('mcp-a');
 
-      // Same conversation, re-initialized, model did NOT echo the handle.
-      const churned = await open('mcp-b', server.url);
-      expect(churned.ws).to.equal(first.ws);
-      expect(churned.handle).to.equal('mcp-b');
-    } finally {
-      await server.close();
-    }
-  });
+      const next = await bare('mcp-b', server.url);
+      expect(next.ws).to.not.equal(first.ws);
 
-  it('leaves a live conversation alone', async () => {
-    const server = await makeAcceptingServer();
-    try {
-      const live = await open('mcp-live', server.url);
-      // No dropMcpSession: mcp-live was just seen, so it is still driving.
-      const other = await open('mcp-new', server.url);
-      expect(other.ws).to.not.equal(live.ws);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('refuses to guess when two orphans are candidates', async () => {
-    const server = await makeAcceptingServer();
-    try {
-      const one = await open('mcp-1', server.url);
-      const two = await open('mcp-2', server.url);
-      dropMcpSession('mcp-1');
-      dropMcpSession('mcp-2');
-
-      const third = await open('mcp-3', server.url);
-      expect(third.ws).to.not.equal(one.ws);
-      expect(third.ws).to.not.equal(two.ws);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('prefers an echoed handle over adoption', async () => {
-    const server = await makeAcceptingServer();
-    try {
-      const target = await open('mcp-x', server.url);
-      const decoy = await open('mcp-y', server.url);
-      dropMcpSession('mcp-x');
-      dropMcpSession('mcp-y');
-
+      // The original browser is still reachable — by its handle.
       const resumed = await getOrCreateSession(
-        'mcp-z',
+        'mcp-b',
         server.url,
         'tok',
         undefined,
@@ -666,10 +731,20 @@ describe('agent-client orphan adoption', () => {
         undefined,
         false,
         undefined,
-        'mcp-x',
+        first.handle,
       );
-      expect(resumed.ws).to.equal(target.ws);
-      expect(resumed.ws).to.not.equal(decoy.ws);
+      expect(resumed.ws).to.equal(first.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("never lets a bare caller reach another conversation's live browser", async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const live = await bare('mcp-live', server.url);
+      const other = await bare('mcp-new', server.url);
+      expect(other.ws).to.not.equal(live.ws);
     } finally {
       await server.close();
     }

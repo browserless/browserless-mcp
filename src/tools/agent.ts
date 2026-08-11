@@ -432,17 +432,12 @@ const CLOSE_REMINDER =
   `When the task is done, send \`{ "method": "close" }\` as its own call — or, if ` +
   `the user may want to keep browsing, ask them before leaving it open.`;
 
-// httpStream only: the handle has to travel through the conversation to pin the
-// browser, while a stdio client's key is already stable for its process life.
-const sessionLine = (
-  session: { handle: string },
-  transport: McpConfig['transport'],
-): string =>
-  transport === 'httpStream'
-    ? `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
-      `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one. ` +
-      CLOSE_REMINDER
-    : CLOSE_REMINDER;
+// Both transports: the minted handle is the only way back, so stdio needs it too —
+// its old process-wide key was what collided concurrent tasks.
+const sessionLine = (session: { handle: string }): string =>
+  `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
+  `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one. ` +
+  CLOSE_REMINDER;
 
 export function registerAgentTools(
   server: FastMCP,
@@ -684,7 +679,7 @@ export function registerAgentTools(
         const text = createProfile
           ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
           : 'Browser session is open. Send commands to drive it.';
-        const line = sessionLine(opened, config.transport);
+        const line = sessionLine(opened);
         return [
           { type: 'text' as const, text: line ? `${text}\n\n${line}` : text },
         ];
@@ -872,7 +867,7 @@ export function registerAgentTools(
             throw new UserError(
               [
                 appendSkills(body, triggered, compliant),
-                fatal ? '' : sessionLine(agentSession, config.transport),
+                fatal ? '' : sessionLine(agentSession),
               ]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -989,7 +984,7 @@ export function registerAgentTools(
         const extraText = [
           renderedSkills,
           siteNotice,
-          closedDuringBatch ? '' : sessionLine(agentSession, config.transport),
+          closedDuringBatch ? '' : sessionLine(agentSession),
         ]
           .filter(Boolean)
           .join('\n\n');
