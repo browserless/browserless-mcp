@@ -1127,7 +1127,10 @@ describe('browserless_agent session handle on errors', () => {
         );
         handle = /sessionId: (\S+)/.exec(msg)?.[1];
       }
-      expect(handle).to.equal('err-handle-1');
+      // Minted per task rather than taken from the MCP session id, which every
+      // concurrent task in the conversation shares.
+      expect(handle).to.match(/^s:/);
+      expect(handle).to.not.equal('err-handle-1');
 
       // A churned MCP session echoing that handle must land on the same browser.
       const after = await execute(

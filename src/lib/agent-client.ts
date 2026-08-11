@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
 import { z } from 'zod';
@@ -168,10 +169,6 @@ const pending = new Map<string, Promise<ActiveSession>>();
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;
-// How long an MCP session id must go unused before its browser is adoptable.
-// Churn abandons the old id instantly; a live conversation re-uses it per turn.
-const ADOPT_AFTER_IDLE_MS = 30_000;
-
 // mcp session id -> last time a request arrived on it. `disconnect` is the
 // primary signal, but a client that abandons a transport never sends one.
 const mcpSeenAt = new Map<string, number>();
@@ -644,45 +641,6 @@ const sendMessage = (
     ws.send(JSON.stringify(msg));
   });
 
-/**
- * Re-key an orphaned browser onto the caller's new MCP session id.
- */
-const adoptOrphan = (
-  key: string,
-  mcpSessionId: string | undefined,
-  handle: string,
-  source: string | undefined,
-): ActiveSession | undefined => {
-  if (!mcpSessionId || handle !== mcpSessionId) return;
-
-  const marker = KEY_SEP + 'conv#';
-  const at = key.indexOf(marker);
-  if (at === -1) return;
-  const prefix = key.slice(0, at + marker.length);
-  const suffix = key.slice(prefix.length + handle.length);
-
-  const now = Date.now();
-  const candidates = [...sessions.entries()].filter(([k, s]) => {
-    if (k === key || !k.startsWith(prefix) || !k.endsWith(suffix)) return false;
-    if (s.ws.readyState !== WebSocket.OPEN || s.source !== source) return false;
-    const owner = k.slice(prefix.length, k.length - suffix.length);
-    if (owner === mcpSessionId) return false;
-    const seen = mcpSeenAt.get(owner);
-    return !seen || now - seen > ADOPT_AFTER_IDLE_MS;
-  });
-
-  if (candidates.length !== 1) return;
-
-  const [oldKey, session] = candidates[0];
-  sessions.delete(oldKey);
-  session.handle = handle;
-  sessions.set(key, session);
-  console.error(
-    `[agent-client] adopted orphaned browser from mcp session ${oldKey.slice(prefix.length, oldKey.length - suffix.length)} into ${mcpSessionId}`,
-  );
-  return session;
-};
-
 export const getOrCreateSession = async (
   mcpSessionId: string | undefined,
   apiUrl: string,
@@ -696,9 +654,11 @@ export const getOrCreateSession = async (
   echoedSessionId?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
-  // Resolving up front keeps the key and the session's own handle identical
-  // (sessionHandle is idempotent once the handle is known).
-  const handle = sessionHandle(mcpSessionId, token, echoedSessionId);
+  // Reusing on a bare call guessed "same task" — but every concurrent task in a
+  // conversation shares the MCP session id, so the guess collided them onto one page.
+  const handle =
+    echoedSessionId ??
+    (attachSessionId ? `attach:${attachSessionId}` : `s:${randomUUID()}`);
   const key = getSessionKey(
     mcpSessionId,
     token,
@@ -709,11 +669,7 @@ export const getOrCreateSession = async (
     handle,
   );
   noteMcpSession(mcpSessionId);
-  const existing =
-    sessions.get(key) ??
-    (echoedSessionId
-      ? undefined
-      : adoptOrphan(key, mcpSessionId, handle, source));
+  const existing = sessions.get(key);
 
   if (
     existing &&
