@@ -14,6 +14,7 @@ import type { McpConfig } from '../../src/@types/types.js';
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
+  accountGraphqlUrl: 'https://accounts.example.com/graphql',
   transport: 'httpStream',
   port: 0, // let OS pick a port
   requestTimeout: 30000,

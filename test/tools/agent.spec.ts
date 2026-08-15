@@ -52,6 +52,7 @@ const seedSiteSkill = (host: string, task: string, body: string) =>
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
+  accountGraphqlUrl: 'https://accounts.example.com/graphql',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,

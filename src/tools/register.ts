@@ -10,6 +10,7 @@ import { registerFunctionTool } from './function.js';
 import { registerMapTool } from './map.js';
 import { registerCrawlTool } from './crawl.js';
 import { registerProfilesTool } from './profiles.js';
+import { registerLogsTool } from './logs.js';
 import { isCompliant } from './compliance.js';
 import { registerApiDocsResource } from '../resources/api-docs.js';
 import { registerStatusResource } from '../resources/status.js';
@@ -30,6 +31,10 @@ export function registerSurface(
     surface: Surface;
     register: () => void;
   }> = [
+    {
+      surface: 'both',
+      register: () => registerLogsTool(server, config, analytics),
+    },
     {
       surface: 'both',
       register: () => registerExportTool(server, config, analytics),

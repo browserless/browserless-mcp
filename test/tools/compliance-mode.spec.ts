@@ -27,6 +27,7 @@ import type { McpConfig, SkillId } from '../../src/@types/types.js';
 const baseConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
+  accountGraphqlUrl: 'https://accounts.example.com/graphql',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -84,24 +85,26 @@ const VALID_GOTO = { method: 'goto', params: { url: 'https://example.com' } };
 describe('compliance mode — compliant tool surface', () => {
   afterEach(() => sinon.restore());
 
-  it('registers exactly the 5 compliant tools (no smartscraper/function/map/crawl)', () => {
+  it('registers exactly the 6 compliant tools (no smartscraper/function/map/crawl)', () => {
     const { names } = captureTools(true);
     expect(names).to.deep.equal([
       'browserless_agent',
       'browserless_export',
+      'browserless_logs',
       'browserless_performance',
       'browserless_search',
       'browserless_skill',
     ]);
   });
 
-  it('full mode registers exactly the 10 tools (regression guard)', () => {
+  it('full mode registers exactly the 11 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_agent',
       'browserless_crawl',
       'browserless_export',
       'browserless_function',
+      'browserless_logs',
       'browserless_map',
       'browserless_performance',
       'browserless_profiles',
@@ -664,6 +667,22 @@ describe('compliance mode — compliant tool surface', () => {
         'timeout',
         'url',
         'waitForTimeout',
+      ],
+      browserless_logs: [
+        'apiKeyId',
+        'category',
+        'cursor',
+        'endTime',
+        'endpoint',
+        'eventNames',
+        'levels',
+        'limit',
+        'order',
+        'outcome',
+        'reason',
+        'requestId',
+        'startTime',
+        'url',
       ],
       browserless_performance: ['budgets', 'categories', 'timeout', 'url'],
       browserless_search: [

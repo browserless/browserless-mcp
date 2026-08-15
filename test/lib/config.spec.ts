@@ -1,5 +1,49 @@
 import { expect } from 'chai';
-import { getConfig, classifyComplianceInput } from '../../src/config.js';
+import {
+  getConfig,
+  classifyComplianceInput,
+  DEFAULT_ACCOUNT_GRAPHQL_URL,
+} from '../../src/config.js';
+
+describe('config.accountGraphqlUrl', () => {
+  const ACCOUNT_KEY = 'BROWSERLESS_ACCOUNT_GRAPHQL_URL';
+  const RUNTIME_KEY = 'BROWSERLESS_API_URL';
+  let originalAccount: string | undefined;
+  let originalRuntime: string | undefined;
+
+  beforeEach(() => {
+    originalAccount = process.env[ACCOUNT_KEY];
+    originalRuntime = process.env[RUNTIME_KEY];
+    delete process.env[ACCOUNT_KEY];
+    delete process.env[RUNTIME_KEY];
+  });
+
+  afterEach(() => {
+    if (originalAccount === undefined) delete process.env[ACCOUNT_KEY];
+    else process.env[ACCOUNT_KEY] = originalAccount;
+    if (originalRuntime === undefined) delete process.env[RUNTIME_KEY];
+    else process.env[RUNTIME_KEY] = originalRuntime;
+  });
+
+  it('defaults to the Browserless account GraphQL endpoint', () => {
+    expect(getConfig().accountGraphqlUrl).to.equal(DEFAULT_ACCOUNT_GRAPHQL_URL);
+  });
+
+  it('accepts an explicit account GraphQL endpoint override', () => {
+    process.env[ACCOUNT_KEY] = 'http://browserless.localhost:4000/graphql';
+    expect(getConfig().accountGraphqlUrl).to.equal(
+      'http://browserless.localhost:4000/graphql',
+    );
+  });
+
+  it('is independent from the browser runtime URL', () => {
+    process.env[RUNTIME_KEY] = 'https://runtime.example.com';
+    expect(getConfig().browserlessApiUrl).to.equal(
+      'https://runtime.example.com',
+    );
+    expect(getConfig().accountGraphqlUrl).to.equal(DEFAULT_ACCOUNT_GRAPHQL_URL);
+  });
+});
 
 const ENV_KEY = 'OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS';
 const BASELINE_PATTERNS = [

@@ -65,6 +65,7 @@ export interface SupabaseJwtPayload {
 export interface McpConfig {
   browserlessToken?: string;
   browserlessApiUrl: string;
+  accountGraphqlUrl: string;
   transport: 'stdio' | 'httpStream';
   port: number;
   requestTimeout: number;

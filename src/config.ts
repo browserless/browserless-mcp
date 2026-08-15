@@ -2,6 +2,7 @@ import { parseCsv } from './lib/utils.js';
 import type { McpConfig } from './@types/types.js';
 
 export const DEFAULT_API_URL = 'https://production-sfo.browserless.io';
+export const DEFAULT_ACCOUNT_GRAPHQL_URL = 'https://api.browserless.io/graphql';
 
 // Baseline allow-list of redirect URIs for MCP clients that legitimately DCR
 // against the hosted mcp.browserless.io deployment. Extend at runtime via
@@ -46,6 +47,9 @@ export function getConfig(): McpConfig {
   return {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
+    accountGraphqlUrl:
+      process.env.BROWSERLESS_ACCOUNT_GRAPHQL_URL ??
+      DEFAULT_ACCOUNT_GRAPHQL_URL,
     transport: (process.env.TRANSPORT as 'stdio' | 'httpStream') ?? 'stdio',
     port: parseInt(process.env.PORT ?? '8080', 10),
     requestTimeout: parseInt(process.env.BROWSERLESS_TIMEOUT ?? '30000', 10),

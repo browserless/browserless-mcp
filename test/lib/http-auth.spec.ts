@@ -3,6 +3,7 @@ import { resolveBrowserlessAuth } from '../../src/lib/http-auth.js';
 
 const config = {
   browserlessApiUrl: 'https://api.example.com',
+  accountGraphqlUrl: 'https://accounts.example.com/graphql',
   supabaseUrl: 'https://supabase.example.com',
   supabaseServiceRoleKey: 'service-role',
 };
