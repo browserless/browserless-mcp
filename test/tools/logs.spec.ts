@@ -151,6 +151,22 @@ describe('browserless_logs tool', () => {
     expect(text).to.match(/no matching .*request-log entries/i);
   });
 
+  it('preserves pagination guidance when an empty page has a cursor', async () => {
+    sinon
+      .stub(globalThis, 'fetch')
+      .resolves(response([], 'cursor-after-empty'));
+
+    const result = await captureTool().execute({}, mockContext);
+    const text = (
+      (result as { content: Content[] }).content[0] as {
+        text: string;
+      }
+    ).text;
+    expect(text).to.match(/no matching .*request-log entries/i);
+    expect(text).to.contain('nextCursor=cursor-after-empty');
+    expect(text).to.contain('pass this value as cursor');
+  });
+
   it('emits normal tool analytics without putting the token in event properties', async () => {
     sinon.stub(globalThis, 'fetch').resolves(response([]));
     const fireToolRequest = sinon.stub();

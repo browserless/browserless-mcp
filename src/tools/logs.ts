@@ -250,16 +250,12 @@ export function registerLogsTool(
       has_next_cursor: !!result.nextCursor,
     }),
     format: (result) => {
-      if (result.entries.length === 0) {
-        return [
-          {
-            type: 'text',
-            text: 'No matching Browserless request-log entries were found in this window.',
-          },
-        ];
-      }
-
-      const lines = result.entries.map(formatEntry);
+      const lines =
+        result.entries.length === 0
+          ? [
+              'No matching Browserless request-log entries were found in this window.',
+            ]
+          : result.entries.map(formatEntry);
       if (result.nextCursor) {
         lines.push(
           `nextCursor=${result.nextCursor} — pass this value as cursor to browserless_logs for the next page.`,
