@@ -18,6 +18,7 @@ import type {
 export const ScrapeFormatSchema = z.enum([
   'markdown',
   'html',
+  'rawText',
   'screenshot',
   'pdf',
   'links',
@@ -39,6 +40,32 @@ export const SmartScraperParamsSchema = z.object({
     .optional()
     .describe('Request timeout in milliseconds'),
   profile: profileField('before scraping'),
+  onlyMainContent: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      'Strip navigation, footers, and sidebars. Defaults to false, returning the full page.',
+    ),
+  includeTags: z
+    .array(z.string())
+    .optional()
+    .describe('CSS selectors to keep in the returned content'),
+  excludeTags: z
+    .array(z.string())
+    .optional()
+    .describe('CSS selectors to remove from the returned content'),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Custom HTTP headers sent to the target site'),
+  waitFor: z
+    .number()
+    .int()
+    .min(0)
+    .max(30_000)
+    .optional()
+    .describe('Milliseconds to wait after page load, from 0 to 30000'),
 });
 
 export const SmartScraperResponseSchema = z.object({
@@ -54,6 +81,17 @@ export const SmartScraperResponseSchema = z.object({
   pdf: z.string().nullable(),
   markdown: z.string().nullable(),
   links: z.array(z.string()).nullable(),
+  rawText: z.string().nullable().optional(),
+  metadata: z
+    .object({
+      title: z.string().nullable(),
+      description: z.string().nullable(),
+      language: z.string().nullable(),
+      sourceURL: z.string(),
+      statusCode: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export function registerSmartScraperTool(
@@ -90,6 +128,11 @@ export function registerSmartScraperTool(
         formats: params.formats,
         timeout: params.timeout,
         profile: params.profile,
+        onlyMainContent: params.onlyMainContent,
+        includeTags: params.includeTags,
+        excludeTags: params.excludeTags,
+        headers: params.headers,
+        waitFor: params.waitFor,
       }),
     analyticsProps: (params, result) => ({
       url: params.url,
@@ -100,6 +143,10 @@ export function registerSmartScraperTool(
       status_code: result.statusCode,
       strategy: result.strategy,
       profile_used: !!params.profile,
+      only_main_content: params.onlyMainContent ?? false,
+      has_content_filters: !!(
+        params.includeTags?.length || params.excludeTags?.length
+      ),
     }),
     format: (response) => {
       if (!response.ok) {
@@ -113,6 +160,8 @@ export function registerSmartScraperTool(
       let textContent: string;
       if (response.markdown) {
         textContent = response.markdown;
+      } else if (response.rawText) {
+        textContent = response.rawText;
       } else if (typeof response.content === 'string' && response.content) {
         textContent = response.content;
       } else if (response.content && typeof response.content === 'object') {

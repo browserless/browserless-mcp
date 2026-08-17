@@ -40,6 +40,8 @@ const mockSuccessResponse = {
   pdf: null,
   markdown: '# Hello',
   links: null,
+  rawText: null,
+  metadata: null,
 };
 
 describe('createApiClient', () => {
@@ -72,8 +74,10 @@ describe('createApiClient', () => {
       expect(url).to.include('timeout=30000');
       expect(options.method).to.equal('POST');
       const body = JSON.parse(options.body);
-      expect(body.url).to.equal('https://example.com');
-      expect(body.formats).to.deep.equal(['markdown']);
+      expect(body).to.deep.equal({
+        url: 'https://example.com',
+        formats: ['markdown'],
+      });
     });
 
     it('returns parsed response', async () => {
@@ -146,6 +150,97 @@ describe('createApiClient', () => {
       await client.smartScrape({ url: 'https://other.com' });
 
       expect(fetchStub.calledTwice).to.be.true;
+    });
+
+    it('separates cache entries by shaping options and reuses the matching entry', async () => {
+      fetchStub.onFirstCall().resolves(
+        new Response(
+          JSON.stringify({ ...mockSuccessResponse, content: 'full' }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+      fetchStub.onSecondCall().resolves(
+        new Response(
+          JSON.stringify({ ...mockSuccessResponse, content: 'main' }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+
+      const client = createApiClient(mockConfig);
+      const full = await client.smartScrape({
+        url: 'https://example.com',
+        onlyMainContent: false,
+      });
+      const main = await client.smartScrape({
+        url: 'https://example.com',
+        onlyMainContent: true,
+      });
+      const fullAgain = await client.smartScrape({
+        url: 'https://example.com',
+        onlyMainContent: false,
+      });
+
+      expect(fetchStub.calledTwice).to.be.true;
+      expect(full.content).to.equal('full');
+      expect(main.content).to.equal('main');
+      expect(fullAgain.content).to.equal('full');
+      expect(fullAgain.cacheHit).to.be.true;
+    });
+
+    it('canonicalizes header order in the cache key', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.smartScrape({
+        url: 'https://example.com',
+        headers: { 'X-B': 'b', 'X-A': 'a' },
+      });
+      await client.smartScrape({
+        url: 'https://example.com',
+        headers: { 'X-A': 'a', 'X-B': 'b' },
+      });
+
+      expect(fetchStub.calledOnce).to.be.true;
+    });
+
+    it('forwards every shaping option in the request body', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.smartScrape({
+        url: 'https://example.com',
+        onlyMainContent: true,
+        includeTags: ['article'],
+        excludeTags: ['nav'],
+        headers: { 'X-A': 'a' },
+        waitFor: 1500,
+      });
+
+      expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.equal({
+        url: 'https://example.com',
+        formats: ['markdown'],
+        onlyMainContent: true,
+        includeTags: ['article'],
+        excludeTags: ['nav'],
+        headers: { 'X-A': 'a' },
+        waitFor: 1500,
+      });
     });
 
     it('isolates cache entries by API URL when the cache is shared', async () => {

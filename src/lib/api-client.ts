@@ -210,6 +210,15 @@ export function createApiClient(
         // Profiles inject auth state — a cache hit across profiles would
         // leak one user's session into another's response.
         profile: params.profile ?? null,
+        onlyMainContent: params.onlyMainContent ?? false,
+        includeTags: [...(params.includeTags ?? [])].sort(),
+        excludeTags: [...(params.excludeTags ?? [])].sort(),
+        waitFor: params.waitFor ?? null,
+        headers: params.headers
+          ? Object.entries(params.headers).sort(([a], [b]) =>
+              a.localeCompare(b),
+            )
+          : null,
       });
 
       const cached = _cache.get<SmartScraperResponse>(cacheKey);
@@ -221,7 +230,16 @@ export function createApiClient(
       const result = await apiFetch<SmartScraperResponse>(config, {
         path: '/smart-scrape',
         query: { timeout, profile: params.profile },
-        body: { url: params.url, formats },
+        body: compact({
+          url: params.url,
+          formats,
+          // False is the semantic default, so keep the legacy bare body exact.
+          onlyMainContent: params.onlyMainContent || undefined,
+          includeTags: params.includeTags,
+          excludeTags: params.excludeTags,
+          headers: params.headers,
+          waitFor: params.waitFor,
+        }),
         timeout,
         profile: params.profile,
       });
