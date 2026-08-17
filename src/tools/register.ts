@@ -10,6 +10,10 @@ import { registerFunctionTool } from './function.js';
 import { registerMapTool } from './map.js';
 import { registerCrawlTool } from './crawl.js';
 import { registerProfilesTool } from './profiles.js';
+import { registerAccountTool } from './account.js';
+import { registerUsageTool } from './usage.js';
+import { registerSessionsTool } from './sessions.js';
+import { registerLogsTool } from './logs.js';
 import { isCompliant } from './compliance.js';
 import { registerApiDocsResource } from '../resources/api-docs.js';
 import { registerStatusResource } from '../resources/status.js';
@@ -46,6 +50,24 @@ export function registerSurface(
     {
       surface: 'both',
       register: () => registerPerformanceTool(server, config, analytics),
+    },
+    // Account-data reads (plan, usage, sessions, logs). Safe on both surfaces:
+    // they drive no browser and mutate nothing.
+    {
+      surface: 'both',
+      register: () => registerAccountTool(server, config, analytics),
+    },
+    {
+      surface: 'both',
+      register: () => registerUsageTool(server, config, analytics),
+    },
+    {
+      surface: 'both',
+      register: () => registerSessionsTool(server, config, analytics),
+    },
+    {
+      surface: 'both',
+      register: () => registerLogsTool(server, config, analytics),
     },
     // Generic service status — safe on both (it reports the active surface).
     { surface: 'both', register: () => registerStatusResource(server, config) },

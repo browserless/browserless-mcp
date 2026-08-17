@@ -65,6 +65,9 @@ export interface SupabaseJwtPayload {
 export interface McpConfig {
   browserlessToken?: string;
   browserlessApiUrl: string;
+  // Account API host — a DIFFERENT host from `browserlessApiUrl` (a browser
+  // runtime). Never derive one from the other, nor let per-session URLs override.
+  apiServerUrl?: string;
   transport: 'stdio' | 'httpStream';
   port: number;
   requestTimeout: number;
