@@ -242,6 +242,34 @@ describe('createApiClient', () => {
       expect(second.cacheHit).to.be.false;
     });
 
+    it('preserves excludeTags order in distinct cache entries', async () => {
+      fetchStub.callsFake(async (_url, options) => {
+        const body = JSON.parse(String(options?.body));
+        return new Response(
+          JSON.stringify({
+            ...mockSuccessResponse,
+            content: body.excludeTags.join('>'),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      });
+
+      const client = createApiClient(mockConfig);
+      const first = await client.smartScrape({
+        url: 'https://example.com',
+        excludeTags: ['div:first-child', '.foo'],
+      });
+      const second = await client.smartScrape({
+        url: 'https://example.com',
+        excludeTags: ['.foo', 'div:first-child'],
+      });
+
+      expect(fetchStub.calledTwice).to.be.true;
+      expect(first.content).to.equal('div:first-child>.foo');
+      expect(second.content).to.equal('.foo>div:first-child');
+      expect(second.cacheHit).to.be.false;
+    });
+
     it('forwards every shaping option in the request body', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {

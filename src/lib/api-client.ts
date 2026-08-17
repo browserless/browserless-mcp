@@ -212,7 +212,7 @@ export function createApiClient(
         profile: params.profile ?? null,
         onlyMainContent: params.onlyMainContent ?? false,
         includeTags: params.includeTags ?? [],
-        excludeTags: [...(params.excludeTags ?? [])].sort(),
+        excludeTags: params.excludeTags ?? [],
         waitFor: params.waitFor ?? null,
         headers: params.headers
           ? Object.entries(params.headers).sort(([a], [b]) =>
