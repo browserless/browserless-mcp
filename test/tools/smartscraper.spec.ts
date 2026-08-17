@@ -178,6 +178,33 @@ describe('browserless_smartscraper tool', () => {
     });
   });
 
+  it('returns an empty rawText result without falling back to HTML', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({
+            content: '<html><body><script>x()</script></body></html>',
+            markdown: null,
+            rawText: '',
+          }),
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    const result = await execute(
+      { url: 'https://example.com', formats: ['rawText'] },
+      mockContext,
+    );
+
+    expect((result as { content: Content[] }).content[0]).to.deep.equal({
+      type: 'text',
+      text: '',
+    });
+  });
+
   it('reports shaping booleans without exposing headers in analytics', async () => {
     fetchStub.resolves(
       new Response(JSON.stringify(makeSuccessResponse()), {

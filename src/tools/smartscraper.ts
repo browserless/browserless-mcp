@@ -160,7 +160,7 @@ export function registerSmartScraperTool(
       let textContent: string;
       if (response.markdown) {
         textContent = response.markdown;
-      } else if (response.rawText) {
+      } else if (typeof response.rawText === 'string') {
         textContent = response.rawText;
       } else if (typeof response.content === 'string' && response.content) {
         textContent = response.content;

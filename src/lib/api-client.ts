@@ -211,7 +211,7 @@ export function createApiClient(
         // leak one user's session into another's response.
         profile: params.profile ?? null,
         onlyMainContent: params.onlyMainContent ?? false,
-        includeTags: [...(params.includeTags ?? [])].sort(),
+        includeTags: params.includeTags ?? [],
         excludeTags: [...(params.excludeTags ?? [])].sort(),
         waitFor: params.waitFor ?? null,
         headers: params.headers
