@@ -2,7 +2,10 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
+import {
+  registerSmartScraperTool,
+  SmartScraperParamsSchema,
+} from '../../src/tools/smartscraper.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 
@@ -203,6 +206,12 @@ describe('browserless_smartscraper tool', () => {
       type: 'text',
       text: '',
     });
+  });
+
+  it('advertises rawText in the formats description', () => {
+    expect(SmartScraperParamsSchema.shape.formats.description).to.include(
+      'rawText',
+    );
   });
 
   it('reports shaping booleans without exposing headers in analytics', async () => {

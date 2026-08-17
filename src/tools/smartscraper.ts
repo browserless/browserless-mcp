@@ -31,7 +31,7 @@ export const SmartScraperParamsSchema = z.object({
     .optional()
     .default(['markdown'])
     .describe(
-      'Output formats to include: "markdown", "html", "screenshot", "pdf", "links". Defaults to ["markdown"].',
+      'Output formats to include: "markdown", "html", "rawText", "screenshot", "pdf", "links". Defaults to ["markdown"].',
     ),
   timeout: z
     .number()
