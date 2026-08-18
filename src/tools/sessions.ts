@@ -5,12 +5,10 @@ import { z } from 'zod';
 import { accountQuery } from '../lib/account-api.js';
 import {
   buildReplayHtml,
-  RRWEB_PLAYER_CSS,
-  RRWEB_PLAYER_CSS_SRI,
-  RRWEB_PLAYER_JS,
-  RRWEB_PLAYER_JS_SRI,
   fetchReplayArtifact,
-  MAX_INLINE_ARTIFACT_BYTES,
+  MAX_INLINE_BYTES_LOCAL,
+  MAX_INLINE_BYTES_REMOTE,
+  openCommandFor,
   openInBrowser,
   type ReplayArtifact,
   writeReplayArtifacts,
@@ -117,6 +115,8 @@ interface SessionsResult {
     jsonPath: string;
     openedInBrowser: boolean;
     inlined: boolean;
+    local: boolean;
+    bytes: number;
   };
 }
 
@@ -286,48 +286,54 @@ const formatIntegrations = (result: SessionsResult): string => {
 const formatReplay = (result: SessionsResult): string => {
   const r = result.replay;
   if (!r) return 'No replay was downloaded.';
-  const { artifact, htmlPath, jsonPath, openedInBrowser, inlined } = r;
+  const { artifact, htmlPath, jsonPath, openedInBrowser, inlined, local } = r;
   const seconds =
     typeof artifact.duration === 'number'
       ? `${Math.round(artifact.duration / 1000)}s`
       : 'unknown length';
+  const kb = Math.round(r.bytes / 1024);
 
-  return [
+  const head = [
     `## Replay \`${artifact.sessionId}\``,
     ``,
     `- Site: ${artifact.website ?? 'unknown'}`,
     `- Length: ${seconds}, ${artifact.events.length} events`,
-    `- Player page (self-contained, playable): ${htmlPath}`,
+    `- Player (self-contained): ${htmlPath}`,
     `- Raw rrweb events: ${jsonPath}`,
-    openedInBrowser ? `- Already opened in the user's default browser.` : '',
     ``,
-    `### Showing this to the user — pick the first option you can actually do`,
+    `### How to show it`,
     ``,
-    inlined
-      ? `1. **Render the attached HTML resource inline.** It is attached to this ` +
-        `response as a \`text/html\` resource and is completely self-contained ` +
-        `(events embedded, player from CDN). If you can display HTML — an iframe, ` +
-        `an embedded resource, an artifact that accepts raw HTML — render it as-is ` +
-        `and do not rebuild it.`
-      : `1. Inline rendering is unavailable: the player is ${Math.round(
-          Buffer.byteLength(r.html) / 1024,
-        )} KB, over the inline limit, so it was not attached. Use option 2 or 3.`,
+  ];
+
+  // The path is only reachable when the server shares the caller's machine.
+  const how = local
+    ? [
+        openedInBrowser
+          ? `Already opened in the user's browser — say it is playing, and stop.`
+          : `Run this to open it in their browser:\n\n    ${openCommandFor(htmlPath)}\n`,
+      ]
+    : inlined
+      ? [
+          `An equivalent \`text/html\` resource (${kb} KB) is attached to this ` +
+            `response — render it inline as-is; do not rebuild it. The file path ` +
+            `above is on the machine running this server, so it only helps the ` +
+            `user if that is also their own machine.`,
+        ]
+      : [
+          `The player is ${kb} KB — too large to attach inline, and the path above ` +
+            `is on the machine running this server, not necessarily the user's. ` +
+            `Tell them the replay is ready, give them the path, and say it must be ` +
+            `opened on that host.`,
+        ];
+
+  return [
+    ...head,
+    ...how,
     ``,
-    `2. **Otherwise build an artifact/HTML document that plays it.** Requirements, ` +
-      `follow them exactly or playback will not work:`,
-    `   - Read the events from \`${jsonPath}\` (the \`events\` array). Do not ` +
-      `paste them inline if large — load the file.`,
-    `   - Stylesheet: \`${RRWEB_PLAYER_CSS}\` (integrity \`${RRWEB_PLAYER_CSS_SRI}\`, crossorigin anonymous)`,
-    `   - Script: \`${RRWEB_PLAYER_JS}\` (integrity \`${RRWEB_PLAYER_JS_SRI}\`, crossorigin anonymous)`,
-    `   - Mount with \`new rrwebPlayer({ target, props: { events, showController: true, autoPlay: false, width, height } })\``,
-    `   - Sizing: \`width: Math.min(window.innerWidth - 48, 1280)\`, \`height: Math.min(window.innerHeight - 160, 720)\`. ` +
-      `The player needs an explicit pixel width and height — it renders blank without them.`,
-    `   - Chrome: background \`#0b0b0f\`, text \`#e7e7ea\`, a header showing host / session id / recorded-at, ` +
-      `player centred in a scrollable main area.`,
-    ``,
-    `3. **If you can render nothing**, tell the user to open the player page above ` +
-      `in a browser. Do not describe the replay instead of showing it, and do not ` +
-      `dump the raw events into the conversation.`,
+    `**Do not read either file.** They are hundreds of kilobytes of DOM-event ` +
+      `JSON — cat/jq/Read on them wastes the context window and shows the user ` +
+      `nothing. Never paste raw events, and never describe the replay instead of ` +
+      `showing it.`,
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -425,6 +431,7 @@ export function registerSessionsTool(
             config.requestTimeout,
           );
           const html = buildReplayHtml(artifact);
+          const bytes = Buffer.byteLength(html);
           const { htmlPath, jsonPath } = await writeReplayArtifacts(
             artifact,
             html,
@@ -445,7 +452,15 @@ export function registerSessionsTool(
               htmlPath,
               jsonPath,
               openedInBrowser,
-              inlined: Buffer.byteLength(html) <= MAX_INLINE_ARTIFACT_BYTES,
+              // A local client can open the path, so inlining is pure context
+              // cost; a remote one can only ever see the inline copy.
+              local: config.transport === 'stdio',
+              bytes,
+              inlined:
+                bytes <=
+                (config.transport === 'stdio'
+                  ? MAX_INLINE_BYTES_LOCAL
+                  : MAX_INLINE_BYTES_REMOTE),
             },
           };
         }
@@ -474,12 +489,7 @@ export function registerSessionsTool(
         },
       ];
       const replay = result?.replay;
-      // A replay is a DOM-event log and can be tens of MB; inline only what a
-      // client could plausibly render, and leave the rest on disk.
-      if (
-        replay &&
-        Buffer.byteLength(replay.html) <= MAX_INLINE_ARTIFACT_BYTES
-      ) {
+      if (replay?.inlined) {
         blocks.push({
           type: 'resource' as const,
           resource: {

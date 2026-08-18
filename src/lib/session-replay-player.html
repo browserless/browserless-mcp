@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}}</title>
+    <link
+      rel="stylesheet"
+      href="{{PLAYER_CSS}}"
+      integrity="{{PLAYER_CSS_SRI}}"
+      crossorigin="anonymous"
+    />
+    <style>
+      /* Tokens copied from the dashboard (browserless-account globals.css) so the
+     standalone file matches it without pulling in Tailwind. */
+      :root {
+        color-scheme: light dark;
+        --bg: hsl(210 40% 98.0392%);
+        --panel: hsl(0 0% 100%);
+        --border: hsl(216 12.1951% 83.9216%);
+        --text: hsl(217.2414 32.5843% 17.451%);
+        --muted: hsl(220 8.9362% 46.0784%);
+        --chip: hsl(220 13.0435% 90.9804%);
+        --accent: hsl(238.7324 83.5294% 66.6667%);
+        --accent-text: hsl(0 0% 100%);
+        --track: hsl(238.7324 83.5294% 66.6667% / 0.2);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: hsl(222.2222 47.3684% 11.1765%);
+          --panel: hsl(217.2414 32.5843% 17.451%);
+          --border: hsl(215 13.7931% 34.1176%);
+          --text: hsl(214.2857 31.8182% 91.3725%);
+          --muted: hsl(217.8947 10.6145% 64.902%);
+          --chip: hsl(217.7778 23.0769% 22.9412%);
+          --accent: hsl(234.4538 89.4737% 73.9216%);
+          --track: hsl(234.4538 89.4737% 73.9216% / 0.2);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+      }
+      .shell {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--panel);
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .chip {
+        background: var(--chip);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .chip.mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .chip.accent {
+        background: var(--accent);
+        color: var(--accent-text);
+        font-weight: 700;
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button.icon {
+        padding: 8px;
+        width: 38px;
+        height: 38px;
+        justify-content: center;
+      }
+      #toggle svg {
+        width: 16px;
+        height: 16px;
+        display: block;
+      }
+      #toggle #icon-pause {
+        display: none;
+      }
+      #toggle.playing #icon-play {
+        display: none;
+      }
+      #toggle.playing #icon-pause {
+        display: block;
+      }
+      .spacer {
+        flex: 1 1 auto;
+      }
+      .scrub {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex: 1 1 240px;
+        min-width: 190px;
+      }
+      input[type='range'] {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--track);
+        outline: none;
+      }
+      input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--bg);
+        border: 1px solid var(--accent);
+        box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+        cursor: pointer;
+      }
+      input[type='range']::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--bg);
+        border: 1px solid var(--accent);
+        box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+        cursor: pointer;
+      }
+      .time {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 20px;
+        overflow: auto;
+        background: var(--bg);
+      }
+      .rr-block {
+        background: #fff;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .notice {
+        padding: 24px;
+        text-align: center;
+        color: #ef4444;
+      }
+      /* rrweb ships its own controller; the toolbar above replaces it. */
+      .replayer-wrapper .rr-controller {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="bar">
+        <span class="chip mono">{{SESSION_ID}}</span>
+        <span class="chip accent">{{HOST}}</span>
+        <span class="chip" id="ago"></span>
+        <button
+          id="download"
+          type="button"
+          title="Download the raw rrweb events"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download
+        </button>
+        <div class="spacer"></div>
+        <button id="toggle" class="icon" type="button" aria-label="Pause">
+          <svg
+            id="icon-play"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg
+            id="icon-pause"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+          </svg>
+        </button>
+        <div class="scrub">
+          <input
+            id="seek"
+            type="range"
+            min="0"
+            max="1000"
+            value="0"
+            step="1"
+            aria-label="Seek"
+          />
+          <span class="time" id="time">0s / 0s</span>
+        </div>
+      </div>
+      <main>
+        <div id="player" class="rr-block"></div>
+        <div id="fallback" class="notice" hidden>
+          Unable to load the player. Be online the first time you open this file
+          so rrweb-player can be fetched from the CDN.
+        </div>
+      </main>
+    </div>
+    <script id="replay-data" type="application/json">
+      {{REPLAY_JSON}}
+    </script>
+    <script
+      src="{{PLAYER_JS}}"
+      integrity="{{PLAYER_JS_SRI}}"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      (function () {
+        var RECORDED_AT = {{RECORDED_AT}};
+        var fallback = document.getElementById("fallback");
+        var data, events;
+        try {
+          data = JSON.parse(document.getElementById("replay-data").textContent);
+          events = Array.isArray(data.events) ? data.events : [];
+        } catch (err) { fallback.hidden = false; return; }
+
+        var stamps = events
+          .map(function (e) { return Number(e && e.timestamp); })
+          .filter(function (n) { return isFinite(n); });
+        // Duration comes from the events: rrweb's own metadata reads not-a-number
+        // when a log has missing or unsorted timestamps.
+        var total = stamps.length > 1
+          ? Math.max.apply(null, stamps) - Math.min.apply(null, stamps) : 0;
+
+        var fmt = function (ms) {
+          var safe = Math.max(0, isFinite(ms) ? ms : 0);
+          var seconds = Math.floor(safe / 1000);
+          var minutes = Math.floor(seconds / 60);
+          var hours = Math.floor(minutes / 60);
+          if (hours > 0) return hours + "h " + (minutes % 60) + "m " + (seconds % 60) + "s";
+          if (minutes > 0) return minutes + "m " + (seconds % 60) + "s";
+          return seconds + "s";
+        };
+        var timeEl = document.getElementById("time");
+        var seek = document.getElementById("seek");
+        var paint = function (cur) {
+          timeEl.textContent = fmt(cur) + " / " + fmt(total);
+          var pct = total > 0 ? Math.min(1000, Math.round((cur / total) * 1000)) : 0;
+          if (document.activeElement !== seek) seek.value = String(pct);
+          var frac = pct / 10;
+          seek.style.background =
+            "linear-gradient(to right, var(--accent) " + frac + "%, var(--track) " + frac + "%)";
+        };
+
+        var ago = document.getElementById("ago");
+        if (RECORDED_AT) {
+          var hours = Math.floor((Date.now() - RECORDED_AT) / 3600000);
+          if (hours < 168) {
+            ago.textContent = hours < 1 ? "just now"
+              : hours < 24 ? hours + (hours === 1 ? " hour ago" : " hours ago")
+              : Math.floor(hours / 24) + (hours < 48 ? " day ago" : " days ago");
+          } else {
+            ago.textContent = new Date(RECORDED_AT).toLocaleDateString(undefined,
+              { month: "short", day: "numeric" });
+          }
+        } else { ago.hidden = true; }
+
+        document.getElementById("download").addEventListener("click", function () {
+          var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "session-replay-" + (data.sessionId || "events") + ".json";
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        });
+
+        var Ctor = typeof rrwebPlayer !== "undefined" ? rrwebPlayer : window.rrwebPlayer;
+        if (!Ctor || events.length < 2) { fallback.hidden = false; paint(0); return; }
+
+        var player;
+        try {
+          player = new Ctor({
+            target: document.getElementById("player"),
+            props: {
+              events: events,
+              autoPlay: true,
+              showController: false,
+              width: Math.min(window.innerWidth - 88, 1280),
+              height: Math.min(window.innerHeight - 190, 720),
+            },
+          });
+        } catch (err) {
+          console.error("Failed to initialize rrweb-player:", err);
+          fallback.hidden = false; return;
+        }
+
+        var toggle = document.getElementById("toggle");
+        var playing = false;
+        var setPlaying = function (on) {
+          playing = on;
+          toggle.classList.toggle("playing", on);
+          toggle.setAttribute("aria-label", on ? "Pause" : "Play");
+        };
+
+        toggle.addEventListener("click", function () {
+          if (playing) { player.pause(); setPlaying(false); }
+          else { player.play(); setPlaying(true); }
+        });
+        seek.addEventListener("input", function () {
+          var ms = (Number(seek.value) / 1000) * total;
+          player.goto(ms, playing);
+          paint(ms);
+        });
+
+        setPlaying(true);
+        paint(0);
+        setInterval(function () {
+          var replayer = player.getReplayer && player.getReplayer();
+          var cur = replayer && replayer.getCurrentTime ? replayer.getCurrentTime() : 0;
+          if (!isFinite(cur)) cur = 0;
+          paint(cur);
+          if (playing && total > 0 && cur >= total) setPlaying(false);
+        }, 100);
+      })();
+    </script>
+  </body>
+</html>

@@ -438,9 +438,9 @@ describe('account-data tools', () => {
         expect(textOf(result)).to.include('2 events');
       });
 
-      // The model decides how to show a replay, so the tool has to state the
-      // options and the exact player recipe — not just hand back a file path.
-      it('instructs the model to render inline, else build an artifact', async () => {
+      // The model must be steered to a command, not to reading the artifact:
+      // it previously jq'd a 460 KB player file into the context window.
+      const primeReplay = () => {
         fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
         fetchStub.onSecondCall().resolves(
           new Response(JSON.stringify(artifact), {
@@ -448,6 +448,10 @@ describe('account-data tools', () => {
             headers: { 'Content-Type': 'application/json' },
           }),
         );
+      };
+
+      it('hands a local client an open command, and forbids reading the files', async () => {
+        primeReplay();
 
         const text = textOf(
           await executeFor(registerSessionsTool)(
@@ -456,16 +460,41 @@ describe('account-data tools', () => {
           ),
         );
 
-        expect(text).to.include('Render the attached HTML resource inline');
-        expect(text).to.include('build an artifact');
-        expect(text).to.include('rrweb-player@');
-        expect(text).to.include('integrity');
-        expect(text).to.include('new rrwebPlayer(');
-        // The blank-player trap: the player needs explicit pixel dimensions.
-        expect(text).to.include('renders blank without them');
-        expect(text).to.include(
-          'Do not describe the replay instead of showing it',
-        );
+        expect(text).to.match(/Already opened|open '/);
+        expect(text).to.include('Do not read either file');
+        expect(text).to.include('wastes the context window');
+        expect(text).to.not.include('rrweb-player@');
+      });
+
+      // A remote client cannot reach a path on the server's disk, so the inline
+      // copy is the only thing it can show.
+      it('inlines for a remote client instead of handing over a path', async () => {
+        primeReplay();
+
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerSessionsTool(server, {
+          ...mockConfig,
+          transport: 'httpStream',
+        });
+        const result = (await (
+          spy.firstCall.args[0].execute as never as (
+            a: unknown,
+            c: unknown,
+          ) => Promise<unknown>
+        )({ action: 'replay', sessionId: 'sr_1' }, mockContext)) as {
+          content: Content[];
+        };
+
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).to.include('render it inline as-is');
+        expect(text).to.include('machine running this server');
+        expect(text).to.not.include("open '");
+        expect(
+          result.content.some(
+            (c) => (c as { type: string }).type === 'resource',
+          ),
+        ).to.equal(true);
       });
 
       it('errors clearly when the replay has no stored artifact', async () => {
