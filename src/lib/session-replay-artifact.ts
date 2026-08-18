@@ -124,7 +124,7 @@ const escapeScriptClose = (value: string) =>
 const TEMPLATE_URL = new URL('./session-replay-player.html', import.meta.url);
 let cachedTemplate: string | undefined;
 
-/** Self-contained player: events are inlined, only rrweb-player is remote. */
+/** Events are inlined; rrweb-player itself is fetched from a CDN on first open. */
 export const buildReplayHtml = (replay: ReplayArtifact): string => {
   cachedTemplate ??= readFileSync(TEMPLATE_URL, 'utf8');
 
