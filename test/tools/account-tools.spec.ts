@@ -7,12 +7,14 @@ import { registerAccountTool } from '../../src/tools/account.js';
 import { registerUsageTool } from '../../src/tools/usage.js';
 import { registerSessionsTool } from '../../src/tools/sessions.js';
 import { registerLogsTool } from '../../src/tools/logs.js';
+import { replayBrowser } from '../../src/lib/session-replay-artifact.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://runtime.example.com',
   apiServerUrl: 'https://account.example.com',
+  replayCdnUrl: 'https://replay.example.com/',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -70,6 +72,8 @@ describe('account-data tools', () => {
 
   beforeEach(() => {
     fetchStub = sinon.stub(globalThis, 'fetch');
+    // The local path opens a real browser otherwise.
+    sinon.stub(replayBrowser, 'open').returns(true);
   });
 
   afterEach(() => sinon.restore());
@@ -422,7 +426,7 @@ describe('account-data tools', () => {
         )) as { content: Content[] };
 
         // Second call is the CDN, not the account API.
-        expect(fetchStub.secondCall.args[0]).to.include('cloudfront.net');
+        expect(fetchStub.secondCall.args[0]).to.include('replay.example.com');
         expect(fetchStub.secondCall.args[0]).to.include('abc/sr_1.json');
 
         const resource = result.content.find(

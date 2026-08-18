@@ -1,6 +1,16 @@
 import { expect } from 'chai';
 
-import { buildReplayHtml } from '../../src/lib/session-replay-artifact.js';
+import sinon from 'sinon';
+
+import {
+  buildReplayHtml,
+  fetchReplayArtifact,
+  openCommandFor,
+} from '../../src/lib/session-replay-artifact.js';
+
+// The template is a real .html file, and lint-staged runs prettier over it, so
+// assertions must match the rule rather than the formatter's line breaks.
+const squashed = (html: string) => html.replace(/\s+/g, ' ');
 
 const artifact = (events: unknown[]) => ({
   sessionId: 'sr_1',
@@ -27,7 +37,7 @@ describe('buildReplayHtml', () => {
 
   // rrweb's controller was replaced by our toolbar; leaving it on shows two.
   it("turns off rrweb's own controller", () => {
-    expect(buildReplayHtml(artifact(twoEvents))).to.include(
+    expect(squashed(buildReplayHtml(artifact(twoEvents)))).to.include(
       'showController: false',
     );
   });
@@ -63,7 +73,9 @@ describe('buildReplayHtml', () => {
     expect(html).to.not.include('<span class="chip mono"><img');
   });
   it('autoplays, since a replay is opened to be watched', () => {
-    expect(buildReplayHtml(artifact(twoEvents))).to.include('autoPlay: true');
+    expect(squashed(buildReplayHtml(artifact(twoEvents)))).to.include(
+      'autoPlay: true',
+    );
   });
 
   // The `hidden` attribute on an SVG loses to rrweb-player's stylesheet, which
@@ -71,8 +83,10 @@ describe('buildReplayHtml', () => {
   it('shows exactly one transport glyph at a time', () => {
     const html = buildReplayHtml(artifact(twoEvents));
 
-    expect(html).to.include('#toggle #icon-pause { display: none; }');
-    expect(html).to.include('#toggle.playing #icon-play { display: none; }');
+    expect(squashed(html)).to.include('#toggle #icon-pause { display: none; }');
+    expect(squashed(html)).to.include(
+      '#toggle.playing #icon-play { display: none; }',
+    );
     expect(html).to.not.include('hidden aria-hidden');
   });
   // A grey track token resolves to the panel colour in dark mode and disappears;
@@ -80,7 +94,62 @@ describe('buildReplayHtml', () => {
   it('derives the seek track from the accent so it shows in dark mode', () => {
     const html = buildReplayHtml(artifact(twoEvents));
 
-    expect(html).to.include('--track: hsl(238.7324 83.5294% 66.6667% / 0.2)');
-    expect(html).to.include('--track: hsl(234.4538 89.4737% 73.9216% / 0.2)');
+    expect(squashed(html)).to.include(
+      '--track: hsl(238.7324 83.5294% 66.6667% / 0.2)',
+    );
+    expect(squashed(html)).to.include(
+      '--track: hsl(234.4538 89.4737% 73.9216% / 0.2)',
+    );
+  });
+  it('emits a cmd-shell open command on Windows', () => {
+    const original = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      // `start` is a cmd builtin, so a bare `start <path>` never runs.
+      expect(openCommandFor('C:\\tmp\\replay.html')).to.equal(
+        'cmd /c start "" "C:\\tmp\\replay.html"',
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original });
+    }
+  });
+
+  it('quotes the path in the posix open command', () => {
+    expect(openCommandFor("/tmp/it's here.html")).to.equal(
+      "open '/tmp/it'\\''s here.html'",
+    );
+  });
+});
+
+describe('fetchReplayArtifact', () => {
+  let fetchStub: sinon.SinonStub;
+
+  beforeEach(() => {
+    fetchStub = sinon.stub(globalThis, 'fetch');
+  });
+  afterEach(() => sinon.restore());
+
+  // The origin check only covers the first hop, so following a redirect would
+  // let the CDN move the download to another origin.
+  it('refuses to follow a redirect off the configured origin', async () => {
+    fetchStub.resolves(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://evil.example.com/x.json' },
+      }),
+    );
+
+    try {
+      await fetchReplayArtifact(
+        'https://cdn.example.com/',
+        'replays/a.json',
+        { sessionId: 'a' },
+        1000,
+      );
+      expect.fail('expected a UserError');
+    } catch (error) {
+      expect((error as Error).message).to.include('redirected');
+    }
+    expect(fetchStub.firstCall.args[1].redirect).to.equal('manual');
   });
 });

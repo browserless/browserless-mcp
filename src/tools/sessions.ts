@@ -1,3 +1,5 @@
+import { pathToFileURL } from 'node:url';
+
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
@@ -9,7 +11,7 @@ import {
   MAX_INLINE_BYTES_LOCAL,
   MAX_INLINE_BYTES_REMOTE,
   openCommandFor,
-  openInBrowser,
+  replayBrowser,
   type ReplayArtifact,
   writeReplayArtifacts,
 } from '../lib/session-replay-artifact.js';
@@ -440,7 +442,7 @@ export function registerSessionsTool(
           // on a hosted deployment that would open one on a worker.
           const openedInBrowser =
             config.transport === 'stdio' && !isCompliant(config)
-              ? openInBrowser(htmlPath)
+              ? replayBrowser.open(htmlPath)
               : false;
           log.debug(
             `Replay ${params.sessionId}: ${artifact.events.length} events → ${htmlPath}`,
@@ -493,7 +495,7 @@ export function registerSessionsTool(
         blocks.push({
           type: 'resource' as const,
           resource: {
-            uri: `file://${replay.htmlPath}`,
+            uri: pathToFileURL(replay.htmlPath).href,
             mimeType: 'text/html',
             text: replay.html,
           },

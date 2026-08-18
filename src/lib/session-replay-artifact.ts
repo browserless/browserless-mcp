@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -86,9 +86,18 @@ export const fetchReplayArtifact = async (
   try {
     response = await fetch(requestUrl.toString(), {
       signal: controller.signal,
+      // The origin check above only covers the first hop; following a redirect
+      // would let the CDN move the download off the configured origin.
+      redirect: 'manual',
     });
   } finally {
     clearTimeout(timer);
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    throw new UserError(
+      'The replay CDN redirected the download. Refusing to follow it off the configured origin.',
+    );
   }
 
   if (!response.ok) {
@@ -142,12 +151,21 @@ export const buildReplayHtml = (replay: ReplayArtifact): string => {
   );
 };
 
+// Replay artifacts are raw page content, so only the most recent few are kept;
+// older directories this process created are removed as new ones appear.
+const RETAINED_ARTIFACT_DIRS = 3;
+const artifactDirs: string[] = [];
+
 /** Writes both artifacts next to each other and returns their paths. */
 export const writeReplayArtifacts = async (
   replay: ReplayArtifact,
   html: string,
 ): Promise<{ htmlPath: string; jsonPath: string }> => {
   const dir = await mkdtemp(join(tmpdir(), 'browserless-replay-'));
+  artifactDirs.push(dir);
+  while (artifactDirs.length > RETAINED_ARTIFACT_DIRS) {
+    rm(artifactDirs.shift()!, { recursive: true, force: true }).catch(() => {});
+  }
   const htmlPath = join(dir, replayFilename(replay, 'html'));
   const jsonPath = join(dir, replayFilename(replay, 'json'));
   await Promise.all([
@@ -157,25 +175,35 @@ export const writeReplayArtifacts = async (
   return { htmlPath, jsonPath };
 };
 
-const OPENERS: Record<string, string> = {
-  darwin: 'open',
-  linux: 'xdg-open',
-  win32: 'start',
+// `start` is a cmd builtin rather than an executable, so Windows needs the shell.
+const OPENERS: Record<string, [string, string[]]> = {
+  darwin: ['open', []],
+  linux: ['xdg-open', []],
+  win32: ['cmd', ['/c', 'start', '']],
 };
 
 /** The shell command that opens a path in the default browser on this platform. */
 export const openCommandFor = (filePath: string): string =>
-  `${OPENERS[process.platform] ?? 'open'} '${filePath.replace(/'/g, "'\\''")}'`;
+  process.platform === 'win32'
+    ? `cmd /c start "" "${filePath}"`
+    : `${OPENERS[process.platform]?.[0] ?? 'open'} '${filePath.replace(/'/g, "'\\''")}'`;
 
 // Only meaningful when the server runs on the caller's own machine — a hosted
 // deployment would open the browser on a worker.
-export const openInBrowser = (filePath: string): boolean => {
+const openInBrowser = (filePath: string): boolean => {
   const opener = OPENERS[process.platform];
   if (!opener) return false;
+  const [cmd, prefix] = opener;
   try {
-    spawn(opener, [filePath], { detached: true, stdio: 'ignore' }).unref();
+    spawn(cmd, [...prefix, filePath], {
+      detached: true,
+      stdio: 'ignore',
+    }).unref();
     return true;
   } catch {
     return false;
   }
 };
+
+// A seam, so a test can assert the local path without spawning a real browser.
+export const replayBrowser = { open: openInBrowser };
