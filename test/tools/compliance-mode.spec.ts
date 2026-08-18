@@ -690,7 +690,14 @@ describe('compliance mode — compliant tool surface', () => {
       // none names a credential, none accepts a URL to fetch.
       browserless_account: ['action'],
       browserless_usage: ['apiKeyIds', 'timeframe'],
-      browserless_sessions: ['action', 'limit', 'page', 'search', 'skip'],
+      browserless_sessions: [
+        'action',
+        'limit',
+        'page',
+        'search',
+        'sessionId',
+        'skip',
+      ],
       browserless_logs: [
         'apiKeyId',
         'category',

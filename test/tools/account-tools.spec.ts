@@ -368,6 +368,137 @@ describe('account-data tools', () => {
       expect(text).to.include('12s');
     });
 
+    describe("action 'replay'", () => {
+      const listResponse = (path: string | null) => ({
+        sessionReplayList: {
+          data: [
+            {
+              sessionId: 'sr_1',
+              website: 'https://example.com',
+              duration: 12000,
+              eventCount: 42,
+              timestamp: 1700000000,
+              path: path,
+            },
+          ],
+          totalCount: 1,
+          page: 1,
+          totalPages: 1,
+        },
+      });
+
+      const artifact = {
+        events: [
+          { type: 4, data: {} },
+          { type: 2, data: {} },
+        ],
+        website: 'https://example.com',
+      };
+
+      it('requires a sessionId', async () => {
+        try {
+          await executeFor(registerSessionsTool)(
+            { action: 'replay' },
+            mockContext,
+          );
+          expect.fail('expected a UserError');
+        } catch (error) {
+          expect((error as Error).message).to.include('sessionId is required');
+        }
+      });
+
+      it('fetches the artifact from the replay CDN and attaches a player resource', async () => {
+        fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
+        fetchStub.onSecondCall().resolves(
+          new Response(JSON.stringify(artifact), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+        const result = (await executeFor(registerSessionsTool)(
+          { action: 'replay', sessionId: 'sr_1' },
+          mockContext,
+        )) as { content: Content[] };
+
+        // Second call is the CDN, not the account API.
+        expect(fetchStub.secondCall.args[0]).to.include('cloudfront.net');
+        expect(fetchStub.secondCall.args[0]).to.include('abc/sr_1.json');
+
+        const resource = result.content.find(
+          (c) => (c as { type: string }).type === 'resource',
+        ) as { resource: { mimeType: string; text: string } };
+        expect(resource, 'player attached as a resource').to.exist;
+        expect(resource.resource.mimeType).to.equal('text/html');
+        expect(resource.resource.text).to.include('rrweb-player');
+        // The events must be inlined so the page plays offline.
+        expect(resource.resource.text).to.include('replay-data');
+
+        expect(textOf(result)).to.include('sr_1');
+        expect(textOf(result)).to.include('2 events');
+      });
+
+      // The model decides how to show a replay, so the tool has to state the
+      // options and the exact player recipe — not just hand back a file path.
+      it('instructs the model to render inline, else build an artifact', async () => {
+        fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
+        fetchStub.onSecondCall().resolves(
+          new Response(JSON.stringify(artifact), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+        const text = textOf(
+          await executeFor(registerSessionsTool)(
+            { action: 'replay', sessionId: 'sr_1' },
+            mockContext,
+          ),
+        );
+
+        expect(text).to.include('Render the attached HTML resource inline');
+        expect(text).to.include('build an artifact');
+        expect(text).to.include('rrweb-player@');
+        expect(text).to.include('integrity');
+        expect(text).to.include('new rrwebPlayer(');
+        // The blank-player trap: the player needs explicit pixel dimensions.
+        expect(text).to.include('renders blank without them');
+        expect(text).to.include(
+          'Do not describe the replay instead of showing it',
+        );
+      });
+
+      it('errors clearly when the replay has no stored artifact', async () => {
+        fetchStub.onFirstCall().resolves(gql(listResponse(null)));
+
+        try {
+          await executeFor(registerSessionsTool)(
+            { action: 'replay', sessionId: 'sr_1' },
+            mockContext,
+          );
+          expect.fail('expected a UserError');
+        } catch (error) {
+          expect((error as Error).message).to.include('No replay found');
+        }
+      });
+
+      it('rejects a path that escapes the configured CDN origin', async () => {
+        fetchStub
+          .onFirstCall()
+          .resolves(gql(listResponse('https://evil.example.com/steal.json')));
+
+        try {
+          await executeFor(registerSessionsTool)(
+            { action: 'replay', sessionId: 'sr_1' },
+            mockContext,
+          );
+          expect.fail('expected a UserError');
+        } catch (error) {
+          expect((error as Error).message).to.include('CDN origin');
+        }
+      });
+    });
+
     it('lists 1Password integrations for action integrations', async () => {
       fetchStub.resolves(
         gql({

@@ -1,19 +1,42 @@
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
+import type { Content } from 'fastmcp';
 import { z } from 'zod';
 
 import { accountQuery } from '../lib/account-api.js';
+import {
+  buildReplayHtml,
+  RRWEB_PLAYER_CSS,
+  RRWEB_PLAYER_CSS_SRI,
+  RRWEB_PLAYER_JS,
+  RRWEB_PLAYER_JS_SRI,
+  fetchReplayArtifact,
+  MAX_INLINE_ARTIFACT_BYTES,
+  openInBrowser,
+  type ReplayArtifact,
+  writeReplayArtifacts,
+} from '../lib/session-replay-artifact.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
+import { isCompliant } from './compliance.js';
+import { DEFAULT_REPLAY_CDN_URL } from '../config.js';
 import type { McpConfig } from '../@types/types.js';
 
 export const SessionsParamsSchema = z.object({
   action: z
-    .enum(['active', 'persistent', 'replays', 'integrations'])
+    .enum(['active', 'persistent', 'replays', 'replay', 'integrations'])
     .describe(
       'Which session data to read. `active` = browsers running right now; ' +
         '`persistent` = saved sessions on dedicated workers, running or not; ' +
-        '`replays` = recorded session replays; `integrations` = 1Password ' +
-        'credential integrations.',
+        '`replays` = list recorded session replays; `replay` = download one ' +
+        'replay and render it as a playable rrweb page (needs `sessionId`); ' +
+        '`integrations` = 1Password credential integrations.',
+    ),
+  sessionId: z
+    .string()
+    .max(128)
+    .optional()
+    .describe(
+      'Which replay to download, for action `replay`. Get ids from action `replays`.',
     ),
   limit: z
     .number()
@@ -65,6 +88,8 @@ interface ReplayEntry {
   duration: number | null;
   eventCount: number | null;
   timestamp: number | null;
+  // Only selected for the download path; the list never renders it.
+  path?: string | null;
 }
 
 interface OpIntegration {
@@ -85,6 +110,14 @@ interface SessionsResult {
     totalPages: number | null;
   };
   integrations?: OpIntegration[] | null;
+  replay?: {
+    artifact: ReplayArtifact;
+    html: string;
+    htmlPath: string;
+    jsonPath: string;
+    openedInBrowser: boolean;
+    inlined: boolean;
+  };
 }
 
 // One document per action: a single query selecting all four would make every
@@ -139,6 +172,7 @@ const REPLAYS_QUERY = `
         duration
         eventCount
         timestamp
+        path
       }
       totalCount
       page
@@ -249,6 +283,56 @@ const formatIntegrations = (result: SessionsResult): string => {
   ].join('\n');
 };
 
+const formatReplay = (result: SessionsResult): string => {
+  const r = result.replay;
+  if (!r) return 'No replay was downloaded.';
+  const { artifact, htmlPath, jsonPath, openedInBrowser, inlined } = r;
+  const seconds =
+    typeof artifact.duration === 'number'
+      ? `${Math.round(artifact.duration / 1000)}s`
+      : 'unknown length';
+
+  return [
+    `## Replay \`${artifact.sessionId}\``,
+    ``,
+    `- Site: ${artifact.website ?? 'unknown'}`,
+    `- Length: ${seconds}, ${artifact.events.length} events`,
+    `- Player page (self-contained, playable): ${htmlPath}`,
+    `- Raw rrweb events: ${jsonPath}`,
+    openedInBrowser ? `- Already opened in the user's default browser.` : '',
+    ``,
+    `### Showing this to the user — pick the first option you can actually do`,
+    ``,
+    inlined
+      ? `1. **Render the attached HTML resource inline.** It is attached to this ` +
+        `response as a \`text/html\` resource and is completely self-contained ` +
+        `(events embedded, player from CDN). If you can display HTML — an iframe, ` +
+        `an embedded resource, an artifact that accepts raw HTML — render it as-is ` +
+        `and do not rebuild it.`
+      : `1. Inline rendering is unavailable: the player is ${Math.round(
+          Buffer.byteLength(r.html) / 1024,
+        )} KB, over the inline limit, so it was not attached. Use option 2 or 3.`,
+    ``,
+    `2. **Otherwise build an artifact/HTML document that plays it.** Requirements, ` +
+      `follow them exactly or playback will not work:`,
+    `   - Read the events from \`${jsonPath}\` (the \`events\` array). Do not ` +
+      `paste them inline if large — load the file.`,
+    `   - Stylesheet: \`${RRWEB_PLAYER_CSS}\` (integrity \`${RRWEB_PLAYER_CSS_SRI}\`, crossorigin anonymous)`,
+    `   - Script: \`${RRWEB_PLAYER_JS}\` (integrity \`${RRWEB_PLAYER_JS_SRI}\`, crossorigin anonymous)`,
+    `   - Mount with \`new rrwebPlayer({ target, props: { events, showController: true, autoPlay: false, width, height } })\``,
+    `   - Sizing: \`width: Math.min(window.innerWidth - 48, 1280)\`, \`height: Math.min(window.innerHeight - 160, 720)\`. ` +
+      `The player needs an explicit pixel width and height — it renders blank without them.`,
+    `   - Chrome: background \`#0b0b0f\`, text \`#e7e7ea\`, a header showing host / session id / recorded-at, ` +
+      `player centred in a scrollable main area.`,
+    ``,
+    `3. **If you can render nothing**, tell the user to open the player page above ` +
+      `in a browser. Do not describe the replay instead of showing it, and do not ` +
+      `dump the raw events into the conversation.`,
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+};
+
 const FORMATTERS: Record<
   SessionsParams['action'],
   (result: SessionsResult) => string
@@ -256,6 +340,7 @@ const FORMATTERS: Record<
   active: formatActive,
   persistent: formatPersistent,
   replays: formatReplays,
+  replay: formatReplay,
   integrations: formatIntegrations,
 };
 
@@ -271,7 +356,11 @@ export function registerSessionsTool(
       'token: browsers running right now, persistent sessions saved on ' +
       'dedicated workers, recorded session replays, and 1Password credential ' +
       'integrations. Use it to answer "what is running", "did my session ' +
-      'survive", or "what got recorded". Read-only — it never stops a session.',
+      'survive", or "what got recorded". Read-only — it never stops a session. ' +
+      'Action `replay` downloads one recording and returns a self-contained, ' +
+      'playable rrweb page: render it inline if you can display HTML, otherwise ' +
+      'build an artifact from the returned instructions so the user can watch it. ' +
+      'Always show the replay — never just summarise it in words.',
     parameters: SessionsParamsSchema,
     annotations: {
       title: 'Browserless Sessions',
@@ -303,6 +392,63 @@ export function registerSessionsTool(
           }>(config, token, REPLAYS_QUERY, { page, pageSize: limit, search });
           return { replays: data.sessionReplayList };
         }
+        case 'replay': {
+          if (!params.sessionId) {
+            throw new UserError(
+              'A sessionId is required to download a replay. List them with action "replays" first.',
+            );
+          }
+          // Search by id rather than paging the whole list to find one row.
+          const data = await accountQuery<{
+            sessionReplayList: SessionsResult['replays'];
+          }>(config, token, REPLAYS_QUERY, {
+            search: params.sessionId,
+            pageSize: 50,
+          });
+          const entry = (data.sessionReplayList?.data ?? []).find(
+            (row) => row.sessionId === params.sessionId,
+          );
+          if (!entry?.path) {
+            throw new UserError(
+              `No replay found for session "${params.sessionId}". It may have been deleted or expired.`,
+            );
+          }
+
+          const artifact = await fetchReplayArtifact(
+            config.replayCdnUrl ?? DEFAULT_REPLAY_CDN_URL,
+            entry.path,
+            {
+              sessionId: params.sessionId,
+              website: entry.website ?? undefined,
+              timestamp: entry.timestamp ?? undefined,
+            },
+            config.requestTimeout,
+          );
+          const html = buildReplayHtml(artifact);
+          const { htmlPath, jsonPath } = await writeReplayArtifacts(
+            artifact,
+            html,
+          );
+          // Only open a browser when the server runs on the caller's own machine;
+          // on a hosted deployment that would open one on a worker.
+          const openedInBrowser =
+            config.transport === 'stdio' && !isCompliant(config)
+              ? openInBrowser(htmlPath)
+              : false;
+          log.debug(
+            `Replay ${params.sessionId}: ${artifact.events.length} events → ${htmlPath}`,
+          );
+          return {
+            replay: {
+              artifact,
+              html,
+              htmlPath,
+              jsonPath,
+              openedInBrowser,
+              inlined: Buffer.byteLength(html) <= MAX_INLINE_ARTIFACT_BYTES,
+            },
+          };
+        }
         case 'integrations': {
           const data = await accountQuery<{
             listOnePasswordIntegrations: OpIntegration[] | null;
@@ -320,8 +466,30 @@ export function registerSessionsTool(
         result?.integrations?.length ??
         0,
     }),
-    format: (result, params) => [
-      { type: 'text' as const, text: FORMATTERS[params.action](result ?? {}) },
-    ],
+    format: (result, params) => {
+      const blocks: Content[] = [
+        {
+          type: 'text' as const,
+          text: FORMATTERS[params.action](result ?? {}),
+        },
+      ];
+      const replay = result?.replay;
+      // A replay is a DOM-event log and can be tens of MB; inline only what a
+      // client could plausibly render, and leave the rest on disk.
+      if (
+        replay &&
+        Buffer.byteLength(replay.html) <= MAX_INLINE_ARTIFACT_BYTES
+      ) {
+        blocks.push({
+          type: 'resource' as const,
+          resource: {
+            uri: `file://${replay.htmlPath}`,
+            mimeType: 'text/html',
+            text: replay.html,
+          },
+        });
+      }
+      return blocks;
+    },
   });
 }
