@@ -101,23 +101,38 @@ describe('buildReplayHtml', () => {
       '--track: hsl(234.4538 89.4737% 73.9216% / 0.2)',
     );
   });
-  it('emits a cmd-shell open command on Windows', () => {
+  // The opener is platform-dependent, so each case pins the platform rather than
+  // asserting whatever the test host happens to be.
+  const onPlatform = <T>(platform: string, fn: () => T): T => {
     const original = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'win32' });
+    Object.defineProperty(process, 'platform', { value: platform });
     try {
-      // `start` is a cmd builtin, so a bare `start <path>` never runs.
-      expect(openCommandFor('C:\\tmp\\replay.html')).to.equal(
-        'cmd /c start "" "C:\\tmp\\replay.html"',
-      );
+      return fn();
     } finally {
       Object.defineProperty(process, 'platform', { value: original });
     }
+  };
+
+  it('emits a cmd-shell open command on Windows', () => {
+    // `start` is a cmd builtin, so a bare `start <path>` never runs.
+    expect(
+      onPlatform('win32', () => openCommandFor('C:\\tmp\\replay.html')),
+    ).to.equal('cmd /c start "" "C:\\tmp\\replay.html"');
   });
 
-  it('quotes the path in the posix open command', () => {
-    expect(openCommandFor("/tmp/it's here.html")).to.equal(
-      "open '/tmp/it'\\''s here.html'",
+  it('uses the platform opener and quotes the path on posix', () => {
+    expect(
+      onPlatform('darwin', () => openCommandFor('/tmp/a b.html')),
+    ).to.equal("open '/tmp/a b.html'");
+    expect(onPlatform('linux', () => openCommandFor('/tmp/a b.html'))).to.equal(
+      "xdg-open '/tmp/a b.html'",
     );
+  });
+
+  it('escapes a single quote in the path', () => {
+    expect(
+      onPlatform('darwin', () => openCommandFor("/tmp/it's here.html")),
+    ).to.equal("open '/tmp/it'\\''s here.html'");
   });
 });
 
