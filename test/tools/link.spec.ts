@@ -401,6 +401,85 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  it('refuses to close the browser while checkout creation is in flight', async () => {
+    let markStarted!: () => void;
+    let releaseResponse!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer(async () => {
+      markStarted();
+      await responseGate;
+      return {
+        status: 'pending_approval',
+        approval_url: 'https://app.link.com/approve/abc',
+        instruction: 'Approve the payment.',
+        checkout_id: checkoutId,
+        _next: {
+          action: 'resume',
+          checkout_id: checkoutId,
+          valid_until: '2099-08-18T00:00:00.000Z',
+        },
+      };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-close-in-flight',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      const agent = captureNamedExecute(
+        registerAgentTools,
+        'browserless_agent',
+        config,
+      );
+      const pendingCheckout = checkout(
+        {
+          action: 'create',
+          browser_session_handle: session.handle,
+          merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+          amount_minor: 1_000,
+          currency: 'usd',
+          cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+          selectors: {
+            number: 'input[name=cardnumber]',
+            expiry: 'input[name=exp-date]',
+            cvc: 'input[name=cvc]',
+          },
+        },
+        mockContext,
+      );
+      await started;
+
+      let error: unknown;
+      try {
+        await agent(
+          { method: 'close', params: {}, sessionId: session.handle },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error).message).to.match(/operation.*in progress/i);
+
+      releaseResponse();
+      await pendingCheckout;
+      expect(session.stripeLinkContinuation).to.deep.equal({
+        checkoutId,
+        allowedNextAction: 'resume',
+      });
+    } finally {
+      releaseResponse();
+      await browser.close();
+    }
+  });
+
   it('allows only one active Stripe Link checkout per browser session', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     let checkoutCalls = 0;
