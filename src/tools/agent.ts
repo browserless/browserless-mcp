@@ -639,6 +639,14 @@ export function registerAgentTools(
         );
       }
 
+      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false);
+        throw new UserError(
+          'stripeLinkCheckout is reserved for browserless_link_checkout.',
+        );
+      }
+
       if (commands.length === 1 && commands[0].method === 'close') {
         closeSession(
           mcpSessionId,

@@ -2,6 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 
 import type {
+  ActiveSession,
   McpConfig,
   StripeLinkCheckoutCartLine,
   StripeLinkCheckoutRequest,
@@ -66,6 +67,30 @@ const ACTION_RESOLUTIONS = new Set([
   'create_new_spend_request',
   'create_new_spend_request_after_completion',
 ]);
+
+const sessionOperations = new WeakMap<ActiveSession, Promise<void>>();
+
+const acquireSessionOperation = async (
+  session: ActiveSession,
+): Promise<() => void> => {
+  const previous = sessionOperations.get(session) ?? Promise.resolve();
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  const queued = previous.then(() => gate);
+  sessionOperations.set(session, queued);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseGate();
+    if (sessionOperations.get(session) === queued) {
+      sessionOperations.delete(session);
+    }
+  };
+};
 
 const SessionHandleSchema = z
   .string()
@@ -386,69 +411,100 @@ export function registerStripeLinkCheckoutTool(
             'That browser session is not open. Resume it with browserless_agent and use the returned sessionId.',
           );
         }
-        if (params.action === 'create' && session.stripeLinkContinuation) {
-          throw new UserError(
-            session.stripeLinkContinuation.allowedNextAction === 'resume'
-              ? 'A Stripe Link checkout is already active in this browser. Resume or cancel it before creating another checkout.'
-              : 'A Stripe Link checkout is already active in this browser. Report its outcome before creating another checkout.',
+        const release = await acquireSessionOperation(session);
+        try {
+          const continuation = session.stripeLinkContinuation;
+          if (params.action === 'create' && continuation) {
+            throw new UserError(
+              continuation.allowedNextAction === 'resume'
+                ? 'A Stripe Link checkout is already active in this browser. Resume or cancel it before creating another checkout.'
+                : 'A Stripe Link checkout is already active in this browser. Report its outcome before creating another checkout.',
+            );
+          }
+          if (params.action !== 'create') {
+            if (!continuation) {
+              throw new UserError(
+                'There is no active Stripe Link checkout in this browser session.',
+              );
+            }
+            if (params.checkout_id !== continuation.checkoutId) {
+              throw new UserError(
+                'checkout_id does not match the active Stripe Link checkout.',
+              );
+            }
+            const actionAllowed =
+              (params.action === 'resume' &&
+                continuation.allowedNextAction === 'resume') ||
+              (params.action === 'cancel' &&
+                continuation.allowedNextAction === 'resume') ||
+              (params.action === 'report' &&
+                continuation.allowedNextAction === 'report');
+            if (!actionAllowed) {
+              throw new UserError(
+                `The active Stripe Link checkout must ${continuation.allowedNextAction} next.`,
+              );
+            }
+          }
+          const { browser_session_handle: _handle, ...command } = params;
+          const response = await send(
+            session,
+            'stripeLinkCheckout',
+            command as Record<string, unknown>,
+            config.requestTimeout,
           );
-        }
-        const { browser_session_handle: _handle, ...command } = params;
-        const response = await send(
-          session,
-          'stripeLinkCheckout',
-          command as Record<string, unknown>,
-          config.requestTimeout,
-        );
-        if (response.error) {
-          throw new UserError(
-            'Stripe Link checkout could not continue safely in this browser session.',
+          if (response.error) {
+            throw new UserError(
+              'Stripe Link checkout could not continue safely in this browser session.',
+            );
+          }
+          const result = normalize(response.result);
+          const continuationCheckoutId =
+            'checkout_id' in params ? params.checkout_id : undefined;
+          const sameContinuation =
+            continuationCheckoutId !== undefined &&
+            session.stripeLinkContinuation?.checkoutId ===
+              continuationCheckoutId;
+          const terminal =
+            params.action === 'report' ||
+            params.action === 'cancel' ||
+            TERMINAL_STATUSES.has(result.status) ||
+            (result.status === 'requires_action' && !result._next);
+          if (sameContinuation && terminal) {
+            session.stripeLinkContinuation = undefined;
+          } else if (
+            result._next?.action === 'resume' &&
+            RESUMABLE_STATUSES.has(result.status)
+          ) {
+            session.stripeLinkContinuation = {
+              checkoutId: result._next.checkout_id,
+              allowedNextAction: 'resume',
+            };
+          } else if (
+            params.action === 'resume' &&
+            result.status === 'filled' &&
+            result.checkout_id === params.checkout_id
+          ) {
+            session.stripeLinkContinuation = {
+              checkoutId: params.checkout_id,
+              allowedNextAction: 'report',
+            };
+          }
+          if (params.action === 'create') {
+            session.skillState.fired.set(
+              'agentic-checkout',
+              session.skillState.cmdIndex,
+            );
+          }
+          if (terminal) {
+            session.skillState.fired.delete('agentic-checkout');
+          }
+          log.debug(
+            `Stripe Link checkout: action=${params.action} status=${result.status}`,
           );
+          return result;
+        } finally {
+          release();
         }
-        const result = normalize(response.result);
-        const continuationCheckoutId =
-          'checkout_id' in params ? params.checkout_id : undefined;
-        const sameContinuation =
-          continuationCheckoutId !== undefined &&
-          session.stripeLinkContinuation?.checkoutId === continuationCheckoutId;
-        const terminal =
-          params.action === 'report' ||
-          params.action === 'cancel' ||
-          TERMINAL_STATUSES.has(result.status) ||
-          (result.status === 'requires_action' && !result._next);
-        if (sameContinuation && terminal) {
-          session.stripeLinkContinuation = undefined;
-        } else if (
-          result._next?.action === 'resume' &&
-          RESUMABLE_STATUSES.has(result.status)
-        ) {
-          session.stripeLinkContinuation = {
-            checkoutId: result._next.checkout_id,
-            allowedNextAction: 'resume',
-          };
-        } else if (
-          params.action === 'resume' &&
-          result.status === 'filled' &&
-          result.checkout_id === params.checkout_id
-        ) {
-          session.stripeLinkContinuation = {
-            checkoutId: params.checkout_id,
-            allowedNextAction: 'report',
-          };
-        }
-        if (params.action === 'create') {
-          session.skillState.fired.set(
-            'agentic-checkout',
-            session.skillState.cmdIndex,
-          );
-        }
-        if (terminal) {
-          session.skillState.fired.delete('agentic-checkout');
-        }
-        log.debug(
-          `Stripe Link checkout: action=${params.action} status=${result.status}`,
-        );
-        return result;
       },
       analyticsProps: (params, result) => ({
         action: params.action,

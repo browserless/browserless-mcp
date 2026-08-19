@@ -12,6 +12,7 @@ import {
   formatSnapshot,
   normalizeUploadCommand,
   buildSkillEventProps,
+  AgentParamsSchema,
   registerAgentTools,
   sanitizeUpgradeBody,
 } from '../../src/tools/agent.js';
@@ -82,6 +83,55 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
+
+describe('browserless_agent reserved methods', () => {
+  it('rejects Stripe Link checkout through single and batch schemas', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'stripeLinkCheckout',
+        params: { action: 'create' },
+      }).success,
+    ).to.equal(false);
+    expect(
+      AgentParamsSchema.safeParse({
+        commands: [
+          { method: 'snapshot', params: {} },
+          { method: 'stripeLinkCheckout', params: { action: 'create' } },
+        ],
+      }).success,
+    ).to.equal(false);
+  });
+
+  it('rejects Stripe Link checkout at runtime if schema validation is bypassed', async () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addToolSpy = sinon.spy(server, 'addTool');
+    registerAgentTools(server, mockConfig);
+    const execute = addToolSpy
+      .getCalls()
+      .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
+      .execute;
+
+    for (const params of [
+      { method: 'stripeLinkCheckout', params: { action: 'create' } },
+      {
+        commands: [
+          { method: 'snapshot', params: {} },
+          { method: 'stripeLinkCheckout', params: { action: 'create' } },
+        ],
+      },
+    ]) {
+      let error: unknown;
+      try {
+        await execute(params, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error).message).to.match(
+        /reserved.*browserless_link_checkout/i,
+      );
+    }
+  });
+});
 
 describe('browserless_skill tool', () => {
   let server: FastMCP;

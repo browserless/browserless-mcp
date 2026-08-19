@@ -461,6 +461,136 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  it('serializes concurrent creates and keeps exactly one continuation', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    let checkoutCalls = 0;
+    const browser = await makeRespondingServer(() => {
+      checkoutCalls++;
+      return {
+        status: 'pending_approval',
+        approval_url: 'https://app.link.com/approve/abc',
+        instruction: 'Approve the payment.',
+        checkout_id: checkoutId,
+        _next: {
+          action: 'resume',
+          checkout_id: checkoutId,
+          valid_until: '2099-08-18T00:00:00.000Z',
+        },
+      };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-concurrent-create',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      const create = {
+        action: 'create' as const,
+        browser_session_handle: session.handle,
+        merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+        amount_minor: 1_000,
+        currency: 'usd' as const,
+        cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+        selectors: {
+          number: 'input[name=cardnumber]',
+          expiry: 'input[name=exp-date]',
+          cvc: 'input[name=cvc]',
+        },
+      };
+
+      const results = await Promise.allSettled([
+        checkout(create, mockContext),
+        checkout(create, mockContext),
+      ]);
+      expect(
+        results.filter((result) => result.status === 'fulfilled'),
+      ).to.have.length(1);
+      expect(
+        results.filter((result) => result.status === 'rejected'),
+      ).to.have.length(1);
+      expect(checkoutCalls).to.equal(1);
+      expect(session.stripeLinkContinuation).to.deep.equal({
+        checkoutId,
+        allowedNextAction: 'resume',
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('rejects mismatched checkout ids and out-of-order actions before dispatch', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    let checkoutCalls = 0;
+    const browser = await makeRespondingServer(() => {
+      checkoutCalls++;
+      return {
+        status: 'pending_approval',
+        approval_url: 'https://app.link.com/approve/abc',
+        instruction: 'Approve the payment.',
+        checkout_id: checkoutId,
+        _next: {
+          action: 'resume',
+          checkout_id: checkoutId,
+          valid_until: '2099-08-18T00:00:00.000Z',
+        },
+      };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-mismatched-continuation',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      await checkout(
+        {
+          action: 'create',
+          browser_session_handle: session.handle,
+          merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+          amount_minor: 1_000,
+          currency: 'usd',
+          cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+          selectors: {
+            number: 'input[name=cardnumber]',
+            expiry: 'input[name=exp-date]',
+            cvc: 'input[name=cvc]',
+          },
+        },
+        mockContext,
+      );
+
+      for (const request of [
+        {
+          action: 'resume',
+          browser_session_handle: session.handle,
+          checkout_id: 'lkco_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
+        },
+        {
+          action: 'report',
+          browser_session_handle: session.handle,
+          checkout_id: checkoutId,
+          outcome: 'success',
+        },
+      ]) {
+        let error: unknown;
+        try {
+          await checkout(request, mockContext);
+        } catch (caught) {
+          error = caught;
+        }
+        expect((error as Error).message).to.match(
+          /does not match|must resume next/i,
+        );
+      }
+      expect(checkoutCalls).to.equal(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('does not retain a terminal checkout response with a forged resume hint', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     const browser = await makeRespondingServer(() => ({
@@ -676,6 +806,10 @@ describe('Stripe Link tools', () => {
         browser_session_handle: session.handle,
         checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
       };
+      session.stripeLinkContinuation = {
+        checkoutId: params.checkout_id,
+        allowedNextAction: 'resume',
+      };
       const auto = JSON.parse(textOf(await execute(params, mockContext)));
       expect(auto.action_url).to.equal(
         'https://app.link.com/finish_setup?verify=3ds',
@@ -723,6 +857,10 @@ describe('Stripe Link tools', () => {
         action: 'resume' as const,
         browser_session_handle: session.handle,
         checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+      };
+      session.stripeLinkContinuation = {
+        checkoutId: params.checkout_id,
+        allowedNextAction: 'resume',
       };
       let error: unknown;
       try {
