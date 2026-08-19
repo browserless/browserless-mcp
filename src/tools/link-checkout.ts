@@ -10,6 +10,7 @@ import type {
 import { AnalyticsHelper } from '../lib/analytics.js';
 import {
   acquireStripeLinkSessionOperation,
+  clearExpiredStripeLinkContinuation,
   getActiveSessionByHandle,
   send,
 } from '../lib/agent-client.js';
@@ -320,13 +321,18 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
       throw new Error('Browserless returned an invalid checkout next step');
     }
     const next = body._next as Record<string, unknown>;
+    const validUntil =
+      typeof next.valid_until === 'string'
+        ? Date.parse(next.valid_until)
+        : Number.NaN;
     if (
       !RESUMABLE_STATUSES.has(result.status) ||
       next.action !== 'resume' ||
       typeof next.checkout_id !== 'string' ||
       !CHECKOUT_ID_RE.test(next.checkout_id) ||
       typeof next.valid_until !== 'string' ||
-      !Number.isFinite(Date.parse(next.valid_until)) ||
+      !Number.isFinite(validUntil) ||
+      validUntil <= Date.now() ||
       (result.checkout_id && next.checkout_id !== result.checkout_id)
     ) {
       throw new Error('Browserless returned an invalid checkout next step');
@@ -392,7 +398,18 @@ export function registerStripeLinkCheckoutTool(
         }
         const release = await acquireStripeLinkSessionOperation(session);
         try {
-          const continuation = session.stripeLinkContinuation;
+          let continuation = session.stripeLinkContinuation;
+          const expired =
+            params.action !== 'cancel' &&
+            clearExpiredStripeLinkContinuation(session);
+          if (expired) {
+            continuation = undefined;
+            if (params.action !== 'create') {
+              throw new UserError(
+                'The active Stripe Link checkout has expired. Create a new checkout.',
+              );
+            }
+          }
           if (params.action === 'create' && continuation) {
             throw new UserError(
               continuation.allowedNextAction === 'resume'
@@ -437,6 +454,15 @@ export function registerStripeLinkCheckoutTool(
             );
           }
           const result = normalize(response.result);
+          if (
+            params.action !== 'create' &&
+            result._next?.checkout_id !== undefined &&
+            result._next.checkout_id !== params.checkout_id
+          ) {
+            throw new Error(
+              'Browserless returned an invalid checkout next step',
+            );
+          }
           const continuationCheckoutId =
             'checkout_id' in params ? params.checkout_id : undefined;
           const sameContinuation =
@@ -457,6 +483,7 @@ export function registerStripeLinkCheckoutTool(
             session.stripeLinkContinuation = {
               checkoutId: result._next.checkout_id,
               allowedNextAction: 'resume',
+              validUntil: Date.parse(result._next.valid_until),
             };
           } else if (
             params.action === 'resume' &&

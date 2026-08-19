@@ -223,10 +223,16 @@ export interface ActiveSession {
   lastActiveTargetId?: string | null;
   // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
   // payment data never enter the session cache.
-  stripeLinkContinuation?: {
-    checkoutId: string;
-    allowedNextAction: 'resume' | 'report';
-  };
+  stripeLinkContinuation?:
+    | {
+        checkoutId: string;
+        allowedNextAction: 'resume';
+        validUntil: number;
+      }
+    | {
+        checkoutId: string;
+        allowedNextAction: 'report';
+      };
 }
 
 /* ------------------------------------------------------------------ */

@@ -26,6 +26,7 @@ import type {
 } from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
+import { DEFAULT_ACCOUNT_API_URL } from '../config.js';
 
 /**
  * Thrown when an API call references a profile that does not exist for the
@@ -288,20 +289,44 @@ const callStripeLinkAccountMutation = async (
     config.requestTimeout + 5_000,
   );
   try {
-    const response = await fetch(
-      config.browserlessAccountApiUrl ?? 'https://api.browserless.io/graphql',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${identityToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: `mutation StripeLinkWalletMutation { ${field} { status authorizationUrl instruction } }`,
-        }),
-        signal: controller.signal,
+    const rawEndpoint =
+      config.browserlessAccountApiUrl ?? DEFAULT_ACCOUNT_API_URL;
+    let endpoint: URL;
+    try {
+      endpoint = new URL(rawEndpoint);
+    } catch {
+      throw new Error(
+        'Stripe Link wallet management is not configured correctly',
+      );
+    }
+    const trustedHost =
+      endpoint.hostname === 'api.browserless.io' ||
+      endpoint.hostname === 'dev-api.browserless.io';
+    if (
+      endpoint.protocol !== 'https:' ||
+      !trustedHost ||
+      (endpoint.port && endpoint.port !== '443') ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.pathname !== '/graphql' ||
+      endpoint.search ||
+      endpoint.hash
+    ) {
+      throw new Error(
+        'Stripe Link wallet management is not configured correctly',
+      );
+    }
+    const response = await fetch(endpoint.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${identityToken}`,
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify({
+        query: `mutation StripeLinkWalletMutation { ${field} { status authorizationUrl instruction } }`,
+      }),
+      signal: controller.signal,
+    });
     const body = (await response.json().catch(() => null)) as {
       data?: Record<string, unknown>;
       errors?: unknown;

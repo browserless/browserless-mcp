@@ -24,6 +24,21 @@ export type {
 
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
+export const clearExpiredStripeLinkContinuation = (
+  session: ActiveSession,
+): boolean => {
+  const continuation = session.stripeLinkContinuation;
+  if (
+    continuation?.allowedNextAction !== 'resume' ||
+    continuation.validUntil > Date.now()
+  ) {
+    return false;
+  }
+  session.stripeLinkContinuation = undefined;
+  session.skillState.fired.delete('agentic-checkout');
+  return true;
+};
+
 export const acquireStripeLinkSessionOperation = async (
   session: ActiveSession,
 ): Promise<() => void> => {
@@ -241,16 +256,26 @@ const closeAndDelete = (key: string, reason: string): void => {
 
 // Sweep idle sessions and enforce a hard cap. Called on every
 // getOrCreateSession; cheap because the map is bounded.
-const sweepSessions = (): void => {
-  const now = Date.now();
+export const sweepSessions = (
+  now = Date.now(),
+  maxSessions = MAX_SESSIONS,
+): void => {
   for (const [key, session] of sessions) {
+    clearExpiredStripeLinkContinuation(session);
+    if (stripeLinkOperations.has(session) || session.stripeLinkContinuation) {
+      continue;
+    }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
       closeAndDelete(key, 'idle');
     }
   }
-  if (sessions.size <= MAX_SESSIONS) return;
-  const overage = sessions.size - MAX_SESSIONS;
+  if (sessions.size <= maxSessions) return;
+  const overage = sessions.size - maxSessions;
   const oldest = [...sessions.entries()]
+    .filter(
+      ([, session]) =>
+        !stripeLinkOperations.has(session) && !session.stripeLinkContinuation,
+    )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
   for (const [key] of oldest) {
@@ -884,6 +909,7 @@ export const closeSession = (
         'A Stripe Link checkout operation is in progress in this browser. Wait for it to finish before closing the browser.',
       );
     }
+    clearExpiredStripeLinkContinuation(session);
     if (session.stripeLinkContinuation) {
       const action = session.stripeLinkContinuation.allowedNextAction;
       throw new Error(

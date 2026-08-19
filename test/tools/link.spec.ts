@@ -9,13 +9,18 @@ import {
 } from '../../src/tools/link-checkout.js';
 import { registerAgentTools } from '../../src/tools/agent.js';
 import type { McpConfig } from '../../src/@types/types.js';
-import { getOrCreateSession } from '../../src/lib/agent-client.js';
+import {
+  closeSession,
+  getActiveSessionByHandle,
+  getOrCreateSession,
+  sweepSessions,
+} from '../../src/lib/agent-client.js';
 import { makeRespondingServer } from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
-  browserlessAccountApiUrl: 'https://accounts.example.com/graphql',
+  browserlessAccountApiUrl: 'https://dev-api.browserless.io/graphql',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -32,6 +37,9 @@ const mockConfig: McpConfig = {
   mcpBaseUrl: '',
   oauthAllowedRedirectUriPatterns: [],
 };
+
+const VALID_UNTIL = '2099-08-18T00:00:00.000Z';
+const VALID_UNTIL_MS = Date.parse(VALID_UNTIL);
 
 const mockContext = {
   reportProgress: sinon.stub().resolves(),
@@ -104,7 +112,7 @@ describe('Stripe Link tools', () => {
 
   it('keeps status read-only and routes mutations through role-enforcing GraphQL', async () => {
     fetchStub.callsFake((url: string, init: RequestInit) => {
-      if (String(url) === 'https://accounts.example.com/graphql') {
+      if (String(url) === 'https://dev-api.browserless.io/graphql') {
         const query = JSON.parse(String(init.body)).query as string;
         const field = query.includes('disconnectStripeLink')
           ? 'disconnectStripeLink'
@@ -138,14 +146,14 @@ describe('Stripe Link tools', () => {
     );
     expect(fetchStub.getCall(0).args[1].method).to.equal('GET');
     expect(fetchStub.getCall(1).args[0]).to.equal(
-      'https://accounts.example.com/graphql',
+      'https://dev-api.browserless.io/graphql',
     );
     expect(fetchStub.getCall(1).args[1].method).to.equal('POST');
     expect(fetchStub.getCall(1).args[1].headers.Authorization).to.equal(
       'Bearer owner-jwt',
     );
     expect(fetchStub.getCall(2).args[0]).to.equal(
-      'https://accounts.example.com/graphql',
+      'https://dev-api.browserless.io/graphql',
     );
     expect(fetchStub.getCall(2).args[1].method).to.equal('POST');
   });
@@ -173,7 +181,7 @@ describe('Stripe Link tools', () => {
 
   it('denies viewer and roleless wallet mutations but allows status, owner, and admin', async () => {
     fetchStub.callsFake((url: string, init: RequestInit) => {
-      if (String(url) === 'https://accounts.example.com/graphql') {
+      if (String(url) === 'https://dev-api.browserless.io/graphql') {
         const query = JSON.parse(String(init.body)).query as string;
         const field = query.includes('disconnectStripeLink')
           ? 'disconnectStripeLink'
@@ -218,7 +226,7 @@ describe('Stripe Link tools', () => {
         await execute({ action }, mockContext);
         expect.fail('expected roleless mutation to fail');
       } catch (error) {
-        expect((error as Error).message).to.include('owners and admins');
+        expect((error as Error).message).to.include('OAuth-authenticated');
       }
     }
     await execute({ action: 'connect' }, context('owner'));
@@ -226,25 +234,49 @@ describe('Stripe Link tools', () => {
     expect(fetchStub.callCount).to.equal(3);
   });
 
-  it('rejects missing instructions and credential-bearing redirect URLs', async () => {
-    const execute = captureExecute(registerStripeLinkConnectTool);
-    fetchStub.resolves(
-      jsonResponse({
-        data: {
-          connectStripeLink: {
-            status: 'not_connected',
-            authorizationUrl: 'https://user@app.link.com/approve/abc',
-          },
-        },
-      }),
-    );
+  for (const [label, connectStripeLink] of [
+    [
+      'a missing instruction',
+      {
+        status: 'not_connected',
+        authorizationUrl: 'https://app.link.com/approve/abc',
+      },
+    ],
+    [
+      'a credential-bearing redirect URL',
+      {
+        status: 'not_connected',
+        authorizationUrl: 'https://user@app.link.com/approve/abc',
+        instruction: 'Approve the wallet.',
+      },
+    ],
+  ] as const) {
+    it(`rejects ${label}`, async () => {
+      const execute = captureExecute(registerStripeLinkConnectTool);
+      fetchStub.resolves(jsonResponse({ data: { connectStripeLink } }));
+
+      try {
+        await execute({ action: 'connect' }, ownerContext);
+        expect.fail('expected an invalid Stripe Link response');
+      } catch (error) {
+        expect((error as Error).message).to.match(/Stripe Link|untrusted/);
+      }
+    });
+  }
+
+  it('rejects an untrusted account API before sending the identity token', async () => {
+    const execute = captureExecute(registerStripeLinkConnectTool, {
+      ...mockConfig,
+      browserlessAccountApiUrl: 'https://attacker.example/graphql',
+    });
 
     try {
       await execute({ action: 'connect' }, ownerContext);
-      expect.fail('expected an invalid Stripe Link response');
+      expect.fail('expected the account API configuration to fail');
     } catch (error) {
-      expect((error as Error).message).to.match(/Stripe Link|untrusted/);
+      expect((error as Error).message).to.include('not configured correctly');
     }
+    expect(fetchStub.called).to.be.false;
   });
 
   it('rejects a mismatched cart total before checkout is called', async () => {
@@ -287,7 +319,7 @@ describe('Stripe Link tools', () => {
         _next: {
           action: 'resume',
           checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
-          valid_until: '2099-08-18T00:00:00.000Z',
+          valid_until: VALID_UNTIL,
         },
         card_number: '4242424242424242',
       };
@@ -346,7 +378,7 @@ describe('Stripe Link tools', () => {
       _next: {
         action: 'resume',
         checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
-        valid_until: '2099-08-18T00:00:00.000Z',
+        valid_until: VALID_UNTIL,
       },
     }));
     try {
@@ -394,7 +426,7 @@ describe('Stripe Link tools', () => {
       }
       expect(error).to.be.instanceOf(Error);
       expect((error as Error).message).to.match(
-        /pending.*checkout.*resume|cancel/i,
+        /(?=.*pending)(?=.*checkout)(?=.*(?:resume|cancel))/i,
       );
     } finally {
       await browser.close();
@@ -422,7 +454,7 @@ describe('Stripe Link tools', () => {
         _next: {
           action: 'resume',
           checkout_id: checkoutId,
-          valid_until: '2099-08-18T00:00:00.000Z',
+          valid_until: VALID_UNTIL,
         },
       };
     });
@@ -473,6 +505,7 @@ describe('Stripe Link tools', () => {
       expect(session.stripeLinkContinuation).to.deep.equal({
         checkoutId,
         allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
       });
     } finally {
       releaseResponse();
@@ -493,7 +526,7 @@ describe('Stripe Link tools', () => {
         _next: {
           action: 'resume',
           checkout_id: checkoutId,
-          valid_until: '2099-08-18T00:00:00.000Z',
+          valid_until: VALID_UNTIL,
         },
       };
     });
@@ -534,6 +567,7 @@ describe('Stripe Link tools', () => {
       expect(session.stripeLinkContinuation).to.deep.equal({
         checkoutId,
         allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
       });
     } finally {
       await browser.close();
@@ -553,7 +587,7 @@ describe('Stripe Link tools', () => {
         _next: {
           action: 'resume',
           checkout_id: checkoutId,
-          valid_until: '2099-08-18T00:00:00.000Z',
+          valid_until: VALID_UNTIL,
         },
       };
     });
@@ -593,6 +627,7 @@ describe('Stripe Link tools', () => {
       expect(session.stripeLinkContinuation).to.deep.equal({
         checkoutId,
         allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
       });
     } finally {
       await browser.close();
@@ -612,7 +647,7 @@ describe('Stripe Link tools', () => {
         _next: {
           action: 'resume',
           checkout_id: checkoutId,
-          valid_until: '2099-08-18T00:00:00.000Z',
+          valid_until: VALID_UNTIL,
         },
       };
     });
@@ -641,34 +676,143 @@ describe('Stripe Link tools', () => {
         mockContext,
       );
 
-      for (const request of [
-        {
-          action: 'resume',
-          browser_session_handle: session.handle,
-          checkout_id: 'lkco_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
-        },
-        {
-          action: 'report',
-          browser_session_handle: session.handle,
-          checkout_id: checkoutId,
-          outcome: 'success',
-        },
-      ]) {
+      for (const [request, expected] of [
+        [
+          {
+            action: 'resume',
+            browser_session_handle: session.handle,
+            checkout_id: 'lkco_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
+          },
+          /does not match/i,
+        ],
+        [
+          {
+            action: 'report',
+            browser_session_handle: session.handle,
+            checkout_id: checkoutId,
+            outcome: 'success',
+          },
+          /must resume next/i,
+        ],
+      ] as const) {
         let error: unknown;
         try {
           await checkout(request, mockContext);
         } catch (caught) {
           error = caught;
         }
-        expect((error as Error).message).to.match(
-          /does not match|must resume next/i,
-        );
+        expect((error as Error).message).to.match(expected);
       }
       expect(checkoutCalls).to.equal(1);
     } finally {
       await browser.close();
     }
   });
+
+  it('rejects a response that tries to rotate the active checkout ID', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer(() => ({
+      status: 'pending_approval',
+      _next: {
+        action: 'resume',
+        checkout_id: 'lkco_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
+        valid_until: VALID_UNTIL,
+      },
+    }));
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-response-id-mismatch',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
+      };
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+
+      let error: unknown;
+      try {
+        await checkout(
+          {
+            action: 'resume',
+            browser_session_handle: session.handle,
+            checkout_id: checkoutId,
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect((error as Error).message).to.match(/invalid checkout next step/i);
+      expect(session.stripeLinkContinuation).to.deep.equal({
+        checkoutId,
+        allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  for (const allowedNextAction of ['resume', 'report'] as const) {
+    for (const eviction of ['idle', 'capacity'] as const) {
+      it(`protects a ${allowedNextAction} continuation from ${eviction} eviction`, async () => {
+        const browser = await makeRespondingServer(() => ({ status: 'ok' }));
+        const mcpSessionId = `link-${allowedNextAction}-${eviction}`;
+        let session: Awaited<ReturnType<typeof getOrCreateSession>> | undefined;
+        try {
+          session = await getOrCreateSession(
+            mcpSessionId,
+            browser.url,
+            mockConfig.browserlessToken!,
+          );
+          session.stripeLinkContinuation =
+            allowedNextAction === 'resume'
+              ? {
+                  checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+                  allowedNextAction,
+                  validUntil: VALID_UNTIL_MS,
+                }
+              : {
+                  checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+                  allowedNextAction,
+                };
+          if (eviction === 'idle') {
+            session.lastUsedAt = Date.now() - 16 * 60 * 1_000;
+            sweepSessions();
+          } else {
+            sweepSessions(Date.now(), 0);
+          }
+
+          expect(
+            getActiveSessionByHandle(
+              session.handle,
+              browser.url,
+              mockConfig.browserlessToken!,
+            ),
+          ).to.equal(session);
+        } finally {
+          if (session) {
+            session.stripeLinkContinuation = undefined;
+            closeSession(
+              mcpSessionId,
+              mockConfig.browserlessToken!,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              session.handle,
+            );
+          }
+          await browser.close();
+        }
+      });
+    }
+  }
 
   it('does not retain a terminal checkout response with a forged resume hint', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -679,7 +823,7 @@ describe('Stripe Link tools', () => {
       _next: {
         action: 'resume',
         checkout_id: checkoutId,
-        valid_until: '2099-08-18T00:00:00.000Z',
+        valid_until: VALID_UNTIL,
       },
     }));
     try {
@@ -722,6 +866,51 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  it('rejects an expired continuation locally before resume', async () => {
+    let checkoutCalls = 0;
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer(() => {
+      checkoutCalls++;
+      return { status: 'approved' };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-expired-continuation',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'resume',
+        validUntil: Date.now() - 1,
+      };
+      session.skillState.fired.set('agentic-checkout', 1);
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+
+      let error: unknown;
+      try {
+        await checkout(
+          {
+            action: 'resume',
+            browser_session_handle: session.handle,
+            checkout_id: checkoutId,
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect((error as Error).message).to.match(/checkout has expired/i);
+      expect(checkoutCalls).to.equal(0);
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+      expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('advances sanitized session state from resume to report and clears it after reporting', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     const browser = await makeRespondingServer((_method, rawParams) => {
@@ -735,7 +924,7 @@ describe('Stripe Link tools', () => {
           _next: {
             action: 'resume',
             checkout_id: checkoutId,
-            valid_until: '2099-08-18T00:00:00.000Z',
+            valid_until: VALID_UNTIL,
           },
         };
       }
@@ -786,6 +975,7 @@ describe('Stripe Link tools', () => {
       expect(session.stripeLinkContinuation).to.deep.equal({
         checkoutId,
         allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
       });
 
       await checkout(
@@ -858,7 +1048,7 @@ describe('Stripe Link tools', () => {
             _next: {
               action: 'resume',
               checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
-              valid_until: '2099-08-18T00:00:00.000Z',
+              valid_until: VALID_UNTIL,
             },
           }
         : {
@@ -888,6 +1078,7 @@ describe('Stripe Link tools', () => {
       session.stripeLinkContinuation = {
         checkoutId: params.checkout_id,
         allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
       };
       const auto = JSON.parse(textOf(await execute(params, mockContext)));
       expect(auto.action_url).to.equal(
@@ -940,6 +1131,7 @@ describe('Stripe Link tools', () => {
       session.stripeLinkContinuation = {
         checkoutId: params.checkout_id,
         allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
       };
       let error: unknown;
       try {
