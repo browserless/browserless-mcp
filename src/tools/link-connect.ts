@@ -45,14 +45,17 @@ export function registerStripeLinkConnectTool(
         openWorldHint: true,
       },
       run: async ({ client, params, log, userRole, identityToken }) => {
-        if (
-          params.action !== 'status' &&
-          userRole !== 'owner' &&
-          userRole !== 'admin'
-        ) {
-          throw new UserError(
-            'Only account owners and admins can connect or disconnect Stripe Link.',
-          );
+        if (params.action !== 'status') {
+          if (userRole === undefined) {
+            throw new UserError(
+              'Connecting or disconnecting Stripe Link requires an OAuth-authenticated session. Sign in with your Browserless account instead of using an API token.',
+            );
+          }
+          if (userRole !== 'owner' && userRole !== 'admin') {
+            throw new UserError(
+              'Only account owners and admins can connect or disconnect Stripe Link.',
+            );
+          }
         }
         const response = await client.stripeLinkConnection(
           params.action,
