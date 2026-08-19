@@ -45,6 +45,15 @@ const mockContext = {
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
 
+const ownerContext = {
+  ...mockContext,
+  session: {
+    token: 'test-token',
+    apiUrl: 'https://api.example.com',
+    userRole: 'owner' as const,
+  },
+};
+
 const jsonResponse = (body: unknown) =>
   new Response(JSON.stringify(body), {
     status: 200,
@@ -86,8 +95,8 @@ describe('Stripe Link tools', () => {
     const execute = captureExecute(registerStripeLinkConnectTool);
 
     await execute({ action: 'status' }, mockContext);
-    await execute({ action: 'connect' }, mockContext);
-    await execute({ action: 'disconnect' }, mockContext);
+    await execute({ action: 'connect' }, ownerContext);
+    await execute({ action: 'disconnect' }, ownerContext);
 
     expect(fetchStub.getCall(0).args[0]).to.include(
       '/integrations/stripe-link/status',
@@ -114,13 +123,13 @@ describe('Stripe Link tools', () => {
     );
     const execute = captureExecute(registerStripeLinkConnectTool);
 
-    const result = await execute({ action: 'connect' }, mockContext);
+    const result = await execute({ action: 'connect' }, ownerContext);
     const text = textOf(result);
     expect(text).to.include('authorization_url');
     expect(text).to.not.include('must-not-leak');
   });
 
-  it('denies viewer wallet mutations but allows status, owner, and admin', async () => {
+  it('denies viewer and roleless wallet mutations but allows status, owner, and admin', async () => {
     fetchStub.callsFake(() =>
       Promise.resolve(
         jsonResponse({
@@ -146,6 +155,12 @@ describe('Stripe Link tools', () => {
       } catch (error) {
         expect((error as Error).message).to.include('owners and admins');
       }
+      try {
+        await execute({ action }, mockContext);
+        expect.fail('expected roleless mutation to fail');
+      } catch (error) {
+        expect((error as Error).message).to.include('owners and admins');
+      }
     }
     await execute({ action: 'connect' }, context('owner'));
     await execute({ action: 'disconnect' }, context('admin'));
@@ -162,7 +177,7 @@ describe('Stripe Link tools', () => {
     );
 
     try {
-      await execute({ action: 'connect' }, mockContext);
+      await execute({ action: 'connect' }, ownerContext);
       expect.fail('expected an invalid Stripe Link response');
     } catch (error) {
       expect((error as Error).message).to.match(/Stripe Link|untrusted/);
@@ -287,8 +302,9 @@ describe('Stripe Link tools', () => {
             checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
             action_type: 'three_d_secure',
             action_resolution: 'auto_resume',
+            action_message: 'Complete 3D Secure verification.',
             action_url: 'https://app.link.com/finish_setup?verify=3ds',
-            instruction: 'Complete the action, then resume.',
+            instruction: 'Complete 3D Secure verification.',
             _next: {
               action: 'resume',
               checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
@@ -300,8 +316,8 @@ describe('Stripe Link tools', () => {
             checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
             action_type: 'add_payment_method',
             action_resolution: 'create_new_spend_request',
-            action_url: 'https://app.link.com/add_payment_method',
-            instruction: 'Complete the action, then create a new checkout.',
+            action_message: 'Add a payment method in Link.',
+            instruction: 'Add a payment method in Link.',
           },
     );
     try {
@@ -323,10 +339,15 @@ describe('Stripe Link tools', () => {
       expect(auto.action_url).to.equal(
         'https://app.link.com/finish_setup?verify=3ds',
       );
+      expect(auto.action_message).to.equal('Complete 3D Secure verification.');
       expect(auto._next.action).to.equal('resume');
       session.skillState.fired.set('agentic-checkout', 1);
       const createNew = JSON.parse(textOf(await execute(params, mockContext)));
       expect(createNew.action_resolution).to.equal('create_new_spend_request');
+      expect(createNew.action_message).to.equal(
+        'Add a payment method in Link.',
+      );
+      expect(createNew).not.to.have.property('action_url');
       expect(createNew).not.to.have.property('_next');
       expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
     } finally {

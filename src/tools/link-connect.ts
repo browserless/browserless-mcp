@@ -47,7 +47,6 @@ export function registerStripeLinkConnectTool(
       run: async ({ client, params, log, userRole }) => {
         if (
           params.action !== 'status' &&
-          userRole !== undefined &&
           userRole !== 'owner' &&
           userRole !== 'admin'
         ) {
