@@ -48,12 +48,13 @@
     "build/src/**/*.js",
     "build/src/**/*.d.ts",
     "build/src/**/*.md",
+    "build/src/**/*.html",
     "bin/*",
     "scripts/*.mjs",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run build:skills && npm run build:types",
+    "build": "tsc && npm run build:skills && npm run build:templates && npm run build:types",
     "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
     "build:types": "mkdir -p build/src/@types && cp src/@types/*.d.ts build/src/@types/",
     "clean": "rm -rf build",
@@ -66,7 +67,8 @@
     "prepack": "npm run build",
     "postinstall": "node scripts/patch-fastmcp.mjs",
     "prepare": "husky",
-    "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write"
+    "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write",
+    "build:templates": "mkdir -p build/src/lib && cp src/lib/*.html build/src/lib/"
   },
   "prettier": {
     "semi": true,

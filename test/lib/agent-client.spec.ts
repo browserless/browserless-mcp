@@ -19,6 +19,24 @@ import {
 } from '../helpers/upgrade-server.js';
 
 describe('agent-client buildAgentWsUrl', () => {
+  // A base carrying a query used to concatenate into path `/` — the raw CDP
+  // socket — so every agent method came back as -32601 "wasn't found".
+  it('ignores a query string on the configured api url', () => {
+    const url = new URL(
+      buildAgentWsUrl('http://localhost:3000?token=leaked', 'tok'),
+    );
+
+    expect(url.pathname).to.equal('/chromium/agent');
+    expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.toString()).to.not.include('leaked');
+  });
+
+  it('keeps a subpath prefix on the configured api url', () => {
+    const url = new URL(buildAgentWsUrl('http://host/browserless/', 'tok'));
+
+    expect(url.pathname).to.equal('/browserless/chromium/agent');
+  });
+
   it('uses ws:// for http and only sets token when no proxy options are passed', () => {
     const url = new URL(buildAgentWsUrl('http://localhost:3000', 'tok'));
     expect(url.protocol).to.equal('ws:');

@@ -269,10 +269,19 @@ export const getSessionKey = (
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
   (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '');
 
+// Concatenating a path onto the base breaks when the base carries a query:
+// `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
+const apiEndpoint = (apiUrl: string, path: string, ws = false): URL => {
+  const url = new URL(ws ? apiUrl.replace(/^http/i, 'ws') : apiUrl);
+  url.search = '';
+  url.hash = '';
+  url.pathname = url.pathname.replace(/\/+$/, '') + path;
+  return url;
+};
+
 /**
- * Build the WebSocket URL for `/chromium/agent`: normalize trailing slashes,
- * swap http(s)→ws(s), and append `token` plus proxy params. Boolean proxy
- * flags follow the API's presence-only contract (set only when truthy).
+ * Build the WebSocket URL for `/chromium/agent`, appending `token` plus proxy
+ * params. Boolean proxy flags follow the API's presence-only contract.
  */
 export const buildAgentWsUrl = (
   apiUrl: string,
@@ -282,8 +291,7 @@ export const buildAgentWsUrl = (
   sessionId?: string,
   compliant = false,
 ): string => {
-  const base = apiUrl.replace(/^http/i, 'ws').replace(/\/+$/, '');
-  const url = new URL(base + '/chromium/agent');
+  const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
   // A creation session already owns its proxy/profile (baked in at POST /profile);
   // the WS only needs to attach to it by id, so proxy/profile params are skipped.
@@ -459,8 +467,7 @@ const postCreateProfile = async (
   token: string,
   createProfile: CreateProfileParams,
 ): Promise<CreationSessionInfo> => {
-  const base = apiUrl.replace(/\/+$/, '');
-  const url = new URL(base + '/profile');
+  const url = apiEndpoint(apiUrl, '/profile');
   url.searchParams.set('token', token);
 
   const controller = new AbortController();

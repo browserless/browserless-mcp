@@ -84,30 +84,38 @@ const VALID_GOTO = { method: 'goto', params: { url: 'https://example.com' } };
 describe('compliance mode — compliant tool surface', () => {
   afterEach(() => sinon.restore());
 
-  it('registers exactly the 5 compliant tools (no smartscraper/function/map/crawl)', () => {
+  it('registers exactly the 9 compliant tools (no smartscraper/function/map/crawl)', () => {
     const { names } = captureTools(true);
     expect(names).to.deep.equal([
+      'browserless_account',
       'browserless_agent',
       'browserless_export',
+      'browserless_logs',
       'browserless_performance',
       'browserless_search',
+      'browserless_sessions',
       'browserless_skill',
+      'browserless_usage',
     ]);
   });
 
-  it('full mode registers exactly the 10 tools (regression guard)', () => {
+  it('full mode registers exactly the 14 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
+      'browserless_account',
       'browserless_agent',
       'browserless_crawl',
       'browserless_export',
       'browserless_function',
+      'browserless_logs',
       'browserless_map',
       'browserless_performance',
       'browserless_profiles',
       'browserless_search',
+      'browserless_sessions',
       'browserless_skill',
       'browserless_smartscraper',
+      'browserless_usage',
     ]);
   });
 
@@ -678,6 +686,34 @@ describe('compliance mode — compliant tool surface', () => {
         'timeout',
       ],
       browserless_skill: ['id'],
+      // Account-data tools: every key is a read filter. None drives a browser,
+      // none names a credential, none accepts a URL to fetch.
+      browserless_account: ['action'],
+      browserless_usage: ['apiKeyIds', 'timeframe'],
+      browserless_sessions: [
+        'action',
+        'limit',
+        'page',
+        'search',
+        'sessionId',
+        'skip',
+      ],
+      browserless_logs: [
+        'apiKeyId',
+        'category',
+        'cursor',
+        'endTime',
+        'endpoint',
+        'eventNames',
+        'levels',
+        'limit',
+        'order',
+        'outcome',
+        'reason',
+        'requestId',
+        'startTime',
+        'url',
+      ],
     };
 
     it('each compliant tool exposes exactly its expected top-level keys', () => {

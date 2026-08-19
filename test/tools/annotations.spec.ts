@@ -9,6 +9,10 @@ import { registerSearchTool } from '../../src/tools/search.js';
 import { registerMapTool } from '../../src/tools/map.js';
 import { registerCrawlTool } from '../../src/tools/crawl.js';
 import { registerPerformanceTool } from '../../src/tools/performance.js';
+import { registerAccountTool } from '../../src/tools/account.js';
+import { registerUsageTool } from '../../src/tools/usage.js';
+import { registerSessionsTool } from '../../src/tools/sessions.js';
+import { registerLogsTool } from '../../src/tools/logs.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -42,6 +46,10 @@ const registrars = [
   registerMapTool,
   registerCrawlTool,
   registerPerformanceTool,
+  registerAccountTool,
+  registerUsageTool,
+  registerSessionsTool,
+  registerLogsTool,
 ];
 
 // MCP clients (notably OpenAI) reject any tool that does not set all three
