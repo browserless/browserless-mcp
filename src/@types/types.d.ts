@@ -275,7 +275,7 @@ export interface DetectContext {
   cmd?: { method: string; params: Record<string, unknown> };
   resp?: unknown;
   apiUrl?: string;
-  /** True when the agent session was opened with a saved auth profile. */
+  /** True when the active agent transport is Browserless-authenticated. */
   authenticated?: boolean;
 }
 
@@ -303,7 +303,6 @@ export type Predicate =
   | { kind: 'snapshot.tabs-at-least'; count: number }
   | { kind: 'snapshot.element-cap-hit' }
   | { kind: 'snapshot.authenticated-payment-stage' }
-  | { kind: 'snapshot.payment-approved' }
   | { kind: 'error.code'; codes: string[] }
   | { kind: 'error.message-match'; regex: RegExp }
   | { kind: 'command.method'; methods: string[] }
@@ -621,18 +620,50 @@ export interface StripeLinkCheckoutCartLine {
   unit_amount_minor: number;
 }
 
-export interface StripeLinkCheckoutRequest {
-  merchant: StripeLinkCheckoutMerchant;
-  amount_minor: number;
-  currency: 'usd';
-  cart: StripeLinkCheckoutCartLine[];
+export interface StripeLinkCheckoutSelectors {
+  number: string;
+  cvc: string;
+  expiry?: string;
+  exp_month?: string;
+  exp_year?: string;
+  postal?: string;
+  cardholder_name?: string;
 }
+
+export type StripeLinkCheckoutRequest =
+  | {
+      action: 'create';
+      browser_session_handle: string;
+      merchant: StripeLinkCheckoutMerchant;
+      amount_minor: number;
+      currency: 'usd';
+      cart: StripeLinkCheckoutCartLine[];
+      selectors: StripeLinkCheckoutSelectors;
+    }
+  | {
+      action: 'resume' | 'cancel';
+      browser_session_handle: string;
+      checkout_id: string;
+    }
+  | {
+      action: 'report';
+      browser_session_handle: string;
+      checkout_id: string;
+      outcome: 'success' | 'blocked' | 'abandoned';
+      tags?: string[];
+      step?: string;
+    };
 
 export interface StripeLinkCheckoutResponse {
   status: string;
   approval_url?: string;
   instruction?: string;
-  _next?: { command: string; until: string };
+  checkout_id?: string;
+  _next?: {
+    action: 'resume';
+    checkout_id: string;
+    valid_until: string;
+  };
   last4?: string;
 }
 
@@ -651,8 +682,5 @@ export interface ApiClient {
   stripeLinkConnection(
     action: StripeLinkAction,
   ): Promise<StripeLinkConnectionResponse>;
-  stripeLinkCheckout(
-    params: StripeLinkCheckoutRequest,
-  ): Promise<StripeLinkCheckoutResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }

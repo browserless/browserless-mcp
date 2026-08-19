@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import {
   buildAgentWsUrl,
+  getActiveSessionByHandle,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -700,6 +701,30 @@ describe('agent-client session handle', () => {
       // Same churned session id, but the handle was dropped — a new browser.
       const dropped = await getOrCreateSession('mcp-2', server.url, 'tok');
       expect(dropped.ws).to.not.equal(first.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('resolves only the exact open handle/token/API tuple without reconnecting', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const active = await getOrCreateSession('mcp-1', server.url, 'tok');
+      expect(
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.equal(active);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'wrong-token'),
+      ).to.throw(/unavailable/);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, 'https://other.example', 'tok'),
+      ).to.throw(/unavailable/);
+
+      active.ws.close();
+      await new Promise((resolve) => active.ws.once('close', resolve));
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.throw(/unavailable/);
     } finally {
       await server.close();
     }

@@ -166,6 +166,28 @@ const sessions = new Map<string, ActiveSession>();
 // opening their own WebSocket.
 const pending = new Map<string, Promise<ActiveSession>>();
 
+/** Resolve only the already-open handled browser; never reconnect or adopt. */
+export const getActiveSessionByHandle = (
+  handle: string,
+  apiUrl: string,
+  token: string,
+): ActiveSession => {
+  const matches = [...sessions.values()].filter(
+    (session) =>
+      session.handle === handle &&
+      session.apiUrl === apiUrl &&
+      session.token === token &&
+      session.ws.readyState === WebSocket.OPEN,
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      'The requested browser session is unavailable. Open or resume it with browserless_agent first.',
+    );
+  }
+  matches[0].lastUsedAt = Date.now();
+  return matches[0];
+};
+
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;

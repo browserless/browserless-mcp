@@ -42,8 +42,6 @@ const PAYMENT_FIELD_RE =
   /\b(card ?number|credit card|debit card|cvc|cvv|security code|expir(?:y|ation))\b/i;
 const PAYMENT_STAGE_RE =
   /\b(check ?out|payment|place order|pay(?: now)?|complete purchase)\b/i;
-const PAYMENT_APPROVED_RE =
-  /\b(payment approved|approval (?:received|confirmed|complete)|authorization (?:successful|complete)|link (?:payment )?approved)\b/i;
 
 const elementText = (
   el: NonNullable<DetectContext['snapshot']>['elements'][number],
@@ -66,13 +64,6 @@ const isAuthenticatedPaymentStage = (ctx: DetectContext): boolean => {
   ].join(' ');
   return PAYMENT_STAGE_RE.test(pageText);
 };
-
-const hasPaymentApproval = (ctx: DetectContext): boolean =>
-  !!ctx.authenticated &&
-  !!ctx.snapshot &&
-  PAYMENT_APPROVED_RE.test(
-    [ctx.snapshot.title, ...ctx.snapshot.elements.map(elementText)].join(' '),
-  );
 
 const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
   switch (p.kind) {
@@ -113,8 +104,6 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
     }
     case 'snapshot.authenticated-payment-stage':
       return isAuthenticatedPaymentStage(ctx);
-    case 'snapshot.payment-approved':
-      return hasPaymentApproval(ctx);
     case 'error.code':
       return !!ctx.error?.code && p.codes.includes(ctx.error.code);
     case 'error.message-match':
@@ -235,9 +224,6 @@ const SKILL_SPECS: SkillSpec[] = [
     id: 'agentic-checkout',
     path: 'src/skills/agentic-checkout.md',
     triggers: [[{ kind: 'snapshot.authenticated-payment-stage' }]],
-    // An approval confirmation rearms the once-per-checkout guidance. It does
-    // not fire on the approval page itself; a later payment-stage snapshot can.
-    resetTriggers: [[{ kind: 'snapshot.payment-approved' }]],
   },
   {
     id: 'captchas',

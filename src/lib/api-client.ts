@@ -22,8 +22,6 @@ import type {
   SmartScrapeResult,
   SmartScraperResponse,
   StripeLinkAction,
-  StripeLinkCheckoutRequest,
-  StripeLinkCheckoutResponse,
   StripeLinkConnectionResponse,
 } from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
@@ -272,55 +270,6 @@ const normalizeStripeLinkConnection = (
   }) as StripeLinkConnectionResponse;
 };
 
-const normalizeStripeLinkCheckout = (
-  value: unknown,
-): StripeLinkCheckoutResponse => {
-  const body = responseObject(value);
-  if (typeof body.status !== 'string' || !/^[a-z_]{2,40}$/.test(body.status)) {
-    throw new Error('Browserless returned an invalid checkout status');
-  }
-  const last4 =
-    typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4)
-      ? body.last4
-      : undefined;
-  let next: StripeLinkCheckoutResponse['_next'];
-  if (body._next !== undefined && body._next !== null) {
-    if (
-      !body._next ||
-      typeof body._next !== 'object' ||
-      Array.isArray(body._next)
-    ) {
-      throw new Error('Browserless returned an invalid checkout next step');
-    }
-    const rawNext = body._next as Record<string, unknown>;
-    if (
-      typeof rawNext.command !== 'string' ||
-      !rawNext.command ||
-      rawNext.command.length > 500 ||
-      typeof rawNext.until !== 'string' ||
-      !rawNext.until ||
-      rawNext.until.length > 200
-    ) {
-      throw new Error('Browserless returned an invalid checkout next step');
-    }
-    next = { command: rawNext.command, until: rawNext.until };
-  }
-  return compact({
-    status: body.status,
-    approval_url: stripeOwnedHttpsUrl(
-      body.approval_url,
-      'Stripe Link approval URL',
-    ),
-    instruction: optionalString(
-      body.instruction,
-      'checkout instruction',
-      1_000,
-    ),
-    _next: next,
-    last4,
-  }) as StripeLinkCheckoutResponse;
-};
-
 export function createApiClient(
   config: ResolvedConfig,
   cache?: ResponseCache,
@@ -436,21 +385,6 @@ export function createApiClient(
           : { maxRetries: 0, shouldRetry: () => false }),
       });
       return normalizeStripeLinkConnection(result);
-    },
-
-    async stripeLinkCheckout(
-      params: StripeLinkCheckoutRequest,
-    ): Promise<StripeLinkCheckoutResponse> {
-      const result = await apiFetch<Record<string, unknown>>(config, {
-        path: '/integrations/stripe-link/checkout',
-        method: 'POST',
-        body: { ...params },
-        timeout: config.requestTimeout,
-        // Never retry a purchase request: a lost response must not duplicate it.
-        maxRetries: 0,
-        shouldRetry: () => false,
-      });
-      return normalizeStripeLinkCheckout(result);
     },
 
     async getStatus(): Promise<{ ok: boolean; message: string }> {
