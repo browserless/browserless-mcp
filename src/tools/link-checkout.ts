@@ -263,16 +263,28 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
       StripeLinkCheckoutResponse['action_resolution']
     >;
   }
+  if (body.action_message !== undefined) {
+    if (
+      typeof body.action_message !== 'string' ||
+      !body.action_message.trim() ||
+      body.action_message.length > 500 ||
+      /(?:\blsrq_|\blink-cli\b|\bspend-request\b|`)/i.test(body.action_message)
+    ) {
+      throw new Error('Browserless returned an invalid checkout action');
+    }
+    result.action_message = body.action_message;
+  }
   if (
     body.status === 'requires_action' &&
-    (!result.action_type || !result.action_resolution)
+    (!result.action_type || !result.action_resolution || !result.action_message)
   ) {
     throw new Error('Browserless returned an incomplete checkout action');
   }
   if (
     typeof body.instruction === 'string' &&
     body.instruction.length > 0 &&
-    body.instruction.length <= 1_000
+    body.instruction.length <= 1_000 &&
+    !/(?:\blsrq_|\blink-cli\b|\bspend-request\b|`)/i.test(body.instruction)
   ) {
     result.instruction = body.instruction;
   }

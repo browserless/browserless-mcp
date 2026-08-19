@@ -666,6 +666,7 @@ export interface StripeLinkCheckoutResponse {
     | 'auto_resume'
     | 'create_new_spend_request'
     | 'create_new_spend_request_after_completion';
+  action_message?: string;
   instruction?: string;
   checkout_id?: string;
   _next?: {
