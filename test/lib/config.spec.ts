@@ -1,5 +1,9 @@
 import { expect } from 'chai';
-import { getConfig, classifyComplianceInput } from '../../src/config.js';
+import {
+  getConfig,
+  classifyComplianceInput,
+  DEFAULT_API_SERVER_URL,
+} from '../../src/config.js';
 
 const ENV_KEY = 'OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS';
 const BASELINE_PATTERNS = [
@@ -120,5 +124,42 @@ describe('config.complianceMode', () => {
     // unrecognized so the boot log warns instead of reading them as opt-in.
     for (const v of ['ture', 'compliant', 'garbage', ''])
       expect(classifyComplianceInput(v), v).to.equal('unrecognized');
+  });
+});
+
+describe('config.apiServerUrl', () => {
+  const original = process.env.BROWSERLESS_API_SERVER;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.BROWSERLESS_API_SERVER;
+    else process.env.BROWSERLESS_API_SERVER = original;
+  });
+
+  it('defaults to the account API host', () => {
+    delete process.env.BROWSERLESS_API_SERVER;
+    expect(getConfig().apiServerUrl).to.equal(DEFAULT_API_SERVER_URL);
+  });
+
+  it('is overridable for self-hosted deployments', () => {
+    process.env.BROWSERLESS_API_SERVER = 'https://api.internal.example.com';
+    expect(getConfig().apiServerUrl).to.equal(
+      'https://api.internal.example.com',
+    );
+  });
+
+  // The account API and the browser runtime are different hosts; deriving one
+  // from the other would send account queries to a browser worker.
+  it('is independent of BROWSERLESS_API_URL', () => {
+    delete process.env.BROWSERLESS_API_SERVER;
+    const previous = process.env.BROWSERLESS_API_URL;
+    process.env.BROWSERLESS_API_URL = 'https://runtime.example.com';
+    try {
+      const config = getConfig();
+      expect(config.browserlessApiUrl).to.equal('https://runtime.example.com');
+      expect(config.apiServerUrl).to.equal(DEFAULT_API_SERVER_URL);
+    } finally {
+      if (previous === undefined) delete process.env.BROWSERLESS_API_URL;
+      else process.env.BROWSERLESS_API_URL = previous;
+    }
   });
 });

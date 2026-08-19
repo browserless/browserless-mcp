@@ -20,7 +20,7 @@ import { makeRespondingServer } from '../helpers/upgrade-server.js';
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
-  browserlessAccountApiUrl: 'https://dev-api.browserless.io/graphql',
+  apiServerUrl: 'https://dev-api.browserless.io',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -267,7 +267,7 @@ describe('Stripe Link tools', () => {
   it('rejects an untrusted account API before sending the identity token', async () => {
     const execute = captureExecute(registerStripeLinkConnectTool, {
       ...mockConfig,
-      browserlessAccountApiUrl: 'https://attacker.example/graphql',
+      apiServerUrl: 'https://attacker.example',
     });
 
     try {

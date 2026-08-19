@@ -26,7 +26,7 @@ import type {
 } from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
-import { DEFAULT_ACCOUNT_API_URL } from '../config.js';
+import { DEFAULT_API_SERVER_URL } from '../config.js';
 
 /**
  * Thrown when an API call references a profile that does not exist for the
@@ -289,8 +289,8 @@ const callStripeLinkAccountMutation = async (
     config.requestTimeout + 5_000,
   );
   try {
-    const rawEndpoint =
-      config.browserlessAccountApiUrl ?? DEFAULT_ACCOUNT_API_URL;
+    const apiServer = config.apiServerUrl ?? DEFAULT_API_SERVER_URL;
+    const rawEndpoint = `${apiServer.replace(/\/+$/, '')}/graphql`;
     let endpoint: URL;
     try {
       endpoint = new URL(rawEndpoint);
