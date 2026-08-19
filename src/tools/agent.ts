@@ -859,7 +859,13 @@ export function registerAgentTools(
             });
 
             const triggered = detectVisibleSkills(
-              { snapshot: err.snapshot, error: err, cmd, apiUrl },
+              {
+                snapshot: err.snapshot,
+                error: err,
+                cmd,
+                apiUrl,
+                authenticated: !!agentSession.profile,
+              },
               agentSession.skillState,
               compliant,
             );
@@ -942,6 +948,7 @@ export function registerAgentTools(
             cmd: lastCmd,
             resp: lastResult,
             apiUrl,
+            authenticated: !!agentSession.profile,
           },
           agentSession.skillState,
           compliant,

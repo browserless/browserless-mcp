@@ -21,6 +21,10 @@ import type {
   SmartScrapeRequest,
   SmartScrapeResult,
   SmartScraperResponse,
+  StripeLinkAction,
+  StripeLinkCheckoutRequest,
+  StripeLinkCheckoutResponse,
+  StripeLinkConnectionResponse,
 } from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
@@ -190,6 +194,133 @@ async function readGeneric(res: Response): Promise<GenericApiResult> {
   };
 }
 
+const optionalString = (
+  value: unknown,
+  field: string,
+  maximumLength: number,
+): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maximumLength
+  ) {
+    throw new Error(`Browserless returned an invalid ${field}`);
+  }
+  return value;
+};
+
+const stripeOwnedHttpsUrl = (
+  value: unknown,
+  field: string,
+): string | undefined => {
+  const raw = optionalString(value, field, 2_048);
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Browserless returned an invalid ${field}`);
+  }
+  const host = url.hostname.toLowerCase();
+  const owned =
+    host === 'stripe.com' ||
+    host.endsWith('.stripe.com') ||
+    host === 'link.com' ||
+    host.endsWith('.link.com');
+  if (
+    url.protocol !== 'https:' ||
+    (url.port && url.port !== '443') ||
+    url.username ||
+    url.password ||
+    !owned
+  ) {
+    throw new Error(`Browserless returned an untrusted ${field}`);
+  }
+  return raw;
+};
+
+const responseObject = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Browserless returned an invalid Stripe Link response');
+  }
+  return value as Record<string, unknown>;
+};
+
+const normalizeStripeLinkConnection = (
+  value: unknown,
+): StripeLinkConnectionResponse => {
+  const body = responseObject(value);
+  if (body.status !== 'connected' && body.status !== 'not_connected') {
+    throw new Error('Browserless returned an invalid Stripe Link status');
+  }
+  const instruction = optionalString(
+    body.instruction,
+    'Stripe Link instruction',
+    1_000,
+  );
+  if (!instruction) {
+    throw new Error('Browserless returned an invalid Stripe Link instruction');
+  }
+  return compact({
+    status: body.status,
+    authorization_url: stripeOwnedHttpsUrl(
+      body.authorization_url,
+      'Stripe Link authorization URL',
+    ),
+    instruction,
+  }) as StripeLinkConnectionResponse;
+};
+
+const normalizeStripeLinkCheckout = (
+  value: unknown,
+): StripeLinkCheckoutResponse => {
+  const body = responseObject(value);
+  if (typeof body.status !== 'string' || !/^[a-z_]{2,40}$/.test(body.status)) {
+    throw new Error('Browserless returned an invalid checkout status');
+  }
+  const last4 =
+    typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4)
+      ? body.last4
+      : undefined;
+  let next: StripeLinkCheckoutResponse['_next'];
+  if (body._next !== undefined && body._next !== null) {
+    if (
+      !body._next ||
+      typeof body._next !== 'object' ||
+      Array.isArray(body._next)
+    ) {
+      throw new Error('Browserless returned an invalid checkout next step');
+    }
+    const rawNext = body._next as Record<string, unknown>;
+    if (
+      typeof rawNext.command !== 'string' ||
+      !rawNext.command ||
+      rawNext.command.length > 500 ||
+      typeof rawNext.until !== 'string' ||
+      !rawNext.until ||
+      rawNext.until.length > 200
+    ) {
+      throw new Error('Browserless returned an invalid checkout next step');
+    }
+    next = { command: rawNext.command, until: rawNext.until };
+  }
+  return compact({
+    status: body.status,
+    approval_url: stripeOwnedHttpsUrl(
+      body.approval_url,
+      'Stripe Link approval URL',
+    ),
+    instruction: optionalString(
+      body.instruction,
+      'checkout instruction',
+      1_000,
+    ),
+    _next: next,
+    last4,
+  }) as StripeLinkCheckoutResponse;
+};
+
 export function createApiClient(
   config: ResolvedConfig,
   cache?: ResponseCache,
@@ -280,6 +411,46 @@ export function createApiClient(
         query: { limit: params?.limit, offset: params?.offset },
         timeout: config.requestTimeout,
       });
+    },
+
+    async stripeLinkConnection(
+      action: StripeLinkAction,
+    ): Promise<StripeLinkConnectionResponse> {
+      const request =
+        action === 'status'
+          ? { path: '/integrations/stripe-link/status', method: 'GET' as const }
+          : action === 'connect'
+            ? {
+                path: '/integrations/stripe-link/authorize',
+                method: 'POST' as const,
+              }
+            : {
+                path: '/integrations/stripe-link/disconnect',
+                method: 'DELETE' as const,
+              };
+      const result = await apiFetch<Record<string, unknown>>(config, {
+        ...request,
+        timeout: config.requestTimeout,
+        ...(action === 'status'
+          ? {}
+          : { maxRetries: 0, shouldRetry: () => false }),
+      });
+      return normalizeStripeLinkConnection(result);
+    },
+
+    async stripeLinkCheckout(
+      params: StripeLinkCheckoutRequest,
+    ): Promise<StripeLinkCheckoutResponse> {
+      const result = await apiFetch<Record<string, unknown>>(config, {
+        path: '/integrations/stripe-link/checkout',
+        method: 'POST',
+        body: { ...params },
+        timeout: config.requestTimeout,
+        // Never retry a purchase request: a lost response must not duplicate it.
+        maxRetries: 0,
+        shouldRetry: () => false,
+      });
+      return normalizeStripeLinkCheckout(result);
     },
 
     async getStatus(): Promise<{ ok: boolean; message: string }> {

@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all eleven skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(11);
+  it('loads all twelve skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(12);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -51,6 +51,7 @@ describe('skills/registry', () => {
       'autonomous-login',
       'auth-profile',
       'file-transfers',
+      'agentic-checkout',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -504,6 +505,67 @@ describe('skills/detectSkills - autonomous-login', () => {
 
     state.cmdIndex = 100;
     expect(detectSkills(ctx, state)).to.not.include('autonomous-login');
+  });
+});
+
+describe('skills/detectSkills - agentic-checkout', () => {
+  const paymentSnapshot = snapshot(
+    [
+      el({
+        role: 'textbox',
+        tag: 'input',
+        name: 'Card number',
+        selector: 'input[name="cardNumber"]',
+      }),
+      el({ role: 'button', name: 'Pay now', selector: 'button#pay' }),
+    ],
+    'https://shop.example.com/checkout/payment',
+  );
+
+  it('fires deterministically at an authenticated payment stage', () => {
+    expect(
+      detectSkills(
+        { snapshot: paymentSnapshot, authenticated: true },
+        createSkillState(),
+      ),
+    ).to.include('agentic-checkout');
+  });
+
+  it('does not fire without a saved authenticated profile', () => {
+    expect(
+      detectSkills(
+        { snapshot: paymentSnapshot, authenticated: false },
+        createSkillState(),
+      ),
+    ).to.not.include('agentic-checkout');
+  });
+
+  it('fires once, then rearms only after an approval confirmation', () => {
+    const state = createSkillState();
+    state.cmdIndex = 1;
+    const triggered = detectSkills(
+      { snapshot: paymentSnapshot, authenticated: true },
+      state,
+    );
+    expect(triggered).to.include('agentic-checkout');
+    markFired(state, triggered);
+
+    state.cmdIndex = 20;
+    expect(
+      detectSkills({ snapshot: paymentSnapshot, authenticated: true }, state),
+    ).to.not.include('agentic-checkout');
+
+    const approved = snapshot([
+      el({ role: 'status', name: 'Payment approved', selector: '#status' }),
+    ]);
+    expect(
+      detectSkills({ snapshot: approved, authenticated: true }, state),
+    ).to.not.include('agentic-checkout');
+
+    state.cmdIndex = 21;
+    expect(
+      detectSkills({ snapshot: paymentSnapshot, authenticated: true }, state),
+    ).to.include('agentic-checkout');
   });
 });
 

@@ -95,13 +95,15 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full mode registers exactly the 10 tools (regression guard)', () => {
+  it('full mode registers exactly the 12 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_agent',
       'browserless_crawl',
       'browserless_export',
       'browserless_function',
+      'browserless_link_checkout',
+      'browserless_link_connect',
       'browserless_map',
       'browserless_performance',
       'browserless_profiles',
@@ -114,6 +116,15 @@ describe('compliance mode — compliant tool surface', () => {
   it('browserless_profiles is full-only (excluded from the compliant surface)', () => {
     expect(captureTools(true).byName.has('browserless_profiles')).to.be.false;
     expect(captureTools(false).byName.has('browserless_profiles')).to.be.true;
+  });
+
+  it('Stripe Link tools are full-only', () => {
+    const compliant = captureTools(true).byName;
+    const full = captureTools(false).byName;
+    expect(compliant.has('browserless_link_connect')).to.be.false;
+    expect(compliant.has('browserless_link_checkout')).to.be.false;
+    expect(full.has('browserless_link_connect')).to.be.true;
+    expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
   // #179 broke compliance by re-adding direct register*() calls in index.ts,

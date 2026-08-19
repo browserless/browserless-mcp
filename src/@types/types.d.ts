@@ -266,7 +266,8 @@ export type SkillId =
   | 'tabs'
   | 'autonomous-login'
   | 'auth-profile'
-  | 'file-transfers';
+  | 'file-transfers'
+  | 'agentic-checkout';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
@@ -274,6 +275,8 @@ export interface DetectContext {
   cmd?: { method: string; params: Record<string, unknown> };
   resp?: unknown;
   apiUrl?: string;
+  /** True when the agent session was opened with a saved auth profile. */
+  authenticated?: boolean;
 }
 
 export interface SkillFireState {
@@ -299,6 +302,8 @@ export type Predicate =
   | { kind: 'snapshot.has-detected-challenge' }
   | { kind: 'snapshot.tabs-at-least'; count: number }
   | { kind: 'snapshot.element-cap-hit' }
+  | { kind: 'snapshot.authenticated-payment-stage' }
+  | { kind: 'snapshot.payment-approved' }
   | { kind: 'error.code'; codes: string[] }
   | { kind: 'error.message-match'; regex: RegExp }
   | { kind: 'command.method'; methods: string[] }
@@ -314,6 +319,8 @@ export interface SkillSpec {
   path: string;
   cloudOnly?: boolean;
   refireAfter?: number;
+  /** Matching this clears the once-per-session latch for a future trigger. */
+  resetTriggers?: Trigger[];
   /** OR of triggers; each trigger is an AND-clause of predicates. */
   triggers: Trigger[];
 }
@@ -595,6 +602,40 @@ export interface ProfileSummary {
   updatedAt: string;
 }
 
+export type StripeLinkAction = 'status' | 'connect' | 'disconnect';
+
+export interface StripeLinkConnectionResponse {
+  status: 'connected' | 'not_connected';
+  authorization_url?: string;
+  instruction: string;
+}
+
+export interface StripeLinkCheckoutMerchant {
+  name: string;
+  url: string;
+}
+
+export interface StripeLinkCheckoutCartLine {
+  name: string;
+  quantity: number;
+  unit_amount_minor: number;
+}
+
+export interface StripeLinkCheckoutRequest {
+  merchant: StripeLinkCheckoutMerchant;
+  amount_minor: number;
+  currency: 'usd';
+  cart: StripeLinkCheckoutCartLine[];
+}
+
+export interface StripeLinkCheckoutResponse {
+  status: string;
+  approval_url?: string;
+  instruction?: string;
+  _next?: { command: string; until: string };
+  last4?: string;
+}
+
 export interface ApiClient {
   smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -607,5 +648,11 @@ export interface ApiClient {
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
   listProfiles(params?: ListProfilesRequest): Promise<ProfileSummary[]>;
+  stripeLinkConnection(
+    action: StripeLinkAction,
+  ): Promise<StripeLinkConnectionResponse>;
+  stripeLinkCheckout(
+    params: StripeLinkCheckoutRequest,
+  ): Promise<StripeLinkCheckoutResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }
