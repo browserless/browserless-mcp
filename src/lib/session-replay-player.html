@@ -4,9 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{TITLE}}</title>
-    <style>
-      {{PLAYER_CSS_CODE}}
-    </style>
+    <style id="rrweb-player-css"></style>
     <style>
       /* Tokens copied from the dashboard (browserless-account globals.css) so the
      standalone file matches it without pulling in Tailwind. */
@@ -264,13 +262,7 @@
     <script id="replay-data" type="application/json">
       {{REPLAY_JSON}}
     </script>
-    <script>
-      {
-        {
-          PLAYER_JS_CODE;
-        }
-      }
-    </script>
+    <script id="rrweb-player"></script>
     <script>
       (function () {
         var RECORDED_AT = {{RECORDED_AT}};
