@@ -7,6 +7,7 @@ import {
   registerStripeLinkCheckoutTool,
   StripeLinkCheckoutParamsSchema,
 } from '../../src/tools/link-checkout.js';
+import { registerAgentTools } from '../../src/tools/agent.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import { getOrCreateSession } from '../../src/lib/agent-client.js';
 import { makeRespondingServer } from '../helpers/upgrade-server.js';
@@ -73,6 +74,22 @@ const captureExecute = (
   const addToolSpy = sinon.spy(server, 'addTool');
   register(server, config);
   return addToolSpy.firstCall.args[0].execute;
+};
+
+const captureNamedExecute = (
+  register: (server: FastMCP, config: McpConfig) => void,
+  name: string,
+  config = mockConfig,
+) => {
+  const server = new FastMCP({ name: 'test', version: '0.1.0' });
+  const addToolSpy = sinon.spy(server, 'addTool');
+  register(server, config);
+  const definition = addToolSpy
+    .getCalls()
+    .map((call) => call.args[0])
+    .find((candidate) => candidate.name === name);
+  expect(definition, `${name} was not registered`).to.exist;
+  return definition!.execute;
 };
 
 describe('Stripe Link tools', () => {
@@ -315,6 +332,284 @@ describe('Stripe Link tools', () => {
       expect(textOf(result)).to.not.include('4242424242424242');
       expect(fetchStub.called).to.be.false;
       expect(session.skillState.fired.has('agentic-checkout')).to.be.true;
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('refuses to close the browser while the checkout has a resumable continuation', async () => {
+    const browser = await makeRespondingServer(() => ({
+      status: 'pending_approval',
+      approval_url: 'https://app.link.com/approve/abc',
+      instruction: 'Approve the payment.',
+      checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+      _next: {
+        action: 'resume',
+        checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+        valid_until: '2099-08-18T00:00:00.000Z',
+      },
+    }));
+    try {
+      const config = {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      };
+      const session = await getOrCreateSession(
+        'link-close-guard',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      const agent = captureNamedExecute(
+        registerAgentTools,
+        'browserless_agent',
+        config,
+      );
+
+      await checkout(
+        {
+          action: 'create',
+          browser_session_handle: session.handle,
+          merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+          amount_minor: 1_000,
+          currency: 'usd',
+          cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+          selectors: {
+            number: 'input[name=cardnumber]',
+            expiry: 'input[name=exp-date]',
+            cvc: 'input[name=cvc]',
+          },
+        },
+        mockContext,
+      );
+
+      let error: unknown;
+      try {
+        await agent(
+          { method: 'close', params: {}, sessionId: session.handle },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(Error);
+      expect((error as Error).message).to.match(
+        /pending.*checkout.*resume|cancel/i,
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('allows only one active Stripe Link checkout per browser session', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    let checkoutCalls = 0;
+    const browser = await makeRespondingServer(() => {
+      checkoutCalls++;
+      return {
+        status: 'pending_approval',
+        approval_url: 'https://app.link.com/approve/abc',
+        instruction: 'Approve the payment.',
+        checkout_id: checkoutId,
+        _next: {
+          action: 'resume',
+          checkout_id: checkoutId,
+          valid_until: '2099-08-18T00:00:00.000Z',
+        },
+      };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-single-active',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      const create = {
+        action: 'create' as const,
+        browser_session_handle: session.handle,
+        merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+        amount_minor: 1_000,
+        currency: 'usd' as const,
+        cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+        selectors: {
+          number: 'input[name=cardnumber]',
+          expiry: 'input[name=exp-date]',
+          cvc: 'input[name=cvc]',
+        },
+      };
+
+      await checkout(create, mockContext);
+      let error: unknown;
+      try {
+        await checkout(create, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect((error as Error).message).to.match(
+        /already active.*resume.*cancel/i,
+      );
+      expect(checkoutCalls).to.equal(1);
+      expect(session.stripeLinkContinuation).to.deep.equal({
+        checkoutId,
+        allowedNextAction: 'resume',
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('does not retain a terminal checkout response with a forged resume hint', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer(() => ({
+      status: 'succeeded',
+      instruction: 'Checkout completed.',
+      checkout_id: checkoutId,
+      _next: {
+        action: 'resume',
+        checkout_id: checkoutId,
+        valid_until: '2099-08-18T00:00:00.000Z',
+      },
+    }));
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-terminal-next',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      let error: unknown;
+      try {
+        await checkout(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: {
+              name: 'Shop',
+              url: 'https://shop.example.com/checkout',
+            },
+            amount_minor: 1_000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+            selectors: {
+              number: 'input[name=cardnumber]',
+              expiry: 'input[name=exp-date]',
+              cvc: 'input[name=cvc]',
+            },
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect((error as Error).message).to.match(/invalid checkout next step/i);
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('advances sanitized session state from resume to report and clears it after reporting', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer((_method, rawParams) => {
+      const params = rawParams as { action?: string };
+      if (params.action === 'create') {
+        return {
+          status: 'pending_approval',
+          approval_url: 'https://app.link.com/approve/abc',
+          instruction: 'Approve the payment.',
+          checkout_id: checkoutId,
+          _next: {
+            action: 'resume',
+            checkout_id: checkoutId,
+            valid_until: '2099-08-18T00:00:00.000Z',
+          },
+        };
+      }
+      if (params.action === 'resume') {
+        return {
+          status: 'filled',
+          instruction: 'Submit the merchant order.',
+          checkout_id: checkoutId,
+          last4: '4242',
+        };
+      }
+      return {
+        status: 'succeeded',
+        instruction: 'Checkout outcome recorded.',
+        last4: '4242',
+      };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-report-state',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+      const agent = captureNamedExecute(
+        registerAgentTools,
+        'browserless_agent',
+        config,
+      );
+
+      await checkout(
+        {
+          action: 'create',
+          browser_session_handle: session.handle,
+          merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+          amount_minor: 1_000,
+          currency: 'usd',
+          cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+          selectors: {
+            number: 'input[name=cardnumber]',
+            expiry: 'input[name=exp-date]',
+            cvc: 'input[name=cvc]',
+          },
+        },
+        mockContext,
+      );
+      expect(session.stripeLinkContinuation).to.deep.equal({
+        checkoutId,
+        allowedNextAction: 'resume',
+      });
+
+      await checkout(
+        {
+          action: 'resume',
+          browser_session_handle: session.handle,
+          checkout_id: checkoutId,
+        },
+        mockContext,
+      );
+      expect(session.stripeLinkContinuation).to.deep.equal({
+        checkoutId,
+        allowedNextAction: 'report',
+      });
+
+      await checkout(
+        {
+          action: 'report',
+          browser_session_handle: session.handle,
+          checkout_id: checkoutId,
+          outcome: 'success',
+        },
+        mockContext,
+      );
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+      expect(
+        textOf(
+          await agent(
+            { method: 'close', params: {}, sessionId: session.handle },
+            mockContext,
+          ),
+        ),
+      ).to.include('Browser session closed');
     } finally {
       await browser.close();
     }

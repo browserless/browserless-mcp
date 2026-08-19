@@ -28,6 +28,19 @@ const STATUSES = new Set([
   'blocked',
   'abandoned',
 ]);
+const RESUMABLE_STATUSES = new Set([
+  'created',
+  'pending_approval',
+  'requires_action',
+  'approved',
+]);
+const TERMINAL_STATUSES = new Set([
+  'denied',
+  'expired',
+  'failed',
+  'canceled',
+  'succeeded',
+]);
 const STRIPE_LINK_HOSTS = (host: string): boolean =>
   host === 'link.com' ||
   host.endsWith('.link.com') ||
@@ -304,6 +317,7 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
     }
     const next = body._next as Record<string, unknown>;
     if (
+      !RESUMABLE_STATUSES.has(result.status) ||
       next.action !== 'resume' ||
       typeof next.checkout_id !== 'string' ||
       !CHECKOUT_ID_RE.test(next.checkout_id) ||
@@ -372,6 +386,13 @@ export function registerStripeLinkCheckoutTool(
             'That browser session is not open. Resume it with browserless_agent and use the returned sessionId.',
           );
         }
+        if (params.action === 'create' && session.stripeLinkContinuation) {
+          throw new UserError(
+            session.stripeLinkContinuation.allowedNextAction === 'resume'
+              ? 'A Stripe Link checkout is already active in this browser. Resume or cancel it before creating another checkout.'
+              : 'A Stripe Link checkout is already active in this browser. Report its outcome before creating another checkout.',
+          );
+        }
         const { browser_session_handle: _handle, ...command } = params;
         const response = await send(
           session,
@@ -385,20 +406,43 @@ export function registerStripeLinkCheckoutTool(
           );
         }
         const result = normalize(response.result);
+        const continuationCheckoutId =
+          'checkout_id' in params ? params.checkout_id : undefined;
+        const sameContinuation =
+          continuationCheckoutId !== undefined &&
+          session.stripeLinkContinuation?.checkoutId === continuationCheckoutId;
+        const terminal =
+          params.action === 'report' ||
+          params.action === 'cancel' ||
+          TERMINAL_STATUSES.has(result.status) ||
+          (result.status === 'requires_action' && !result._next);
+        if (sameContinuation && terminal) {
+          session.stripeLinkContinuation = undefined;
+        } else if (
+          result._next?.action === 'resume' &&
+          RESUMABLE_STATUSES.has(result.status)
+        ) {
+          session.stripeLinkContinuation = {
+            checkoutId: result._next.checkout_id,
+            allowedNextAction: 'resume',
+          };
+        } else if (
+          params.action === 'resume' &&
+          result.status === 'filled' &&
+          result.checkout_id === params.checkout_id
+        ) {
+          session.stripeLinkContinuation = {
+            checkoutId: params.checkout_id,
+            allowedNextAction: 'report',
+          };
+        }
         if (params.action === 'create') {
           session.skillState.fired.set(
             'agentic-checkout',
             session.skillState.cmdIndex,
           );
         }
-        if (
-          params.action === 'report' ||
-          params.action === 'cancel' ||
-          ['denied', 'expired', 'failed', 'canceled', 'succeeded'].includes(
-            result.status,
-          ) ||
-          (result.status === 'requires_action' && !result._next)
-        ) {
+        if (terminal) {
           session.skillState.fired.delete('agentic-checkout');
         }
         log.debug(

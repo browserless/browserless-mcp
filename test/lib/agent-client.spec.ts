@@ -20,13 +20,14 @@ import {
 } from '../helpers/upgrade-server.js';
 
 describe('agent-client buildAgentWsUrl', () => {
-  it('uses ws:// for http and only sets token when no proxy options are passed', () => {
+  it('uses ws:// for http and lets the backend apply the plan timeout', () => {
     const url = new URL(buildAgentWsUrl('http://localhost:3000', 'tok'));
     expect(url.protocol).to.equal('ws:');
     expect(url.host).to.equal('localhost:3000');
     expect(url.pathname).to.equal('/chromium/agent');
     expect([...url.searchParams.keys()]).to.deep.equal(['token']);
     expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.searchParams.has('timeout')).to.equal(false);
   });
 
   it('uses wss:// for https', () => {

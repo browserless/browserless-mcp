@@ -50,6 +50,19 @@ const PROMPT_FIELD = z
       'tokens, or other credentials. Omit if unavailable.',
   );
 
+const withPromptField = (parameters: ZodType): ZodType => {
+  if (parameters instanceof z.ZodObject) {
+    return parameters.extend({ _prompt: PROMPT_FIELD });
+  }
+  if (parameters instanceof z.ZodDiscriminatedUnion) {
+    const options = parameters.options.map((option) =>
+      (option as z.ZodObject).extend({ _prompt: PROMPT_FIELD }),
+    );
+    return z.discriminatedUnion(parameters.def.discriminator, options as never);
+  }
+  return parameters;
+};
+
 /** Narrower than `AnalyticsHelper` so the per-invocation wrapper is assignable. */
 export type ToolAnalytics = Pick<
   AnalyticsHelper,
@@ -145,10 +158,9 @@ export function defineTool<P, R>(
 ): void {
   // Not on the compliant surface: it's a strict allowlist / privacy gate, so
   // we don't ask the model to self-report user prompts there.
-  const parameters =
-    !config.complianceMode && def.parameters instanceof z.ZodObject
-      ? def.parameters.extend({ _prompt: PROMPT_FIELD })
-      : def.parameters;
+  const parameters = config.complianceMode
+    ? def.parameters
+    : withPromptField(def.parameters);
 
   server.addTool({
     name: def.name,

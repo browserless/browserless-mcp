@@ -61,6 +61,15 @@ describe('skills/registry', () => {
     }
   });
 
+  it('keeps an approval-pending checkout browser open for same-session resume', () => {
+    const skill = skillsRegistry.find(
+      (candidate) => candidate.id === 'agentic-checkout',
+    );
+    expect(skill?.body).to.include(
+      'Do not close the browser while this checkout can still be resumed.',
+    );
+  });
+
   it('renderSkill wraps body with markers and the file path', () => {
     const out = renderSkill('shadow-dom', false);
     expect(out).to.match(

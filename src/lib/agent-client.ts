@@ -293,8 +293,9 @@ export const getSessionKey = (
 
 /**
  * Build the WebSocket URL for `/chromium/agent`: normalize trailing slashes,
- * swap http(s)→ws(s), and append `token` plus proxy params. Boolean proxy
- * flags follow the API's presence-only contract (set only when truthy).
+ * swap http(s)→ws(s), and append token plus proxy params. Timeout is omitted so
+ * the backend applies the authenticated plan maximum (free through enterprise)
+ * instead of the MCP accidentally shortening or exceeding that entitlement.
  */
 export const buildAgentWsUrl = (
   apiUrl: string,
@@ -854,6 +855,14 @@ export const closeSession = (
   );
   const session = sessions.get(key);
   if (session) {
+    if (session.stripeLinkContinuation) {
+      const action = session.stripeLinkContinuation.allowedNextAction;
+      throw new Error(
+        action === 'resume'
+          ? 'A Stripe Link checkout is pending in this browser. Resume or cancel it before closing the browser.'
+          : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',
+      );
+    }
     try {
       session.ws.close();
     } catch {

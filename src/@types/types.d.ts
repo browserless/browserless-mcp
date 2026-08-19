@@ -221,6 +221,12 @@ export interface ActiveSession {
   lastSnapshotElements?: SnapshotElement[];
   // Active tab the cache above belongs to; a change means re-baseline (new tab).
   lastActiveTargetId?: string | null;
+  // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
+  // payment data never enter the session cache.
+  stripeLinkContinuation?: {
+    checkoutId: string;
+    allowedNextAction: 'resume' | 'report';
+  };
 }
 
 /* ------------------------------------------------------------------ */

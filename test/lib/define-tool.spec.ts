@@ -41,14 +41,14 @@ const mockContext = {
 
 type Def = Parameters<typeof defineTool<{ url?: string }, unknown>>[3];
 
-const register = (def: Partial<Def>) => {
+const register = (def: Partial<Def>, config = mockConfig) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
   const analytics = new AnalyticsHelper(false);
   const fire = sinon.stub(analytics, 'fireToolRequest');
   const skill = sinon.stub(analytics, 'fireSkill');
 
-  defineTool<{ url?: string }, unknown>(server, mockConfig, analytics, {
+  defineTool<{ url?: string }, unknown>(server, config, analytics, {
     name: 'test_tool',
     description: 'test',
     parameters: z.object({ url: z.string().optional() }),
@@ -61,6 +61,7 @@ const register = (def: Partial<Def>) => {
     execute: addToolSpy.firstCall.args[0].execute,
     fire,
     skill,
+    parameters: addToolSpy.firstCall.args[0].parameters as z.ZodType,
     props: () => fire.firstCall.args[2] as Record<string, unknown>,
   };
 };
@@ -76,6 +77,39 @@ const rejects = async (promise: Promise<unknown>): Promise<Error> => {
 
 describe('defineTool analytics', () => {
   afterEach(() => sinon.restore());
+
+  it('adds the analytics prompt to every strict discriminated-union branch', () => {
+    const schema = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('create') }).strict(),
+      z.object({ action: z.literal('resume') }).strict(),
+    ]);
+    const { parameters } = register({ parameters: schema as never });
+
+    expect(
+      parameters.safeParse({ action: 'create', _prompt: 'buy socks' }).success,
+    ).to.equal(true);
+    expect(
+      parameters.safeParse({ action: 'resume', _prompt: 'continue' }).success,
+    ).to.equal(true);
+    expect(
+      parameters.safeParse({ action: 'create', unexpected: true }).success,
+    ).to.equal(false);
+  });
+
+  it('keeps the analytics prompt unavailable in compliance mode', () => {
+    const schema = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('create') }).strict(),
+      z.object({ action: z.literal('resume') }).strict(),
+    ]);
+    const { parameters } = register(
+      { parameters: schema as never },
+      { ...mockConfig, complianceMode: true },
+    );
+
+    expect(
+      parameters.safeParse({ action: 'create', _prompt: 'buy socks' }).success,
+    ).to.equal(false);
+  });
 
   it('fires exactly one enriched event on success', async () => {
     const { execute, fire, props } = register({
