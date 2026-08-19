@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/browserless/browserless-mcp/compare/v1.20.2...v1.21.0) (2026-08-19)
+
+
+### Features
+
+* account management tools ([#256](https://github.com/browserless/browserless-mcp/issues/256)) ([4af5c70](https://github.com/browserless/browserless-mcp/commit/4af5c7024adc9e1acb00ca18403ad4303e4356f9))
+
 ## [1.20.2](https://github.com/browserless/browserless-mcp/compare/v1.20.1...v1.20.2) (2026-08-11)
 
 
