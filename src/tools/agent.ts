@@ -1168,7 +1168,9 @@ export function registerAgentTools(
                 error: err,
                 cmd,
                 apiUrl,
-                authenticated: !!agentSession.profile,
+                // The live WebSocket is Browserless-authenticated; profile
+                // presence is not merchant-auth state.
+                authenticated: true,
               },
               agentSession.skillState,
               compliant,
@@ -1267,7 +1269,7 @@ export function registerAgentTools(
             cmd: lastCmd,
             resp: lastResult,
             apiUrl,
-            authenticated: !!agentSession.profile,
+            authenticated: true,
           },
           agentSession.skillState,
           compliant,

@@ -8,6 +8,8 @@ import {
   StripeLinkCheckoutParamsSchema,
 } from '../../src/tools/link-checkout.js';
 import type { McpConfig } from '../../src/@types/types.js';
+import { getOrCreateSession } from '../../src/lib/agent-client.js';
+import { makeRespondingServer } from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -54,10 +56,11 @@ const textOf = (result: unknown): string =>
 
 const captureExecute = (
   register: (server: FastMCP, config: McpConfig) => void,
+  config = mockConfig,
 ) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  register(server, mockConfig);
+  register(server, config);
   return addToolSpy.firstCall.args[0].execute;
 };
 
@@ -136,10 +139,17 @@ describe('Stripe Link tools', () => {
 
   it('rejects a mismatched cart total before checkout is called', async () => {
     const input = {
+      action: 'create' as const,
+      browser_session_handle: 's:checkout-session',
       merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
       amount_minor: 1200,
       currency: 'usd' as const,
       cart: [{ name: 'Item', quantity: 2, unit_amount_minor: 500 }],
+      selectors: {
+        number: 'input[name=cardnumber]',
+        expiry: 'input[name=exp-date]',
+        cvc: 'input[name=cvc]',
+      },
     };
     expect(StripeLinkCheckoutParamsSchema.safeParse(input).success).to.be.false;
 
@@ -155,55 +165,127 @@ describe('Stripe Link tools', () => {
     expect(fetchStub.called).to.be.false;
   });
 
-  it('posts the exact checkout body and sanitizes last4', async () => {
-    fetchStub.resolves(
-      jsonResponse({
-        status: 'approval_required',
-        approval_url: 'https://checkout.stripe.com/approve/abc',
+  it('uses the exact open agent WebSocket and returns only data-only continuation state', async () => {
+    let sent: { method: string; params: unknown } | undefined;
+    const browser = await makeRespondingServer((method, params) => {
+      sent = { method, params };
+      return {
+        status: 'pending_approval',
+        approval_url: 'https://app.link.com/approve/abc',
         instruction: 'Approve the payment.',
+        checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
         _next: {
-          command:
-            'spend-request retrieve lsrq_abc --interval 2 --max-attempts 300',
-          until: 'status changes from pending_approval',
+          action: 'resume',
+          checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+          valid_until: '2099-08-18T00:00:00.000Z',
         },
-        last4: '4242',
         card_number: '4242424242424242',
-      }),
-    );
-    const execute = captureExecute(registerStripeLinkCheckoutTool);
-    const input = {
-      merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
-      amount_minor: 1000,
-      currency: 'usd' as const,
-      cart: [{ name: 'Item', quantity: 2, unit_amount_minor: 500 }],
-    };
+      };
+    });
+    try {
+      const session = await getOrCreateSession(
+        'link-checkout',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      const input = {
+        action: 'create' as const,
+        browser_session_handle: session.handle,
+        merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+        amount_minor: 1000,
+        currency: 'usd' as const,
+        cart: [{ name: 'Item', quantity: 2, unit_amount_minor: 500 }],
+        selectors: {
+          number: 'input[name=cardnumber]',
+          expiry: 'input[name=exp-date]',
+          cvc: 'input[name=cvc]',
+        },
+      };
 
-    const result = await execute(input, mockContext);
+      const result = await execute(input, mockContext);
 
-    const [url, options] = fetchStub.firstCall.args;
-    expect(url).to.include('/integrations/stripe-link/checkout');
-    expect(options.method).to.equal('POST');
-    expect(JSON.parse(options.body)).to.deep.equal(input);
-    expect(textOf(result)).to.include('"last4": "4242"');
-    expect(textOf(result)).to.not.include('4242424242424242');
+      expect(sent?.method).to.equal('stripeLinkCheckout');
+      expect(sent?.params).to.deep.equal({
+        action: 'create',
+        merchant: input.merchant,
+        amount_minor: 1000,
+        currency: 'usd',
+        cart: input.cart,
+        selectors: input.selectors,
+      });
+      expect(textOf(result)).to.include('"action": "resume"');
+      expect(textOf(result)).to.not.include('"command"');
+      expect(textOf(result)).to.not.include('4242424242424242');
+      expect(fetchStub.called).to.be.false;
+      expect(session.skillState.fired.has('agentic-checkout')).to.be.true;
+    } finally {
+      await browser.close();
+    }
   });
 
-  it('drops a malformed last4 instead of exposing it', async () => {
-    fetchStub.resolves(
-      jsonResponse({ status: 'complete', last4: '4242424242424242' }),
-    );
+  it('fails closed for an unknown browser handle without opening or calling checkout', async () => {
     const execute = captureExecute(registerStripeLinkCheckoutTool);
-    const result = await execute(
-      {
-        merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
-        amount_minor: 500,
-        currency: 'usd',
-        cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 500 }],
-      },
-      mockContext,
-    );
+    let error: unknown;
+    try {
+      await execute(
+        {
+          action: 'resume',
+          browser_session_handle: 's:missing-session',
+          checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+        },
+        mockContext,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect((error as Error).message).to.match(/not open|Resume it/);
+    expect(fetchStub.called).to.be.false;
+  });
 
-    expect(textOf(result)).to.not.include('last4');
-    expect(textOf(result)).to.not.include('4242424242424242');
+  it('rejects executable next steps and drops malformed last4', async () => {
+    let calls = 0;
+    const browser = await makeRespondingServer(() =>
+      calls++ === 0
+        ? {
+            status: 'pending_approval',
+            _next: {
+              command: 'spend-request retrieve lsrq_secret',
+              until: 'approved',
+            },
+          }
+        : { status: 'filled', last4: '4242424242424242' },
+    );
+    try {
+      const session = await getOrCreateSession(
+        'link-malicious-response',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      const params = {
+        action: 'resume' as const,
+        browser_session_handle: session.handle,
+        checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+      };
+      let error: unknown;
+      try {
+        await execute(params, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error).message).to.match(/next step/);
+      expect(textOf(await execute(params, mockContext))).to.not.include(
+        'last4',
+      );
+    } finally {
+      await browser.close();
+    }
   });
 });

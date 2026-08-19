@@ -564,7 +564,7 @@ describe('skills/detectSkills - agentic-checkout', () => {
     ).to.include('agentic-checkout');
   });
 
-  it('does not fire without a saved authenticated profile', () => {
+  it('does not fire on an unauthenticated Browserless transport', () => {
     expect(
       detectSkills(
         { snapshot: paymentSnapshot, authenticated: false },
@@ -573,7 +573,7 @@ describe('skills/detectSkills - agentic-checkout', () => {
     ).to.not.include('agentic-checkout');
   });
 
-  it('fires once, then rearms only after an approval confirmation', () => {
+  it('does not rearm from page text; terminal checkout state explicitly rearms it', () => {
     const state = createSkillState();
     state.cmdIndex = 1;
     const triggered = detectSkills(
@@ -595,6 +595,9 @@ describe('skills/detectSkills - agentic-checkout', () => {
       detectSkills({ snapshot: approved, authenticated: true }, state),
     ).to.not.include('agentic-checkout');
 
+    // browserless_link_checkout performs this only after a terminal
+    // report/cancel/provider status, not from untrusted merchant page text.
+    state.fired.delete('agentic-checkout');
     state.cmdIndex = 21;
     expect(
       detectSkills({ snapshot: paymentSnapshot, authenticated: true }, state),
