@@ -11,6 +11,20 @@ import { UserError } from 'fastmcp';
 // a sandbox whose CSP forbids every external host, so a CDN <script> silently
 // never loads there. Inlining also lets a downloaded replay play offline.
 const requireFrom = createRequire(import.meta.url);
+
+// Filled by replacing an empty tag rather than a {{…}} placeholder: prettier
+// parses the contents of script and style blocks, and rewrites a placeholder
+// sitting in statement position into a bare identifier, which silently yields a
+// player-less page. A missing slot throws instead.
+const PLAYER_CSS_SLOT = '<style id="rrweb-player-css"></style>';
+const PLAYER_JS_SLOT = '<script id="rrweb-player"></script>';
+
+const fillSlot = (html: string, slot: string, markup: string): string => {
+  if (!html.includes(slot)) {
+    throw new Error(`The replay template no longer contains ${slot}`);
+  }
+  return html.replace(slot, () => markup);
+};
 let cachedPlayerCss: string | undefined;
 let cachedPlayerJs: string | undefined;
 
@@ -140,18 +154,20 @@ export const buildReplayHtml = (replay: ReplayArtifact): string => {
     SESSION_ID: escapeHtml(replay.sessionId),
     HOST: escapeHtml(host || 'unknown host'),
     RECORDED_AT: String(replay.timestamp ? replay.timestamp * 1000 : 0),
-    PLAYER_CSS_CODE: cachedPlayerCss,
-    // Minified player JS carries markup in string literals, so a raw `</script`
-    // in it would close the tag early.
-    PLAYER_JS_CODE: escapeScriptClose(cachedPlayerJs),
     REPLAY_JSON: escapeScriptClose(JSON.stringify(replay)),
   };
 
   // A replacer function, not a string: `$` sequences in the events JSON would
   // otherwise be read as capture-group references.
-  return cachedTemplate.replace(
+  const html = cachedTemplate.replace(
     /\{\{(\w+)\}\}/g,
     (whole, key: string) => values[key] ?? whole,
+  );
+
+  return fillSlot(
+    fillSlot(html, PLAYER_CSS_SLOT, `<style>${cachedPlayerCss}</style>`),
+    PLAYER_JS_SLOT,
+    `<script>${escapeScriptClose(cachedPlayerJs)}</script>`,
   );
 };
 
