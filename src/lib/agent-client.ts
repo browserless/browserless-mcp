@@ -1230,6 +1230,14 @@ export const closeSession = (
   const session = sessions.get(key);
   if (session) {
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
+    if (session.stripeLinkContinuation) {
+      const action = session.stripeLinkContinuation.allowedNextAction;
+      throw new Error(
+        action === 'resume'
+          ? 'A Stripe Link checkout is pending in this browser. Resume or cancel it before closing the browser.'
+          : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',
+      );
+    }
     try {
       session.ws.close();
     } catch {

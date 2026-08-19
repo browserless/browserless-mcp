@@ -73,6 +73,7 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.pathname).to.equal('/chromium/agent');
     expect([...url.searchParams.keys()]).to.deep.equal(['token']);
     expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.searchParams.has('timeout')).to.equal(false);
   });
 
   it('uses wss:// for https', () => {
