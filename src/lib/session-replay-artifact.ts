@@ -1,22 +1,18 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { UserError } from 'fastmcp';
 
-// Ported from browserless-account's src/lib/session-replay-download.ts so the
-// artifact is byte-comparable with what the dashboard hands users.
-const RRWEB_PLAYER_VERSION = '1.0.0-alpha.4';
-const RRWEB_PLAYER_CSS = `https://cdn.jsdelivr.net/npm/rrweb-player@${RRWEB_PLAYER_VERSION}/dist/style.css`;
-const RRWEB_PLAYER_JS = `https://cdn.jsdelivr.net/npm/rrweb-player@${RRWEB_PLAYER_VERSION}/dist/index.js`;
-// Recompute on a version bump:
-//   curl -fsSL <url> | openssl dgst -sha384 -binary | openssl base64 -A
-const RRWEB_PLAYER_CSS_SRI =
-  'sha384-KkV3xosCYjwvyxFBgSDymv2R75UVsSEajt5pp/ANxMkGCES+Gx+0thrpA8yjOKcP';
-const RRWEB_PLAYER_JS_SRI =
-  'sha384-8wpRIGXF6jLCcei4LQ/8mu1JVvFjyIJIPUNShjd7Z0xt3k421PeGOmVJSouiUMt0';
+// The player is inlined rather than linked: MCP clients render this page inside
+// a sandbox whose CSP forbids every external host, so a CDN <script> silently
+// never loads there. Inlining also lets a downloaded replay play offline.
+const requireFrom = createRequire(import.meta.url);
+let cachedPlayerCss: string | undefined;
+let cachedPlayerJs: string | undefined;
 
 // A local client can just open the file, so inlining only burns context. A remote
 // one cannot reach the path at all, making the inline copy the only way to show it.
@@ -124,9 +120,17 @@ const escapeScriptClose = (value: string) =>
 const TEMPLATE_URL = new URL('./session-replay-player.html', import.meta.url);
 let cachedTemplate: string | undefined;
 
-/** Events are inlined; rrweb-player itself is fetched from a CDN on first open. */
+/** Self-contained: the events and rrweb-player itself are both inlined. */
 export const buildReplayHtml = (replay: ReplayArtifact): string => {
   cachedTemplate ??= readFileSync(TEMPLATE_URL, 'utf8');
+  cachedPlayerCss ??= readFileSync(
+    requireFrom.resolve('rrweb-player/dist/style.css'),
+    'utf8',
+  );
+  cachedPlayerJs ??= readFileSync(
+    requireFrom.resolve('rrweb-player/dist/index.js'),
+    'utf8',
+  );
 
   const host = hostFromUrl(replay.website);
   const values: Record<string, string> = {
@@ -136,10 +140,10 @@ export const buildReplayHtml = (replay: ReplayArtifact): string => {
     SESSION_ID: escapeHtml(replay.sessionId),
     HOST: escapeHtml(host || 'unknown host'),
     RECORDED_AT: String(replay.timestamp ? replay.timestamp * 1000 : 0),
-    PLAYER_CSS: RRWEB_PLAYER_CSS,
-    PLAYER_CSS_SRI: RRWEB_PLAYER_CSS_SRI,
-    PLAYER_JS: RRWEB_PLAYER_JS,
-    PLAYER_JS_SRI: RRWEB_PLAYER_JS_SRI,
+    PLAYER_CSS_CODE: cachedPlayerCss,
+    // Minified player JS carries markup in string literals, so a raw `</script`
+    // in it would close the tag early.
+    PLAYER_JS_CODE: escapeScriptClose(cachedPlayerJs),
     REPLAY_JSON: escapeScriptClose(JSON.stringify(replay)),
   };
 

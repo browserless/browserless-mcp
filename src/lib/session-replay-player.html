@@ -4,12 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{TITLE}}</title>
-    <link
-      rel="stylesheet"
-      href="{{PLAYER_CSS}}"
-      integrity="{{PLAYER_CSS_SRI}}"
-      crossorigin="anonymous"
-    />
+    <style>
+      {{PLAYER_CSS_CODE}}
+    </style>
     <style>
       /* Tokens copied from the dashboard (browserless-account globals.css) so the
      standalone file matches it without pulling in Tailwind. */
@@ -259,19 +256,21 @@
       <main>
         <div id="player" class="rr-block"></div>
         <div id="fallback" class="notice" hidden>
-          Unable to load the player. Be online the first time you open this file
-          so rrweb-player can be fetched from the CDN.
+          Unable to play this recording. The events in this file could not be
+          rendered — see the browser console for the reason.
         </div>
       </main>
     </div>
     <script id="replay-data" type="application/json">
       {{REPLAY_JSON}}
     </script>
-    <script
-      src="{{PLAYER_JS}}"
-      integrity="{{PLAYER_JS_SRI}}"
-      crossorigin="anonymous"
-    ></script>
+    <script>
+      {
+        {
+          PLAYER_JS_CODE;
+        }
+      }
+    </script>
     <script>
       (function () {
         var RECORDED_AT = {{RECORDED_AT}};
