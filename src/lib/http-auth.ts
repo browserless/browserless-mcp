@@ -9,6 +9,7 @@ export interface ResolvedBrowserlessAuth {
   source?: string;
   accountId?: string;
   userRole?: 'owner' | 'admin' | 'viewer';
+  identityToken?: string;
 }
 
 export interface AuthInput {
@@ -74,6 +75,7 @@ export const resolveBrowserlessAuth = async (
       source,
       accountId,
       userRole,
+      identityToken: headerToken,
     };
   }
 

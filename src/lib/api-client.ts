@@ -270,6 +270,57 @@ const normalizeStripeLinkConnection = (
   }) as StripeLinkConnectionResponse;
 };
 
+const callStripeLinkAccountMutation = async (
+  config: ResolvedConfig,
+  action: 'connect' | 'disconnect',
+  identityToken: string | undefined,
+): Promise<StripeLinkConnectionResponse> => {
+  if (!identityToken) {
+    throw new Error(
+      'Stripe Link wallet mutations require authenticated owner or admin access',
+    );
+  }
+  const field =
+    action === 'connect' ? 'connectStripeLink' : 'disconnectStripeLink';
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    config.requestTimeout + 5_000,
+  );
+  try {
+    const response = await fetch(
+      config.browserlessAccountApiUrl ?? 'https://api.browserless.io/graphql',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${identityToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: `mutation StripeLinkWalletMutation { ${field} { status authorizationUrl instruction } }`,
+        }),
+        signal: controller.signal,
+      },
+    );
+    const body = (await response.json().catch(() => null)) as {
+      data?: Record<string, unknown>;
+      errors?: unknown;
+    } | null;
+    if (!response.ok || !body?.data || body.errors) {
+      throw new Error(
+        'Stripe Link wallet management is temporarily unavailable',
+      );
+    }
+    const result = responseObject(body.data[field]);
+    return normalizeStripeLinkConnection({
+      ...result,
+      authorization_url: result.authorizationUrl,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 export function createApiClient(
   config: ResolvedConfig,
   cache?: ResponseCache,
@@ -364,25 +415,18 @@ export function createApiClient(
 
     async stripeLinkConnection(
       action: StripeLinkAction,
+      identityToken?: string,
     ): Promise<StripeLinkConnectionResponse> {
-      const request =
-        action === 'status'
-          ? { path: '/integrations/stripe-link/status', method: 'GET' as const }
-          : action === 'connect'
-            ? {
-                path: '/integrations/stripe-link/authorize',
-                method: 'POST' as const,
-              }
-            : {
-                path: '/integrations/stripe-link/disconnect',
-                method: 'DELETE' as const,
-              };
+      if (action !== 'status') {
+        return callStripeLinkAccountMutation(config, action, identityToken);
+      }
+      const request = {
+        path: '/integrations/stripe-link/status',
+        method: 'GET' as const,
+      };
       const result = await apiFetch<Record<string, unknown>>(config, {
         ...request,
         timeout: config.requestTimeout,
-        ...(action === 'status'
-          ? {}
-          : { maxRetries: 0, shouldRetry: () => false }),
       });
       return normalizeStripeLinkConnection(result);
     },

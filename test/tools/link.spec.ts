@@ -14,6 +14,7 @@ import { makeRespondingServer } from '../helpers/upgrade-server.js';
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
+  browserlessAccountApiUrl: 'https://accounts.example.com/graphql',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -51,6 +52,7 @@ const ownerContext = {
     token: 'test-token',
     apiUrl: 'https://api.example.com',
     userRole: 'owner' as const,
+    identityToken: 'owner-jwt',
   },
 };
 
@@ -83,15 +85,31 @@ describe('Stripe Link tools', () => {
 
   afterEach(() => sinon.restore());
 
-  it('maps status, connect, and disconnect to the locked REST routes', async () => {
-    fetchStub.callsFake(() =>
-      Promise.resolve(
+  it('keeps status read-only and routes mutations through role-enforcing GraphQL', async () => {
+    fetchStub.callsFake((url: string, init: RequestInit) => {
+      if (String(url) === 'https://accounts.example.com/graphql') {
+        const query = JSON.parse(String(init.body)).query as string;
+        const field = query.includes('disconnectStripeLink')
+          ? 'disconnectStripeLink'
+          : 'connectStripeLink';
+        return Promise.resolve(
+          jsonResponse({
+            data: {
+              [field]: {
+                status: 'not_connected',
+                instruction: 'Connect Stripe Link before checkout.',
+              },
+            },
+          }),
+        );
+      }
+      return Promise.resolve(
         jsonResponse({
           status: 'not_connected',
           instruction: 'Connect Stripe Link before checkout.',
         }),
-      ),
-    );
+      );
+    });
     const execute = captureExecute(registerStripeLinkConnectTool);
 
     await execute({ action: 'status' }, mockContext);
@@ -102,23 +120,30 @@ describe('Stripe Link tools', () => {
       '/integrations/stripe-link/status',
     );
     expect(fetchStub.getCall(0).args[1].method).to.equal('GET');
-    expect(fetchStub.getCall(1).args[0]).to.include(
-      '/integrations/stripe-link/authorize',
+    expect(fetchStub.getCall(1).args[0]).to.equal(
+      'https://accounts.example.com/graphql',
     );
     expect(fetchStub.getCall(1).args[1].method).to.equal('POST');
-    expect(fetchStub.getCall(2).args[0]).to.include(
-      '/integrations/stripe-link/disconnect',
+    expect(fetchStub.getCall(1).args[1].headers.Authorization).to.equal(
+      'Bearer owner-jwt',
     );
-    expect(fetchStub.getCall(2).args[1].method).to.equal('DELETE');
+    expect(fetchStub.getCall(2).args[0]).to.equal(
+      'https://accounts.example.com/graphql',
+    );
+    expect(fetchStub.getCall(2).args[1].method).to.equal('POST');
   });
 
   it('returns only the connection contract fields', async () => {
     fetchStub.resolves(
       jsonResponse({
-        status: 'not_connected',
-        authorization_url: 'https://connect.stripe.com/setup/abc',
-        instruction: 'Connect the wallet.',
-        secret: 'must-not-leak',
+        data: {
+          connectStripeLink: {
+            status: 'not_connected',
+            authorizationUrl: 'https://connect.stripe.com/setup/abc',
+            instruction: 'Connect the wallet.',
+            secret: 'must-not-leak',
+          },
+        },
       }),
     );
     const execute = captureExecute(registerStripeLinkConnectTool);
@@ -130,14 +155,30 @@ describe('Stripe Link tools', () => {
   });
 
   it('denies viewer and roleless wallet mutations but allows status, owner, and admin', async () => {
-    fetchStub.callsFake(() =>
-      Promise.resolve(
+    fetchStub.callsFake((url: string, init: RequestInit) => {
+      if (String(url) === 'https://accounts.example.com/graphql') {
+        const query = JSON.parse(String(init.body)).query as string;
+        const field = query.includes('disconnectStripeLink')
+          ? 'disconnectStripeLink'
+          : 'connectStripeLink';
+        return Promise.resolve(
+          jsonResponse({
+            data: {
+              [field]: {
+                status: 'not_connected',
+                instruction: 'Connect the wallet.',
+              },
+            },
+          }),
+        );
+      }
+      return Promise.resolve(
         jsonResponse({
           status: 'not_connected',
           instruction: 'Connect the wallet.',
         }),
-      ),
-    );
+      );
+    });
     const execute = captureExecute(registerStripeLinkConnectTool);
     const context = (userRole: 'owner' | 'admin' | 'viewer') => ({
       ...mockContext,
@@ -145,6 +186,7 @@ describe('Stripe Link tools', () => {
         token: 'test-token',
         apiUrl: 'https://api.example.com',
         userRole,
+        identityToken: `${userRole}-jwt`,
       },
     });
     await execute({ action: 'status' }, context('viewer'));
@@ -171,8 +213,12 @@ describe('Stripe Link tools', () => {
     const execute = captureExecute(registerStripeLinkConnectTool);
     fetchStub.resolves(
       jsonResponse({
-        status: 'not_connected',
-        authorization_url: 'https://user@app.link.com/approve/abc',
+        data: {
+          connectStripeLink: {
+            status: 'not_connected',
+            authorizationUrl: 'https://user@app.link.com/approve/abc',
+          },
+        },
       }),
     );
 

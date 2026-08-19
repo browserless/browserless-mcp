@@ -48,6 +48,8 @@ export interface BrowserlessSession extends Record<string, unknown> {
   accountId?: string;
   /** Authoritative Browserless account role from the verified Supabase user. */
   userRole?: 'owner' | 'admin' | 'viewer';
+  /** Verified Supabase JWT retained only for role-enforced account mutations. */
+  identityToken?: string;
   /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
   source?: string;
 }
@@ -68,6 +70,7 @@ export interface SupabaseJwtPayload {
 export interface McpConfig {
   browserlessToken?: string;
   browserlessApiUrl: string;
+  browserlessAccountApiUrl?: string;
   transport: 'stdio' | 'httpStream';
   port: number;
   requestTimeout: number;
@@ -691,6 +694,7 @@ export interface ApiClient {
   listProfiles(params?: ListProfilesRequest): Promise<ProfileSummary[]>;
   stripeLinkConnection(
     action: StripeLinkAction,
+    identityToken?: string,
   ): Promise<StripeLinkConnectionResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }

@@ -81,6 +81,8 @@ export interface ToolRunContext<P> {
   attachSessionId?: string;
   /** Present only for OAuth sessions verified against Supabase Auth. */
   userRole?: 'owner' | 'admin' | 'viewer';
+  /** Verified Supabase JWT used only for role-enforced account mutations. */
+  identityToken?: string;
 }
 
 export interface ToolDefinition<P, R> {
@@ -248,6 +250,7 @@ export function defineTool<P, R>(
           sessionId,
           attachSessionId: s?.attachSessionId,
           userRole: s?.userRole,
+          identityToken: s?.identityToken,
         });
 
         await reportProgress({ progress: 100, total: 100 });
