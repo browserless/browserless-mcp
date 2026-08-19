@@ -6,6 +6,14 @@ interface ResolvedAccount {
   apiKey: string;
   email: string;
   accountId: string;
+  userRole: 'owner' | 'admin' | 'viewer';
+}
+
+type CachedAccount = Omit<ResolvedAccount, 'userRole'>;
+
+interface VerifiedOwner {
+  accountId: string;
+  userRole: 'owner' | 'admin' | 'viewer';
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -57,7 +65,7 @@ async function verifyAccessToken(
   supabaseUrl: string,
   serviceRoleKey: string,
   accessToken: string,
-): Promise<string> {
+): Promise<VerifiedOwner> {
   // Cheap format guard so obviously-malformed input fails fast without a round
   // trip. GoTrue is still the authority on validity below.
   if (accessToken.split('.').length !== 3) {
@@ -87,7 +95,11 @@ async function verifyAccessToken(
         'The user may not have a Browserless account.',
     );
   }
-  return accountId;
+  const role = user.app_metadata?.role;
+  if (role !== 'owner' && role !== 'admin' && role !== 'viewer') {
+    throw new Error('Supabase user does not contain a valid account role.');
+  }
+  return { accountId, userRole: role };
 }
 
 /**
@@ -104,22 +116,23 @@ export async function resolveApiKey(
   // cache if warm, otherwise by calling Supabase Auth. A failed verification
   // throws and is never cached, so a forged token can't poison the cache.
   const verifyKey = fullHash(accessToken);
-  let accountId = verifyCache.get<string>(verifyKey);
-  if (!accountId) {
-    accountId = await verifyAccessToken(
+  let verified = verifyCache.get<VerifiedOwner>(verifyKey);
+  if (!verified) {
+    verified = await verifyAccessToken(
       supabaseUrl,
       serviceRoleKey,
       accessToken,
     );
-    verifyCache.set(verifyKey, accountId);
+    verifyCache.set(verifyKey, verified);
   }
+  const { accountId, userRole } = verified;
 
   // Cache the stable accountId -> {apiKey,email} PostgREST lookup, keyed by the
   // verified account UUID.
   const cacheKey = `account:${accountId}`;
-  const cached = cache.get<ResolvedAccount>(cacheKey);
+  const cached = cache.get<CachedAccount>(cacheKey);
   if (cached) {
-    return cached;
+    return { ...cached, userRole };
   }
 
   const url = `${supabaseUrl}/rest/v1/accounts?account_id=eq.${encodeURIComponent(accountId)}&select=api_key,email`;
@@ -147,14 +160,14 @@ export async function resolveApiKey(
     throw new Error('Account not found or missing api_key/email.');
   }
 
-  const resolved: ResolvedAccount = {
+  const resolved: CachedAccount = {
     apiKey: account.api_key,
     email: account.email,
     accountId,
   };
 
   cache.set(cacheKey, resolved);
-  return resolved;
+  return { ...resolved, userRole };
 }
 
 export function clearResolverCache(): void {

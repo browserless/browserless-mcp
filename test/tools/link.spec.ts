@@ -120,6 +120,38 @@ describe('Stripe Link tools', () => {
     expect(text).to.not.include('must-not-leak');
   });
 
+  it('denies viewer wallet mutations but allows status, owner, and admin', async () => {
+    fetchStub.callsFake(() =>
+      Promise.resolve(
+        jsonResponse({
+          status: 'not_connected',
+          instruction: 'Connect the wallet.',
+        }),
+      ),
+    );
+    const execute = captureExecute(registerStripeLinkConnectTool);
+    const context = (userRole: 'owner' | 'admin' | 'viewer') => ({
+      ...mockContext,
+      session: {
+        token: 'test-token',
+        apiUrl: 'https://api.example.com',
+        userRole,
+      },
+    });
+    await execute({ action: 'status' }, context('viewer'));
+    for (const action of ['connect', 'disconnect'] as const) {
+      try {
+        await execute({ action }, context('viewer'));
+        expect.fail('expected viewer mutation to fail');
+      } catch (error) {
+        expect((error as Error).message).to.include('owners and admins');
+      }
+    }
+    await execute({ action: 'connect' }, context('owner'));
+    await execute({ action: 'disconnect' }, context('admin'));
+    expect(fetchStub.callCount).to.equal(3);
+  });
+
   it('rejects missing instructions and credential-bearing redirect URLs', async () => {
     const execute = captureExecute(registerStripeLinkConnectTool);
     fetchStub.resolves(
@@ -244,6 +276,62 @@ describe('Stripe Link tools', () => {
     }
     expect((error as Error).message).to.match(/not open|Resume it/);
     expect(fetchStub.called).to.be.false;
+  });
+
+  it('keeps only validated requires-action handoffs and resume semantics', async () => {
+    let calls = 0;
+    const browser = await makeRespondingServer(() =>
+      calls++ === 0
+        ? {
+            status: 'requires_action',
+            checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+            action_type: 'three_d_secure',
+            action_resolution: 'auto_resume',
+            action_url: 'https://app.link.com/finish_setup?verify=3ds',
+            instruction: 'Complete the action, then resume.',
+            _next: {
+              action: 'resume',
+              checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+              valid_until: '2099-08-18T00:00:00.000Z',
+            },
+          }
+        : {
+            status: 'requires_action',
+            checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+            action_type: 'add_payment_method',
+            action_resolution: 'create_new_spend_request',
+            action_url: 'https://app.link.com/add_payment_method',
+            instruction: 'Complete the action, then create a new checkout.',
+          },
+    );
+    try {
+      const session = await getOrCreateSession(
+        'link-action-response',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      const params = {
+        action: 'resume' as const,
+        browser_session_handle: session.handle,
+        checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+      };
+      const auto = JSON.parse(textOf(await execute(params, mockContext)));
+      expect(auto.action_url).to.equal(
+        'https://app.link.com/finish_setup?verify=3ds',
+      );
+      expect(auto._next.action).to.equal('resume');
+      session.skillState.fired.set('agentic-checkout', 1);
+      const createNew = JSON.parse(textOf(await execute(params, mockContext)));
+      expect(createNew.action_resolution).to.equal('create_new_spend_request');
+      expect(createNew).not.to.have.property('_next');
+      expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
+    } finally {
+      await browser.close();
+    }
   });
 
   it('rejects executable next steps and drops malformed last4', async () => {
