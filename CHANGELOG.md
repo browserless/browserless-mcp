@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.22.0](https://github.com/browserless/browserless-mcp/compare/v1.21.0...v1.22.0) (2026-08-19)
+
+
+### Features
+
+* enhance rrweb-player integration with dynamic CSS and JS slot filling ([#261](https://github.com/browserless/browserless-mcp/issues/261)) ([0e72c32](https://github.com/browserless/browserless-mcp/commit/0e72c3261423ba5362ce8b5ce1ef15f5f084e474))
+* inline rrweb-player for self-contained session replays ([#259](https://github.com/browserless/browserless-mcp/issues/259)) ([180c19f](https://github.com/browserless/browserless-mcp/commit/180c19fd7b3bf0f1bf88b2c2e0d3fd73ef588006))
+
 ## [1.21.0](https://github.com/browserless/browserless-mcp/compare/v1.20.2...v1.21.0) (2026-08-19)
 
 
