@@ -2,14 +2,17 @@ import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 
 import type {
-  ActiveSession,
   McpConfig,
   StripeLinkCheckoutCartLine,
   StripeLinkCheckoutRequest,
   StripeLinkCheckoutResponse,
 } from '../@types/types.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import { getActiveSessionByHandle, send } from '../lib/agent-client.js';
+import {
+  acquireStripeLinkSessionOperation,
+  getActiveSessionByHandle,
+  send,
+} from '../lib/agent-client.js';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 
 const MAX_CHECKOUT_AMOUNT_MINOR = 5_000;
@@ -67,30 +70,6 @@ const ACTION_RESOLUTIONS = new Set([
   'create_new_spend_request',
   'create_new_spend_request_after_completion',
 ]);
-
-const sessionOperations = new WeakMap<ActiveSession, Promise<void>>();
-
-const acquireSessionOperation = async (
-  session: ActiveSession,
-): Promise<() => void> => {
-  const previous = sessionOperations.get(session) ?? Promise.resolve();
-  let releaseGate!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    releaseGate = resolve;
-  });
-  const queued = previous.then(() => gate);
-  sessionOperations.set(session, queued);
-  await previous;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    releaseGate();
-    if (sessionOperations.get(session) === queued) {
-      sessionOperations.delete(session);
-    }
-  };
-};
 
 const SessionHandleSchema = z
   .string()
@@ -411,7 +390,7 @@ export function registerStripeLinkCheckoutTool(
             'That browser session is not open. Resume it with browserless_agent and use the returned sessionId.',
           );
         }
-        const release = await acquireSessionOperation(session);
+        const release = await acquireStripeLinkSessionOperation(session);
         try {
           const continuation = session.stripeLinkContinuation;
           if (params.action === 'create' && continuation) {

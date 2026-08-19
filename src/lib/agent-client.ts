@@ -22,6 +22,30 @@ export type {
   AgentError,
 } from '../@types/types.js';
 
+const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
+
+export const acquireStripeLinkSessionOperation = async (
+  session: ActiveSession,
+): Promise<() => void> => {
+  const previous = stripeLinkOperations.get(session) ?? Promise.resolve();
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  const queued = previous.then(() => gate);
+  stripeLinkOperations.set(session, queued);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseGate();
+    if (stripeLinkOperations.get(session) === queued) {
+      stripeLinkOperations.delete(session);
+    }
+  };
+};
+
 /* ------------------------------------------------------------------ */
 /*  Proxy schemas — used by agent.ts's AgentParamsSchema and by the    */
 /*  session key fingerprinting below. Co-located here to avoid a       */
@@ -855,6 +879,11 @@ export const closeSession = (
   );
   const session = sessions.get(key);
   if (session) {
+    if (stripeLinkOperations.has(session)) {
+      throw new Error(
+        'A Stripe Link checkout operation is in progress in this browser. Wait for it to finish before closing the browser.',
+      );
+    }
     if (session.stripeLinkContinuation) {
       const action = session.stripeLinkContinuation.allowedNextAction;
       throw new Error(
