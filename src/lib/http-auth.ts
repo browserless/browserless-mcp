@@ -114,6 +114,7 @@ export const resolveBrowserlessAuth = async (
       transport,
       userAgent,
       userRole,
+      identityToken: headerToken,
     };
   }
 

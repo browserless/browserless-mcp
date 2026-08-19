@@ -44,7 +44,7 @@ export function registerStripeLinkConnectTool(
         idempotentHint: false,
         openWorldHint: true,
       },
-      run: async ({ client, params, log, userRole }) => {
+      run: async ({ client, params, log, userRole, identityToken }) => {
         if (
           params.action !== 'status' &&
           userRole !== 'owner' &&
@@ -54,7 +54,10 @@ export function registerStripeLinkConnectTool(
             'Only account owners and admins can connect or disconnect Stripe Link.',
           );
         }
-        const response = await client.stripeLinkConnection(params.action);
+        const response = await client.stripeLinkConnection(
+          params.action,
+          identityToken,
+        );
         log.debug(`Stripe Link ${params.action}: status=${response.status}`);
         return response;
       },
