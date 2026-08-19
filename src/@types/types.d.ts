@@ -46,6 +46,8 @@ export interface BrowserlessSession extends Record<string, unknown> {
   attachSessionId?: string;
   /** Verified account id for OAuth/Supabase-authenticated sessions. */
   accountId?: string;
+  /** Authoritative Browserless account role from the verified Supabase user. */
+  userRole?: 'owner' | 'admin' | 'viewer';
   /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
   source?: string;
 }
@@ -55,6 +57,7 @@ export interface SupabaseJwtPayload {
   email?: string;
   app_metadata?: {
     accountId?: string;
+    role?: string;
   };
 }
 
@@ -657,6 +660,12 @@ export type StripeLinkCheckoutRequest =
 export interface StripeLinkCheckoutResponse {
   status: string;
   approval_url?: string;
+  action_url?: string;
+  action_type?: string;
+  action_resolution?:
+    | 'auto_resume'
+    | 'create_new_spend_request'
+    | 'create_new_spend_request_after_completion';
   instruction?: string;
   checkout_id?: string;
   _next?: {

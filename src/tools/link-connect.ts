@@ -1,4 +1,4 @@
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -44,7 +44,17 @@ export function registerStripeLinkConnectTool(
         idempotentHint: false,
         openWorldHint: true,
       },
-      run: async ({ client, params, log }) => {
+      run: async ({ client, params, log, userRole }) => {
+        if (
+          params.action !== 'status' &&
+          userRole !== undefined &&
+          userRole !== 'owner' &&
+          userRole !== 'admin'
+        ) {
+          throw new UserError(
+            'Only account owners and admins can connect or disconnect Stripe Link.',
+          );
+        }
         const response = await client.stripeLinkConnection(params.action);
         log.debug(`Stripe Link ${params.action}: status=${response.status}`);
         return response;

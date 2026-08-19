@@ -79,6 +79,8 @@ export interface ToolRunContext<P> {
    * header). When set, the agent tool attaches to it instead of opening its own.
    */
   attachSessionId?: string;
+  /** Present only for OAuth sessions verified against Supabase Auth. */
+  userRole?: 'owner' | 'admin' | 'viewer';
 }
 
 export interface ToolDefinition<P, R> {
@@ -245,6 +247,7 @@ export function defineTool<P, R>(
           reportProgress,
           sessionId,
           attachSessionId: s?.attachSessionId,
+          userRole: s?.userRole,
         });
 
         await reportProgress({ progress: 100, total: 100 });

@@ -33,6 +33,26 @@ const STRIPE_LINK_HOSTS = (host: string): boolean =>
   host.endsWith('.link.com') ||
   host === 'stripe.com' ||
   host.endsWith('.stripe.com');
+const ACTION_TYPES = new Set([
+  'verify_identity',
+  'verify_address',
+  'verify_phone',
+  'verify_email',
+  'ssn_verification',
+  'identity_verification',
+  'contact_support',
+  'select_payment_method',
+  'add_payment_method',
+  'update_payment_method',
+  're_authorize',
+  'three_d_secure',
+  'three_d_secure_retry',
+]);
+const ACTION_RESOLUTIONS = new Set([
+  'auto_resume',
+  'create_new_spend_request',
+  'create_new_spend_request_after_completion',
+]);
 
 const SessionHandleSchema = z
   .string()
@@ -221,6 +241,34 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
   const result: StripeLinkCheckoutResponse = { status: body.status };
   const url = approvalUrl(body.approval_url);
   if (url) result.approval_url = url;
+  const actionUrl = approvalUrl(body.action_url);
+  if (actionUrl) result.action_url = actionUrl;
+  if (body.action_type !== undefined) {
+    if (
+      typeof body.action_type !== 'string' ||
+      !ACTION_TYPES.has(body.action_type)
+    ) {
+      throw new Error('Browserless returned an invalid checkout action');
+    }
+    result.action_type = body.action_type;
+  }
+  if (body.action_resolution !== undefined) {
+    if (
+      typeof body.action_resolution !== 'string' ||
+      !ACTION_RESOLUTIONS.has(body.action_resolution)
+    ) {
+      throw new Error('Browserless returned an invalid checkout action');
+    }
+    result.action_resolution = body.action_resolution as NonNullable<
+      StripeLinkCheckoutResponse['action_resolution']
+    >;
+  }
+  if (
+    body.status === 'requires_action' &&
+    (!result.action_type || !result.action_resolution)
+  ) {
+    throw new Error('Browserless returned an incomplete checkout action');
+  }
   if (
     typeof body.instruction === 'string' &&
     body.instruction.length > 0 &&
@@ -336,7 +384,8 @@ export function registerStripeLinkCheckoutTool(
           params.action === 'cancel' ||
           ['denied', 'expired', 'failed', 'canceled', 'succeeded'].includes(
             result.status,
-          )
+          ) ||
+          (result.status === 'requires_action' && !result._next)
         ) {
           session.skillState.fired.delete('agentic-checkout');
         }
