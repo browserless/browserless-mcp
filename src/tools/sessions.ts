@@ -300,7 +300,7 @@ const formatReplay = (result: SessionsResult): string => {
     ``,
     `- Site: ${artifact.website ?? 'unknown'}`,
     `- Length: ${seconds}, ${artifact.events.length} events`,
-    `- Player (events embedded; loads rrweb-player from CDN): ${htmlPath}`,
+    `- Player (self-contained, plays offline): ${htmlPath}`,
     `- Raw rrweb events: ${jsonPath}`,
     ``,
     `### How to show it`,
@@ -365,9 +365,9 @@ export function registerSessionsTool(
       'dedicated workers, recorded session replays, and 1Password credential ' +
       'integrations. Use it to answer "what is running", "did my session ' +
       'survive", or "what got recorded". Read-only — it never stops a session. ' +
-      'Action `replay` downloads one recording and returns a playable rrweb page ' +
-      'with the events embedded (the player itself loads from a CDN on first ' +
-      'open): render it inline if you can display HTML, otherwise ' +
+      'Action `replay` downloads one recording and returns a fully self-contained ' +
+      'playable rrweb page, needing no network to render: display it inline if ' +
+      'you can render HTML, otherwise ' +
       'build an artifact from the returned instructions so the user can watch it. ' +
       'Always show the replay — never just summarise it in words.',
     parameters: SessionsParamsSchema,

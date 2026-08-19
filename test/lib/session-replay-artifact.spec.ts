@@ -52,6 +52,33 @@ describe('buildReplayHtml', () => {
     expect(html).to.include('Math.max.apply');
   });
 
+  // MCP clients render this page in a sandbox whose CSP blocks every external
+  // host, so a single remote reference is enough to make it unplayable there.
+  it('references no external resource, so a CSP sandbox can render it', () => {
+    const html = buildReplayHtml(artifact(twoEvents));
+
+    const external = [
+      ...html.matchAll(/(?:src|href)\s*=\s*["']([a-z]+:\/\/[^"']+)/gi),
+    ].map((match) => match[1]);
+
+    expect(external).to.deep.equal([]);
+  });
+
+  it('inlines the player itself, not just the events', () => {
+    const html = buildReplayHtml(artifact(twoEvents));
+
+    expect(html).to.include('var rrwebPlayer=function()');
+    expect(html).to.include('.rr-player');
+  });
+
+  it('leaves the embedded player script tag balanced', () => {
+    const html = buildReplayHtml(artifact(twoEvents));
+
+    expect((html.match(/<script/g) ?? []).length).to.equal(
+      (html.match(/<\/script/g) ?? []).length,
+    );
+  });
+
   it('escapes a closing script tag inside the embedded events', () => {
     const html = buildReplayHtml(
       artifact([{ type: 3, timestamp: 1, data: { text: '</script><b>x' } }]),
