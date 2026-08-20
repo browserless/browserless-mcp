@@ -49,6 +49,9 @@ export function getConfig(): McpConfig {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
     apiServerUrl: process.env.BROWSERLESS_API_SERVER ?? DEFAULT_API_SERVER_URL,
+    apiServerExplicitlyConfigured: Boolean(
+      process.env.BROWSERLESS_API_SERVER?.trim(),
+    ),
     replayCdnUrl:
       process.env.BROWSERLESS_REPLAY_CDN_URL ?? DEFAULT_REPLAY_CDN_URL,
     transport: (process.env.TRANSPORT as 'stdio' | 'httpStream') ?? 'stdio',

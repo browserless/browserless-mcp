@@ -68,6 +68,8 @@ export interface McpConfig {
   // Account API host — a DIFFERENT host from `browserlessApiUrl` (a browser
   // runtime). Never derive one from the other, nor let per-session URLs override.
   apiServerUrl?: string;
+  // True only when the operator explicitly configured the account API host.
+  apiServerExplicitlyConfigured?: boolean;
   // Origin serving session-replay artifacts; replay paths are checked against it.
   replayCdnUrl?: string;
   transport: 'stdio' | 'httpStream';

@@ -14,6 +14,7 @@ const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://runtime.example.com',
   apiServerUrl: 'https://account.example.com',
+  apiServerExplicitlyConfigured: true,
   replayCdnUrl: 'https://replay.example.com/',
   transport: 'stdio',
   port: 8080,

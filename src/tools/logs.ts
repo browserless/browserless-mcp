@@ -1,4 +1,4 @@
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 
 import { accountQuery } from '../lib/account-api.js';
@@ -197,6 +197,15 @@ const formatEntry = (entry: LogEntry): string => {
   return lines.join('\n');
 };
 
+const isBrowserlessHostedRuntime = (apiUrl: string): boolean => {
+  try {
+    const host = new URL(apiUrl).hostname.toLowerCase();
+    return host === 'browserless.io' || host.endsWith('.browserless.io');
+  } catch {
+    return false;
+  }
+};
+
 export function registerLogsTool(
   server: FastMCP,
   config: McpConfig,
@@ -219,7 +228,15 @@ export function registerLogsTool(
       idempotentHint: true,
       openWorldHint: true,
     },
-    run: async ({ params, token, log }) => {
+    run: async ({ params, token, log, apiUrl }) => {
+      if (
+        !config.apiServerExplicitlyConfigured &&
+        !isBrowserlessHostedRuntime(apiUrl)
+      ) {
+        throw new UserError(
+          'Set BROWSERLESS_API_SERVER to your self-hosted account API before using browserless_logs. The token was not sent to the default hosted account API.',
+        );
+      }
       const data = await accountQuery<{ requestLogs: LogsResult }>(
         config,
         token,

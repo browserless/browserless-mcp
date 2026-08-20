@@ -2,14 +2,17 @@ import { expect } from 'chai';
 import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import sinon from 'sinon';
+import { UserError } from 'fastmcp';
 
 import type { McpConfig } from '../../src/@types/types.js';
+import { DEFAULT_API_SERVER_URL } from '../../src/config.js';
 import { LogsParamsSchema, registerLogsTool } from '../../src/tools/logs.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'secret-token',
   browserlessApiUrl: 'https://runtime.example.com',
   apiServerUrl: 'https://accounts.example.com',
+  apiServerExplicitlyConfigured: true,
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -47,10 +50,10 @@ const response = (entries: unknown[], nextCursor: string | null = null) =>
     { headers: { 'Content-Type': 'application/json' } },
   );
 
-const captureTool = (analytics?: unknown) => {
+const captureTool = (analytics?: unknown, config: McpConfig = mockConfig) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addTool = sinon.spy(server, 'addTool');
-  registerLogsTool(server, mockConfig, analytics as never);
+  registerLogsTool(server, config, analytics as never);
   return addTool.firstCall.args[0];
 };
 
@@ -109,6 +112,63 @@ describe('browserless_logs tool', () => {
         eventNames: Array.from({ length: 21 }, (_, i) => `event.${i}`),
       }).success,
     ).to.equal(false);
+  });
+
+  it('refuses to send a self-hosted token to the default hosted account API', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(response([]));
+    const unsafeConfig = {
+      ...mockConfig,
+      apiServerUrl: DEFAULT_API_SERVER_URL,
+      apiServerExplicitlyConfigured: false,
+    } as McpConfig;
+
+    try {
+      await captureTool(undefined, unsafeConfig).execute({}, mockContext);
+      expect.fail('Expected a UserError');
+    } catch (error) {
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).to.include('BROWSERLESS_API_SERVER');
+    }
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it('allows the default hosted account API for a Browserless cloud runtime', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(response([]));
+    const hostedConfig = {
+      ...mockConfig,
+      browserlessApiUrl: 'https://production-sfo.browserless.io',
+      apiServerUrl: DEFAULT_API_SERVER_URL,
+      apiServerExplicitlyConfigured: false,
+    } as McpConfig;
+
+    await captureTool(undefined, hostedConfig).execute({}, mockContext);
+
+    expect(fetchStub.calledOnce).to.equal(true);
+  });
+
+  it('applies the fail-closed guard to a per-session runtime override', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(response([]));
+    const hostedConfig = {
+      ...mockConfig,
+      browserlessApiUrl: 'https://production-sfo.browserless.io',
+      apiServerUrl: DEFAULT_API_SERVER_URL,
+      apiServerExplicitlyConfigured: false,
+    } as McpConfig;
+    const overrideContext = {
+      ...mockContext,
+      session: {
+        token: 'secret-token',
+        apiUrl: 'https://self-hosted.example.com',
+      },
+    };
+
+    try {
+      await captureTool(undefined, hostedConfig).execute({}, overrideContext);
+      expect.fail('Expected a UserError');
+    } catch (error) {
+      expect(error).to.be.instanceOf(UserError);
+    }
+    expect(fetchStub.called).to.equal(false);
   });
 
   it('renders entries and explains how to use nextCursor', async () => {
