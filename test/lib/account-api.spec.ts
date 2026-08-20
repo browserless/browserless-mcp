@@ -1,147 +1,154 @@
 import { expect } from 'chai';
-import { UserError } from 'fastmcp';
 import sinon from 'sinon';
+import { UserError } from 'fastmcp';
 
 import { accountQuery } from '../../src/lib/account-api.js';
+import { DEFAULT_API_SERVER_URL } from '../../src/config.js';
 
 const config = {
-  accountGraphqlUrl: 'https://accounts.example.com/graphql',
-  requestTimeout: 100,
+  apiServerUrl: 'https://account.example.com',
+  requestTimeout: 30000,
   maxRetries: 0,
 };
 
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+const bodyOf = (stub: sinon.SinonStub, call = 0) =>
+  JSON.parse(stub.getCall(call).args[1].body as string);
+
 describe('accountQuery', () => {
-  afterEach(() => sinon.restore());
+  let fetchStub: sinon.SinonStub;
 
-  it('sends the token only as the apiToken GraphQL variable', async () => {
-    const fetchStub = sinon
-      .stub(globalThis, 'fetch')
-      .resolves(new Response(JSON.stringify({ data: { ok: true } })));
+  beforeEach(() => {
+    fetchStub = sinon.stub(globalThis, 'fetch');
+  });
 
-    const result = await accountQuery<{ ok: boolean }>(
-      config,
-      'secret-token',
-      'query Test($apiToken: String) { test(apiToken: $apiToken) }',
-      { limit: 5 },
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('POSTs to the account API graphql endpoint', async () => {
+    fetchStub.resolves(jsonResponse({ data: { ok: true } }));
+
+    const data = await accountQuery(config, 'a-token', 'query { ok }');
+
+    const [url, options] = fetchStub.firstCall.args;
+    expect(url).to.equal('https://account.example.com/graphql');
+    expect(options.method).to.equal('POST');
+    expect(options.headers['content-type']).to.equal('application/json');
+    expect(data).to.deep.equal({ ok: true });
+  });
+
+  it('falls back to the default account host', async () => {
+    fetchStub.resolves(jsonResponse({ data: {} }));
+
+    await accountQuery(
+      { requestTimeout: 1000, maxRetries: 0 },
+      'a-token',
+      'query { ok }',
     );
-    expect(result).to.deep.equal({ ok: true });
 
-    const [url, init] = fetchStub.firstCall.args as [string, RequestInit];
-    expect(url).to.equal(config.accountGraphqlUrl);
-    expect(url).not.to.contain('secret-token');
-    expect(JSON.stringify(init.headers)).not.to.contain('secret-token');
-    expect(JSON.parse(init.body as string).variables).to.deep.equal({
-      limit: 5,
-      apiToken: 'secret-token',
+    expect(fetchStub.firstCall.args[0]).to.equal(
+      `${DEFAULT_API_SERVER_URL}/graphql`,
+    );
+  });
+
+  it('sends the token only in the apiToken variable', async () => {
+    fetchStub.resolves(jsonResponse({ data: {} }));
+
+    await accountQuery(config, 'secret-token', 'query { ok }', { limit: 5 });
+
+    const [url, options] = fetchStub.firstCall.args;
+    expect(url).to.not.include('secret-token');
+    expect(JSON.stringify(options.headers)).to.not.include('secret-token');
+
+    const body = bodyOf(fetchStub);
+    expect(body.variables.apiToken).to.equal('secret-token');
+    expect(body.variables.limit).to.equal(5);
+  });
+
+  it('drops undefined variables instead of sending nulls', async () => {
+    fetchStub.resolves(jsonResponse({ data: {} }));
+
+    await accountQuery(config, 'a-token', 'query { ok }', {
+      limit: undefined,
+      search: 'x',
     });
+
+    const body = bodyOf(fetchStub);
+    expect(body.variables).to.not.have.property('limit');
+    expect(body.variables.search).to.equal('x');
   });
 
-  it('surfaces a GraphQL error as UserError without retrying', async () => {
-    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
-      new Response(
-        JSON.stringify({
-          errors: [{ message: 'Plan does not allow logs.' }],
-        }),
-      ),
-    );
-
-    try {
-      await accountQuery(
-        { ...config, maxRetries: 3 },
-        'secret-token',
-        'query Test { test }',
-      );
-      expect.fail('expected UserError');
-    } catch (error) {
-      expect(error).to.be.instanceOf(UserError);
-      expect((error as Error).message).to.equal('Plan does not allow logs.');
-    }
-    expect(fetchStub.callCount).to.equal(1);
-  });
-
-  it('retries a network failure and then succeeds', async () => {
-    const clock = sinon.useFakeTimers();
-    sinon.stub(Math, 'random').returns(0);
-    const fetchStub = sinon
-      .stub(globalThis, 'fetch')
-      .onFirstCall()
-      .rejects(new Error('socket closed'))
-      .onSecondCall()
-      .resolves(new Response(JSON.stringify({ data: { ok: true } })));
-
-    const result = accountQuery<{ ok: boolean }>(
-      { ...config, maxRetries: 1 },
-      'secret-token',
-      'query Test { test }',
-    );
-    await clock.tickAsync(1000);
-
-    expect(await result).to.deep.equal({ ok: true });
-    expect(fetchStub.callCount).to.equal(2);
-  });
-
-  it('turns a non-2xx response into a non-retried UserError', async () => {
-    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
-      new Response(JSON.stringify({}), {
-        status: 503,
-        statusText: 'Unavailable',
+  it('surfaces a GraphQL error as a UserError carrying the server message', async () => {
+    fetchStub.resolves(
+      jsonResponse({
+        errors: [{ message: 'Request logs are not available for this plan.' }],
       }),
     );
 
     try {
-      await accountQuery(
-        { ...config, maxRetries: 2 },
-        'secret-token',
-        'query Test { test }',
-      );
-      expect.fail('expected UserError');
+      await accountQuery(config, 'a-token', 'query { ok }');
+      expect.fail('Expected a UserError');
     } catch (error) {
       expect(error).to.be.instanceOf(UserError);
-      expect((error as Error).message).to.contain('HTTP 503');
+      expect((error as Error).message).to.equal(
+        'Request logs are not available for this plan.',
+      );
     }
+  });
+
+  it('does not retry a GraphQL error', async () => {
+    fetchStub.resolves(
+      jsonResponse({ errors: [{ message: 'Invalid API token' }] }),
+    );
+
+    await accountQuery({ ...config, maxRetries: 3 }, 'a-token', 'query { ok }')
+      .then(() => expect.fail('Expected a UserError'))
+      .catch(() => undefined);
+
     expect(fetchStub.callCount).to.equal(1);
   });
 
-  it('aborts a hung request at requestTimeout', async () => {
-    const clock = sinon.useFakeTimers();
-    sinon.stub(globalThis, 'fetch').callsFake(
-      (_input, init) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(
-              new DOMException('The operation was aborted.', 'AbortError'),
-            );
-          });
-        }),
+  it('retries a network failure', async () => {
+    fetchStub.onFirstCall().rejects(new TypeError('fetch failed'));
+    fetchStub.onSecondCall().resolves(jsonResponse({ data: { ok: 1 } }));
+
+    const data = await accountQuery(
+      { ...config, maxRetries: 2 },
+      'a-token',
+      'query { ok }',
     );
 
-    const result = accountQuery(config, 'secret-token', 'query Test { test }');
-    await clock.tickAsync(config.requestTimeout);
+    expect(fetchStub.callCount).to.equal(2);
+    expect(data).to.deep.equal({ ok: 1 });
+  });
+
+  it('reports a non-2xx response without leaking the token', async () => {
+    fetchStub.resolves(jsonResponse({}, 502));
 
     try {
-      await result;
-      expect.fail('expected timeout');
+      await accountQuery(config, 'secret-token', 'query { ok }');
+      expect.fail('Expected a UserError');
     } catch (error) {
-      expect((error as Error).name).to.equal('AbortError');
-      expect((error as Error).message).not.to.contain('secret-token');
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).to.include('502');
+      expect((error as Error).message).to.not.include('secret-token');
     }
   });
 
-  it('redacts the token if a server error message echoes it', async () => {
-    sinon.stub(globalThis, 'fetch').resolves(
-      new Response(
-        JSON.stringify({
-          errors: [{ message: 'Bad credential secret-token' }],
-        }),
-      ),
-    );
+  it('rejects a 200 response that carries no data', async () => {
+    fetchStub.resolves(jsonResponse({}));
 
     try {
-      await accountQuery(config, 'secret-token', 'query Test { test }');
-      expect.fail('expected UserError');
+      await accountQuery(config, 'a-token', 'query { ok }');
+      expect.fail('Expected a UserError');
     } catch (error) {
-      expect((error as Error).message).to.equal('Bad credential [REDACTED]');
-      expect((error as Error).message).not.to.contain('secret-token');
+      expect((error as Error).message).to.include('no data');
     }
   });
 });

@@ -27,7 +27,6 @@ import type { McpConfig, SkillId } from '../../src/@types/types.js';
 const baseConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
-  accountGraphqlUrl: 'https://accounts.example.com/graphql',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -85,21 +84,25 @@ const VALID_GOTO = { method: 'goto', params: { url: 'https://example.com' } };
 describe('compliance mode — compliant tool surface', () => {
   afterEach(() => sinon.restore());
 
-  it('registers exactly the 6 compliant tools (no smartscraper/function/map/crawl)', () => {
+  it('registers exactly the 9 compliant tools (no smartscraper/function/map/crawl)', () => {
     const { names } = captureTools(true);
     expect(names).to.deep.equal([
+      'browserless_account',
       'browserless_agent',
       'browserless_export',
       'browserless_logs',
       'browserless_performance',
       'browserless_search',
+      'browserless_sessions',
       'browserless_skill',
+      'browserless_usage',
     ]);
   });
 
-  it('full mode registers exactly the 11 tools (regression guard)', () => {
+  it('full mode registers exactly the 14 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
+      'browserless_account',
       'browserless_agent',
       'browserless_crawl',
       'browserless_export',
@@ -109,8 +112,10 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_performance',
       'browserless_profiles',
       'browserless_search',
+      'browserless_sessions',
       'browserless_skill',
       'browserless_smartscraper',
+      'browserless_usage',
     ]);
   });
 
@@ -668,6 +673,31 @@ describe('compliance mode — compliant tool surface', () => {
         'url',
         'waitForTimeout',
       ],
+      browserless_performance: ['budgets', 'categories', 'timeout', 'url'],
+      browserless_search: [
+        'categories',
+        'country',
+        'lang',
+        'limit',
+        'location',
+        'query',
+        'sources',
+        'tbs',
+        'timeout',
+      ],
+      browserless_skill: ['id'],
+      // Account-data tools: every key is a read filter. None drives a browser,
+      // none names a credential, none accepts a URL to fetch.
+      browserless_account: ['action'],
+      browserless_usage: ['apiKeyIds', 'timeframe'],
+      browserless_sessions: [
+        'action',
+        'limit',
+        'page',
+        'search',
+        'sessionId',
+        'skip',
+      ],
       browserless_logs: [
         'apiKeyId',
         'category',
@@ -684,19 +714,6 @@ describe('compliance mode — compliant tool surface', () => {
         'startTime',
         'url',
       ],
-      browserless_performance: ['budgets', 'categories', 'timeout', 'url'],
-      browserless_search: [
-        'categories',
-        'country',
-        'lang',
-        'limit',
-        'location',
-        'query',
-        'sources',
-        'tbs',
-        'timeout',
-      ],
-      browserless_skill: ['id'],
     };
 
     it('each compliant tool exposes exactly its expected top-level keys', () => {

@@ -1,75 +1,75 @@
 import { UserError } from 'fastmcp';
 
-import type { McpConfig } from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
-
-interface GraphQLResponse<T> {
-  data?: T;
-  errors?: Array<{ message?: string }>;
-}
+import { compact, isMeaningfulBody } from './utils.js';
+import { DEFAULT_API_SERVER_URL } from '../config.js';
+import type { McpConfig } from '../@types/types.js';
 
 type AccountApiConfig = Pick<
   McpConfig,
-  'accountGraphqlUrl' | 'requestTimeout' | 'maxRetries'
+  'apiServerUrl' | 'requestTimeout' | 'maxRetries'
 >;
 
-const safeServerMessage = (message: string, token: string): string =>
-  token ? message.split(token).join('[REDACTED]') : message;
+/** Network-level failures are worth retrying; a GraphQL error is not. */
+const isRetryable = (err: Error): boolean =>
+  err.name === 'AbortError' || err instanceof TypeError;
 
+// The token travels only in the `apiToken` variable — never a header, URL, log
+// line or thrown message. Revoked tokens are rejected server-side, not here.
 export const accountQuery = async <T>(
   config: AccountApiConfig,
   token: string,
   query: string,
-  variables: Record<string, unknown> = {},
-): Promise<T> =>
-  retryWithBackoff(
+  variables?: Record<string, unknown>,
+): Promise<T> => {
+  const url = `${config.apiServerUrl ?? DEFAULT_API_SERVER_URL}/graphql`;
+  const body = JSON.stringify({
+    query,
+    variables: { ...compact(variables ?? {}), apiToken: token },
+  });
+
+  const response = await retryWithBackoff(
     async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.requestTimeout);
       try {
-        const response = await fetch(config.accountGraphqlUrl, {
+        return await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query,
-            variables: { ...variables, apiToken: token },
-          }),
+          headers: { 'content-type': 'application/json' },
+          body,
           signal: controller.signal,
         });
-
-        let body: GraphQLResponse<T> | undefined;
-        try {
-          body = (await response.json()) as GraphQLResponse<T>;
-        } catch {
-          throw new UserError(
-            `Browserless account API returned an invalid response (HTTP ${response.status}).`,
-          );
-        }
-
-        const graphQLError = body.errors?.[0]?.message;
-        if (graphQLError) {
-          throw new UserError(safeServerMessage(graphQLError, token));
-        }
-        if (!response.ok) {
-          throw new UserError(
-            `Browserless account API returned HTTP ${response.status}.`,
-          );
-        }
-        if (body.data === undefined) {
-          throw new UserError(
-            'Browserless account API returned no data for this request.',
-          );
-        }
-        return body.data;
       } finally {
         clearTimeout(timer);
       }
     },
     {
       maxRetries: config.maxRetries,
-      baseDelayMs: 1000,
-      // GraphQL and HTTP response errors are deterministic user-facing
-      // outcomes. Retry only failures where fetch itself did not complete.
-      shouldRetry: (error) => !(error instanceof UserError),
+      baseDelayMs: 250,
+      shouldRetry: isRetryable,
     },
   );
+
+  const payload = (await response.json().catch(() => undefined)) as
+    { data?: T; errors?: Array<{ message?: string }> } | undefined;
+
+  const serverMessage = payload?.errors?.[0]?.message;
+
+  if (serverMessage && isMeaningfulBody(serverMessage)) {
+    throw new UserError(serverMessage);
+  }
+
+  if (!response.ok) {
+    throw new UserError(
+      `The Browserless account API returned ${response.status}. Check that your token is valid and still active.`,
+    );
+  }
+
+  if (!payload?.data) {
+    throw new UserError(
+      'The Browserless account API returned no data for this request.',
+    );
+  }
+
+  return payload.data;
+};

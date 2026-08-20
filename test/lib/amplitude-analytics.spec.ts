@@ -135,7 +135,6 @@ describe('Amplitude MCP analytics', () => {
     const addTool = sinon.spy(server, 'addTool');
     const config = {
       browserlessApiUrl: 'https://example.com',
-      accountGraphqlUrl: 'https://accounts.example.com/graphql',
       complianceMode: true,
     } as McpConfig;
 

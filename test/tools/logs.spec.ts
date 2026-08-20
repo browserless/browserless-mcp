@@ -9,7 +9,7 @@ import { LogsParamsSchema, registerLogsTool } from '../../src/tools/logs.js';
 const mockConfig: McpConfig = {
   browserlessToken: 'secret-token',
   browserlessApiUrl: 'https://runtime.example.com',
-  accountGraphqlUrl: 'https://accounts.example.com/graphql',
+  apiServerUrl: 'https://accounts.example.com',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -93,7 +93,7 @@ describe('browserless_logs tool', () => {
 
     const [url, init] = fetchStub.firstCall.args as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(url).to.equal(mockConfig.accountGraphqlUrl);
+    expect(url).to.equal(`${mockConfig.apiServerUrl}/graphql`);
     expect(body.variables).to.deep.equal({
       ...params,
       apiToken: 'secret-token',
@@ -132,11 +132,10 @@ describe('browserless_logs tool', () => {
     const result = await captureTool().execute({ limit: 5 }, mockContext);
     const content = (result as { content: Content[] }).content;
     const text = (content[0] as { text: string }).text;
-    expect(text).to.contain('ERROR | /chromium/bql');
+    expect(text).to.contain('error · /chromium/bql');
     expect(text).to.contain('target_error/navigation_failed');
-    expect(text).to.contain('requestId=request-1');
-    expect(text).to.contain('nextCursor=cursor-2');
-    expect(text).to.contain('pass this value as cursor');
+    expect(text).to.contain('request `request-1`');
+    expect(text).to.contain('cursor: "cursor-2"');
   });
 
   it('renders a plain message when no entries match', async () => {
@@ -148,7 +147,7 @@ describe('browserless_logs tool', () => {
         text: string;
       }
     ).text;
-    expect(text).to.match(/no matching .*request-log entries/i);
+    expect(text).to.match(/no request log entries matched/i);
   });
 
   it('preserves pagination guidance when an empty page has a cursor', async () => {
@@ -162,9 +161,8 @@ describe('browserless_logs tool', () => {
         text: string;
       }
     ).text;
-    expect(text).to.match(/no matching .*request-log entries/i);
-    expect(text).to.contain('nextCursor=cursor-after-empty');
-    expect(text).to.contain('pass this value as cursor');
+    expect(text).to.match(/no request log entries matched/i);
+    expect(text).to.contain('cursor: "cursor-after-empty"');
   });
 
   it('emits normal tool analytics without putting the token in event properties', async () => {

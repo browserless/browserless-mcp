@@ -1,144 +1,112 @@
 import { FastMCP } from 'fastmcp';
-import type { Content } from 'fastmcp';
 import { z } from 'zod';
 
-import type { McpConfig } from '../@types/types.js';
 import { accountQuery } from '../lib/account-api.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
-
-const levelSchema = z.enum([
-  'TRACE',
-  'DEBUG',
-  'INFO',
-  'WARN',
-  'ERROR',
-  'FATAL',
-]);
+import type { McpConfig } from '../@types/types.js';
 
 export const LogsParamsSchema = z.object({
-  startTime: z.iso
-    .datetime({ offset: true })
+  startTime: z
+    .string()
     .optional()
-    .describe('Inclusive RFC 3339 start time. Omit to use the plan window.'),
-  endTime: z.iso
-    .datetime({ offset: true })
+    .describe(
+      'Inclusive RFC 3339 start time. Omit to let the account’s plan decide how ' +
+        'far back to look — the available window is plan-dependent and the ' +
+        'server rejects a range that exceeds it.',
+    ),
+  endTime: z
+    .string()
     .optional()
-    .describe('Exclusive RFC 3339 end time. Omit to use the current time.'),
+    .describe('Exclusive RFC 3339 end time. Defaults to now when omitted.'),
   limit: z
     .number()
     .int()
     .min(1)
     .max(100)
     .optional()
-    .describe('Maximum request-log entries to return, from 1 through 100.'),
+    .describe('Maximum entries to return, 1-100. Defaults to 50.'),
   requestId: z
     .string()
-    .max(256)
     .optional()
-    .describe('Filter by an exact Browserless request id.'),
+    .describe('Return only entries for one request id.'),
   url: z
     .string()
-    .max(2048)
     .optional()
-    .describe(
-      'Filter by the requested page URL; this is a log filter, not a fetch target.',
-    ),
+    .describe('Filter by the target URL of the request.'),
   eventNames: z
-    .array(z.string().max(128))
+    .array(z.string())
     .max(20)
     .optional()
     .describe(
-      'Filter by event names such as request.failed or bql.*.failed (up to 20).',
+      'Filter by lifecycle event name, e.g. `request.failed`, `bql.*.failed`.',
     ),
   outcome: z
     .string()
-    .max(256)
     .optional()
-    .describe('Filter by request outcome, such as successful or failed.'),
+    .describe('Filter by request outcome, e.g. `failed` or `succeeded`.'),
   apiKeyId: z
     .string()
-    .max(256)
-    .optional()
-    .describe('Filter by the non-secret API key id recorded on the request.'),
-  endpoint: z
-    .string()
-    .max(256)
-    .optional()
-    .describe('Filter by Browserless endpoint, for example /chromium/bql.'),
-  category: z
-    .string()
-    .max(256)
     .optional()
     .describe(
-      'Filter by category such as browserless_refused, browserless_killed, or target_error.',
+      'Restrict to one API key, by id. Get ids from browserless_account with action "keys".',
+    ),
+  endpoint: z
+    .string()
+    .optional()
+    .describe('Filter by endpoint, e.g. `/chromium/bql` or `/screenshot`.'),
+  category: z
+    .string()
+    .optional()
+    .describe(
+      'Filter by failure category, e.g. `browserless_refused`, ' +
+        '`browserless_killed`, `target_error`.',
     ),
   reason: z
     .string()
-    .max(256)
     .optional()
-    .describe(
-      'Filter by failure reason such as concurrency_limit or target_error.',
-    ),
+    .describe('Filter by the specific failure reason within a category.'),
   levels: z
-    .array(levelSchema)
-    .max(6)
+    .array(z.enum(['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']))
     .optional()
-    .describe('Filter by severity: TRACE, DEBUG, INFO, WARN, ERROR, or FATAL.'),
+    .describe('Severity levels to include. Omit for all levels.'),
   order: z
-    .enum(['ASC', 'DESC'])
+    .enum(['asc', 'desc'])
     .optional()
-    .describe(
-      'Timestamp order. Use DESC for newest first or ASC for oldest first.',
-    ),
+    .describe('Timestamp order. Defaults to newest first.'),
   cursor: z
     .string()
-    .max(512)
     .optional()
-    .describe('Opaque nextCursor from a previous browserless_logs response.'),
+    .describe('Opaque cursor returned as `nextCursor` by the previous page.'),
 });
 
-type LogsParams = z.infer<typeof LogsParamsSchema>;
+export type LogsParams = z.infer<typeof LogsParamsSchema>;
 
-interface RequestLogEntry {
-  timestamp?: string | null;
-  eventName?: string | null;
-  requestId?: string | null;
-  apiKeyId?: string | null;
-  level?: string | null;
-  endpoint?: string | null;
-  category?: string | null;
-  reason?: string | null;
-  message?: string | null;
-  url?: string | null;
-  status?: number | null;
-  durationMs?: number | null;
-  timeoutBudgetMs?: number | null;
-  region?: string | null;
-  sessionId?: string | null;
-  bqlOperationId?: string | null;
-  operationName?: string | null;
-  resolver?: string | null;
-  graphqlPath?: string | null;
-  outcome?: string | null;
-  timeUnits?: number | null;
-  proxyUnits?: number | null;
-  captchaUnits?: number | null;
-  agentUnits?: number | null;
-  totalUnits?: number | null;
+interface LogEntry {
+  timestamp: string | null;
+  eventName: string | null;
+  requestId: string | null;
+  level: string | null;
+  endpoint: string | null;
+  category: string | null;
+  reason: string | null;
+  message: string | null;
+  url: string | null;
+  status: number | null;
+  durationMs: number | null;
+  region: string | null;
+  sessionId: string | null;
+  outcome: string | null;
+  totalUnits: number | null;
 }
 
-interface RequestLogsResult {
-  entries: RequestLogEntry[];
-  nextCursor?: string | null;
+interface LogsResult {
+  entries: LogEntry[];
+  nextCursor: string | null;
 }
 
-interface RequestLogsData {
-  requestLogs: RequestLogsResult;
-}
-
-export const REQUEST_LOGS_QUERY = `
-  query BrowserlessLogs(
+const REQUEST_LOGS_QUERY = `
+  query RequestLogs(
     $apiToken: String
     $startTime: String
     $endTime: String
@@ -176,7 +144,6 @@ export const REQUEST_LOGS_QUERY = `
         timestamp
         eventName
         requestId
-        apiKeyId
         level
         endpoint
         category
@@ -185,18 +152,9 @@ export const REQUEST_LOGS_QUERY = `
         url
         status
         durationMs
-        timeoutBudgetMs
         region
         sessionId
-        bqlOperationId
-        operationName
-        resolver
-        graphqlPath
         outcome
-        timeUnits
-        proxyUnits
-        captchaUnits
-        agentUnits
         totalUnits
       }
       nextCursor
@@ -204,18 +162,39 @@ export const REQUEST_LOGS_QUERY = `
   }
 `;
 
-const formatEntry = (entry: RequestLogEntry): string => {
-  const categoryAndReason = [entry.category, entry.reason]
+const formatEntry = (entry: LogEntry): string => {
+  const head = [
+    entry.timestamp ?? 'unknown time',
+    entry.level ?? 'INFO',
+    entry.endpoint ?? entry.eventName ?? 'unknown endpoint',
+  ].join(' · ');
+
+  const detail = [
+    entry.category && entry.reason
+      ? `${entry.category}/${entry.reason}`
+      : (entry.category ?? entry.reason),
+    entry.outcome,
+    entry.status != null ? `HTTP ${entry.status}` : undefined,
+    entry.durationMs != null ? `${Math.round(entry.durationMs)}ms` : undefined,
+    entry.totalUnits != null ? `${entry.totalUnits} units` : undefined,
+    entry.region,
+  ]
     .filter(Boolean)
-    .join('/');
-  const summary = [
-    entry.timestamp ?? 'unknown-time',
-    (entry.level ?? 'INFO').toUpperCase(),
-    entry.endpoint ?? 'unknown-endpoint',
-    categoryAndReason || 'uncategorized',
-    entry.message ?? entry.eventName ?? 'Request event',
-  ].join(' | ');
-  return `${summary} | requestId=${entry.requestId ?? 'unknown'}`;
+    .join(' · ');
+
+  const lines = [`- **${head}**`];
+  if (detail) lines.push(`  ${detail}`);
+  if (entry.message) lines.push(`  ${entry.message}`);
+  if (entry.url) lines.push(`  ${entry.url}`);
+  const ids = [
+    entry.requestId ? `request \`${entry.requestId}\`` : undefined,
+    entry.sessionId ? `session \`${entry.sessionId}\`` : undefined,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  if (ids) lines.push(`  ${ids}`);
+
+  return lines.join('\n');
 };
 
 export function registerLogsTool(
@@ -223,11 +202,15 @@ export function registerLogsTool(
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
-  defineTool<LogsParams, RequestLogsResult>(server, config, analytics, {
+  defineTool<LogsParams, LogsResult>(server, config, analytics, {
     name: 'browserless_logs',
     description:
-      "Return Browserless's recent request logs for the configured account to diagnose failed runs. " +
-      'The available history depends on the account plan, and the tool reports the allowed limit when a requested range is refused.',
+      "Read Browserless's own record of the account's recent requests: what " +
+      'was attempted, whether it failed, why it stopped, how long it took and ' +
+      'what it cost. This is the tool for diagnosing a run that failed on the ' +
+      'Browserless side rather than in your own code. The window available ' +
+      'depends on the account plan; the server reports the limit if a range is ' +
+      'refused. Read-only.',
     parameters: LogsParamsSchema,
     annotations: {
       title: 'Browserless Request Logs',
@@ -236,32 +219,48 @@ export function registerLogsTool(
       idempotentHint: true,
       openWorldHint: true,
     },
-    run: async ({ params, token }) => {
-      const data = await accountQuery<RequestLogsData>(
+    run: async ({ params, token, log }) => {
+      const data = await accountQuery<{ requestLogs: LogsResult }>(
         config,
         token,
         REQUEST_LOGS_QUERY,
-        params,
+        {
+          ...params,
+          // The GraphQL enum is ASC/DESC. Time bounds pass through untouched so
+          // the server applies the plan's own default.
+          ...(params.order ? { order: params.order.toUpperCase() } : {}),
+        },
       );
+      log.debug(`Read ${data.requestLogs?.entries?.length ?? 0} log entries`);
       return data.requestLogs;
     },
-    analyticsProps: (_params, result) => ({
-      entry_count: result.entries.length,
-      has_next_cursor: !!result.nextCursor,
+    analyticsProps: (params, result) => ({
+      entry_count: result?.entries?.length ?? 0,
+      had_cursor: Boolean(params.cursor),
+      filtered_by_outcome: params.outcome ?? undefined,
+      filtered_by_endpoint: params.endpoint ?? undefined,
     }),
     format: (result) => {
-      const lines =
-        result.entries.length === 0
-          ? [
-              'No matching Browserless request-log entries were found in this window.',
-            ]
-          : result.entries.map(formatEntry);
+      const entries = result?.entries ?? [];
+      const blocks = entries.length
+        ? [
+            `## Request logs (${entries.length})`,
+            ``,
+            entries.map(formatEntry).join('\n'),
+          ]
+        : [
+            'No request log entries matched. Widen the time range or drop a ' +
+              'filter — and note the available window depends on the account plan.',
+          ];
+
       if (result.nextCursor) {
-        lines.push(
-          `nextCursor=${result.nextCursor} — pass this value as cursor to browserless_logs for the next page.`,
+        blocks.push(
+          ``,
+          `More entries are available — pass \`cursor: "${result.nextCursor}"\` for the next page.`,
         );
       }
-      return [{ type: 'text', text: lines.join('\n') } satisfies Content];
+
+      return [{ type: 'text' as const, text: blocks.join('\n') }];
     },
   });
 }
