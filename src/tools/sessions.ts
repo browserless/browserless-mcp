@@ -317,9 +317,19 @@ const formatReplay = (result: SessionsResult): string => {
     : inlined
       ? [
           `An equivalent \`text/html\` resource (${kb} KB) is attached to this ` +
-            `response — render it inline as-is; do not rebuild it. The file path ` +
-            `above is on the machine running this server, so it only helps the ` +
-            `user if that is also their own machine.`,
+            `response. It is a complete, self-contained page and it is already ` +
+            `built — never rebuild the player. Show it whichever way you can ` +
+            `display HTML: inline if your surface renders a page that size, ` +
+            `otherwise write the resource to a .html file and open or publish ` +
+            `that. Most of those bytes are the player itself, so move them to ` +
+            `the file without reading them into context. If your host wraps ` +
+            `page content in its own HTML skeleton, insert the contents of ` +
+            `this page's head and body into it — the style and script ` +
+            `elements, then the markup — and drop the doctype, html, head and ` +
+            `body tags themselves, since a nested head or body can stop the ` +
+            `player's CSS or scripts from running. The file path above is on ` +
+            `the machine running this server, so it only helps the user if ` +
+            `that is also their own machine.`,
         ]
       : [
           `The player is ${kb} KB — too large to attach inline, and the path above ` +
