@@ -323,8 +323,11 @@ const formatReplay = (result: SessionsResult): string => {
             `otherwise write the resource to a .html file and open or publish ` +
             `that. Most of those bytes are the player itself, so move them to ` +
             `the file without reading them into context. If your host wraps ` +
-            `page content in its own HTML skeleton, keep the inner head and ` +
-            `body and drop the outer document tags. The file path above is on ` +
+            `page content in its own HTML skeleton, insert the contents of ` +
+            `this page's head and body into it — the style and script ` +
+            `elements, then the markup — and drop the doctype, html, head and ` +
+            `body tags themselves, since a nested head or body can stop the ` +
+            `player's CSS or scripts from running. The file path above is on ` +
             `the machine running this server, so it only helps the user if ` +
             `that is also their own machine.`,
         ]
