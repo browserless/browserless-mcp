@@ -53,6 +53,7 @@ export const accountQuery = async <T>(
             signal: controller.signal,
           });
           if (result.status >= 500) {
+            await result.body?.cancel();
             throw new RetryableAccountApiError(result.status);
           }
           return result;

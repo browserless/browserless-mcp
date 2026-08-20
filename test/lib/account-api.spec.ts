@@ -142,6 +142,21 @@ describe('accountQuery', () => {
     expect(data).to.deep.equal({ ok: 1 });
   });
 
+  it('cancels a transient 5xx response body before retrying', async () => {
+    let cancelCount = 0;
+    const body = new ReadableStream({
+      cancel: () => {
+        cancelCount += 1;
+      },
+    });
+    fetchStub.onFirstCall().resolves(new Response(body, { status: 503 }));
+    fetchStub.onSecondCall().resolves(jsonResponse({ data: { ok: 1 } }));
+
+    await accountQuery({ ...config, maxRetries: 1 }, 'a-token', 'query { ok }');
+
+    expect(cancelCount).to.equal(1);
+  });
+
   it('retries an HTML gateway response before surfacing a safe UserError', async () => {
     fetchStub.resolves(
       new Response('<html>bad gateway</html>', {
