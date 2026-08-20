@@ -142,6 +142,13 @@ describe('config.apiServerUrl', () => {
     expect(config.apiServerExplicitlyConfigured).to.equal(false);
   });
 
+  it('treats a whitespace-only account API host as unset', () => {
+    process.env.BROWSERLESS_API_SERVER = '   ';
+    const config = getConfig();
+    expect(config.apiServerUrl).to.equal(DEFAULT_API_SERVER_URL);
+    expect(config.apiServerExplicitlyConfigured).to.equal(false);
+  });
+
   it('is overridable for self-hosted deployments', () => {
     process.env.BROWSERLESS_API_SERVER = 'https://api.internal.example.com';
     const config = getConfig();
