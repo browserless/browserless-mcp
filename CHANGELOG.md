@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.1](https://github.com/browserless/browserless-mcp/compare/v1.22.0...v1.22.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* update replay rendering instructions ([#262](https://github.com/browserless/browserless-mcp/issues/262)) ([a7adbdb](https://github.com/browserless/browserless-mcp/commit/a7adbdbdecad24d15e1943f94a2b52da72f796a6))
+
 ## [1.22.0](https://github.com/browserless/browserless-mcp/compare/v1.21.0...v1.22.0) (2026-08-19)
 
 
