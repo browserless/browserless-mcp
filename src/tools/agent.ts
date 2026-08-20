@@ -639,6 +639,14 @@ export function registerAgentTools(
         );
       }
 
+      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false);
+        throw new UserError(
+          'stripeLinkCheckout is reserved for browserless_link_checkout.',
+        );
+      }
+
       if (commands.length === 1 && commands[0].method === 'close') {
         closeSession(
           mcpSessionId,
@@ -859,7 +867,15 @@ export function registerAgentTools(
             });
 
             const triggered = detectVisibleSkills(
-              { snapshot: err.snapshot, error: err, cmd, apiUrl },
+              {
+                snapshot: err.snapshot,
+                error: err,
+                cmd,
+                apiUrl,
+                // The live WebSocket is Browserless-authenticated; profile
+                // presence is not merchant-auth state.
+                authenticated: true,
+              },
               agentSession.skillState,
               compliant,
             );
@@ -942,6 +958,7 @@ export function registerAgentTools(
             cmd: lastCmd,
             resp: lastResult,
             apiUrl,
+            authenticated: true,
           },
           agentSession.skillState,
           compliant,

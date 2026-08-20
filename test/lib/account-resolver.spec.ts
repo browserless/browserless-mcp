@@ -19,7 +19,10 @@ const SERVICE_ROLE_KEY = 'test-service-role-key';
 /** Supabase Auth `/auth/v1/user` success — the authoritative, signature-verified user. */
 function supabaseUser(appMetadata: Record<string, unknown>): Response {
   return new Response(
-    JSON.stringify({ id: 'user-uuid', app_metadata: appMetadata }),
+    JSON.stringify({
+      id: 'user-uuid',
+      app_metadata: { role: 'owner', ...appMetadata },
+    }),
     {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -65,6 +68,7 @@ describe('account-resolver', () => {
 
     expect(result.apiKey).to.equal('resolved-key');
     expect(result.email).to.equal('user@example.com');
+    expect(result.userRole).to.equal('owner');
 
     // First call must be the Supabase Auth verification with the USER's token.
     const [verifyUrl, verifyOpts] = fetchStub.firstCall.args;
@@ -167,6 +171,50 @@ describe('account-resolver', () => {
       expect.fail('should have thrown');
     } catch (err) {
       expect((err as Error).message).to.include('app_metadata.accountId');
+    }
+  });
+
+  it('keeps verified roles token-scoped when users share an account cache', async () => {
+    const ownerJwt = buildFakeJwt({ sub: 'owner' });
+    const viewerJwt = buildFakeJwt({ sub: 'viewer' });
+    fetchStub
+      .onCall(0)
+      .resolves(supabaseUser({ accountId: 'acc-shared', role: 'owner' }));
+    fetchStub
+      .onCall(1)
+      .resolves(
+        postgrestRows([{ api_key: 'shared-key', email: 'owner@example.com' }]),
+      );
+    fetchStub
+      .onCall(2)
+      .resolves(supabaseUser({ accountId: 'acc-shared', role: 'viewer' }));
+    const owner = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, ownerJwt);
+    const viewer = await resolveApiKey(
+      SUPABASE_URL,
+      SERVICE_ROLE_KEY,
+      viewerJwt,
+    );
+    expect(owner.userRole).to.equal('owner');
+    expect(viewer.userRole).to.equal('viewer');
+    expect(fetchStub.callCount).to.equal(3);
+  });
+
+  it('rejects a verified user without a Browserless account role', async () => {
+    const jwt = buildFakeJwt({ sub: 'user-uuid' });
+    fetchStub.onFirstCall().resolves(
+      new Response(
+        JSON.stringify({
+          id: 'user-uuid',
+          app_metadata: { accountId: 'acc-no-role' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    try {
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      expect.fail('should have thrown');
+    } catch (error) {
+      expect((error as Error).message).to.include('valid account role');
     }
   });
 

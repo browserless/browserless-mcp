@@ -46,6 +46,10 @@ export interface BrowserlessSession extends Record<string, unknown> {
   attachSessionId?: string;
   /** Verified account id for OAuth/Supabase-authenticated sessions. */
   accountId?: string;
+  /** Authoritative Browserless account role from the verified Supabase user. */
+  userRole?: 'owner' | 'admin' | 'viewer';
+  /** Verified Supabase JWT retained only for role-enforced account mutations. */
+  identityToken?: string;
   /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
   source?: string;
 }
@@ -55,6 +59,7 @@ export interface SupabaseJwtPayload {
   email?: string;
   app_metadata?: {
     accountId?: string;
+    role?: string;
   };
 }
 
@@ -220,6 +225,18 @@ export interface ActiveSession {
   lastSnapshotElements?: SnapshotElement[];
   // Active tab the cache above belongs to; a change means re-baseline (new tab).
   lastActiveTargetId?: string | null;
+  // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
+  // payment data never enter the session cache.
+  stripeLinkContinuation?:
+    | {
+        checkoutId: string;
+        allowedNextAction: 'resume';
+        validUntil: number;
+      }
+    | {
+        checkoutId: string;
+        allowedNextAction: 'report';
+      };
 }
 
 /* ------------------------------------------------------------------ */
@@ -271,7 +288,8 @@ export type SkillId =
   | 'tabs'
   | 'autonomous-login'
   | 'auth-profile'
-  | 'file-transfers';
+  | 'file-transfers'
+  | 'agentic-checkout';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
@@ -279,6 +297,8 @@ export interface DetectContext {
   cmd?: { method: string; params: Record<string, unknown> };
   resp?: unknown;
   apiUrl?: string;
+  /** True when the active agent transport is Browserless-authenticated. */
+  authenticated?: boolean;
 }
 
 export interface SkillFireState {
@@ -304,6 +324,7 @@ export type Predicate =
   | { kind: 'snapshot.has-detected-challenge' }
   | { kind: 'snapshot.tabs-at-least'; count: number }
   | { kind: 'snapshot.element-cap-hit' }
+  | { kind: 'snapshot.authenticated-payment-stage' }
   | { kind: 'error.code'; codes: string[] }
   | { kind: 'error.message-match'; regex: RegExp }
   | { kind: 'command.method'; methods: string[] }
@@ -319,6 +340,8 @@ export interface SkillSpec {
   path: string;
   cloudOnly?: boolean;
   refireAfter?: number;
+  /** Matching this clears the once-per-session latch for a future trigger. */
+  resetTriggers?: Trigger[];
   /** OR of triggers; each trigger is an AND-clause of predicates. */
   triggers: Trigger[];
 }
@@ -600,6 +623,79 @@ export interface ProfileSummary {
   updatedAt: string;
 }
 
+export type StripeLinkAction = 'status' | 'connect' | 'disconnect';
+
+export interface StripeLinkConnectionResponse {
+  status: 'connected' | 'not_connected';
+  authorization_url?: string;
+  instruction: string;
+}
+
+export interface StripeLinkCheckoutMerchant {
+  name: string;
+  url: string;
+}
+
+export interface StripeLinkCheckoutCartLine {
+  name: string;
+  quantity: number;
+  unit_amount_minor: number;
+}
+
+export interface StripeLinkCheckoutSelectors {
+  number: string;
+  cvc: string;
+  expiry?: string;
+  exp_month?: string;
+  exp_year?: string;
+  postal?: string;
+  cardholder_name?: string;
+}
+
+export type StripeLinkCheckoutRequest =
+  | {
+      action: 'create';
+      browser_session_handle: string;
+      merchant: StripeLinkCheckoutMerchant;
+      amount_minor: number;
+      currency: 'usd';
+      cart: StripeLinkCheckoutCartLine[];
+      selectors: StripeLinkCheckoutSelectors;
+    }
+  | {
+      action: 'resume' | 'cancel';
+      browser_session_handle: string;
+      checkout_id: string;
+    }
+  | {
+      action: 'report';
+      browser_session_handle: string;
+      checkout_id: string;
+      outcome: 'success' | 'blocked' | 'abandoned';
+      tags?: string[];
+      step?: string;
+    };
+
+export interface StripeLinkCheckoutResponse {
+  status: string;
+  approval_url?: string;
+  action_url?: string;
+  action_type?: string;
+  action_resolution?:
+    | 'auto_resume'
+    | 'create_new_spend_request'
+    | 'create_new_spend_request_after_completion';
+  action_message?: string;
+  instruction?: string;
+  checkout_id?: string;
+  _next?: {
+    action: 'resume';
+    checkout_id: string;
+    valid_until: string;
+  };
+  last4?: string;
+}
+
 export interface ApiClient {
   smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
@@ -612,5 +708,9 @@ export interface ApiClient {
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
   listProfiles(params?: ListProfilesRequest): Promise<ProfileSummary[]>;
+  stripeLinkConnection(
+    action: StripeLinkAction,
+    identityToken?: string,
+  ): Promise<StripeLinkConnectionResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
 }

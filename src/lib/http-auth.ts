@@ -8,6 +8,8 @@ export interface ResolvedBrowserlessAuth {
   attachSessionId?: string;
   source?: string;
   accountId?: string;
+  userRole?: 'owner' | 'admin' | 'viewer';
+  identityToken?: string;
 }
 
 export interface AuthInput {
@@ -61,12 +63,20 @@ export const resolveBrowserlessAuth = async (
 
   // A JWT is exchanged for the account's Browserless API key via PostgREST.
   if (isJwt && headerToken) {
-    const { apiKey, accountId } = await resolveApiKey(
+    const { apiKey, accountId, userRole } = await resolveApiKey(
       config.supabaseUrl,
       config.supabaseServiceRoleKey,
       headerToken,
     );
-    return { token: apiKey, apiUrl, attachSessionId, source, accountId };
+    return {
+      token: apiKey,
+      apiUrl,
+      attachSessionId,
+      source,
+      accountId,
+      userRole,
+      identityToken: headerToken,
+    };
   }
 
   throw new Error(

@@ -8,6 +8,7 @@ import type {
   SkillFireState,
   SkillId,
   SkillSpec,
+  Trigger,
 } from '../@types/types.js';
 
 export type {
@@ -36,6 +37,33 @@ const TAB_ERROR_CODES = ['TAB_NOT_FOUND', 'TAB_CLOSED', 'TAB_LIMIT_EXCEEDED'];
 const TAB_COMMAND_METHODS = ['getTabs', 'switchTab', 'createTab', 'closeTab'];
 
 const FILE_TRANSFER_METHODS = ['uploadFile', 'getDownloads'];
+
+const PAYMENT_FIELD_RE =
+  /\b(card ?number|credit card|debit card|cvc|cvv|security code|expir(?:y|ation))\b/i;
+const PAYMENT_STAGE_RE =
+  /\b(check ?out|payment|place order|pay(?: now)?|complete purchase)\b/i;
+
+const elementText = (
+  el: NonNullable<DetectContext['snapshot']>['elements'][number],
+): string =>
+  [el.name, el.text, el.placeholder, el.id, el.ariaLabel, el.selector]
+    .filter(Boolean)
+    .join(' ');
+
+const isAuthenticatedPaymentStage = (ctx: DetectContext): boolean => {
+  if (!ctx.authenticated || !ctx.snapshot) return false;
+  const snapshot = ctx.snapshot;
+  const hasPaymentField = snapshot.elements.some(
+    (el) => el.tag === 'input' && PAYMENT_FIELD_RE.test(elementText(el)),
+  );
+  if (!hasPaymentField) return false;
+  const pageText = [
+    snapshot.url,
+    snapshot.title,
+    ...snapshot.elements.map(elementText),
+  ].join(' ');
+  return PAYMENT_STAGE_RE.test(pageText);
+};
 
 const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
   switch (p.kind) {
@@ -74,6 +102,8 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
           : DEFAULT_MAX_ELEMENTS;
       return len >= requestedMax;
     }
+    case 'snapshot.authenticated-payment-stage':
+      return isAuthenticatedPaymentStage(ctx);
     case 'error.code':
       return !!ctx.error?.code && p.codes.includes(ctx.error.code);
     case 'error.message-match':
@@ -191,6 +221,11 @@ const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    id: 'agentic-checkout',
+    path: 'src/skills/agentic-checkout.md',
+    triggers: [[{ kind: 'snapshot.authenticated-payment-stage' }]],
+  },
+  {
     id: 'captchas',
     path: 'src/skills/captchas.md',
     cloudOnly: true,
@@ -234,8 +269,11 @@ export const createSkillState = (): SkillFireState => ({
   sitesSurfaced: new Set(),
 });
 
+const firesTriggers = (triggers: Trigger[], ctx: DetectContext): boolean =>
+  triggers.some((trigger) => trigger.every((p) => evalPredicate(p, ctx)));
+
 const fires = (skill: Skill, ctx: DetectContext): boolean =>
-  skill.triggers.some((trigger) => trigger.every((p) => evalPredicate(p, ctx)));
+  firesTriggers(skill.triggers, ctx);
 
 export const detectSkills = (
   ctx: DetectContext,
@@ -244,9 +282,17 @@ export const detectSkills = (
   const triggered: SkillId[] = [];
   for (const skill of skills) {
     if (skill.cloudOnly && !isCloudApi(ctx.apiUrl)) continue;
+    const lastFired = state.fired.get(skill.id);
+    if (
+      lastFired !== undefined &&
+      skill.resetTriggers &&
+      firesTriggers(skill.resetTriggers, ctx)
+    ) {
+      state.fired.delete(skill.id);
+      continue;
+    }
     if (!fires(skill, ctx)) continue;
 
-    const lastFired = state.fired.get(skill.id);
     if (lastFired === undefined) {
       triggered.push(skill.id);
       continue;

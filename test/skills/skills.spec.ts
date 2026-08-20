@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all eleven skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(11);
+  it('loads all twelve skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(12);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -51,6 +51,7 @@ describe('skills/registry', () => {
       'autonomous-login',
       'auth-profile',
       'file-transfers',
+      'agentic-checkout',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -58,6 +59,15 @@ describe('skills/registry', () => {
         100,
       );
     }
+  });
+
+  it('keeps an approval-pending checkout browser open for same-session resume', () => {
+    const skill = skillsRegistry.find(
+      (candidate) => candidate.id === 'agentic-checkout',
+    );
+    expect(skill?.body).to.include(
+      'Do not close the browser while this checkout can still be resumed.',
+    );
   });
 
   it('renderSkill wraps body with markers and the file path', () => {
@@ -504,6 +514,70 @@ describe('skills/detectSkills - autonomous-login', () => {
 
     state.cmdIndex = 100;
     expect(detectSkills(ctx, state)).to.not.include('autonomous-login');
+  });
+});
+
+describe('skills/detectSkills - agentic-checkout', () => {
+  const paymentSnapshot = snapshot(
+    [
+      el({
+        role: 'textbox',
+        tag: 'input',
+        name: 'Card number',
+        selector: 'input[name="cardNumber"]',
+      }),
+      el({ role: 'button', name: 'Pay now', selector: 'button#pay' }),
+    ],
+    'https://shop.example.com/checkout/payment',
+  );
+
+  it('fires deterministically at an authenticated payment stage', () => {
+    expect(
+      detectSkills(
+        { snapshot: paymentSnapshot, authenticated: true },
+        createSkillState(),
+      ),
+    ).to.include('agentic-checkout');
+  });
+
+  it('does not fire on an unauthenticated Browserless transport', () => {
+    expect(
+      detectSkills(
+        { snapshot: paymentSnapshot, authenticated: false },
+        createSkillState(),
+      ),
+    ).to.not.include('agentic-checkout');
+  });
+
+  it('does not rearm from page text; terminal checkout state explicitly rearms it', () => {
+    const state = createSkillState();
+    state.cmdIndex = 1;
+    const triggered = detectSkills(
+      { snapshot: paymentSnapshot, authenticated: true },
+      state,
+    );
+    expect(triggered).to.include('agentic-checkout');
+    markFired(state, triggered);
+
+    state.cmdIndex = 20;
+    expect(
+      detectSkills({ snapshot: paymentSnapshot, authenticated: true }, state),
+    ).to.not.include('agentic-checkout');
+
+    const approved = snapshot([
+      el({ role: 'status', name: 'Payment approved', selector: '#status' }),
+    ]);
+    expect(
+      detectSkills({ snapshot: approved, authenticated: true }, state),
+    ).to.not.include('agentic-checkout');
+
+    // browserless_link_checkout performs this only after a terminal
+    // report/cancel/provider status, not from untrusted merchant page text.
+    state.fired.delete('agentic-checkout');
+    state.cmdIndex = 21;
+    expect(
+      detectSkills({ snapshot: paymentSnapshot, authenticated: true }, state),
+    ).to.include('agentic-checkout');
   });
 });
 

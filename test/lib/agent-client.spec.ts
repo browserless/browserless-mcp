@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import {
   buildAgentWsUrl,
+  getActiveSessionByHandle,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -37,13 +38,14 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.pathname).to.equal('/browserless/chromium/agent');
   });
 
-  it('uses ws:// for http and only sets token when no proxy options are passed', () => {
+  it('uses ws:// for http and lets the backend apply the plan timeout', () => {
     const url = new URL(buildAgentWsUrl('http://localhost:3000', 'tok'));
     expect(url.protocol).to.equal('ws:');
     expect(url.host).to.equal('localhost:3000');
     expect(url.pathname).to.equal('/chromium/agent');
     expect([...url.searchParams.keys()]).to.deep.equal(['token']);
     expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.searchParams.has('timeout')).to.equal(false);
   });
 
   it('uses wss:// for https', () => {
@@ -718,6 +720,30 @@ describe('agent-client session handle', () => {
       // Same churned session id, but the handle was dropped — a new browser.
       const dropped = await getOrCreateSession('mcp-2', server.url, 'tok');
       expect(dropped.ws).to.not.equal(first.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('resolves only the exact open handle/token/API tuple without reconnecting', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const active = await getOrCreateSession('mcp-1', server.url, 'tok');
+      expect(
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.equal(active);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'wrong-token'),
+      ).to.throw(/unavailable/);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, 'https://other.example', 'tok'),
+      ).to.throw(/unavailable/);
+
+      active.ws.close();
+      await new Promise((resolve) => active.ws.once('close', resolve));
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.throw(/unavailable/);
     } finally {
       await server.close();
     }
