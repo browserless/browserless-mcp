@@ -114,6 +114,19 @@ describe('browserless_logs tool', () => {
     ).to.equal(false);
   });
 
+  it('documents both endpoint shapes and every failure category', () => {
+    expect(LogsParamsSchema.shape.endpoint.description).to.include(
+      'MCP Client',
+    );
+    expect(LogsParamsSchema.shape.endpoint.description).to.include('CLI Agent');
+    expect(LogsParamsSchema.shape.endpoint.description).to.include(
+      '/chromium/bql',
+    );
+    expect(LogsParamsSchema.shape.category.description).to.include(
+      'client_closed',
+    );
+  });
+
   it('refuses to send a self-hosted token to the default hosted account API', async () => {
     const fetchStub = sinon.stub(globalThis, 'fetch').resolves(response([]));
     const unsafeConfig = {

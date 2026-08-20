@@ -54,13 +54,17 @@ export const LogsParamsSchema = z.object({
   endpoint: z
     .string()
     .optional()
-    .describe('Filter by endpoint, e.g. `/chromium/bql` or `/screenshot`.'),
+    .describe(
+      'Filter by endpoint. Browser routes use paths such as `/chromium/bql` ' +
+        'or `/screenshot`; agent routes use origin labels such as `MCP Client`, ' +
+        '`CLI Agent`, `Script Builder`, `Autologin`, or `Agent`.',
+    ),
   category: z
     .string()
     .optional()
     .describe(
       'Filter by failure category, e.g. `browserless_refused`, ' +
-        '`browserless_killed`, `target_error`.',
+        '`browserless_killed`, `client_closed`, or `target_error`.',
     ),
   reason: z
     .string()
