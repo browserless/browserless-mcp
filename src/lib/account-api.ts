@@ -10,9 +10,17 @@ type AccountApiConfig = Pick<
   'apiServerUrl' | 'requestTimeout' | 'maxRetries'
 >;
 
+class RetryableAccountApiError extends Error {
+  constructor(readonly status: number) {
+    super(`Browserless account API returned ${status}`);
+  }
+}
+
 /** Network-level failures are worth retrying; a GraphQL error is not. */
 const isRetryable = (err: Error): boolean =>
-  err.name === 'AbortError' || err instanceof TypeError;
+  err.name === 'AbortError' ||
+  err instanceof TypeError ||
+  err instanceof RetryableAccountApiError;
 
 // The token travels only in the `apiToken` variable — never a header, URL, log
 // line or thrown message. Revoked tokens are rejected server-side, not here.
@@ -28,27 +36,45 @@ export const accountQuery = async <T>(
     variables: { ...compact(variables ?? {}), apiToken: token },
   });
 
-  const response = await retryWithBackoff(
-    async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), config.requestTimeout);
-      try {
-        return await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-    {
-      maxRetries: config.maxRetries,
-      baseDelayMs: 250,
-      shouldRetry: isRetryable,
-    },
-  );
+  let response: Response;
+  try {
+    response = await retryWithBackoff(
+      async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(
+          () => controller.abort(),
+          config.requestTimeout,
+        );
+        try {
+          const result = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+            signal: controller.signal,
+          });
+          if (result.status >= 500) {
+            await result.body?.cancel();
+            throw new RetryableAccountApiError(result.status);
+          }
+          return result;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+      {
+        maxRetries: config.maxRetries,
+        baseDelayMs: 250,
+        shouldRetry: isRetryable,
+      },
+    );
+  } catch (error) {
+    if (error instanceof RetryableAccountApiError) {
+      throw new UserError(
+        `The Browserless account API returned ${error.status}. Check that your token is valid and still active.`,
+      );
+    }
+    throw error;
+  }
 
   const payload = (await response.json().catch(() => undefined)) as
     { data?: T; errors?: Array<{ message?: string }> } | undefined;

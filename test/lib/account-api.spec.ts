@@ -128,6 +128,58 @@ describe('accountQuery', () => {
     expect(data).to.deep.equal({ ok: 1 });
   });
 
+  it('retries a transient 5xx response and then succeeds', async () => {
+    fetchStub.onFirstCall().resolves(jsonResponse({}, 503));
+    fetchStub.onSecondCall().resolves(jsonResponse({ data: { ok: 1 } }));
+
+    const data = await accountQuery(
+      { ...config, maxRetries: 1 },
+      'a-token',
+      'query { ok }',
+    );
+
+    expect(fetchStub.callCount).to.equal(2);
+    expect(data).to.deep.equal({ ok: 1 });
+  });
+
+  it('cancels a transient 5xx response body before retrying', async () => {
+    let cancelCount = 0;
+    const body = new ReadableStream({
+      cancel: () => {
+        cancelCount += 1;
+      },
+    });
+    fetchStub.onFirstCall().resolves(new Response(body, { status: 503 }));
+    fetchStub.onSecondCall().resolves(jsonResponse({ data: { ok: 1 } }));
+
+    await accountQuery({ ...config, maxRetries: 1 }, 'a-token', 'query { ok }');
+
+    expect(cancelCount).to.equal(1);
+  });
+
+  it('retries an HTML gateway response before surfacing a safe UserError', async () => {
+    fetchStub.resolves(
+      new Response('<html>bad gateway</html>', {
+        status: 502,
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    );
+
+    try {
+      await accountQuery(
+        { ...config, maxRetries: 1 },
+        'secret-token',
+        'query { ok }',
+      );
+      expect.fail('Expected a UserError');
+    } catch (error) {
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).to.include('502');
+      expect((error as Error).message).to.not.include('secret-token');
+    }
+    expect(fetchStub.callCount).to.equal(2);
+  });
+
   it('reports a non-2xx response without leaking the token', async () => {
     fetchStub.resolves(jsonResponse({}, 502));
 

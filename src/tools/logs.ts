@@ -1,4 +1,4 @@
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 
 import { accountQuery } from '../lib/account-api.js';
@@ -54,13 +54,17 @@ export const LogsParamsSchema = z.object({
   endpoint: z
     .string()
     .optional()
-    .describe('Filter by endpoint, e.g. `/chromium/bql` or `/screenshot`.'),
+    .describe(
+      'Filter by endpoint. Browser routes use paths such as `/chromium/bql` ' +
+        'or `/screenshot`; agent routes use origin labels such as `MCP Client`, ' +
+        '`CLI Agent`, `Script Builder`, `Autologin`, or `Agent`.',
+    ),
   category: z
     .string()
     .optional()
     .describe(
       'Filter by failure category, e.g. `browserless_refused`, ' +
-        '`browserless_killed`, `target_error`.',
+        '`browserless_killed`, `client_closed`, or `target_error`.',
     ),
   reason: z
     .string()
@@ -197,6 +201,15 @@ const formatEntry = (entry: LogEntry): string => {
   return lines.join('\n');
 };
 
+const isBrowserlessHostedRuntime = (apiUrl: string): boolean => {
+  try {
+    const host = new URL(apiUrl).hostname.toLowerCase();
+    return host === 'browserless.io' || host.endsWith('.browserless.io');
+  } catch {
+    return false;
+  }
+};
+
 export function registerLogsTool(
   server: FastMCP,
   config: McpConfig,
@@ -219,7 +232,15 @@ export function registerLogsTool(
       idempotentHint: true,
       openWorldHint: true,
     },
-    run: async ({ params, token, log }) => {
+    run: async ({ params, token, log, apiUrl }) => {
+      if (
+        !config.apiServerExplicitlyConfigured &&
+        !isBrowserlessHostedRuntime(apiUrl)
+      ) {
+        throw new UserError(
+          'Set BROWSERLESS_API_SERVER to your self-hosted account API before using browserless_logs. The token was not sent to the default hosted account API.',
+        );
+      }
       const data = await accountQuery<{ requestLogs: LogsResult }>(
         config,
         token,
@@ -242,23 +263,16 @@ export function registerLogsTool(
     }),
     format: (result) => {
       const entries = result?.entries ?? [];
-
-      if (!entries.length) {
-        return [
-          {
-            type: 'text' as const,
-            text:
-              'No request log entries matched. Widen the time range or drop a ' +
+      const blocks = entries.length
+        ? [
+            `## Request logs (${entries.length})`,
+            ``,
+            entries.map(formatEntry).join('\n'),
+          ]
+        : [
+            'No request log entries matched. Widen the time range or drop a ' +
               'filter — and note the available window depends on the account plan.',
-          },
-        ];
-      }
-
-      const blocks = [
-        `## Request logs (${entries.length})`,
-        ``,
-        entries.map(formatEntry).join('\n'),
-      ];
+          ];
 
       if (result.nextCursor) {
         blocks.push(

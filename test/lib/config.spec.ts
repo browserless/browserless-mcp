@@ -137,14 +137,23 @@ describe('config.apiServerUrl', () => {
 
   it('defaults to the account API host', () => {
     delete process.env.BROWSERLESS_API_SERVER;
-    expect(getConfig().apiServerUrl).to.equal(DEFAULT_API_SERVER_URL);
+    const config = getConfig();
+    expect(config.apiServerUrl).to.equal(DEFAULT_API_SERVER_URL);
+    expect(config.apiServerExplicitlyConfigured).to.equal(false);
+  });
+
+  it('treats a whitespace-only account API host as unset', () => {
+    process.env.BROWSERLESS_API_SERVER = '   ';
+    const config = getConfig();
+    expect(config.apiServerUrl).to.equal(DEFAULT_API_SERVER_URL);
+    expect(config.apiServerExplicitlyConfigured).to.equal(false);
   });
 
   it('is overridable for self-hosted deployments', () => {
     process.env.BROWSERLESS_API_SERVER = 'https://api.internal.example.com';
-    expect(getConfig().apiServerUrl).to.equal(
-      'https://api.internal.example.com',
-    );
+    const config = getConfig();
+    expect(config.apiServerUrl).to.equal('https://api.internal.example.com');
+    expect(config.apiServerExplicitlyConfigured).to.equal(true);
   });
 
   // The account API and the browser runtime are different hosts; deriving one
