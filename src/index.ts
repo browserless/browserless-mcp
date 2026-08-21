@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FastMCP, OAuthProvider } from 'fastmcp';
-import { OAuthProxy } from 'fastmcp/auth';
+import type { OAuthProxy } from 'fastmcp/auth';
 import { getConfig, classifyComplianceInput } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
 import { registerSurface } from './tools/register.js';
@@ -16,6 +16,7 @@ import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
+import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
 import { Redis } from 'ioredis';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
@@ -81,13 +82,13 @@ class PassthroughOAuthProvider extends OAuthProvider {
         this.genericConfig.tokenEndpointAuthMethod ?? 'client_secret_basic',
     };
     if (redisClient) {
-      return new OAuthProxy({
+      return new BrowserlessOAuthProxy({
         ...proxyConfig,
         encryptionKey: false,
         tokenStorage: new RedisTokenStorage(redisClient),
       });
     }
-    return new OAuthProxy(proxyConfig);
+    return new BrowserlessOAuthProxy(proxyConfig);
   }
 }
 
