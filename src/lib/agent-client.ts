@@ -260,6 +260,7 @@ export const getSessionKey = (
   attachSessionId?: string,
   echoedSessionId?: string,
   integrationId?: string,
+  allowedDomains?: string[],
 ): string =>
   `t:${hashToken(token)}` +
   KEY_SEP +
@@ -269,7 +270,21 @@ export const getSessionKey = (
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
   (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-  (integrationId ? KEY_SEP + 'int#' + hashToken(integrationId) : '');
+  // allowedDomains is part of the binding, not just integrationId: the scope is
+  // baked into the connection, so a same-integration call with a different scope
+  // must key to a separate WS rather than silently reuse the first one's scope.
+  // Sorted so domain order doesn't fork the key; folded into the int# segment
+  // since allowedDomains is meaningless without integrationId.
+  (integrationId
+    ? KEY_SEP +
+      'int#' +
+      hashToken(
+        integrationId +
+          (allowedDomains?.length
+            ? '|' + [...allowedDomains].sort().join(',')
+            : ''),
+      )
+    : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -693,6 +708,7 @@ export const getOrCreateSession = async (
     attachSessionId,
     handle,
     integrationId,
+    allowedDomains,
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
@@ -757,6 +773,8 @@ export const getOrCreateSession = async (
       source,
       compliant,
       handle,
+      integrationId,
+      allowedDomains,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -809,6 +827,8 @@ export const send = async (
         session.creationSessionId,
         session.compliant,
         session.source,
+        session.integrationId,
+        session.allowedDomains,
       ).finally(() => {
         session.reconnecting = undefined;
       });
@@ -849,6 +869,7 @@ export const closeSession = (
   attachSessionId?: string,
   echoedSessionId?: string,
   integrationId?: string,
+  allowedDomains?: string[],
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -859,6 +880,7 @@ export const closeSession = (
     attachSessionId,
     echoedSessionId,
     integrationId,
+    allowedDomains,
   );
   const session = sessions.get(key);
   if (session) {
@@ -885,6 +907,7 @@ export const destroySession = (
   attachSessionId?: string,
   echoedSessionId?: string,
   integrationId?: string,
+  allowedDomains?: string[],
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -895,6 +918,7 @@ export const destroySession = (
     attachSessionId,
     echoedSessionId,
     integrationId,
+    allowedDomains,
   );
   const session = sessions.get(key);
   if (session) {

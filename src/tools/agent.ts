@@ -600,6 +600,15 @@ export function registerAgentTools(
       const createProfile = params.createProfile;
       const integrationId = params.integrationId;
       const allowedDomains = params.allowedDomains;
+      // A profile-creation session attaches to POST /profile's session by id, and
+      // the attach connection deliberately omits integrationId — so binding an
+      // integration here would be silently dropped. Reject rather than mislead:
+      // create the profile first, then bind the integration on a follow-up call.
+      if (createProfile && integrationId) {
+        throw new UserError(
+          'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
+        );
+      }
       const echoedSessionId = params.sessionId;
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.
@@ -660,6 +669,7 @@ export function registerAgentTools(
           attachSessionId,
           echoedSessionId,
           integrationId,
+          allowedDomains,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -733,6 +743,7 @@ export function registerAgentTools(
             attachSessionId,
             echoedSessionId,
             integrationId,
+            allowedDomains,
           );
           return runCommands(true);
         }
@@ -756,6 +767,7 @@ export function registerAgentTools(
               attachSessionId,
               echoedSessionId,
               integrationId,
+              allowedDomains,
             );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
@@ -803,6 +815,7 @@ export function registerAgentTools(
               attachSessionId,
               echoedSessionId,
               integrationId,
+              allowedDomains,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -840,6 +853,7 @@ export function registerAgentTools(
                 attachSessionId,
                 echoedSessionId,
                 integrationId,
+                allowedDomains,
               );
               if (!isRetry) {
                 return runCommands(true);

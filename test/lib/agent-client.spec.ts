@@ -798,6 +798,42 @@ describe('agent-client session handle', () => {
     }
   });
 });
+
+describe('agent-client integration binding key', () => {
+  const key = (integrationId?: string, allowedDomains?: string[]) =>
+    getSessionKey(
+      'mcp-1',
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'handle-1',
+      integrationId,
+      allowedDomains,
+    );
+
+  it('separates the same integration under different domain scopes', () => {
+    expect(key('op_int_a', ['https://a.com'])).to.not.equal(
+      key('op_int_a', ['https://b.com']),
+    );
+  });
+
+  it('separates a scoped binding from an unscoped one', () => {
+    expect(key('op_int_a', ['https://a.com'])).to.not.equal(key('op_int_a'));
+  });
+
+  it('treats domain order as the same scope', () => {
+    expect(key('op_int_a', ['https://a.com', 'https://b.com'])).to.equal(
+      key('op_int_a', ['https://b.com', 'https://a.com']),
+    );
+  });
+
+  it('ignores allowedDomains with no integrationId (it never reaches the wire)', () => {
+    expect(key(undefined, ['https://a.com'])).to.equal(key(undefined));
+  });
+});
+
 describe('agent-client mcp-session churn', () => {
   const bare = (sid: string, url: string) =>
     getOrCreateSession(sid, url, 'tok');
