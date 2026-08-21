@@ -128,6 +128,9 @@ describe('Browserless OAuth redirect URI validation', () => {
 
   it('does not let glob metacharacters extend a loopback hostname', () => {
     expect(
+      isAllowedOAuthRedirectUri('http://localhost', ['http://localhost']),
+    ).to.equal(true);
+    expect(
       isAllowedOAuthRedirectUri('http://localhost.evil.example/callback', [
         'http://localhost*/callback',
       ]),
