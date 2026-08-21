@@ -144,6 +144,39 @@ describe('Browserless OAuth redirect URI validation', () => {
     }
   });
 
+  it('delegates valid registration and authorization with Redis storage', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const proxy = new BrowserlessOAuthProxy({
+      ...buildConfig(),
+      encryptionKey: false,
+      tokenStorage: new RedisTokenStorage(redis),
+    });
+
+    try {
+      const redirectUri = 'https://api.devin.ai/mcp/oauth/callback';
+      const registration = await proxy.registerClient({
+        redirect_uris: [redirectUri],
+      });
+      expect(
+        await redis.get(`mcp:oauth:client:${registration.client_id}`),
+      ).to.be.a('string');
+
+      const response = await proxy.authorize({
+        client_id: registration.client_id,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        state: 'client-state',
+      });
+      expect(response.status).to.equal(302);
+      expect(response.headers.get('location')).to.include(
+        '127.0.0.1:9/oauth/authorize',
+      );
+    } finally {
+      proxy.destroy();
+      await redis.quit();
+    }
+  });
+
   it('revalidates a vulnerable pre-existing registration at authorize time', async () => {
     const redis = new RedisMock() as unknown as Redis;
     const storage = new RedisTokenStorage(redis);
