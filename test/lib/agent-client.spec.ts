@@ -166,6 +166,81 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.toString()).to.include('profile=profile+with+spaces');
   });
 
+  it('omits integrationId when not set', () => {
+    const url = new URL(buildAgentWsUrl('http://localhost:3000', 'tok'));
+    expect(url.searchParams.has('integrationId')).to.equal(false);
+    expect(url.searchParams.has('allowedDomains')).to.equal(false);
+  });
+
+  it('appends integrationId and JSON-encodes allowedDomains', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        'op_int_abc',
+        ['https://gymshark.com', 'https://flixbus.co.uk'],
+      ),
+    );
+    expect(url.searchParams.get('integrationId')).to.equal('op_int_abc');
+    expect(
+      JSON.parse(url.searchParams.get('allowedDomains') as string),
+    ).to.deep.equal(['https://gymshark.com', 'https://flixbus.co.uk']);
+  });
+
+  it('appends integrationId without allowedDomains when none given', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        'op_int_abc',
+      ),
+    );
+    expect(url.searchParams.get('integrationId')).to.equal('op_int_abc');
+    expect(url.searchParams.has('allowedDomains')).to.equal(false);
+  });
+
+  it('drops integrationId on the compliant surface', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        true,
+        'op_int_abc',
+        ['https://gymshark.com'],
+      ),
+    );
+    expect(url.searchParams.has('integrationId')).to.equal(false);
+    expect(url.searchParams.has('allowedDomains')).to.equal(false);
+  });
+
+  it('skips integrationId when attaching to an existing session', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        'op_int_abc',
+        ['https://gymshark.com'],
+      ),
+    );
+    expect(url.searchParams.get('sessionId')).to.equal('sess-123');
+    expect(url.searchParams.has('integrationId')).to.equal(false);
+  });
+
   it('combines profile and proxy params on the same URL', () => {
     const url = new URL(
       buildAgentWsUrl(

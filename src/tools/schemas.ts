@@ -743,6 +743,31 @@ export const AgentParamsSchema = z
         'the session expired. A different `profile` value opens a separate session.',
     ),
     createProfile: CreateProfileSchema.optional(),
+    integrationId: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((v) => !v.includes(NUL), {
+        message: 'integrationId must not contain NUL characters',
+      })
+      .optional()
+      .describe(
+        'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
+          'session so `loadSecret` can resolve `op://vault/item/field` references. Find ' +
+          'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
+          'flow (like `profile`); a call that omits it runs with no vault bound and ' +
+          '`loadSecret` returns CredentialNotResolved. Pair with `allowedDomains` to ' +
+          'permit filling on the target sites.',
+      ),
+    allowedDomains: z
+      .array(z.string().trim().min(1))
+      .optional()
+      .describe(
+        'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +
+          "Only meaningful with `integrationId`. Defaults to the integration's configured " +
+          'origins; set it to fill on additional sites. loadSecret is refused on any origin ' +
+          'not covered here.',
+      ),
     rationale: z
       .string()
       .optional()

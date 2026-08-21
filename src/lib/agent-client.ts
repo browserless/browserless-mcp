@@ -259,6 +259,7 @@ export const getSessionKey = (
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
+  integrationId?: string,
 ): string =>
   `t:${hashToken(token)}` +
   KEY_SEP +
@@ -267,7 +268,8 @@ export const getSessionKey = (
   proxyFingerprint(proxy) +
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
-  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '');
+  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
+  (integrationId ? KEY_SEP + 'int#' + hashToken(integrationId) : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -290,11 +292,13 @@ export const buildAgentWsUrl = (
   profile?: string,
   sessionId?: string,
   compliant = false,
+  integrationId?: string,
+  allowedDomains?: string[],
 ): string => {
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
-  // A creation session already owns its proxy/profile (baked in at POST /profile);
-  // the WS only needs to attach to it by id, so proxy/profile params are skipped.
+  // A creation session already owns its proxy/profile/integration (baked in at
+  // POST /profile); the WS only needs to attach to it by id, so those params are skipped.
   if (sessionId) {
     url.searchParams.set('sessionId', sessionId);
     return url.toString();
@@ -316,6 +320,14 @@ export const buildAgentWsUrl = (
     if (proxy?.externalProxyServer)
       url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
     if (profile) url.searchParams.set('profile', profile);
+    // 1Password integration binding: enterprise reads ?integrationId=/?allowedDomains=
+    // on a fresh connection to attach the credential resolver so Browserless.loadSecret
+    // can resolve op:// refs. allowedDomains scopes where a resolved secret may be filled.
+    if (integrationId) {
+      url.searchParams.set('integrationId', integrationId);
+      if (allowedDomains?.length)
+        url.searchParams.set('allowedDomains', JSON.stringify(allowedDomains));
+    }
   }
   return url.toString();
 };
@@ -517,6 +529,8 @@ const connect = (
   sessionId?: string,
   compliant = false,
   source?: string,
+  integrationId?: string,
+  allowedDomains?: string[],
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -526,6 +540,8 @@ const connect = (
       profile,
       sessionId,
       compliant,
+      integrationId,
+      allowedDomains,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -659,6 +675,8 @@ export const getOrCreateSession = async (
   compliant = false,
   source?: string,
   echoedSessionId?: string,
+  integrationId?: string,
+  allowedDomains?: string[],
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -674,6 +692,7 @@ export const getOrCreateSession = async (
     createProfile,
     attachSessionId,
     handle,
+    integrationId,
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
@@ -723,6 +742,8 @@ export const getOrCreateSession = async (
       creationSessionId,
       compliant,
       source,
+      integrationId,
+      allowedDomains,
     );
     const session: ActiveSession = {
       ws,
@@ -827,6 +848,7 @@ export const closeSession = (
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
+  integrationId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -836,6 +858,7 @@ export const closeSession = (
     createProfile,
     attachSessionId,
     echoedSessionId,
+    integrationId,
   );
   const session = sessions.get(key);
   if (session) {
@@ -861,6 +884,7 @@ export const destroySession = (
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
+  integrationId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -870,6 +894,7 @@ export const destroySession = (
     createProfile,
     attachSessionId,
     echoedSessionId,
+    integrationId,
   );
   const session = sessions.get(key);
   if (session) {

@@ -585,11 +585,21 @@ export function registerAgentTools(
             'Proxy configuration is not available on this endpoint.',
           );
         }
+        if (
+          params.integrationId !== undefined ||
+          params.allowedDomains !== undefined
+        ) {
+          throw new UserError(
+            'Credential integrations are not available on this endpoint.',
+          );
+        }
       }
 
       const proxy = params.proxy;
       const profile = params.profile;
       const createProfile = params.createProfile;
+      const integrationId = params.integrationId;
+      const allowedDomains = params.allowedDomains;
       const echoedSessionId = params.sessionId;
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.
@@ -622,6 +632,7 @@ export function registerAgentTools(
           proxy_external: !!proxy?.externalProxyServer,
           profile_used: !!profile,
           create_profile: !!createProfile,
+          integration_used: !!integrationId,
           rationale:
             typeof params.rationale === 'string'
               ? params.rationale.trim().slice(0, 50)
@@ -648,6 +659,7 @@ export function registerAgentTools(
           createProfile,
           attachSessionId,
           echoedSessionId,
+          integrationId,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -671,6 +683,8 @@ export function registerAgentTools(
             compliant,
             mcpSource.source,
             echoedSessionId,
+            integrationId,
+            allowedDomains,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -700,6 +714,8 @@ export function registerAgentTools(
             compliant,
             mcpSource.source,
             echoedSessionId,
+            integrationId,
+            allowedDomains,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -716,6 +732,7 @@ export function registerAgentTools(
             createProfile,
             attachSessionId,
             echoedSessionId,
+            integrationId,
           );
           return runCommands(true);
         }
@@ -738,6 +755,7 @@ export function registerAgentTools(
               createProfile,
               attachSessionId,
               echoedSessionId,
+              integrationId,
             );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
@@ -784,6 +802,7 @@ export function registerAgentTools(
               createProfile,
               attachSessionId,
               echoedSessionId,
+              integrationId,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -820,6 +839,7 @@ export function registerAgentTools(
                 createProfile,
                 attachSessionId,
                 echoedSessionId,
+                integrationId,
               );
               if (!isRetry) {
                 return runCommands(true);
