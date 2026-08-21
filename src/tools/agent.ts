@@ -600,10 +600,8 @@ export function registerAgentTools(
       const createProfile = params.createProfile;
       const integrationId = params.integrationId;
       const allowedDomains = params.allowedDomains;
-      // A profile-creation session attaches to POST /profile's session by id, and
-      // the attach connection deliberately omits integrationId — so binding an
-      // integration here would be silently dropped. Reject rather than mislead:
-      // create the profile first, then bind the integration on a follow-up call.
+      // createProfile attaches by session id, which omits integrationId — binding
+      // here would be silently dropped, so reject rather than mislead.
       if (createProfile && integrationId) {
         throw new UserError(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',

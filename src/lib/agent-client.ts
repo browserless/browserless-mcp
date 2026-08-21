@@ -270,11 +270,8 @@ export const getSessionKey = (
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
   (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-  // allowedDomains is part of the binding, not just integrationId: the scope is
-  // baked into the connection, so a same-integration call with a different scope
-  // must key to a separate WS rather than silently reuse the first one's scope.
-  // Sorted so domain order doesn't fork the key; folded into the int# segment
-  // since allowedDomains is meaningless without integrationId.
+  // Different scope must key to a different WS, else a same-integration call
+  // silently reuses the first scope. Sorted so domain order doesn't fork the key.
   (integrationId
     ? KEY_SEP +
       'int#' +
@@ -312,8 +309,8 @@ export const buildAgentWsUrl = (
 ): string => {
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
-  // A creation session already owns its proxy/profile/integration (baked in at
-  // POST /profile); the WS only needs to attach to it by id, so those params are skipped.
+  // On attach (sessionId set) the creation session already owns proxy/profile from
+  // POST /profile; skip them. integrationId isn't carried there (combo rejected upstream).
   if (sessionId) {
     url.searchParams.set('sessionId', sessionId);
     return url.toString();
@@ -335,9 +332,8 @@ export const buildAgentWsUrl = (
     if (proxy?.externalProxyServer)
       url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
     if (profile) url.searchParams.set('profile', profile);
-    // 1Password integration binding: enterprise reads ?integrationId=/?allowedDomains=
-    // on a fresh connection to attach the credential resolver so Browserless.loadSecret
-    // can resolve op:// refs. allowedDomains scopes where a resolved secret may be filled.
+    // enterprise reads ?integrationId=/?allowedDomains= on a fresh connection to
+    // bind the resolver so loadSecret can resolve op:// refs; allowedDomains scopes fills.
     if (integrationId) {
       url.searchParams.set('integrationId', integrationId);
       if (allowedDomains?.length)
