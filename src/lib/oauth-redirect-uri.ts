@@ -9,9 +9,11 @@ import {
 
 const SAFE_DEFAULT_PATTERNS = ['http://localhost:*', 'http://127.0.0.1:*'];
 
+const AUTHORITY_WITH_USERINFO = /^\s*[a-z][a-z\d+.-]*:\/\/[^/?#]*@/i;
+
 const LOOPBACK_PATTERN_HOSTS = new Map([
-  ['http://localhost:', 'localhost'],
-  ['http://127.0.0.1:', '127.0.0.1'],
+  ['http://localhost', 'localhost'],
+  ['http://127.0.0.1', '127.0.0.1'],
 ]);
 
 function globToRegExp(pattern: string): RegExp {
@@ -24,7 +26,11 @@ function globToRegExp(pattern: string): RegExp {
 
 function hasExpectedLoopbackHost(uri: URL, pattern: string): boolean {
   for (const [prefix, hostname] of LOOPBACK_PATTERN_HOSTS) {
-    if (pattern.startsWith(prefix)) return uri.hostname === hostname;
+    if (!pattern.toLowerCase().startsWith(prefix)) continue;
+    const nextCharacter = pattern.at(prefix.length);
+    if ([':', '*', '?'].includes(nextCharacter ?? '')) {
+      return uri.hostname === hostname;
+    }
   }
   return true;
 }
@@ -40,7 +46,13 @@ export function isAllowedOAuthRedirectUri(
     return false;
   }
 
-  if (uri.username || uri.password) return false;
+  if (
+    AUTHORITY_WITH_USERINFO.test(redirectUri) ||
+    uri.username ||
+    uri.password
+  ) {
+    return false;
+  }
   if (Array.isArray(patterns) && patterns.length === 0) return false;
 
   return (patterns ?? SAFE_DEFAULT_PATTERNS).some(

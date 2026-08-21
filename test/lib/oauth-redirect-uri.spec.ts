@@ -43,6 +43,7 @@ const LOOPBACK_CONFUSION_CALLBACKS = [
   'http://localhost.evil.example:31337/callback',
   'http://127.0.0.1.evil.example:31337/callback',
   'http://localhost:31337@evil.example/callback',
+  'http://@localhost:31337/callback',
   'http://user@localhost:31337/callback',
   'http://user:password@127.0.0.1:31337/callback',
 ];
@@ -122,6 +123,27 @@ describe('Browserless OAuth redirect URI validation', () => {
         'http://localhost.evil.example:3000/callback',
         undefined,
       ),
+    ).to.equal(false);
+  });
+
+  it('does not let glob metacharacters extend a loopback hostname', () => {
+    expect(
+      isAllowedOAuthRedirectUri('http://localhost.evil.example/callback', [
+        'http://localhost*/callback',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('http://127.0.0.1.evil.example/callback', [
+        'http://127.0.0.1*/callback',
+      ]),
+    ).to.equal(false);
+  });
+
+  it('rejects empty userinfo even when a configured glob would match it', () => {
+    expect(
+      isAllowedOAuthRedirectUri('http://@localhost:31337/callback', [
+        'http://*@localhost:*',
+      ]),
     ).to.equal(false);
   });
 
