@@ -66,7 +66,24 @@ function buildConfig(
 }
 
 describe('Browserless OAuth redirect URI validation', () => {
-  const patterns = getConfig().oauthAllowedRedirectUriPatterns;
+  let originalAdditionalPatterns: string | undefined;
+  let patterns: string[];
+
+  before(() => {
+    originalAdditionalPatterns =
+      process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
+    delete process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
+    patterns = getConfig().oauthAllowedRedirectUriPatterns;
+  });
+
+  after(() => {
+    if (originalAdditionalPatterns === undefined) {
+      delete process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
+    } else {
+      process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS =
+        originalAdditionalPatterns;
+    }
+  });
 
   for (const redirectUri of [...EXACT_CALLBACKS, ...WILDCARD_CALLBACKS]) {
     it(`accepts configured callback ${redirectUri}`, () => {
@@ -97,15 +114,77 @@ describe('Browserless OAuth redirect URI validation', () => {
       ]),
     ).to.equal(false);
     expect(
-      isAllowedOAuthRedirectUri('https://client.example/cb/one/two', [
+      isAllowedOAuthRedirectUri('https://client.example/cb/one', [
         'https://client.example/cb/*',
       ]),
     ).to.equal(true);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb/one/two', [
+        'https://client.example/cb/*',
+      ]),
+    ).to.equal(false);
     expect(
       isAllowedOAuthRedirectUri('https://client.example/cb/x', [
         'https://client.example/cb/?',
       ]),
     ).to.equal(true);
+  });
+
+  it('keeps wildcards inside their URL component boundaries', () => {
+    const cases = [
+      {
+        redirectUri: 'https://client.corp.example.com/cb',
+        pattern: 'https://*.corp.example.com/cb',
+        expected: true,
+      },
+      {
+        redirectUri: 'https://evil.example/a.corp.example.com/cb',
+        pattern: 'https://*.corp.example.com/cb',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://one.two.corp.example.com/cb',
+        pattern: 'https://*.corp.example.com/cb',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/value',
+        pattern: 'https://client.example/cb/*',
+        expected: true,
+      },
+      {
+        redirectUri: 'https://client.example/cb/one/two',
+        pattern: 'https://client.example/cb/*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/x',
+        pattern: 'https://client.example/cb/?',
+        expected: true,
+      },
+      {
+        redirectUri: 'https://client.example/cb//',
+        pattern: 'https://client.example/cb/?',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb',
+        pattern: '*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb',
+        pattern: 'https://client.example:/cb',
+        expected: false,
+      },
+    ];
+
+    for (const { redirectUri, pattern, expected } of cases) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, [pattern]),
+        `${pattern} against ${redirectUri}`,
+      ).to.equal(expected);
+    }
   });
 
   it('rejects an empty allowlist', () => {
@@ -150,10 +229,13 @@ describe('Browserless OAuth redirect URI validation', () => {
     ).to.equal(false);
   });
 
-  it('rejects lookalikes through the public DCR seam', async () => {
+  it('rejects every unsafe callback through the public DCR seam', async () => {
     const proxy = new BrowserlessOAuthProxy(buildConfig());
     try {
-      for (const redirectUri of LOOKALIKE_CALLBACKS) {
+      for (const redirectUri of [
+        ...LOOKALIKE_CALLBACKS,
+        ...LOOPBACK_CONFUSION_CALLBACKS,
+      ]) {
         try {
           await proxy.registerClient({ redirect_uris: [redirectUri] });
           expect.fail(`accepted ${redirectUri}`);
@@ -166,6 +248,64 @@ describe('Browserless OAuth redirect URI validation', () => {
       }
     } finally {
       proxy.destroy();
+    }
+  });
+
+  it('returns invalid_client_metadata for malformed redirect lists', async () => {
+    const proxy = new BrowserlessOAuthProxy(buildConfig());
+    const requests = [
+      {},
+      { redirect_uris: null },
+      { redirect_uris: {} },
+      { redirect_uris: 'https://api.devin.ai/mcp/oauth/callback' },
+      { redirect_uris: [] },
+    ];
+
+    try {
+      for (const request of requests) {
+        try {
+          await proxy.registerClient(
+            request as unknown as Parameters<
+              BrowserlessOAuthProxy['registerClient']
+            >[0],
+          );
+          expect.fail(`accepted ${JSON.stringify(request)}`);
+        } catch (error) {
+          expect(error).to.be.instanceOf(OAuthProxyError);
+          expect((error as OAuthProxyError).code).to.equal(
+            'invalid_client_metadata',
+          );
+        }
+      }
+    } finally {
+      proxy.destroy();
+    }
+  });
+
+  it('does not persist a mixed valid and unsafe redirect list', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const proxy = new BrowserlessOAuthProxy({
+      ...buildConfig(),
+      encryptionKey: false,
+      tokenStorage: new RedisTokenStorage(redis),
+    });
+
+    try {
+      try {
+        await proxy.registerClient({
+          redirect_uris: [EXACT_CALLBACKS[0], LOOKALIKE_CALLBACKS[0]],
+        });
+        expect.fail('accepted a mixed redirect list');
+      } catch (error) {
+        expect(error).to.be.instanceOf(OAuthProxyError);
+        expect((error as OAuthProxyError).code).to.equal(
+          'invalid_redirect_uri',
+        );
+      }
+      expect(await redis.keys('mcp:oauth:client:*')).to.deep.equal([]);
+    } finally {
+      proxy.destroy();
+      await redis.quit();
     }
   });
 

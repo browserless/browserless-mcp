@@ -7,21 +7,54 @@ import {
   type OAuthProxyConfig,
 } from 'fastmcp/auth';
 
+// Mirrors FastMCP's defaults for callers that omit an explicit allowlist.
 const SAFE_DEFAULT_PATTERNS = ['http://localhost:*', 'http://127.0.0.1:*'];
 
 const AUTHORITY_WITH_USERINFO = /^\s*[a-z][a-z\d+.-]*:\/\/[^/?#]*@/i;
+const URL_PATTERN =
+  /^([a-z][a-z\d+.-]*):\/\/(\[[^\]]+\]|[^:/?#@]+)(?::([^/?#]*))?(.*)$/;
 
 const LOOPBACK_PATTERN_HOSTS = new Map([
   ['http://localhost', 'localhost'],
   ['http://127.0.0.1', '127.0.0.1'],
 ]);
 
-function globToRegExp(pattern: string): RegExp {
-  const source = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`^${source}$`);
+function globComponentToRegExp(
+  component: string,
+  wildcardCharacter: string,
+): string {
+  return [...component]
+    .map((character) => {
+      if (character === '*') return `${wildcardCharacter}*`;
+      if (character === '?') return wildcardCharacter;
+      return character.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+    })
+    .join('');
+}
+
+function globToRegExp(pattern: string): RegExp | undefined {
+  const match = URL_PATTERN.exec(pattern);
+  if (!match) return;
+
+  const [, scheme, hostnamePattern, portPattern, suffix] = match;
+  if (portPattern === '') return;
+
+  const hostname = globComponentToRegExp(hostnamePattern, '[^./:@]');
+  const port =
+    portPattern === undefined
+      ? ''
+      : `:${globComponentToRegExp(portPattern, '\\d')}`;
+  const allowsAnyLoopbackPath =
+    scheme.toLowerCase() === 'http' &&
+    ['localhost', '127.0.0.1'].includes(hostnamePattern.toLowerCase()) &&
+    portPattern === '*' &&
+    suffix === '';
+  const path = allowsAnyLoopbackPath
+    ? '(?:/.*)?'
+    : globComponentToRegExp(suffix, '[^/]');
+  return new RegExp(
+    `^${globComponentToRegExp(scheme, '[^:]')}://${hostname}${port}${path}$`,
+  );
 }
 
 function hasExpectedLoopbackHost(uri: URL, pattern: string): boolean {
@@ -55,14 +88,19 @@ export function isAllowedOAuthRedirectUri(
   }
   if (Array.isArray(patterns) && patterns.length === 0) return false;
 
-  return (patterns ?? SAFE_DEFAULT_PATTERNS).some(
-    (pattern) =>
+  return (patterns ?? SAFE_DEFAULT_PATTERNS).some((pattern) => {
+    const matcher = globToRegExp(pattern);
+    return (
+      matcher !== undefined &&
       hasExpectedLoopbackHost(uri, pattern) &&
-      globToRegExp(pattern).test(redirectUri),
-  );
+      matcher.test(redirectUri)
+    );
+  });
 }
 
 export class BrowserlessOAuthProxy extends OAuthProxy {
+  // OAuthProxy's normalized config is private, so retain this field for both
+  // public validation seams.
   private readonly allowedRedirectUriPatterns: string[] | undefined;
 
   constructor(config: OAuthProxyConfig) {
@@ -71,7 +109,19 @@ export class BrowserlessOAuthProxy extends OAuthProxy {
   }
 
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
-    for (const redirectUri of request.redirect_uris) {
+    const redirectUris = request?.redirect_uris;
+    if (
+      !Array.isArray(redirectUris) ||
+      redirectUris.length === 0 ||
+      redirectUris.some((redirectUri) => typeof redirectUri !== 'string')
+    ) {
+      throw new OAuthProxyError(
+        'invalid_client_metadata',
+        'redirect_uris must be a non-empty array of strings',
+      );
+    }
+
+    for (const redirectUri of redirectUris) {
       if (
         !isAllowedOAuthRedirectUri(redirectUri, this.allowedRedirectUriPatterns)
       ) {
