@@ -5,32 +5,28 @@ import { ProxyOptionsSchema } from '../lib/agent-client.js';
 // fromCharCode so the literal control character never appears in source.
 const NUL = String.fromCharCode(0);
 
+// A trimmed, non-empty string that also rejects NUL. Every field feeding the
+// session-cache key (see getSessionKey) needs this, or a NUL lets a caller forge
+// extra key segments (NUL is KEY_SEP).
+const nulSafeString = (label: string) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .refine((v) => !v.includes(NUL), {
+      message: `${label} must not contain NUL characters`,
+    });
+
 export function profileField(whenLoaded: string, extra = '') {
   const description =
     `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
     "The profile's cookies, localStorage, and IndexedDB are restored into the session before the request runs. " +
     'The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session first.' +
     extra;
-  return z
-    .string()
-    .trim()
-    .min(1)
-    .refine((v) => !v.includes(NUL), {
-      message: 'profile must not contain NUL characters',
-    })
-    .optional()
-    .describe(description);
+  return nulSafeString('profile').optional().describe(description);
 }
 
-// Feeds the session-cache key (see getSessionKey), so it carries the same NUL
-// guard as `profile` — a NUL would let a caller forge extra key segments.
-const sessionIdField = z
-  .string()
-  .trim()
-  .min(1)
-  .refine((v) => !v.includes(NUL), {
-    message: 'sessionId must not contain NUL characters',
-  })
+const sessionIdField = nulSafeString('sessionId')
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +
@@ -743,6 +739,25 @@ export const AgentParamsSchema = z
         'the session expired. A different `profile` value opens a separate session.',
     ),
     createProfile: CreateProfileSchema.optional(),
+    integrationId: nulSafeString('integrationId')
+      .optional()
+      .describe(
+        'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
+          'session so `loadSecret` can resolve `op://vault/item/field` references. Find ' +
+          'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
+          'flow (like `profile`); a call that omits it runs with no vault bound and ' +
+          '`loadSecret` returns CredentialNotResolved. Pair with `allowedDomains` to ' +
+          'permit filling on the target sites.',
+      ),
+    allowedDomains: z
+      .array(z.string().trim().min(1))
+      .optional()
+      .describe(
+        'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +
+          "Only meaningful with `integrationId`. Defaults to the integration's configured " +
+          'origins; set it to fill on additional sites. loadSecret is refused on any origin ' +
+          'not covered here.',
+      ),
     rationale: z
       .string()
       .optional()
