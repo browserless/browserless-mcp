@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/browserless/browserless-mcp/compare/v1.22.1...v1.23.0) (2026-08-24)
+
+
+### Features
+
+* bind 1Password integration to agent sessions so loadSecret can resolve op:// refs ([#264](https://github.com/browserless/browserless-mcp/issues/264)) ([108007e](https://github.com/browserless/browserless-mcp/commit/108007e07bba49562f6ef70dbe9175d543e25438))
+
 ## [1.22.1](https://github.com/browserless/browserless-mcp/compare/v1.22.0...v1.22.1) (2026-08-20)
 
 
