@@ -196,7 +196,10 @@ const LoadSecretCommandSchema = z.object({
         'The credential reference/alias to inject (e.g. an op:// reference). ' +
           'The secret value is resolved server-side and typed into the field — ' +
           'you never see it. Use this for ALL passwords and usernames from a ' +
-          'secrets vault; never put a secret value in `type`.',
+          'secrets vault; never put a secret value in `type`. Also accepts a ' +
+          'mail://<item>/otp reference that resolves the newest emailed one-time ' +
+          'code server-side (value never surfaced); trigger the send, then call ' +
+          'loadSecret promptly.',
       ),
     selector: z
       .string()
