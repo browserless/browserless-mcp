@@ -58,6 +58,8 @@ Load manually via **browserless_skill** if suspected but not injected:
 - Snapshot VALID after: type, hover, scroll, evaluate
 - Expect new content? → re-snapshot
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
+- Snapshot lines may include \`desc="..."\`, \`action=METHOD URL\`, \`autocomplete=...\`, and intent markers (\`⚠ destructive\`, \`⚠ sign-out\`, \`sign-in\`, \`reset\`)
+- Before clicking a control marked \`⚠ destructive\` or \`⚠ sign-out\`, confirm that the action is actually intended; an unlabeled destructive control is a common trap
 - Snapshots after the first return a **diff** vs. your previous snapshot: only \`+\` new / \`~\` changed / \`-\` removed elements, plus a count of unchanged ones omitted. Unchanged elements stay valid — keep using their refs from the earlier snapshot. If that earlier snapshot is no longer in your context (summarized/trimmed away), request \`snapshot { full: true }\` to get the complete element list again.
 
 ## Selectors
@@ -183,6 +185,8 @@ Load manually via **browserless_skill** if suspected but not injected:
 - Snapshot VALID after: type, hover, scroll
 - Expect new content? → re-snapshot
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
+- Snapshot lines may include \`desc="..."\`, \`action=METHOD URL\`, \`autocomplete=...\`, and intent markers (\`⚠ destructive\`, \`⚠ sign-out\`, \`sign-in\`, \`reset\`)
+- Before clicking a control marked \`⚠ destructive\` or \`⚠ sign-out\`, confirm that the action is actually intended; an unlabeled destructive control is a common trap
 - Snapshots after the first return a **diff** vs. your previous snapshot: only \`+\` new / \`~\` changed / \`-\` removed elements, plus a count of unchanged ones omitted. Unchanged elements stay valid — keep using their refs from the earlier snapshot. If that earlier snapshot is no longer in your context, request \`snapshot { full: true }\` for the complete element list again.
 
 ## Selectors

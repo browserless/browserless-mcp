@@ -125,6 +125,16 @@ export const formatConnectError = (err: unknown): string => {
  * element carries a frameId, the label is appended so the agent sees which
  * iframe it lives in.
  */
+const INTENT_MARKERS: Record<
+  NonNullable<SnapshotElement['intentHint']>,
+  string
+> = {
+  destructive: '⚠ destructive',
+  signout: '⚠ sign-out',
+  signin: 'sign-in',
+  reset: 'reset',
+};
+
 const formatElement = (
   el: SnapshotElement,
   frameLabels?: Map<string, string>,
@@ -141,6 +151,12 @@ const formatElement = (
 
   if (el.value) parts.push(`value="${el.value}"`);
   if (el.options?.length) parts.push(`options=[${el.options.join(', ')}]`);
+  if (el.description) parts.push(`desc="${el.description}"`);
+  if (el.formAction)
+    parts.push(
+      `action=${(el.formMethod || 'get').toUpperCase()} ${el.formAction}`,
+    );
+  if (el.autocomplete) parts.push(`autocomplete=${el.autocomplete}`);
 
   const flags: string[] = [];
   if (el.disabled) flags.push('disabled');
@@ -151,6 +167,9 @@ const formatElement = (
 
   const frameLabel = el.frameId && frameLabels?.get(el.frameId);
   if (frameLabel) parts.push(`[${frameLabel}]`);
+
+  const intentMarker = el.intentHint && INTENT_MARKERS[el.intentHint];
+  if (intentMarker) parts.push(intentMarker);
 
   return parts.join(' ');
 };
@@ -198,6 +217,11 @@ const SIGNATURE_FIELDS: Array<keyof SnapshotElement> = [
   'type',
   'placeholder',
   'href',
+  'description',
+  'formAction',
+  'formMethod',
+  'autocomplete',
+  'intentHint',
   'disabled',
   'checked',
   'focused',

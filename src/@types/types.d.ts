@@ -149,12 +149,17 @@ export interface SnapshotElement {
   name: string;
   selector: string;
   tag: string;
+  autocomplete?: string;
+  description?: string;
   text?: string;
   value?: string;
   type?: string;
   placeholder?: string;
   id?: string;
   href?: string;
+  formAction?: string;
+  formMethod?: string;
+  intentHint?: 'destructive' | 'signout' | 'signin' | 'reset';
   disabled?: boolean;
   checked?: boolean;
   focused?: boolean;
