@@ -168,6 +168,16 @@ describe('Browserless OAuth redirect URI validation', () => {
         expected: false,
       },
       {
+        redirectUri: 'https://client.example/cb/value?next=attacker.example',
+        pattern: 'https://client.example/cb/*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/value#fragment',
+        pattern: 'https://client.example/cb/*',
+        expected: false,
+      },
+      {
         redirectUri: 'https://client.example/cb',
         pattern: '*',
         expected: false,
@@ -184,6 +194,44 @@ describe('Browserless OAuth redirect URI validation', () => {
         isAllowedOAuthRedirectUri(redirectUri, [pattern]),
         `${pattern} against ${redirectUri}`,
       ).to.equal(expected);
+    }
+  });
+
+  it('does not let a path glob reach the query or fragment', () => {
+    // The shipped allowlist's only path wildcard. A glob that swallowed '?' or
+    // '#' would widen it past the connector id it is meant to stand in for.
+    expect(
+      isAllowedOAuthRedirectUri(
+        'https://chatgpt.com/connector/oauth/browserless',
+        patterns,
+      ),
+    ).to.equal(true);
+
+    for (const redirectUri of [
+      'https://chatgpt.com/connector/oauth/x?code=stolen',
+      'https://chatgpt.com/connector/oauth/x#fragment',
+      'https://chatgpt.com/connector/oauth/#@evil.example',
+      'https://chatgpt.com/connector/oauth/x?a=1#b',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(false);
+    }
+  });
+
+  it('still allows loopback clients their own path, query, and fragment', () => {
+    // hasExpectedLoopbackHost pins the host here, so the broad loopback path
+    // costs nothing and desktop clients keep working.
+    for (const redirectUri of [
+      'http://localhost:3000/cb?state=1',
+      'http://localhost:3000/cb#done',
+      'http://127.0.0.1:8976/oauth/callback?x=1',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(true);
     }
   });
 
