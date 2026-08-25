@@ -49,15 +49,21 @@ function globToRegExp(pattern: string): RegExp | undefined {
     ['localhost', '127.0.0.1'].includes(hostnamePattern.toLowerCase()) &&
     portPattern === '*' &&
     suffix === '';
-  // A path glob must not swallow the '?' or '#' that starts the query or
-  // fragment, or 'https://client.example/cb/*' would also accept
+  // Two different rules, because the two cases carry different risk.
+  //
+  // Loopback is host-pinned by hasExpectedLoopbackHost, so whatever follows
+  // the port reaches the user's own machine and can never reach an attacker.
+  // Stay permissive: a desktop client picks its own callback path, and it may
+  // sit at the root with only a query ('http://localhost:3000?state=1'). A
+  // false negative here breaks a login for no security gain.
+  //
+  // Everywhere else the wildcard must stop at the query or fragment
+  // delimiter, or 'https://client.example/cb/*' would also accept
   // '.../cb/x?next=...' and '.../cb/x#...'. RFC 6749 3.1.2 forbids a fragment
   // on a redirect endpoint outright, and a pattern can never spell a literal
-  // query anyway because '?' is the single-character glob. Loopback keeps
-  // '(?:/.*)?': the host is pinned by hasExpectedLoopbackHost, and desktop
-  // clients pick their own callback path.
+  // query anyway because '?' is the single-character glob.
   const path = allowsAnyLoopbackPath
-    ? '(?:/.*)?'
+    ? '(?:[/?#].*)?'
     : globComponentToRegExp(suffix, '[^/?#]');
   return new RegExp(
     `^${globComponentToRegExp(scheme, '[^:]')}://${hostname}${port}${path}$`,

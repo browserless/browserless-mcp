@@ -227,11 +227,30 @@ describe('Browserless OAuth redirect URI validation', () => {
       'http://localhost:3000/cb?state=1',
       'http://localhost:3000/cb#done',
       'http://127.0.0.1:8976/oauth/callback?x=1',
+      // Root callback with no path at all — legal, and some clients use it.
+      'http://localhost:3000',
+      'http://localhost:3000?state=1',
+      'http://localhost:3000#done',
+      'http://127.0.0.1:8976?state=1',
     ]) {
       expect(
         isAllowedOAuthRedirectUri(redirectUri, patterns),
         redirectUri,
       ).to.equal(true);
+    }
+  });
+
+  it('keeps the loopback host pinned however permissive its path is', () => {
+    // The permissive loopback suffix must not become a way past the host.
+    for (const redirectUri of [
+      'http://localhost:3000@evil.example/cb',
+      'http://localhost.evil.example:3000?state=1',
+      'http://localhost:3000.evil.example/cb',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(false);
     }
   });
 
