@@ -151,6 +151,7 @@ describe('Amplitude MCP analytics', () => {
       {},
       {
         reportProgress: async () => undefined,
+        signal: new AbortController().signal,
         session: { token: 'test-token', apiUrl: 'https://example.com' },
         sessionId: undefined,
         log: {
