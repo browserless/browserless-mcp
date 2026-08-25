@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.24.0](https://github.com/browserless/browserless-mcp/compare/v1.23.0...v1.24.0) (2026-08-25)
+
+
+### Features
+
+* render snapshot context signals ([#273](https://github.com/browserless/browserless-mcp/issues/273)) ([0164050](https://github.com/browserless/browserless-mcp/commit/0164050bc7efd7c9522e124f4aca4beea8a21afc))
+* update `loadSecret` tool definition to mention mail OTP ([#267](https://github.com/browserless/browserless-mcp/issues/267)) ([c9d9988](https://github.com/browserless/browserless-mcp/commit/c9d99881ff56799377bbb95caa91e7296c37ede6))
+
+
+### Bug Fixes
+
+* PLT-1521 harden OAuth redirect matching ([#265](https://github.com/browserless/browserless-mcp/issues/265)) ([8ab07ab](https://github.com/browserless/browserless-mcp/commit/8ab07ab454f1f74a8f64e13196c62d16b157c2a9))
+
 ## [1.23.0](https://github.com/browserless/browserless-mcp/compare/v1.22.1...v1.23.0) (2026-08-24)
 
 
