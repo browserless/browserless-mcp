@@ -106,6 +106,29 @@ describe('formatSnapshotDiff', () => {
     expect(out).to.include('placeholder: "old"→"new"');
   });
 
+  for (const [field, before, after] of [
+    ['description', 'old description', 'new description'],
+    ['formAction', '/old', '/new'],
+    ['formMethod', 'get', 'post'],
+    ['autocomplete', 'email', 'username'],
+    ['intentHint', 'signin', 'signout'],
+  ] as const) {
+    it(`surfaces a ${field} change`, () => {
+      const previous = el({ selector: '#context', [field]: before });
+      const current = el({ selector: '#context', [field]: after });
+      const out = formatSnapshotDiff(
+        snap([current]),
+        indexByIdentity(snap([previous])),
+      );
+
+      expect(out).to.match(/1 changed/);
+      expect(out).to.include('~ [');
+      expect(out).to.include(
+        `${field}: ${JSON.stringify(before)}→${JSON.stringify(after)}`,
+      );
+    });
+  }
+
   it('reports no changes when nothing moved', () => {
     const prev = indexByIdentity(
       snap([el({ ref: 1, selector: '#x', name: 'X' })]),
