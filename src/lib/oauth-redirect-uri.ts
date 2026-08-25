@@ -49,6 +49,12 @@ function globToRegExp(pattern: string): RegExp | undefined {
     ['localhost', '127.0.0.1'].includes(hostnamePattern.toLowerCase()) &&
     portPattern === '*' &&
     suffix === '';
+  // RFC 6749 3.1.2: a redirect endpoint URI must not carry a fragment, so a
+  // pattern that spells one can never describe a valid client. Refuse to build
+  // a matcher for it, the same way an unparseable pattern is refused above.
+  // The loopback branch is unaffected — its patterns stop at the port.
+  if (!allowsAnyLoopbackPath && suffix.includes('#')) return;
+
   // Two different rules, because the two cases carry different risk.
   //
   // Loopback is host-pinned by hasExpectedLoopbackHost, so whatever follows

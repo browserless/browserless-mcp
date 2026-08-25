@@ -240,6 +240,29 @@ describe('Browserless OAuth redirect URI validation', () => {
     }
   });
 
+  it('refuses a non-loopback pattern that spells a fragment', () => {
+    // RFC 6749 3.1.2 forbids a fragment on a redirect endpoint, so a pattern
+    // carrying one describes no valid client and is dropped, not honoured.
+    for (const pattern of [
+      'https://client.example/cb#done',
+      'https://client.example/cb*#done',
+      'https://client.example/#',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri('https://client.example/cb#done', [pattern]),
+        pattern,
+      ).to.equal(false);
+    }
+
+    // Dropping the pattern must not drop the rest of the allowlist.
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb', [
+        'https://client.example/cb#done',
+        'https://client.example/cb',
+      ]),
+    ).to.equal(true);
+  });
+
   it('keeps the loopback host pinned however permissive its path is', () => {
     // The permissive loopback suffix must not become a way past the host.
     for (const redirectUri of [
