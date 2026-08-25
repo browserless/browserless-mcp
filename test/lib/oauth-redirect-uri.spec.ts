@@ -240,6 +240,38 @@ describe('Browserless OAuth redirect URI validation', () => {
     }
   });
 
+  it('refuses a pattern whose glob would extend the host', () => {
+    // The suffix is a path only when it starts with '/'. A glob placed straight
+    // after the authority extends the HOST, so these patterns are ambiguous and
+    // are dropped rather than honoured.
+    expect(
+      isAllowedOAuthRedirectUri('https://client.examplex', [
+        'https://client.example?',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://foo.comX/cb', ['https://foo.com?/cb']),
+    ).to.equal(false);
+
+    // A host glob is honoured, but it stops at every authority delimiter,
+    // including the ones that start the query and the fragment.
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example#fragment', [
+        'https://client.example*',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example?next=1', [
+        'https://client.example*',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.exampleXYZ', [
+        'https://client.example*',
+      ]),
+    ).to.equal(true);
+  });
+
   it('refuses a non-loopback pattern that spells a fragment', () => {
     // RFC 6749 3.1.2 forbids a fragment on a redirect endpoint, so a pattern
     // carrying one describes no valid client and is dropped, not honoured.

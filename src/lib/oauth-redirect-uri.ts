@@ -39,7 +39,9 @@ function globToRegExp(pattern: string): RegExp | undefined {
   const [, scheme, hostnamePattern, portPattern, suffix] = match;
   if (portPattern === '') return;
 
-  const hostname = globComponentToRegExp(hostnamePattern, '[^./:@]');
+  // '?' and '#' end the authority, so a host glob must not run into them:
+  // otherwise 'https://client.example*' accepts 'https://client.example#frag'.
+  const hostname = globComponentToRegExp(hostnamePattern, '[^./:@?#]');
   const port =
     portPattern === undefined
       ? ''
@@ -54,6 +56,15 @@ function globToRegExp(pattern: string): RegExp | undefined {
   // a matcher for it, the same way an unparseable pattern is refused above.
   // The loopback branch is unaffected — its patterns stop at the port.
   if (!allowsAnyLoopbackPath && suffix.includes('#')) return;
+
+  // The suffix is only a path when it starts with '/'. 'https://client.example?'
+  // and 'https://foo.com?/cb' put a glob straight after the authority, where it
+  // extends the HOST rather than the path — 'https://client.examplex' and
+  // 'https://foo.comX/cb' would match, which is a different registrable domain
+  // and the exact bug class this file exists to close. Such a pattern is
+  // ambiguous, so refuse it rather than guess which component was meant.
+  if (!allowsAnyLoopbackPath && suffix !== '' && !suffix.startsWith('/'))
+    return;
 
   // Two different rules, because the two cases carry different risk.
   //
