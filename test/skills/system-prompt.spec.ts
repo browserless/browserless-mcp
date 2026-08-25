@@ -16,6 +16,10 @@ describe('agent system prompt contextual snapshot guidance', () => {
       expect(prompt).to.include('autocomplete=...');
       expect(prompt).to.include('⚠ destructive');
       expect(prompt).to.include('⚠ sign-out');
+      expect(prompt).to.include(
+        'Before activating or navigating to a control marked',
+      );
+      expect(prompt).to.not.include('Before clicking a control marked');
       expect(prompt).to.include('confirm that the action is actually intended');
       expect(prompt).to.include(
         'an unlabeled destructive control is a common trap',
