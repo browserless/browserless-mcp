@@ -32,6 +32,7 @@ const mockConfig: McpConfig = {
 
 const mockContext = {
   reportProgress: sinon.stub().resolves(),
+  signal: new AbortController().signal,
   log: {
     debug: sinon.stub(),
     error: sinon.stub(),
