@@ -28,8 +28,8 @@ Proxy config is a **top-level \`proxy\` object** on the tool call — it is appl
 If you already opened a session without a proxy and now realize one is needed, you must \`close\` and start a new session with the proxy options set — there is no in-session switch.
 
 - Use \`proxy: { proxy: "datacenter" }\` when a lower-cost IP is sufficient. Use \`proxy: { proxy: "residential" }\` when the target is known to block datacenter IPs or the cheaper tier still hits a challenge.
-- Inside the object: \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
-- Geo/preset/sticky require built-in \`proxy: "residential"\` / \`"datacenter"\`, or \`externalProxyServer\`
+- Inside the object: \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — residential-only named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
+- Geo/sticky/locale options require a built-in proxy tier or \`externalProxyServer\`; \`proxyPreset\` requires \`proxy: "residential"\`
 
 ## OS persona (optional)
 The top-level \`emulationOs\`, \`emulatedDevice\`, \`screen\`, \`deviceScaleFactor\`, and \`deviceSlot\` options are read once when the session opens. Put them on the **very first call, before any \`goto\`**, then keep using the returned \`sessionId\`; close and open a new session to change them.

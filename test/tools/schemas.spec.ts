@@ -81,6 +81,25 @@ describe('ProxyOptionsSchema', () => {
   });
 
   describe('dependent-field refinement', () => {
+    const tierCases: Array<[string, Record<string, unknown>, boolean]> = [
+      ['residential preset', { proxy: 'residential', proxyPreset: 'px' }, true],
+      ['datacenter geo', { proxy: 'datacenter', proxyCountry: 'us' }, true],
+      ['datacenter sticky', { proxy: 'datacenter', proxySticky: true }, true],
+      ['datacenter preset', { proxy: 'datacenter', proxyPreset: 'px' }, false],
+      [
+        'external preset',
+        { externalProxyServer: 'http://host', proxyPreset: 'px' },
+        false,
+      ],
+      ['orphan preset', { proxyPreset: 'px' }, false],
+    ];
+
+    for (const [name, value, accepted] of tierCases) {
+      it(`${accepted ? 'accepts' : 'rejects'} ${name}`, () => {
+        expect(ProxyOptionsSchema.safeParse(value).success).to.equal(accepted);
+      });
+    }
+
     it('accepts an empty object', () => {
       expect(() => ProxyOptionsSchema.parse({})).to.not.throw();
     });
@@ -219,6 +238,29 @@ describe('AgentParamsSchema persona', () => {
           ...extra,
         }),
       ).to.throw();
+    }
+  });
+
+  it('enforces the persona creation relationship matrix', () => {
+    const cases: Array<[string, Record<string, unknown>, boolean]> = [
+      ['persona launch', { emulationOs: 'windows' }, true],
+      ['profile creation', { createProfile: { name: 'demo' } }, true],
+      [
+        'profile creation with persona',
+        { createProfile: { name: 'demo' }, emulationOs: 'windows' },
+        false,
+      ],
+    ];
+    for (const [name, extra, accepted] of cases) {
+      expect(
+        AgentParamsSchema.safeParse({
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+          ],
+          ...extra,
+        }).success,
+        name,
+      ).to.equal(accepted);
     }
   });
 });

@@ -108,7 +108,9 @@ export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
       'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
       "require proxy: 'residential'/'datacenter' or externalProxyServer to be set; otherwise the API silently ignores them.",
   },
-);
+).refine((v) => v.proxyPreset === undefined || v.proxy === 'residential', {
+  message: 'proxyPreset is supported only with proxy: "residential".',
+});
 
 export const PROXY_FIELDS = Object.keys(
   ProxyOptionsObjectSchema.shape,
@@ -386,7 +388,12 @@ export const buildAgentWsUrl = (
       url.searchParams.set('proxyCountry', proxy.proxyCountry);
     if (proxy?.proxyState) url.searchParams.set('proxyState', proxy.proxyState);
     if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
-    if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
+    if (
+      proxy?.proxySticky ||
+      (persona?.emulationOs !== undefined && proxy?.proxySticky === false)
+    ) {
+      url.searchParams.set('proxySticky', String(proxy.proxySticky));
+    }
     if (proxy?.proxyLocaleMatch)
       url.searchParams.set('proxyLocaleMatch', 'true');
     if (proxy?.proxyPreset)

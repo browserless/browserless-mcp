@@ -914,6 +914,31 @@ describe('browserless_agent integration binding guard', () => {
   });
 });
 
+describe('browserless_agent persona creation guard', () => {
+  afterEach(() => sinon.restore());
+
+  it('rejects createProfile with persona before connecting', async () => {
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    try {
+      await execute(
+        {
+          createProfile: { name: 'demo' },
+          emulationOs: 'windows',
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+          ],
+        },
+        { ...mockContext, sessionId: 'persona-create-guard' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.match(
+        /persona.*cannot be combined with profile creation/i,
+      );
+    }
+  });
+});
+
 describe('browserless_agent retry-guard (runCommands)', () => {
   // Each test uses a distinct mcpSessionId so the module-level session
   // cache can't return a stale entry from a prior case.

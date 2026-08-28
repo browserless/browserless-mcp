@@ -623,6 +623,11 @@ export function registerAgentTools(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
         );
       }
+      if (createProfile && personaRequested) {
+        throw new UserError(
+          'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
+        );
+      }
       if (attachSessionId && personaRequested) {
         throw new UserError(
           'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',

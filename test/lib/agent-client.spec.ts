@@ -105,6 +105,23 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.has('proxySticky')).to.equal(false);
   });
 
+  it('preserves explicit rotating proxy behavior for a persona session', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        { proxy: 'datacenter', proxySticky: false },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      ),
+    );
+    expect(url.searchParams.get('proxySticky')).to.equal('false');
+  });
+
   it('omits locale-match when false (server uses presence-only semantics)', () => {
     const url = new URL(
       buildAgentWsUrl('http://localhost:3000', 'tok', {
