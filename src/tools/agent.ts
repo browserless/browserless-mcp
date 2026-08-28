@@ -562,6 +562,9 @@ export function registerAgentTools(
               params: c.params ?? {},
             }))
           : [{ method: params.method ?? '', params: params.params ?? {} }];
+      const personaRequested = PERSONA_FIELDS.some(
+        (field) => params[field] !== undefined,
+      );
 
       // Defense-in-depth: even if the schema were mis-built, compliant never
       // forwards a non-allowlisted method, auth-profile, or proxy arg to the backend.
@@ -586,7 +589,7 @@ export function registerAgentTools(
             'Proxy configuration is not available on this endpoint.',
           );
         }
-        if (PERSONA_FIELDS.some((field) => params[field] !== undefined)) {
+        if (personaRequested) {
           throw new UserError(
             'Persona configuration is not available on this endpoint.',
           );
@@ -637,10 +640,7 @@ export function registerAgentTools(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
         );
       }
-      if (
-        attachSessionId &&
-        PERSONA_FIELDS.some((field) => persona[field] !== undefined)
-      ) {
+      if (attachSessionId && personaRequested) {
         throw new UserError(
           'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
         );
@@ -676,9 +676,7 @@ export function registerAgentTools(
           proxy_sticky: !!proxy?.proxySticky,
           proxy_external: !!proxy?.externalProxyServer,
           emulation_os: persona.emulationOs ?? null,
-          persona_requested: PERSONA_FIELDS.some(
-            (field) => persona[field] !== undefined,
-          ),
+          persona_requested: personaRequested,
           profile_used: !!profile,
           create_profile: !!createProfile,
           integration_used: !!integrationId,
