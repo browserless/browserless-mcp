@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { ProxyOptionsSchema } from '../lib/agent-client.js';
+import {
+  PersonaOptionsSchema,
+  ProxyOptionsSchema,
+} from '../lib/agent-client.js';
 
 // NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
 // fromCharCode so the literal control character never appears in source.
@@ -730,9 +733,10 @@ export const AgentParamsSchema = z
           'type email + type password + click submit). Do NOT batch across navigations.',
       ),
     proxy: ProxyOptionsSchema.optional().describe(
-      'Residential / external proxy config. Read once at session creation. ' +
+      'Residential, datacenter, or external proxy config. Read once at session creation. ' +
         'Changing requires close() + a new session call.',
     ),
+    ...PersonaOptionsSchema.shape,
     profile: profileField(
       'when the agent session connects',
       ' `profile` binds each call to its hydrated session — you MUST pass it on ' +

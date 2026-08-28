@@ -27,3 +27,30 @@ describe('agent system prompt contextual snapshot guidance', () => {
     });
   }
 });
+
+describe('full Agent persona and proxy guidance', () => {
+  it('names the persona contract, timing, block signals, and proxy trade-off', () => {
+    for (const field of [
+      'emulationOs',
+      'emulatedDevice',
+      'screen',
+      'deviceScaleFactor',
+      'deviceSlot',
+    ]) {
+      expect(AGENT_SYSTEM_PROMPT).to.include(field);
+    }
+    for (const personaOnlyField of [
+      'emulationOs',
+      'emulatedDevice',
+      'deviceScaleFactor',
+      'deviceSlot',
+    ]) {
+      expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include(personaOnlyField);
+    }
+    expect(AGENT_SYSTEM_PROMPT).to.match(/very first call|first call/i);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/Cloudflare|hard block/i);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/datacenter/i);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/lower-cost/i);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/residential.*block/i);
+  });
+});

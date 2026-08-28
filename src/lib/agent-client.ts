@@ -9,6 +9,7 @@ import type {
   ActiveSession,
   AgentMessage,
   AgentResponse,
+  PersonaOptions,
   ProxyOptions,
 } from '../@types/types.js';
 
@@ -16,6 +17,7 @@ import type {
 // need (e.g. a hosted Agent constructor that takes `proxy?: ProxyOptions`).
 export type {
   ProxyOptions,
+  PersonaOptions,
   ActiveSession,
   AgentMessage,
   AgentResponse,
@@ -30,9 +32,11 @@ export type {
 
 const ProxyOptionsObjectSchema = z.object({
   proxy: z
-    .enum(['residential'])
+    .enum(['residential', 'datacenter'])
     .optional()
-    .describe('Routing tier. Only "residential" is supported today.'),
+    .describe(
+      'Routing tier. Datacenter is cheaper per MB; residential is less likely to be blocked.',
+    ),
   proxyCountry: z
     .string()
     .regex(/^[A-Za-z]{2}$/, 'Must be a 2-letter ISO-2 country code')
@@ -93,19 +97,71 @@ export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   (v) => {
     const hasDependent = DEPENDENT_PROXY_FIELDS.some((k) => v[k] !== undefined);
     return (
-      !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer
+      !hasDependent ||
+      v.proxy === 'residential' ||
+      v.proxy === 'datacenter' ||
+      !!v.externalProxyServer
     );
   },
   {
     message:
       'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
-      "require proxy: 'residential' or externalProxyServer to be set; otherwise the API silently ignores them.",
+      "require proxy: 'residential'/'datacenter' or externalProxyServer to be set; otherwise the API silently ignores them.",
   },
 );
 
 export const PROXY_FIELDS = Object.keys(
   ProxyOptionsObjectSchema.shape,
 ) as Array<keyof ProxyOptions>;
+
+export const PersonaOptionsSchema = z.object({
+  emulationOs: z
+    .enum(['windows', 'macos', 'linux', 'android'])
+    .optional()
+    .describe(
+      'OS persona for platform spoofing. Set on the first call before navigation.',
+    ),
+  emulatedDevice: z
+    .string()
+    .optional()
+    .describe(
+      'Android device slug, used only with emulationOs="android". Unknown slugs select a seeded device.',
+    ),
+  screen: z
+    .string()
+    .optional()
+    .describe(
+      'Desktop screen as WIDTHxHEIGHT. Invalid values fall back to a seeded screen; ignored for Android.',
+    ),
+  deviceScaleFactor: z
+    .union([z.literal(1), z.literal(1.25)])
+    .optional()
+    .describe('Desktop device pixel ratio. Ignored for Android.'),
+  deviceSlot: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      'Stable desktop device slot. The server validates the account-specific upper bound.',
+    ),
+});
+
+export const PERSONA_FIELDS = Object.keys(PersonaOptionsSchema.shape) as Array<
+  keyof PersonaOptions
+>;
+
+const hasPersona = (persona?: PersonaOptions): boolean =>
+  !!persona && PERSONA_FIELDS.some((field) => persona[field] !== undefined);
+
+const hasPersonaConflict = (
+  existing: PersonaOptions | undefined,
+  requested: PersonaOptions,
+): boolean =>
+  PERSONA_FIELDS.some(
+    (field) =>
+      requested[field] !== undefined && existing?.[field] !== requested[field],
+  );
 
 /**
  * Thrown when the agent WebSocket upgrade is rejected with a non-101 HTTP
@@ -294,8 +350,8 @@ const apiEndpoint = (apiUrl: string, path: string, ws = false): URL => {
 };
 
 /**
- * Build the WebSocket URL for `/chromium/agent`, appending `token` plus proxy
- * params. Boolean proxy flags follow the API's presence-only contract.
+ * Build the WebSocket URL for `/chromium/agent`, appending `token`, proxy, and
+ * persona params. Boolean proxy flags follow the API's presence-only contract.
  */
 export const buildAgentWsUrl = (
   apiUrl: string,
@@ -306,12 +362,18 @@ export const buildAgentWsUrl = (
   compliant = false,
   integrationId?: string,
   allowedDomains?: string[],
+  persona?: PersonaOptions,
 ): string => {
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
   // On attach (sessionId set) the creation session already owns proxy/profile from
   // POST /profile; skip them. integrationId isn't carried there (combo rejected upstream).
   if (sessionId) {
+    if (hasPersona(persona)) {
+      throw new Error(
+        'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
+      );
+    }
     url.searchParams.set('sessionId', sessionId);
     return url.toString();
   }
@@ -338,6 +400,10 @@ export const buildAgentWsUrl = (
       url.searchParams.set('integrationId', integrationId);
       if (allowedDomains?.length)
         url.searchParams.set('allowedDomains', JSON.stringify(allowedDomains));
+    }
+    for (const field of PERSONA_FIELDS) {
+      const value = persona?.[field];
+      if (value !== undefined) url.searchParams.set(field, String(value));
     }
   }
   return url.toString();
@@ -542,6 +608,7 @@ const connect = (
   source?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  persona?: PersonaOptions,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -553,6 +620,7 @@ const connect = (
       compliant,
       integrationId,
       allowedDomains,
+      persona,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -688,6 +756,7 @@ export const getOrCreateSession = async (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  persona?: PersonaOptions,
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -708,6 +777,23 @@ export const getOrCreateSession = async (
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
+
+  if (attachSessionId && hasPersona(persona)) {
+    throw new Error(
+      'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
+    );
+  }
+
+  if (
+    existing &&
+    persona &&
+    hasPersona(persona) &&
+    hasPersonaConflict(existing.persona, persona)
+  ) {
+    throw new Error(
+      'Persona options are fixed when a browser session opens. Close the session before changing them.',
+    );
+  }
 
   if (
     existing &&
@@ -756,6 +842,7 @@ export const getOrCreateSession = async (
       source,
       integrationId,
       allowedDomains,
+      persona,
     );
     const session: ActiveSession = {
       ws,
@@ -771,6 +858,7 @@ export const getOrCreateSession = async (
       handle,
       integrationId,
       allowedDomains,
+      persona,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -825,6 +913,7 @@ export const send = async (
         session.source,
         session.integrationId,
         session.allowedDomains,
+        session.persona,
       ).finally(() => {
         session.reconnecting = undefined;
       });

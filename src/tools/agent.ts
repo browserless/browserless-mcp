@@ -16,6 +16,7 @@ import {
   closeSession,
   destroySession,
   isRetryableUpgradeError,
+  PERSONA_FIELDS,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -585,6 +586,11 @@ export function registerAgentTools(
             'Proxy configuration is not available on this endpoint.',
           );
         }
+        if (PERSONA_FIELDS.some((field) => params[field] !== undefined)) {
+          throw new UserError(
+            'Persona configuration is not available on this endpoint.',
+          );
+        }
         if (
           params.integrationId !== undefined ||
           params.allowedDomains !== undefined
@@ -600,11 +606,26 @@ export function registerAgentTools(
       const createProfile = params.createProfile;
       const integrationId = params.integrationId;
       const allowedDomains = params.allowedDomains;
+      const persona = {
+        emulationOs: params.emulationOs,
+        emulatedDevice: params.emulatedDevice,
+        screen: params.screen,
+        deviceScaleFactor: params.deviceScaleFactor,
+        deviceSlot: params.deviceSlot,
+      };
       // createProfile attaches by session id, which omits integrationId — binding
       // here would be silently dropped, so reject rather than mislead.
       if (createProfile && integrationId) {
         throw new UserError(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
+        );
+      }
+      if (
+        attachSessionId &&
+        PERSONA_FIELDS.some((field) => persona[field] !== undefined)
+      ) {
+        throw new UserError(
+          'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
         );
       }
       const echoedSessionId = params.sessionId;
@@ -637,6 +658,10 @@ export function registerAgentTools(
           proxy_country: proxy?.proxyCountry ?? null,
           proxy_sticky: !!proxy?.proxySticky,
           proxy_external: !!proxy?.externalProxyServer,
+          emulation_os: persona.emulationOs ?? null,
+          persona_requested: PERSONA_FIELDS.some(
+            (field) => persona[field] !== undefined,
+          ),
           profile_used: !!profile,
           create_profile: !!createProfile,
           integration_used: !!integrationId,
@@ -652,8 +677,8 @@ export function registerAgentTools(
         lastCategory = 'INVALID_PARAMS';
         sendAnalytics(false);
         throw new UserError(
-          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
-            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
+          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
+            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy object alongside `method`/`commands`, e.g. { "proxy": { "proxy": "residential", "proxyCountry": "us" }, "commands": [ ... ] }.',
         );
       }
 
@@ -693,6 +718,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            persona,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -724,6 +750,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            persona,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting

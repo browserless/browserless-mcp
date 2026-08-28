@@ -271,6 +271,20 @@ describe('compliance mode — compliant tool surface', () => {
         }).success,
         'profile must be rejected',
       ).to.be.false;
+      for (const extra of [
+        { emulationOs: 'windows' },
+        { emulatedDevice: 'pixel-8' },
+        { screen: '1920x1080' },
+        { deviceScaleFactor: 1 },
+        { deviceSlot: 0 },
+        { proxy: { proxy: 'datacenter' } },
+      ]) {
+        expect(
+          agent.parameters.safeParse({ commands: [VALID_GOTO], ...extra })
+            .success,
+          JSON.stringify(extra),
+        ).to.be.false;
+      }
       expect(
         agent.parameters.safeParse({
           commands: [VALID_GOTO],
@@ -566,6 +580,12 @@ describe('compliance mode — compliant tool surface', () => {
         { profile: 'my-profile' },
         { createProfile: { name: 'x' } },
         { proxy: { proxy: 'residential', proxyCountry: 'us' } },
+        { proxy: { proxy: 'datacenter' } },
+        { emulationOs: 'windows' },
+        { emulatedDevice: 'pixel-8' },
+        { screen: '1920x1080' },
+        { deviceScaleFactor: 1 },
+        { deviceSlot: 0 },
       ]) {
         try {
           await execute({ commands: [VALID_GOTO], ...extra }, mockCtx);

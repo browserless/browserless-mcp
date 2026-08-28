@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
 import {
+  PERSONA_FIELDS,
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
@@ -90,6 +91,16 @@ describe('ProxyOptionsSchema', () => {
       ).to.not.throw();
     });
 
+    it('accepts datacenter with geo and sticky fields', () => {
+      expect(() =>
+        ProxyOptionsSchema.parse({
+          proxy: 'datacenter',
+          proxyCountry: 'us',
+          proxySticky: true,
+        }),
+      ).to.not.throw();
+    });
+
     it('accepts externalProxyServer alone', () => {
       expect(() =>
         ProxyOptionsSchema.parse({
@@ -175,6 +186,40 @@ describe('AgentParamsSchema.proxy', () => {
       params: { url: 'https://example.com' },
     });
     expect(parsed.proxy).to.be.undefined;
+  });
+});
+
+describe('AgentParamsSchema persona', () => {
+  it('accepts every persona option on the top-level Agent surface', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      emulationOs: 'windows',
+      emulatedDevice: 'pixel-8',
+      screen: '1920x1080',
+      deviceScaleFactor: 1.25,
+      deviceSlot: 3,
+    });
+    expect(
+      PERSONA_FIELDS.every((field) => parsed[field] !== undefined),
+    ).to.equal(true);
+  });
+
+  it('rejects unknown operating systems, DPRs, and invalid slots', () => {
+    for (const extra of [
+      { emulationOs: 'plan9' },
+      { deviceScaleFactor: 2 },
+      { deviceSlot: -1 },
+      { deviceSlot: 1.5 },
+    ]) {
+      expect(() =>
+        AgentParamsSchema.parse({
+          method: 'goto',
+          params: { url: 'https://example.com' },
+          ...extra,
+        }),
+      ).to.throw();
+    }
   });
 });
 
