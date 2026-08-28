@@ -70,6 +70,17 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.get('proxy')).to.equal('residential');
   });
 
+  it('sets proxy=datacenter when requested', () => {
+    const url = new URL(
+      buildAgentWsUrl('http://localhost:3000', 'tok', {
+        proxy: 'datacenter',
+        proxyCountry: 'us',
+      }),
+    );
+    expect(url.searchParams.get('proxy')).to.equal('datacenter');
+    expect(url.searchParams.get('proxyCountry')).to.equal('us');
+  });
+
   it('passes country, sticky, and locale-match flags', () => {
     const proxy: ProxyOptions = {
       proxy: 'residential',
@@ -222,6 +233,69 @@ describe('agent-client buildAgentWsUrl', () => {
     );
     expect(url.searchParams.has('integrationId')).to.equal(false);
     expect(url.searchParams.has('allowedDomains')).to.equal(false);
+  });
+
+  it('forwards persona options only on the full surface', () => {
+    const persona = {
+      emulationOs: 'windows' as const,
+      emulatedDevice: 'pixel-8',
+      screen: '1920x1080',
+      deviceScaleFactor: 1.25 as const,
+      deviceSlot: 3,
+    };
+    const full = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        persona,
+      ),
+    );
+    expect(Object.fromEntries(full.searchParams)).to.include({
+      emulationOs: 'windows',
+      emulatedDevice: 'pixel-8',
+      screen: '1920x1080',
+      deviceScaleFactor: '1.25',
+      deviceSlot: '3',
+    });
+
+    const compliant = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        true,
+        undefined,
+        undefined,
+        persona,
+      ),
+    );
+    for (const field of Object.keys(persona)) {
+      expect(compliant.searchParams.has(field), field).to.equal(false);
+    }
+  });
+
+  it('rejects redefining persona while attaching an existing browser', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      ),
+    ).to.throw(/cannot redefine an attached browser/i);
   });
 
   it('skips integrationId when attaching to an existing session', () => {
@@ -658,6 +732,68 @@ describe('agent-client bare-call isolation', () => {
       expect(churned.ws).to.equal(opened.ws);
       const onStdio = await echo(undefined, server.url, opened.handle);
       expect(onStdio.ws).to.equal(opened.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains persona on an echoed handle and rejects a conflicting persona', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-persona',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows', screen: '1920x1080' },
+      );
+      const resumed = await getOrCreateSession(
+        'mcp-persona-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+      expect(resumed.ws).to.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({
+        emulationOs: 'windows',
+        screen: '1920x1080',
+      });
+
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-persona-2',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          opened.handle,
+          undefined,
+          undefined,
+          { emulationOs: 'macos' },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect((thrown as Error).message).to.match(/fixed when.*opens/i);
     } finally {
       await server.close();
     }
