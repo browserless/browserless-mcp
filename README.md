@@ -96,10 +96,10 @@ Pass a top-level `proxy` object on `browserless_agent` to route the session thro
 | `proxyCity`           | City target. Paid/enterprise plan gated — non-eligible tokens get a 401.                                                                      |
 | `proxySticky`         | Stable IP while the underlying WebSocket stays open. Reconnects (idle drop, network blip, browser crash) allocate a new sticky id and new IP. |
 | `proxyLocaleMatch`    | Match `navigator` locale to the proxy IP country.                                                                                             |
-| `proxyPreset`         | Named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.                            |
+| `proxyPreset`         | Residential-only named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.           |
 | `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`. Must be `http://` or `https://`.                                                  |
 
-> **Note:** `proxyCountry` / `proxyState` / `proxyCity` / `proxySticky` / `proxyLocaleMatch` / `proxyPreset` require either a built-in `proxy` tier or `externalProxyServer`. The MCP rejects this combination at validation time; without it, the API would silently ignore them.
+> **Note:** Geo, sticky, and locale options require either a built-in `proxy` tier or `externalProxyServer`; `proxyPreset` requires `proxy: "residential"`. The MCP rejects unsupported combinations instead of letting the API silently ignore them.
 
 The `proxy` object is read once at session creation. To change it, call `close` and start a new session — the agent client keys sessions on the proxy fingerprint, so passing a different config will land on a fresh WebSocket.
 

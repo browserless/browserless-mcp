@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  PERSONA_FIELDS,
   PersonaOptionsSchema,
   ProxyOptionsSchema,
 } from '../lib/agent-client.js';
@@ -835,7 +836,16 @@ export const AgentParamsSchema = z
     message:
       '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
       'one) cannot both be set',
-  });
+  })
+  .refine(
+    (v) =>
+      !v.createProfile ||
+      !PERSONA_FIELDS.some((field) => v[field] !== undefined),
+    {
+      message:
+        'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
+    },
+  );
 
 // ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
 // De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,
