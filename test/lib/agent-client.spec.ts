@@ -821,6 +821,56 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('retains persona when a dropped socket is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-persona',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-persona-handle',
+        undefined,
+        undefined,
+        { emulationOs: 'windows', screen: '1920x1080' },
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-persona-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-persona-handle',
+      );
+
+      expect(resumed.ws).to.not.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({
+        emulationOs: 'windows',
+        screen: '1920x1080',
+      });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('windows');
+      expect(reconnectUrl.searchParams.get('screen')).to.equal('1920x1080');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects a conflicting persona while sharing an in-flight creation', async () => {
     const server = await makeAcceptingServer(25);
     try {
@@ -855,13 +905,11 @@ describe('agent-client bare-call isolation', () => {
   });
 
   it('rejects persona before allocating a profile-creation session', async () => {
-    const fetchStub = sinon
-      .stub(globalThis, 'fetch')
-      .resolves(
-        new Response(JSON.stringify({ id: 'created-profile' }), {
-          status: 200,
-        }),
-      );
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ id: 'created-profile' }), {
+        status: 200,
+      }),
+    );
     try {
       let thrown: unknown;
       try {

@@ -171,10 +171,12 @@ export const makeRespondingServer = async (
  */
 export const makeAcceptingServer = async (
   upgradeDelayMs = 0,
-): Promise<UpgradeServerHandle> => {
+): Promise<RespondingServerHandle> => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
+  const upgradeUrls: string[] = [];
   server.on('upgrade', (req, socket, head) => {
+    upgradeUrls.push(req.url ?? '');
     socket.on('error', () => {});
     setTimeout(
       () =>
@@ -188,6 +190,8 @@ export const makeAcceptingServer = async (
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}`,
+    hits: () => upgradeUrls.length,
+    upgradeUrls: () => [...upgradeUrls],
     close: () =>
       new Promise<void>((r) => {
         wss.clients.forEach((c) => c.terminate());
