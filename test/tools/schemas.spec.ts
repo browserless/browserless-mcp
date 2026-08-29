@@ -210,18 +210,54 @@ describe('AgentParamsSchema.proxy', () => {
 
 describe('AgentParamsSchema persona', () => {
   it('accepts every persona option on the top-level Agent surface', () => {
-    const parsed = AgentParamsSchema.parse({
+    const desktop = AgentParamsSchema.parse({
       method: 'goto',
       params: { url: 'https://example.com' },
       emulationOs: 'windows',
-      emulatedDevice: 'pixel-8',
       screen: '1920x1080',
       deviceScaleFactor: 1.25,
       deviceSlot: 3,
     });
-    expect(
-      PERSONA_FIELDS.every((field) => parsed[field] !== undefined),
-    ).to.equal(true);
+    const android = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      emulationOs: 'android',
+      emulatedDevice: 'pixel-8',
+    });
+    expect(desktop.deviceSlot).to.equal(3);
+    expect(android.emulatedDevice).to.equal('pixel-8');
+    expect(PERSONA_FIELDS).to.have.members([
+      'emulationOs',
+      'emulatedDevice',
+      'screen',
+      'deviceScaleFactor',
+      'deviceSlot',
+    ]);
+  });
+
+  it('enforces device and slot persona relationships locally', () => {
+    const cases: Array<[string, Record<string, unknown>, boolean]> = [
+      [
+        'Android device',
+        { emulationOs: 'android', emulatedDevice: 'pixel-8' },
+        true,
+      ],
+      ['device without OS', { emulatedDevice: 'pixel-8' }, false],
+      [
+        'device on desktop',
+        { emulationOs: 'windows', emulatedDevice: 'pixel-8' },
+        false,
+      ],
+      ['desktop slot', { emulationOs: 'windows', deviceSlot: 2 }, true],
+      ['slot without OS', { deviceSlot: 2 }, false],
+      ['slot on Android', { emulationOs: 'android', deviceSlot: 2 }, false],
+    ];
+    for (const [name, extra, accepted] of cases) {
+      expect(
+        AgentParamsSchema.safeParse({ method: 'snapshot', ...extra }).success,
+        name,
+      ).to.equal(accepted);
+    }
   });
 
   it('rejects unknown operating systems, DPRs, and invalid slots', () => {

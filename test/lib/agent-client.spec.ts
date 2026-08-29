@@ -821,6 +821,75 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('rejects a conflicting persona while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const open = (mcpSessionId: string, emulationOs: 'windows' | 'macos') =>
+        getOrCreateSession(
+          mcpSessionId,
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'shared-pending-persona',
+          undefined,
+          undefined,
+          { emulationOs },
+        );
+
+      const windows = open('mcp-pending-a', 'windows');
+      const macos = open('mcp-pending-b', 'macos').catch(
+        (error: unknown) => error,
+      );
+      expect((await windows).persona).to.deep.equal({
+        emulationOs: 'windows',
+      });
+      expect(await macos).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects persona before allocating a profile-creation session', async () => {
+    const fetchStub = sinon
+      .stub(globalThis, 'fetch')
+      .resolves(
+        new Response(JSON.stringify({ id: 'created-profile' }), {
+          status: 200,
+        }),
+      );
+    try {
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-create-profile-persona',
+          'http://127.0.0.1:1',
+          'tok',
+          undefined,
+          undefined,
+          { name: 'demo' },
+          undefined,
+          false,
+          undefined,
+          'profile-persona-handle',
+          undefined,
+          undefined,
+          { emulationOs: 'windows' },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect(fetchStub.called).to.equal(false);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
   it('keeps an echoed handle scoped to its own token', async () => {
     const server = await makeAcceptingServer();
     try {

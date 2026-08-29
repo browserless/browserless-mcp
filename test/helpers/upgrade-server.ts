@@ -169,14 +169,20 @@ export const makeRespondingServer = async (
  * tests that need a live session — the server holds connections open until
  * `close()` terminates them.
  */
-export const makeAcceptingServer = async (): Promise<UpgradeServerHandle> => {
+export const makeAcceptingServer = async (
+  upgradeDelayMs = 0,
+): Promise<UpgradeServerHandle> => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
   server.on('upgrade', (req, socket, head) => {
     socket.on('error', () => {});
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.on('close', () => {});
-    });
+    setTimeout(
+      () =>
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          ws.on('close', () => {});
+        }),
+      upgradeDelayMs,
+    );
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const { port } = server.address() as AddressInfo;
