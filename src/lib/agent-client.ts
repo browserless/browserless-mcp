@@ -777,6 +777,11 @@ export const getOrCreateSession = async (
   persona?: PersonaOptions,
 ): Promise<ActiveSession> => {
   sweepSessions();
+  if (createProfile && hasPersona(persona)) {
+    throw new PersonaConflictError(
+      'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
+    );
+  }
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
   // conversation shares the MCP session id, so the guess collided them onto one page.
   const handle =
@@ -822,7 +827,17 @@ export const getOrCreateSession = async (
 
   // Another caller is already creating a session for this key — share it.
   const inFlight = pending.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const session = await inFlight;
+    if (
+      persona &&
+      hasPersona(persona) &&
+      hasPersonaConflict(session.persona, persona)
+    ) {
+      throw new PersonaConflictError();
+    }
+    return session;
+  }
 
   // Clean up stale session if any
   if (existing) {

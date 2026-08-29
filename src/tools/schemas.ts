@@ -798,7 +798,27 @@ export const AgentParamsSchema = z
       message:
         'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
     },
-  );
+  )
+  .superRefine((v, ctx) => {
+    if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['emulatedDevice'],
+        message: 'emulatedDevice requires emulationOs="android".',
+      });
+    }
+    if (
+      v.deviceSlot !== undefined &&
+      !['windows', 'macos', 'linux'].includes(v.emulationOs ?? '')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['deviceSlot'],
+        message:
+          'deviceSlot requires a desktop emulationOs (windows, macos, or linux).',
+      });
+    }
+  });
 
 // ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
 // De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,
