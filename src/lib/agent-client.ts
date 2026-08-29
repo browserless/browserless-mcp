@@ -202,6 +202,16 @@ export class ProfileNotFoundError extends UpgradeError {
   }
 }
 
+/** A caller attempted to redefine immutable persona state on a live browser. */
+export class PersonaConflictError extends Error {
+  constructor(
+    message = 'Persona options are fixed when a browser session opens. Close the session before changing them.',
+  ) {
+    super(message);
+    this.name = 'PersonaConflictError';
+  }
+}
+
 // Upgrade statuses where a one-shot retry cannot help: bad request (400),
 // bad auth (401), forbidden by plan/policy (403), missing resource (404), or
 // concurrency limit (429). Retrying a 429 just opens another session and
@@ -209,6 +219,7 @@ export class ProfileNotFoundError extends UpgradeError {
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
+  if (err instanceof PersonaConflictError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -786,7 +797,7 @@ export const getOrCreateSession = async (
   const existing = sessions.get(key);
 
   if (attachSessionId && hasPersona(persona)) {
-    throw new Error(
+    throw new PersonaConflictError(
       'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
     );
   }
@@ -797,9 +808,7 @@ export const getOrCreateSession = async (
     hasPersona(persona) &&
     hasPersonaConflict(existing.persona, persona)
   ) {
-    throw new Error(
-      'Persona options are fixed when a browser session opens. Close the session before changing them.',
-    );
+    throw new PersonaConflictError();
   }
 
   if (

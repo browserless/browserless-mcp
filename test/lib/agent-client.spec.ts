@@ -5,6 +5,7 @@ import {
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
+  PersonaConflictError,
   ProfileNotFoundError,
   proxyFingerprint,
   sessionHandle,
@@ -449,6 +450,10 @@ describe('agent-client isRetryableUpgradeError', () => {
 
   it('retries on plain errors (network failures, timeouts)', () => {
     expect(isRetryableUpgradeError(new Error('ECONNREFUSED'))).to.equal(true);
+  });
+
+  it('does not retry persona conflicts that would destroy the live session', () => {
+    expect(isRetryableUpgradeError(new PersonaConflictError())).to.equal(false);
   });
 });
 
