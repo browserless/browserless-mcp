@@ -251,6 +251,32 @@ describe('AgentParamsSchema persona', () => {
       ['desktop slot', { emulationOs: 'windows', deviceSlot: 2 }, true],
       ['slot without OS', { deviceSlot: 2 }, false],
       ['slot on Android', { emulationOs: 'android', deviceSlot: 2 }, false],
+      ['desktop screen', { emulationOs: 'windows', screen: '1920x1080' }, true],
+      ['screen without OS', { screen: '1920x1080' }, false],
+      [
+        'screen on Android',
+        { emulationOs: 'android', screen: '1920x1080' },
+        false,
+      ],
+      [
+        'desktop screen with DPR',
+        {
+          emulationOs: 'windows',
+          screen: '1920x1080',
+          deviceScaleFactor: 1.25,
+        },
+        true,
+      ],
+      [
+        'DPR without screen',
+        { emulationOs: 'windows', deviceScaleFactor: 1.25 },
+        false,
+      ],
+      [
+        'DPR without OS',
+        { screen: '1920x1080', deviceScaleFactor: 1.25 },
+        false,
+      ],
     ];
     for (const [name, extra, accepted] of cases) {
       expect(

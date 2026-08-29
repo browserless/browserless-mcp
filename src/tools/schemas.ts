@@ -800,6 +800,9 @@ export const AgentParamsSchema = z
     },
   )
   .superRefine((v, ctx) => {
+    const hasDesktopOs = ['windows', 'macos', 'linux'].includes(
+      v.emulationOs ?? '',
+    );
     if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
       ctx.addIssue({
         code: 'custom',
@@ -807,16 +810,38 @@ export const AgentParamsSchema = z
         message: 'emulatedDevice requires emulationOs="android".',
       });
     }
-    if (
-      v.deviceSlot !== undefined &&
-      !['windows', 'macos', 'linux'].includes(v.emulationOs ?? '')
-    ) {
+    if (v.deviceSlot !== undefined && !hasDesktopOs) {
       ctx.addIssue({
         code: 'custom',
         path: ['deviceSlot'],
         message:
           'deviceSlot requires a desktop emulationOs (windows, macos, or linux).',
       });
+    }
+    if (v.screen !== undefined && !hasDesktopOs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['screen'],
+        message:
+          'screen requires a desktop emulationOs (windows, macos, or linux).',
+      });
+    }
+    if (v.deviceScaleFactor !== undefined) {
+      if (!hasDesktopOs) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['deviceScaleFactor'],
+          message:
+            'deviceScaleFactor requires a desktop emulationOs (windows, macos, or linux).',
+        });
+      }
+      if (v.screen === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['deviceScaleFactor'],
+          message: 'deviceScaleFactor requires screen.',
+        });
+      }
     }
   });
 
