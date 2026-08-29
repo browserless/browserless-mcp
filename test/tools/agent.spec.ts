@@ -1042,6 +1042,53 @@ describe('browserless_agent retry-guard (runCommands)', () => {
       await srv.close();
     }
   });
+
+  it('preserves a live session persona when recovering from a browser crash', async () => {
+    let snapshots = 0;
+    const srv = await makeRespondingServer((method) => {
+      if (method !== 'snapshot') return {};
+      snapshots += 1;
+      if (snapshots === 2) {
+        return new AgentErrorFrame({
+          code: 'BROWSER_CRASHED',
+          message: 'browser crashed',
+        });
+      }
+      return {
+        url: 'https://example.com/',
+        title: 'Example',
+        elements: [],
+        time: 1,
+      };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const opened = (await execute(
+        { method: 'snapshot', emulationOs: 'windows' },
+        ctx('retry-persona-open'),
+      )) as { content: Array<{ text?: string }> };
+      const openedText = opened.content
+        .map((item) => item.text ?? '')
+        .join('\n');
+      const sessionId = /sessionId: (\S+)/.exec(openedText)?.[1];
+      expect(sessionId).to.match(/^s:/);
+
+      await execute(
+        { method: 'snapshot', sessionId },
+        ctx('retry-persona-follow-up'),
+      );
+
+      expect(
+        srv.hits(),
+        'the browser-crash recovery opened one replacement',
+      ).to.equal(2);
+      expect(
+        new URL(srv.upgradeUrls()[1]!, srv.url).searchParams.get('emulationOs'),
+      ).to.equal('windows');
+    } finally {
+      await srv.close();
+    }
+  });
 });
 
 describe('browserless_agent _prompt capture', () => {

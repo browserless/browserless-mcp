@@ -22,6 +22,7 @@ import type {
   AgentParams,
   ErrorCategory,
   McpConfig,
+  PersonaOptions,
   SkillId,
   SnapshotResult,
 } from '../@types/types.js';
@@ -756,7 +757,10 @@ export function registerAgentTools(
         ];
       }
 
-      const runCommands = async (isRetry: boolean): Promise<Content[]> => {
+      const runCommands = async (
+        isRetry: boolean,
+        retryPersona: PersonaOptions = persona,
+      ): Promise<Content[]> => {
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
@@ -774,7 +778,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
-            persona,
+            retryPersona,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -794,7 +798,7 @@ export function registerAgentTools(
             integrationId,
             allowedDomains,
           );
-          return runCommands(true);
+          return runCommands(true, retryPersona);
         }
 
         // Execute all commands sequentially
@@ -872,7 +876,7 @@ export function registerAgentTools(
               log.warn(
                 `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
               );
-              return runCommands(true);
+              return runCommands(true, agentSession.persona ?? retryPersona);
             }
             const classified = classifyAgentError({
               err: { message: errMessage },
@@ -905,7 +909,7 @@ export function registerAgentTools(
                 allowedDomains,
               );
               if (!isRetry) {
-                return runCommands(true);
+                return runCommands(true, agentSession.persona ?? retryPersona);
               }
             }
 

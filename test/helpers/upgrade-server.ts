@@ -11,6 +11,10 @@ export interface RejectingServerHandle extends UpgradeServerHandle {
   hits: () => number;
 }
 
+export interface RespondingServerHandle extends RejectingServerHandle {
+  upgradeUrls: () => string[];
+}
+
 export class AgentErrorFrame {
   constructor(
     public readonly error: {
@@ -118,12 +122,14 @@ export const makeStallingServer = async (
 // for tests only
 export const makeRespondingServer = async (
   responder: (method: string, params: unknown) => unknown,
-): Promise<RejectingServerHandle> => {
+): Promise<RespondingServerHandle> => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
   let upgrades = 0;
+  const upgradeUrls: string[] = [];
   server.on('upgrade', (req, socket, head) => {
     upgrades++;
+    upgradeUrls.push(req.url ?? '');
     socket.on('error', () => {});
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.on('message', (data: Buffer) => {
@@ -148,6 +154,7 @@ export const makeRespondingServer = async (
   return {
     url: `http://127.0.0.1:${port}`,
     hits: () => upgrades,
+    upgradeUrls: () => [...upgradeUrls],
     close: () =>
       new Promise<void>((r) => {
         wss.clients.forEach((c) => c.terminate());
