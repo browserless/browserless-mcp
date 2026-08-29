@@ -234,10 +234,15 @@ const sessions = new Map<string, ActiveSession>();
 // getOrCreateSession callers await the same promise instead of each
 // opening their own WebSocket.
 const pending = new Map<string, Promise<ActiveSession>>();
+// Persona is creation state associated with the caller-visible handle, not the
+// socket. Keep it after transport close/idle eviction so an echoed handle can
+// recreate the browser coherently without making callers repeat the options.
+const retainedPersonas = new Map<string, PersonaOptions>();
 
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;
+const MAX_RETAINED_PERSONAS = 500;
 // mcp session id -> last time a request arrived on it. `disconnect` is the
 // primary signal, but a client that abandons a transport never sends one.
 const mcpSeenAt = new Map<string, number>();
@@ -822,6 +827,22 @@ export const getOrCreateSession = async (
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
+  const retainedPersona = retainedPersonas.get(key);
+
+  if (
+    retainedPersona &&
+    persona &&
+    hasPersona(persona) &&
+    hasPersonaConflict(retainedPersona, persona)
+  ) {
+    throw new PersonaConflictError();
+  }
+  const effectivePersona = retainedPersona ?? persona;
+  if (retainedPersona) {
+    // Refresh insertion order so the bounded map behaves as a small LRU.
+    retainedPersonas.delete(key);
+    retainedPersonas.set(key, retainedPersona);
+  }
 
   if (attachSessionId && hasPersona(persona)) {
     throw new PersonaConflictError(
@@ -897,7 +918,7 @@ export const getOrCreateSession = async (
       allowedDomains,
       os,
       humanlike,
-      persona,
+      effectivePersona,
     );
     const session: ActiveSession = {
       ws,
@@ -915,10 +936,20 @@ export const getOrCreateSession = async (
       allowedDomains,
       os,
       humanlike,
-      persona,
+      persona: effectivePersona,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
+
+    if (hasPersona(effectivePersona)) {
+      retainedPersonas.delete(key);
+      retainedPersonas.set(key, effectivePersona!);
+      while (retainedPersonas.size > MAX_RETAINED_PERSONAS) {
+        const oldest = retainedPersonas.keys().next().value;
+        if (oldest === undefined) break;
+        retainedPersonas.delete(oldest);
+      }
+    }
 
     // Auto-cleanup on close
     ws.on('close', (code: number, reason: Buffer) => {
@@ -1035,6 +1066,7 @@ export const closeSession = (
     }
     sessions.delete(key);
   }
+  retainedPersonas.delete(key);
 };
 
 /**
