@@ -117,12 +117,12 @@ const SKILL_SPECS: SkillSpec[] = [
     path: 'src/skills/vision-fallback.md',
     refireAfter: 3,
     triggers: [
-      // Deep `< ` selector already tried and still missed → snapshot can't
-      // surface the element; escalate to clicking by screenshot coordinate.
+      // A click whose deep `< ` selector missed → escalate to coordinate-click.
+      // Click-only: the skill is coordinate-click, useless for reads (text/html).
       [
         { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
         { kind: 'command.selector-deep' },
-        { kind: 'command.method-not', methods: ['waitForSelector'] },
+        { kind: 'command.method', methods: ['click'] },
       ],
     ],
   },

@@ -195,11 +195,15 @@ const ClickCommandSchema = z.object({
     })
     .refine(
       (p) =>
-        (typeof p.selector === 'string') !==
-        (typeof p.x === 'number' && typeof p.y === 'number'),
+        (typeof p.selector === 'string' &&
+          p.x === undefined &&
+          p.y === undefined) ||
+        (p.selector === undefined &&
+          typeof p.x === 'number' &&
+          typeof p.y === 'number'),
       {
         message:
-          'Provide either selector OR both x and y (screenshot-pixel coordinates), not both.',
+          'Provide either selector alone OR both x and y (screenshot-pixel coordinates) without a selector.',
       },
     ),
 });

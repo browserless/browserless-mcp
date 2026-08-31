@@ -139,6 +139,38 @@ describe('skills/detectSkills - shadow-dom', () => {
   });
 });
 
+describe('skills/detectSkills - vision-fallback', () => {
+  it('fires on a click whose deep selector missed', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: { method: 'click', params: { selector: '< button#missing' } },
+    };
+    expect(detectSkills(ctx, state)).to.include('vision-fallback');
+  });
+
+  it('does not fire for a non-click command — the skill is coordinate-click', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: {
+        method: 'type',
+        params: { selector: '< input#missing', text: 'x' },
+      },
+    };
+    expect(detectSkills(ctx, state)).to.not.include('vision-fallback');
+  });
+
+  it('does not fire when the click selector is not yet deep — shadow-dom is rung 1', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: { method: 'click', params: { selector: 'button#missing' } },
+    };
+    expect(detectSkills(ctx, state)).to.not.include('vision-fallback');
+  });
+});
+
 describe('skills/detectSkills - cookie-consent', () => {
   it('fires when a button name matches the consent regex', () => {
     const state = createSkillState();
