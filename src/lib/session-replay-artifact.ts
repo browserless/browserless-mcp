@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import { UserError } from 'fastmcp';
 
@@ -142,10 +142,7 @@ export const buildReplayHtml = (replay: ReplayArtifact): string => {
     'utf8',
   );
   cachedPlayerJs ??= readFileSync(
-    join(
-      dirname(requireFrom.resolve('rrweb-player')),
-      'rrweb-player.umd.min.cjs',
-    ),
+    requireFrom.resolve('rrweb-player/dist/index.js'),
     'utf8',
   );
 
