@@ -88,6 +88,10 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
       const sel = ctx.cmd?.params?.selector;
       return typeof sel === 'string' && !sel.startsWith('< ');
     }
+    case 'command.selector-deep': {
+      const sel = ctx.cmd?.params?.selector;
+      return typeof sel === 'string' && sel.startsWith('< ');
+    }
   }
 };
 
@@ -104,6 +108,20 @@ const SKILL_SPECS: SkillSpec[] = [
       [
         { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
         { kind: 'command.selector-not-deep' },
+        { kind: 'command.method-not', methods: ['waitForSelector'] },
+      ],
+    ],
+  },
+  {
+    id: 'vision-fallback',
+    path: 'src/skills/vision-fallback.md',
+    refireAfter: 3,
+    triggers: [
+      // Deep `< ` selector already tried and still missed → snapshot can't
+      // surface the element; escalate to clicking by screenshot coordinate.
+      [
+        { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
+        { kind: 'command.selector-deep' },
         { kind: 'command.method-not', methods: ['waitForSelector'] },
       ],
     ],

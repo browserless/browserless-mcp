@@ -321,6 +321,7 @@ describe('compliance mode — compliant tool surface', () => {
         'snapshot-misses',
         'dynamic-content',
         'screenshots',
+        'vision-fallback',
         'tabs',
       ];
       expect(
