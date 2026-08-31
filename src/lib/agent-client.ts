@@ -500,9 +500,14 @@ const postCreateProfile = async (
   apiUrl: string,
   token: string,
   createProfile: CreateProfileParams,
+  os?: string,
+  humanlike?: boolean,
 ): Promise<CreationSessionInfo> => {
   const url = apiEndpoint(apiUrl, '/profile');
   url.searchParams.set('token', token);
+  if (os) url.searchParams.set('emulationOs', os);
+  if (humanlike !== undefined)
+    url.searchParams.set('humanlike', String(humanlike));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CREATE_PROFILE_TIMEOUT_MS);
@@ -760,7 +765,7 @@ export const getOrCreateSession = async (
       creationSessionId = attachSessionId;
     } else if (createProfile) {
       creationSessionId = (
-        await postCreateProfile(apiUrl, token, createProfile)
+        await postCreateProfile(apiUrl, token, createProfile, os, humanlike)
       ).id;
     }
     const ws = await connect(
