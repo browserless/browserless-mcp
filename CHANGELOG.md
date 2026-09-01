@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/browserless/browserless-mcp/compare/v1.24.0...v1.25.0) (2026-09-01)
+
+
+### Features
+
+* add vision fallback skill for clicking by coordinate when snapshot fails ([#274](https://github.com/browserless/browserless-mcp/issues/274)) ([d6c56a6](https://github.com/browserless/browserless-mcp/commit/d6c56a6ea20fa424e1be5f40b2b77f1822119159))
+
 ## [1.24.0](https://github.com/browserless/browserless-mcp/compare/v1.23.0...v1.24.0) (2026-08-25)
 
 
