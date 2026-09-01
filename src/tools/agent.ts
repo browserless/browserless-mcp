@@ -186,6 +186,17 @@ const fmtBytes = (n?: number): string =>
       ? `${(n / 1_048_576).toFixed(1)}MB`
       : `${Math.round(n / 1024)}KB`;
 
+export const formatAgentCommandLog = (cmd: {
+  method: string;
+  params: Record<string, unknown>;
+}): string => {
+  const params =
+    cmd.method === 'saveSecret'
+      ? { ...cmd.params, password: '[REDACTED]' }
+      : cmd.params;
+  return `agent: ${cmd.method} ${JSON.stringify(params)}`;
+};
+
 // Still-downloading entry: report progress so the caller knows to touch the
 // browser again to collect it (no bytes, nothing to save yet).
 const describeInProgressDownload = (d: DownloadEntry): string => {
@@ -801,7 +812,7 @@ export function registerAgentTools(
             continue;
           }
 
-          log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
+          log.info(formatAgentCommandLog(cmd));
 
           agentSession.skillState.cmdIndex += 1;
 

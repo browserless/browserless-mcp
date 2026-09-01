@@ -284,6 +284,76 @@ describe('loadSecret command', () => {
   });
 });
 
+describe('saveSecret command', () => {
+  const requiredParams = {
+    vault: 'Automation',
+    title: 'Example login',
+    username: 'user@example.com',
+    password: 'synthetic-password',
+  };
+
+  it('accepts a saveSecret command with all fields', () => {
+    const parsed = AgentParamsSchema.parse({
+      commands: [
+        {
+          method: 'saveSecret',
+          params: {
+            ...requiredParams,
+            website: 'https://example.com',
+          },
+        },
+      ],
+    });
+    const cmd = parsed.commands?.[0];
+    expect(cmd?.method).to.equal('saveSecret');
+    expect((cmd?.params as { vault?: string })?.vault).to.equal('Automation');
+  });
+
+  it('accepts a saveSecret command without a website', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [{ method: 'saveSecret', params: requiredParams }],
+    });
+    expect(result.success).to.equal(true);
+  });
+
+  it('rejects missing required fields without falling back to the generic schema', () => {
+    for (const field of ['vault', 'title', 'username', 'password'] as const) {
+      const params: Partial<typeof requiredParams> = { ...requiredParams };
+      delete params[field];
+      const result = AgentParamsSchema.safeParse({
+        commands: [{ method: 'saveSecret', params }],
+      });
+      expect(result.success, `missing ${field}`).to.equal(false);
+    }
+  });
+
+  it('rejects empty required fields', () => {
+    for (const field of ['vault', 'title', 'username', 'password'] as const) {
+      const result = AgentParamsSchema.safeParse({
+        commands: [
+          {
+            method: 'saveSecret',
+            params: { ...requiredParams, [field]: '' },
+          },
+        ],
+      });
+      expect(result.success, `empty ${field}`).to.equal(false);
+    }
+  });
+
+  it('rejects a non-string website', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [
+        {
+          method: 'saveSecret',
+          params: { ...requiredParams, website: 42 },
+        },
+      ],
+    });
+    expect(result.success).to.equal(false);
+  });
+});
+
 describe('createProfile field', () => {
   it('accepts a createProfile object on its own', () => {
     const parsed = AgentParamsSchema.parse({

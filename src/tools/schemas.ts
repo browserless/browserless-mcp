@@ -240,6 +240,25 @@ const LoadSecretCommandSchema = z.object({
   }),
 });
 
+const SaveSecretCommandSchema = z.object({
+  method: z.literal('saveSecret'),
+  params: z.object({
+    vault: z.string().min(1).describe('Name of the connected vault to save to'),
+    title: z.string().min(1).describe('Title for the saved login item'),
+    username: z.string().min(1).describe('Username for the new login'),
+    password: z
+      .string()
+      .min(1)
+      .describe(
+        'Password for the new login; never repeat it in other commands',
+      ),
+    website: z
+      .string()
+      .optional()
+      .describe('Optional website associated with the saved login'),
+  }),
+});
+
 const SelectCommandSchema = z.object({
   method: z.literal('select'),
   params: z.object({
@@ -642,6 +661,7 @@ const specificCommandSchemas = [
   ClickCommandSchema,
   TypeCommandSchema,
   LoadSecretCommandSchema,
+  SaveSecretCommandSchema,
   SelectCommandSchema,
   CheckboxCommandSchema,
   HoverCommandSchema,
@@ -775,11 +795,13 @@ export const AgentParamsSchema = z
       .optional()
       .describe(
         'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
-          'session so `loadSecret` can resolve `op://vault/item/field` references. Find ' +
+          'session so `loadSecret` can resolve credentials and `saveSecret` can persist ' +
+          'a new login. Find ' +
           'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
           'flow (like `profile`); a call that omits it runs with no vault bound and ' +
-          '`loadSecret` returns CredentialNotResolved. Pair with `allowedDomains` to ' +
-          'permit filling on the target sites.',
+          'credential commands return CredentialNotResolved. `saveSecret` requires a ' +
+          'write-enabled connection. Pair with `allowedDomains` to permit filling on ' +
+          'the target sites.',
       ),
     allowedDomains: z
       .array(z.string().trim().min(1))

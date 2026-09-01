@@ -4,6 +4,7 @@ import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
+  formatAgentCommandLog,
   formatConnectError,
   formatDownloads,
   formatErrorMessage,
@@ -82,6 +83,37 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
+
+describe('formatAgentCommandLog', () => {
+  it('redacts saveSecret passwords while preserving non-secret parameters', () => {
+    const message = formatAgentCommandLog({
+      method: 'saveSecret',
+      params: {
+        vault: 'Automation',
+        title: 'Example login',
+        username: 'user@example.com',
+        password: 'synthetic-password',
+        website: 'https://example.com',
+      },
+    });
+
+    expect(message).to.include('agent: saveSecret');
+    expect(message).to.include('Automation');
+    expect(message).to.include('user@example.com');
+    expect(message).to.include('https://example.com');
+    expect(message).to.include('"password":"[REDACTED]"');
+    expect(message).to.not.include('synthetic-password');
+  });
+
+  it('leaves non-saveSecret command parameters unchanged', () => {
+    expect(
+      formatAgentCommandLog({
+        method: 'goto',
+        params: { url: 'https://example.com' },
+      }),
+    ).to.equal('agent: goto {"url":"https://example.com"}');
+  });
+});
 
 describe('browserless_skill tool', () => {
   let server: FastMCP;
