@@ -310,3 +310,32 @@ describe('createProfile field', () => {
     }
   });
 });
+
+describe('AgentParamsSchema click coordinates', () => {
+  const parseClick = (params: Record<string, unknown>): boolean =>
+    AgentParamsSchema.safeParse({
+      rationale: 'test',
+      commands: [{ method: 'click', params }],
+    }).success;
+
+  it('accepts a selector alone', () => {
+    expect(parseClick({ selector: 'button#go' })).to.equal(true);
+  });
+
+  it('accepts both x and y without a selector', () => {
+    expect(parseClick({ x: 10, y: 20 })).to.equal(true);
+  });
+
+  it('rejects x without y', () => {
+    expect(parseClick({ x: 10 })).to.equal(false);
+  });
+
+  it('rejects a selector combined with a coordinate', () => {
+    expect(parseClick({ selector: 'button#go', x: 10 })).to.equal(false);
+    expect(parseClick({ selector: 'button#go', x: 10, y: 20 })).to.equal(false);
+  });
+
+  it('rejects an empty params object', () => {
+    expect(parseClick({})).to.equal(false);
+  });
+});

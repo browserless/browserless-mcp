@@ -49,6 +49,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
+- \`vision-fallback\` — click by coordinate when the snapshot can't surface an element
 - \`tabs\` — multi-tab workflows, peek-without-switching
 
 ## Snapshot Rules
@@ -176,6 +177,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
+- \`vision-fallback\` — click by coordinate when the snapshot can't surface an element
 - \`tabs\` — multi-tab workflows, peek-without-switching
 
 ## Snapshot Rules
@@ -318,6 +320,7 @@ Available in-house skills:
 - **snapshot-misses** — truncated/empty snapshots, image-rendered content
 - **dynamic-content** — choosing the right \`wait*\` method after async triggers
 - **screenshots** — when to screenshot vs. snapshot, scope and format choices
+- **vision-fallback** — click by coordinate when a "< " deep selector still can't surface the element (shadow DOM, nested iframe, canvas)
 - **tabs** — multi-tab workflows, peek-without-switching
 - **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)

@@ -217,6 +217,11 @@ export interface ActiveSession {
   // after a drop. Feeds the session-cache key, so readonly.
   readonly integrationId?: string;
   readonly allowedDomains?: string[];
+  // Spoofed desktop OS for the stealth fingerprint (forwarded as ?emulationOs).
+  // Re-sent on reconnect so the identity stays coherent after a drop.
+  readonly os?: string;
+  // Human-like cursor/pacing (forwarded as ?humanlike). Re-sent on reconnect.
+  readonly humanlike?: boolean;
   // Handle the caller echoes back as `sessionId`. Feeds the session-cache key,
   // and is re-keyed in place when an orphaned browser is adopted.
   handle: string;
@@ -280,7 +285,8 @@ export type SkillId =
   | 'tabs'
   | 'autonomous-login'
   | 'auth-profile'
-  | 'file-transfers';
+  | 'file-transfers'
+  | 'vision-fallback';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
@@ -318,7 +324,8 @@ export type Predicate =
   | { kind: 'command.method'; methods: string[] }
   | { kind: 'command.method-not'; methods: string[] }
   | { kind: 'command.method-prefix'; prefix: string }
-  | { kind: 'command.selector-not-deep' };
+  | { kind: 'command.selector-not-deep' }
+  | { kind: 'command.selector-deep' };
 
 /** AND-clause: every predicate must match. */
 export type Trigger = Predicate[];

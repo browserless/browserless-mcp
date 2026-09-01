@@ -22,6 +22,7 @@ export const COMPLIANT_SKILLS: ReadonlySet<SkillId> = new Set<SkillId>([
   'snapshot-misses',
   'dynamic-content',
   'screenshots',
+  'vision-fallback',
   'tabs',
 ]);
 
@@ -63,4 +64,5 @@ Available skills:
 - **snapshot-misses** — truncated/empty snapshots, image-rendered content
 - **dynamic-content** — choosing the right \`wait*\` method after async triggers
 - **screenshots** — when to screenshot vs. snapshot, scope and format choices
+- **vision-fallback** — click by coordinate when a \`< \` deep selector still can't surface the element
 - **tabs** — multi-tab workflows, peek-without-switching`;

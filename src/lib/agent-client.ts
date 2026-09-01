@@ -306,11 +306,15 @@ export const buildAgentWsUrl = (
   compliant = false,
   integrationId?: string,
   allowedDomains?: string[],
+  os?: string,
+  humanlike?: boolean,
 ): string => {
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
   // On attach (sessionId set) the creation session already owns proxy/profile from
   // POST /profile; skip them. integrationId isn't carried there (combo rejected upstream).
+  // emulationOs is likewise carried by the running browser on reconnect (enterprise
+  // restores requestedEmulationOs from the instance), so it's only set on a fresh connect.
   if (sessionId) {
     url.searchParams.set('sessionId', sessionId);
     return url.toString();
@@ -332,6 +336,13 @@ export const buildAgentWsUrl = (
     if (proxy?.externalProxyServer)
       url.searchParams.set('externalProxyServer', proxy.externalProxyServer);
     if (profile) url.searchParams.set('profile', profile);
+    // Opt the agent socket into the stealth stack with a spoofed desktop OS.
+    // Without it the agent (BraveStealthBrowser) reports native Linux under a
+    // Chrome-masked UA — an incoherent fingerprint anti-bot checks flag.
+    if (os) url.searchParams.set('emulationOs', os);
+    // Human-like cursor/pacing — lifts the passive score of invisible anti-bot
+    // challenges (the agent otherwise moves no mouse). Read at session creation.
+    if (humanlike) url.searchParams.set('humanlike', 'true');
     // enterprise reads ?integrationId=/?allowedDomains= on a fresh connection to
     // bind the resolver so loadSecret can resolve op:// refs; allowedDomains scopes fills.
     if (integrationId) {
@@ -489,9 +500,14 @@ const postCreateProfile = async (
   apiUrl: string,
   token: string,
   createProfile: CreateProfileParams,
+  os?: string,
+  humanlike?: boolean,
 ): Promise<CreationSessionInfo> => {
   const url = apiEndpoint(apiUrl, '/profile');
   url.searchParams.set('token', token);
+  if (os) url.searchParams.set('emulationOs', os);
+  if (humanlike !== undefined)
+    url.searchParams.set('humanlike', String(humanlike));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CREATE_PROFILE_TIMEOUT_MS);
@@ -542,6 +558,8 @@ const connect = (
   source?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  os?: string,
+  humanlike?: boolean,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -553,6 +571,8 @@ const connect = (
       compliant,
       integrationId,
       allowedDomains,
+      os,
+      humanlike,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -688,6 +708,8 @@ export const getOrCreateSession = async (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  os?: string,
+  humanlike?: boolean,
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -743,7 +765,7 @@ export const getOrCreateSession = async (
       creationSessionId = attachSessionId;
     } else if (createProfile) {
       creationSessionId = (
-        await postCreateProfile(apiUrl, token, createProfile)
+        await postCreateProfile(apiUrl, token, createProfile, os, humanlike)
       ).id;
     }
     const ws = await connect(
@@ -756,6 +778,8 @@ export const getOrCreateSession = async (
       source,
       integrationId,
       allowedDomains,
+      os,
+      humanlike,
     );
     const session: ActiveSession = {
       ws,
@@ -771,6 +795,8 @@ export const getOrCreateSession = async (
       handle,
       integrationId,
       allowedDomains,
+      os,
+      humanlike,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -825,6 +851,8 @@ export const send = async (
         session.source,
         session.integrationId,
         session.allowedDomains,
+        session.os,
+        session.humanlike,
       ).finally(() => {
         session.reconnecting = undefined;
       });

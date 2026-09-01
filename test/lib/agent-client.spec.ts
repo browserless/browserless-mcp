@@ -879,3 +879,111 @@ describe('agent-client mcp-session churn', () => {
     }
   });
 });
+
+describe('agent-client createProfile with os and humanlike', () => {
+  let fetchStub: sinon.SinonStub;
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('forwards non-default os and humanlike as query params to POST /profile', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(JSON.stringify({ id: 'sess-test-123' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      await getOrCreateSession(
+        'mcp-create-profile',
+        server.url,
+        'tok',
+        undefined, // proxy
+        undefined, // profile (string)
+        { name: 'my-profile' }, // createProfile
+        undefined, // attachSessionId
+        false, // compliant
+        undefined, // source
+        undefined, // echoedSessionId
+        undefined, // integrationId
+        undefined, // allowedDomains
+        'macos', // os
+        true, // humanlike
+      );
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
+      expect(calledUrl.pathname).to.equal('/profile');
+      expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
+      expect(calledUrl.searchParams.get('humanlike')).to.equal('true');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('omits emulationOs and humanlike from POST /profile when not provided', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(JSON.stringify({ id: 'sess-no-os' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      await getOrCreateSession(
+        'mcp-create-profile-bare',
+        server.url,
+        'tok',
+        undefined, // proxy
+        undefined, // profile (string)
+        { name: 'bare-profile' }, // createProfile
+      );
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
+      expect(calledUrl.searchParams.has('emulationOs')).to.be.false;
+      expect(calledUrl.searchParams.has('humanlike')).to.be.false;
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards humanlike=false explicitly when humanlike is false', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(JSON.stringify({ id: 'sess-hl-false' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      await getOrCreateSession(
+        'mcp-create-profile-hl-false',
+        server.url,
+        'tok',
+        undefined, // proxy
+        undefined, // profile (string)
+        { name: 'hl-false-profile' }, // createProfile
+        undefined, // attachSessionId
+        false, // compliant
+        undefined, // source
+        undefined, // echoedSessionId
+        undefined, // integrationId
+        undefined, // allowedDomains
+        undefined, // os
+        false, // humanlike — explicitly disabled
+      );
+
+      expect(fetchStub.calledOnce).to.be.true;
+      const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
+      expect(calledUrl.searchParams.get('humanlike')).to.equal('false');
+    } finally {
+      await server.close();
+    }
+  });
+});
