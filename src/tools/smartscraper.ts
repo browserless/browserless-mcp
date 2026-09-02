@@ -165,7 +165,7 @@ export function registerSmartScraperTool(
         params.includeTags?.length || params.excludeTags?.length
       ),
     }),
-    format: (response) => {
+    format: (response, params) => {
       if (!response.ok) {
         throw new UserError(
           `Scraping failed: ${response.message ?? 'Unknown error'} ` +
@@ -187,10 +187,24 @@ export function registerSmartScraperTool(
         textContent = `[No page content returned by the API. Strategy: ${response.strategy}, Status: ${response.statusCode}]`;
       }
       blocks.push({ type: 'text' as const, text: textContent });
-      if (response.markdown && typeof response.rawText === 'string') {
+      if (
+        response.markdown &&
+        params.formats.includes('rawText') &&
+        typeof response.rawText === 'string'
+      ) {
         blocks.push({
           type: 'text' as const,
           text: `## Raw text\n${response.rawText}`,
+        });
+      }
+      if (
+        params.formats.includes('html') &&
+        typeof response.content === 'string' &&
+        response.content !== textContent
+      ) {
+        blocks.push({
+          type: 'text' as const,
+          text: `## HTML\n${response.content}`,
         });
       }
       const pageMetadata = response.metadata

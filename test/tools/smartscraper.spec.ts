@@ -203,6 +203,7 @@ describe('browserless_smartscraper tool', () => {
       new Response(
         JSON.stringify(
           makeSuccessResponse({
+            content: '<html>HTML</html>',
             markdown: '# Markdown',
             rawText: 'Raw text',
           }),
@@ -217,7 +218,7 @@ describe('browserless_smartscraper tool', () => {
     const result = await addToolSpy.firstCall.args[0].execute(
       {
         url: 'https://example.com',
-        formats: ['markdown', 'rawText'],
+        formats: ['markdown', 'rawText', 'html'],
       },
       mockContext,
     );
@@ -225,6 +226,30 @@ describe('browserless_smartscraper tool', () => {
 
     expect(content[0]).to.deep.equal({ type: 'text', text: '# Markdown' });
     expect(JSON.stringify(content)).to.include('Raw text');
+    expect(JSON.stringify(content)).to.include('<html>HTML</html>');
+  });
+
+  it('returns HTML when requested with markdown', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify(makeSuccessResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    const result = await execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown', 'html'],
+      },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content;
+
+    expect(content[0]).to.deep.equal({ type: 'text', text: '# Hello World' });
+    expect(JSON.stringify(content)).to.include('<html>Hello</html>');
   });
 
   it('validates selector limits and conflicts before calling the API', () => {
