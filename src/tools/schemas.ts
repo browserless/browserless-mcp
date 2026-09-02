@@ -174,9 +174,38 @@ const ReloadCommandSchema = z.object({
 
 const ClickCommandSchema = z.object({
   method: z.literal('click'),
-  params: z.object({
-    selector: z.string().describe('CSS selector of the element to click'),
-  }),
+  params: z
+    .object({
+      selector: z
+        .string()
+        .optional()
+        .describe(
+          'CSS selector of the element to click. Omit when clicking by coordinate (x/y).',
+        ),
+      x: z
+        .number()
+        .optional()
+        .describe(
+          'Vision fallback: raw screenshot-pixel X to click. Read it off a viewport (non-fullPage) screenshot and pass it as-is — the server maps screenshot pixels to the page. Provide x and y together, without selector.',
+        ),
+      y: z
+        .number()
+        .optional()
+        .describe('Vision fallback: raw screenshot-pixel Y to click. See x.'),
+    })
+    .refine(
+      (p) =>
+        (typeof p.selector === 'string' &&
+          p.x === undefined &&
+          p.y === undefined) ||
+        (p.selector === undefined &&
+          typeof p.x === 'number' &&
+          typeof p.y === 'number'),
+      {
+        message:
+          'Provide either selector alone OR both x and y (screenshot-pixel coordinates) without a selector.',
+      },
+    ),
 });
 
 const TypeCommandSchema = z.object({
@@ -785,6 +814,24 @@ export const AgentParamsSchema = z
           "Only meaningful with `integrationId`. Defaults to the integration's configured " +
           'origins; set it to fill on additional sites. loadSecret is refused on any origin ' +
           'not covered here.',
+      ),
+    os: z
+      .enum(['windows', 'macos', 'linux'])
+      .optional()
+      .describe(
+        'Desktop OS to spoof for the stealth fingerprint (navigator.platform, UA, ' +
+          'UA-CH client hints, GPU/font signals). Defaults to "windows" so the agent ' +
+          'presents a coherent, low-risk desktop identity instead of its native Linux ' +
+          '(a Chrome-masked UA over "Linux x86_64" is a bot tell that anti-bot checks ' +
+          'flag). Forwarded to the browser as ?emulationOs; read once at session creation.',
+      ),
+    humanlike: z
+      .boolean()
+      .optional()
+      .describe(
+        'Human-like cursor movement + pacing for clicks/scrolls. Improves the passive ' +
+          'score of invisible anti-bot challenges (which weight real mouse/interaction ' +
+          'signals). Defaults on. Forwarded as ?humanlike; read once at session creation.',
       ),
     rationale: z
       .string()

@@ -656,6 +656,23 @@ export function registerAgentTools(
       const integrationId = params.integrationId;
       const allowedDomains = params.allowedDomains;
       const record = params.record;
+      // Spoofed desktop OS for the agent's stealth fingerprint. Defaults to
+      // windows so the agent presents a coherent, low-risk desktop identity
+      // rather than its native Linux (Chrome-masked UA over "Linux x86_64" is a
+      // bot tell). Forwarded as ?emulationOs; see agent-client buildAgentWsUrl.
+      const os =
+        typeof (params as { os?: unknown }).os === 'string'
+          ? (params as { os: string }).os
+          : 'windows';
+      // Human-like cursor movement + pacing. Improves the passive score of
+      // invisible anti-bot challenges (e.g. Revolut's post-passcode hCaptcha),
+      // which weight real mouse/interaction signals; a machine-timed agent with
+      // no cursor motion scores as a bot. Defaults ON for the demo stack.
+      // Forwarded as ?humanlike; enterprise's agent route reads it. Override with os/humanlike args.
+      const humanlike =
+        typeof (params as { humanlike?: unknown }).humanlike === 'boolean'
+          ? (params as { humanlike: boolean }).humanlike
+          : true;
       // createProfile attaches by session id, which omits integrationId — binding
       // here would be silently dropped, so reject rather than mislead.
       if (createProfile && integrationId) {
@@ -749,6 +766,8 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            os,
+            humanlike,
             record,
           );
         } catch (connErr: unknown) {
@@ -781,6 +800,8 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            os,
+            humanlike,
             record,
           );
         } catch (connErr: unknown) {
