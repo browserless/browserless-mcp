@@ -306,6 +306,7 @@ export const buildAgentWsUrl = (
   compliant = false,
   integrationId?: string,
   allowedDomains?: string[],
+  record?: boolean,
 ): string => {
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
@@ -340,6 +341,8 @@ export const buildAgentWsUrl = (
         url.searchParams.set('allowedDomains', JSON.stringify(allowedDomains));
     }
   }
+  // Recording is armed only when launching a new browser.
+  if (record) url.searchParams.set('record', 'true');
   return url.toString();
 };
 
@@ -542,6 +545,7 @@ const connect = (
   source?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  record?: boolean,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -553,6 +557,7 @@ const connect = (
       compliant,
       integrationId,
       allowedDomains,
+      record,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -688,6 +693,7 @@ export const getOrCreateSession = async (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  record?: boolean,
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -756,6 +762,7 @@ export const getOrCreateSession = async (
       source,
       integrationId,
       allowedDomains,
+      record,
     );
     const session: ActiveSession = {
       ws,
