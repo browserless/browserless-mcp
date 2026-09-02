@@ -347,26 +347,25 @@ export const getSessionKey = (
   KEY_SEP +
   'conv#' +
   sessionHandle(mcpSessionId, token, echoedSessionId) +
-  (echoedSessionId
-    ? ''
-    : proxyFingerprint(proxy) +
-      (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
-      (createProfile
-        ? KEY_SEP + 'create#' + hashToken(createProfile.name)
-        : '') +
-      (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-      // Different scope must key to a different WS until a returned handle
-      // identifies the browser. Sorted so domain order doesn't fork the key.
-      (integrationId
-        ? KEY_SEP +
-          'int#' +
-          hashToken(
-            integrationId +
-              (allowedDomains?.length
-                ? '|' + [...allowedDomains].sort().join(',')
-                : ''),
-          )
-        : ''));
+  // A returned handle identifies its existing browser without requiring the
+  // caller to repeat proxy state. The other suffixes remain contractual scope:
+  // profile and integration bindings must still be repeated on every call.
+  (echoedSessionId ? '' : proxyFingerprint(proxy)) +
+  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
+  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
+  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
+  // Different integration scope must key to a different WS. Sorted so domain
+  // order doesn't fork the key.
+  (integrationId
+    ? KEY_SEP +
+      'int#' +
+      hashToken(
+        integrationId +
+          (allowedDomains?.length
+            ? '|' + [...allowedDomains].sort().join(',')
+            : ''),
+      )
+    : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
