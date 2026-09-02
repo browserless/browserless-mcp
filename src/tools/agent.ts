@@ -378,8 +378,7 @@ export const formatScreenshotToDisk = async (
   return content;
 };
 
-// stopRecording returns the WebM in-band (up to the 256MB enterprise cap), far
-// too big for model context: persist to the download store, hand back a handle.
+/** Persist stopRecording's WebM outside model context and return a handle. */
 export const persistRecording = async (
   result: unknown,
   sessionId: string | undefined,
@@ -388,6 +387,16 @@ export const persistRecording = async (
   // No payload (recording failed / nothing captured) → leave the result as-is
   // so the error surfaces to the caller unchanged.
   if (!value) return result;
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const decodedBytes = Math.floor((value.length * 3) / 4) - padding;
+  if (decodedBytes > FILE_TRANSFER_MAX_BYTES) {
+    return {
+      recording: false,
+      error:
+        `Recording is ${decodedBytes} bytes, over the ` +
+        `${FILE_TRANSFER_MAX_BYTES}-byte download limit — record a shorter clip.`,
+    };
+  }
   const buf = Buffer.from(value, 'base64');
   if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
     return {

@@ -856,7 +856,22 @@ export const AgentParamsSchema = z
     message:
       '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
       'one) cannot both be set',
-  });
+  })
+  .refine(
+    ({ commands = [] }) =>
+      commands.every(
+        (command, index) =>
+          command.method !== 'stopRecording' ||
+          index === commands.length - 1 ||
+          (index === commands.length - 2 &&
+            commands.at(-1)?.method === 'close'),
+      ),
+    {
+      message:
+        '`stopRecording` must be the final command, except before `close`',
+      path: ['commands'],
+    },
+  );
 
 // ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
 // De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,

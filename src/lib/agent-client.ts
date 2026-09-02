@@ -804,6 +804,7 @@ export const getOrCreateSession = async (
       allowedDomains,
       os,
       humanlike,
+      record,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -860,6 +861,7 @@ export const send = async (
         session.allowedDomains,
         session.os,
         session.humanlike,
+        session.record,
       ).finally(() => {
         session.reconnecting = undefined;
       });

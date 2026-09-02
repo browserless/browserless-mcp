@@ -385,10 +385,18 @@ describe('recording downloads', () => {
   });
 
   it('rejects recordings over the transfer limit', async () => {
-    const value = Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1).toString('base64');
-    expect(await persistRecording({ value }, undefined)).to.deep.include({
-      recording: false,
-    });
+    const value = 'A'.repeat(4 * Math.ceil((FILE_TRANSFER_MAX_BYTES + 1) / 3));
+    const decode = sinon
+      .stub(Buffer, 'from')
+      .throws(new Error('must reject before decoding'));
+    try {
+      expect(await persistRecording({ value }, undefined)).to.deep.include({
+        recording: false,
+      });
+      expect(decode.called).to.equal(false);
+    } finally {
+      decode.restore();
+    }
   });
 });
 
