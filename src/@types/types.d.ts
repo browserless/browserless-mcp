@@ -513,6 +513,11 @@ export interface SmartScrapeRequest {
   formats?: ScrapeFormat[];
   timeout?: number;
   profile?: string;
+  onlyMainContent?: boolean;
+  includeTags?: string[];
+  excludeTags?: string[];
+  headers?: Record<string, string>;
+  waitFor?: number;
 }
 
 export type SmartScrapeResult = SmartScraperResponse & { cacheHit: boolean };

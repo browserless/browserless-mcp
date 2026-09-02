@@ -2,8 +2,12 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
+import {
+  registerSmartScraperTool,
+  SmartScraperParamsSchema,
+} from '../../src/tools/smartscraper.js';
 import type { McpConfig } from '../../src/@types/types.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -38,6 +42,8 @@ const makeSuccessResponse = (overrides = {}) => ({
   pdf: null,
   markdown: '# Hello World',
   links: null,
+  rawText: null,
+  metadata: null,
   ...overrides,
 });
 
@@ -54,6 +60,8 @@ const makeFailResponse = (overrides = {}) => ({
   pdf: null,
   markdown: null,
   links: null,
+  rawText: null,
+  metadata: null,
   ...overrides,
 });
 
@@ -126,6 +134,136 @@ describe('browserless_smartscraper tool', () => {
     const metadata = textBlocks[1] as { type: string; text: string };
     expect(metadata.text).to.include('Strategy: http-fetch');
     expect(metadata.text).to.include('Status: 200');
+  });
+
+  it('forwards shaping fields, renders rawText, and keeps headers out of analytics', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({
+            markdown: null,
+            rawText: 'Visible page text',
+            metadata: {
+              title: 'Example Domain',
+              description: null,
+              language: 'en',
+              sourceURL: 'https://example.com',
+              statusCode: 200,
+            },
+          }),
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addToolSpy = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerSmartScraperTool(server, mockConfig, analytics);
+
+    const result = await addToolSpy.firstCall.args[0].execute(
+      {
+        url: 'https://example.com',
+        formats: ['rawText'],
+        onlyMainContent: true,
+        excludeTags: ['nav'],
+        headers: { 'X-Api-Key': 'SECRET123' },
+        waitFor: 100,
+      },
+      mockContext,
+    );
+
+    const content = (result as { content: Content[] }).content;
+    expect(content[0]).to.deep.equal({
+      type: 'text',
+      text: 'Visible page text',
+    });
+    expect(JSON.stringify(content)).to.include('Example Domain');
+    expect(JSON.stringify(content)).to.include('https://example.com');
+    expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.include({
+      onlyMainContent: true,
+      excludeTags: ['nav'],
+      headers: { 'X-Api-Key': 'SECRET123' },
+      waitFor: 100,
+    });
+    expect(SmartScraperParamsSchema.shape.formats.description).to.include(
+      'rawText',
+    );
+    const props = fire.firstCall.args[2] as Record<string, unknown>;
+    expect(props).to.include({
+      only_main_content: true,
+      has_content_filters: true,
+    });
+    expect(JSON.stringify(props)).not.to.include('X-Api-Key');
+    expect(JSON.stringify(props)).not.to.include('SECRET123');
+  });
+
+  it('returns every requested text format', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({
+            markdown: '# Markdown',
+            rawText: 'Raw text',
+          }),
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addToolSpy = sinon.spy(server, 'addTool');
+    registerSmartScraperTool(server, mockConfig, new AnalyticsHelper(false));
+
+    const result = await addToolSpy.firstCall.args[0].execute(
+      {
+        url: 'https://example.com',
+        formats: ['markdown', 'rawText'],
+      },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content;
+
+    expect(content[0]).to.deep.equal({ type: 'text', text: '# Markdown' });
+    expect(JSON.stringify(content)).to.include('Raw text');
+  });
+
+  it('validates selector limits and conflicts before calling the API', () => {
+    for (const fields of [
+      { includeTags: Array(100).fill('article') },
+      { excludeTags: Array(100).fill('nav') },
+      { includeTags: ['['] },
+      { excludeTags: ['['] },
+    ]) {
+      expect(
+        SmartScraperParamsSchema.safeParse({
+          url: 'https://example.com',
+          ...fields,
+        }).success,
+      ).to.be.true;
+    }
+    for (const fields of [
+      { formats: [] },
+      { includeTags: Array(101).fill('article') },
+      { excludeTags: Array(101).fill('nav') },
+      { includeTags: ['article'], excludeTags: ['nav'] },
+      { includeTags: ['article'], onlyMainContent: true },
+    ]) {
+      expect(
+        SmartScraperParamsSchema.safeParse({
+          url: 'https://example.com',
+          ...fields,
+        }).success,
+      ).to.be.false;
+    }
+    expect(SmartScraperParamsSchema.shape.formats.description).to.include(
+      'DOM text',
+    );
+    expect(SmartScraperParamsSchema.shape.includeTags.description).to.include(
+      'Malformed entries are ignored',
+    );
+    expect(SmartScraperParamsSchema.shape.headers.description).to.include(
+      'authorization',
+    );
   });
 
   it('throws UserError on failed scrape', async () => {

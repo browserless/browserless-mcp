@@ -18,28 +18,83 @@ import type {
 export const ScrapeFormatSchema = z.enum([
   'markdown',
   'html',
+  'rawText',
   'screenshot',
   'pdf',
   'links',
 ]);
 
-export const SmartScraperParamsSchema = z.object({
-  url: z.url().describe('The URL to scrape (must be http or https)'),
-  formats: z
-    .array(ScrapeFormatSchema)
-    .optional()
-    .default(['markdown'])
-    .describe(
-      'Output formats to include: "markdown", "html", "screenshot", "pdf", "links". Defaults to ["markdown"].',
-    ),
-  timeout: z
-    .number()
-    .int()
-    .positive()
-    .optional()
-    .describe('Request timeout in milliseconds'),
-  profile: profileField('before scraping'),
-});
+export const SmartScraperParamsSchema = z
+  .object({
+    url: z.url().describe('The URL to scrape (must be http or https)'),
+    formats: z
+      .array(ScrapeFormatSchema)
+      .min(1)
+      .optional()
+      .default(['markdown'])
+      .describe(
+        'Output formats to include: "markdown", "html", "rawText", "screenshot", "pdf", "links". rawText is DOM text with script, style, and noscript elements removed and whitespace collapsed, or extracted text for PDF targets. Defaults to ["markdown"].',
+      ),
+    timeout: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Request timeout in milliseconds'),
+    profile: profileField('before scraping'),
+    onlyMainContent: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        'For HTML webpages, remove nav, footer, aside, role=navigation, script, style, and noscript elements from DOM-derived outputs. Parsed JSON and PDF content are unchanged. Defaults to false.',
+      ),
+    includeTags: z
+      .array(z.string())
+      .max(100)
+      .optional()
+      .describe(
+        'Up to 100 CSS selectors to keep in HTML webpage outputs. Malformed entries are ignored; if no selector matches, the scraper returns unfiltered content. Cannot be combined with excludeTags or onlyMainContent.',
+      ),
+    excludeTags: z
+      .array(z.string())
+      .max(100)
+      .optional()
+      .describe(
+        'Up to 100 CSS selectors to remove from HTML webpage outputs. Malformed selectors are ignored. Cannot be combined with includeTags.',
+      ),
+    headers: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe(
+        'Custom HTTP headers sent to the target site. host, authorization, proxy-authorization, cookie, set-cookie, x-forwarded-for, x-real-ip, and forwarded are removed by the API.',
+      ),
+    waitFor: z
+      .number()
+      .int()
+      .min(0)
+      .max(30_000)
+      .optional()
+      .describe(
+        'Milliseconds to wait after page load, from 0 to 30000. A positive value forces browser rendering.',
+      ),
+  })
+  .superRefine((params, context) => {
+    if (params.includeTags?.length && params.excludeTags?.length) {
+      context.addIssue({
+        code: 'custom',
+        message: 'includeTags and excludeTags cannot be combined',
+        path: ['includeTags'],
+      });
+    }
+    if (params.includeTags?.length && params.onlyMainContent) {
+      context.addIssue({
+        code: 'custom',
+        message: 'includeTags and onlyMainContent cannot be combined',
+        path: ['includeTags'],
+      });
+    }
+  });
 
 export const SmartScraperResponseSchema = z.object({
   ok: z.boolean(),
@@ -54,6 +109,17 @@ export const SmartScraperResponseSchema = z.object({
   pdf: z.string().nullable(),
   markdown: z.string().nullable(),
   links: z.array(z.string()).nullable(),
+  rawText: z.string().nullable().optional(),
+  metadata: z
+    .object({
+      title: z.string().nullable(),
+      description: z.string().nullable(),
+      language: z.string().nullable(),
+      sourceURL: z.string(),
+      statusCode: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export function registerSmartScraperTool(
@@ -66,7 +132,7 @@ export function registerSmartScraperTool(
   defineTool<SmartScraperParams, SmartScrapeResult>(server, config, analytics, {
     name: 'browserless_smartscraper',
     description:
-      'Scrape a SINGLE webpage and return its content as markdown or HTML. ' +
+      'Scrape a SINGLE webpage and return HTML, markdown, raw DOM text, links, screenshots, or PDFs plus page metadata. ' +
       'Handles JavaScript-heavy pages and anti-bot measures automatically. ' +
       'For content across MULTIPLE pages of a site, use browserless_crawl; ' +
       "to list a site's URLs, use browserless_map.",
@@ -84,13 +150,7 @@ export function registerSmartScraperTool(
       `live session first, or omit the profile parameter to scrape ` +
       `anonymously.`,
     cache,
-    run: async ({ client, params }) =>
-      client.smartScrape({
-        url: params.url,
-        formats: params.formats,
-        timeout: params.timeout,
-        profile: params.profile,
-      }),
+    run: async ({ client, params }) => client.smartScrape(params),
     analyticsProps: (params, result) => ({
       url: params.url,
       formats: (params.formats ?? ['markdown']).join(','),
@@ -100,6 +160,10 @@ export function registerSmartScraperTool(
       status_code: result.statusCode,
       strategy: result.strategy,
       profile_used: !!params.profile,
+      only_main_content: params.onlyMainContent ?? false,
+      has_content_filters: !!(
+        params.includeTags?.length || params.excludeTags?.length
+      ),
     }),
     format: (response) => {
       if (!response.ok) {
@@ -109,10 +173,12 @@ export function registerSmartScraperTool(
         );
       }
       const blocks: Content[] = [];
-      // Primary text content: prefer markdown > string content > object content > diagnostic
+      // Primary text content: prefer markdown > rawText > string content > object content > diagnostic
       let textContent: string;
       if (response.markdown) {
         textContent = response.markdown;
+      } else if (typeof response.rawText === 'string') {
+        textContent = response.rawText;
       } else if (typeof response.content === 'string' && response.content) {
         textContent = response.content;
       } else if (response.content && typeof response.content === 'object') {
@@ -121,10 +187,26 @@ export function registerSmartScraperTool(
         textContent = `[No page content returned by the API. Strategy: ${response.strategy}, Status: ${response.statusCode}]`;
       }
       blocks.push({ type: 'text' as const, text: textContent });
+      if (response.markdown && typeof response.rawText === 'string') {
+        blocks.push({
+          type: 'text' as const,
+          text: `## Raw text\n${response.rawText}`,
+        });
+      }
+      const pageMetadata = response.metadata
+        ? [
+            `Title: ${response.metadata.title ?? 'unknown'}`,
+            `Description: ${response.metadata.description ?? 'unknown'}`,
+            `Language: ${response.metadata.language ?? 'unknown'}`,
+            `Source URL: ${response.metadata.sourceURL}`,
+            `Source Status: ${response.metadata.statusCode ?? 'unknown'}`,
+          ]
+        : [];
       blocks.push({
         type: 'text' as const,
         text: [
           '---',
+          ...pageMetadata,
           `Strategy: ${response.strategy}`,
           `Status: ${response.statusCode}`,
           `Content-Type: ${response.contentType}`,
