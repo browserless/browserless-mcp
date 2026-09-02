@@ -241,9 +241,8 @@ const sessions = new Map<string, ActiveSession>();
 // getOrCreateSession callers await the same promise instead of each
 // opening their own WebSocket.
 const pending = new Map<string, Promise<ActiveSession>>();
-// Persona is creation state associated with the caller-visible handle, not the
-// socket. Keep it after transport close/idle eviction so an echoed handle can
-// recreate the browser coherently without making callers repeat the options.
+// Retain creation-state persona across socket eviction so an echoed handle can
+// recreate coherently without requiring callers to repeat options.
 const retainedPersonas = new Map<string, PersonaOptions>();
 
 const DEFAULT_TIMEOUT = 60_000;
@@ -347,9 +346,8 @@ export const getSessionKey = (
   KEY_SEP +
   'conv#' +
   sessionHandle(mcpSessionId, token, echoedSessionId) +
-  // A returned handle identifies its existing browser without requiring the
-  // caller to repeat proxy state. The other suffixes remain contractual scope:
-  // profile and integration bindings must still be repeated on every call.
+  // A returned handle identifies proxy state; profile and integration bindings
+  // remain contractual scope and must be repeated on every call.
   (echoedSessionId ? '' : proxyFingerprint(proxy)) +
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
