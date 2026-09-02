@@ -117,6 +117,8 @@ describe('agent-client buildAgentWsUrl', () => {
         false,
         undefined,
         undefined,
+        undefined,
+        undefined,
         { emulationOs: 'windows' },
       ),
     );
@@ -271,6 +273,8 @@ describe('agent-client buildAgentWsUrl', () => {
         false,
         undefined,
         undefined,
+        undefined,
+        undefined,
         persona,
       ),
     );
@@ -292,12 +296,32 @@ describe('agent-client buildAgentWsUrl', () => {
         true,
         undefined,
         undefined,
+        undefined,
+        undefined,
         persona,
       ),
     );
     for (const field of Object.keys(persona)) {
       expect(compliant.searchParams.has(field), field).to.equal(false);
     }
+  });
+
+  it('rejects conflicting OS aliases before serializing the URL', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        'macos',
+        undefined,
+        { emulationOs: 'windows' },
+      ),
+    ).to.throw(PersonaConflictError, /os.*emulationOs/i);
   });
 
   it('rejects redefining persona while attaching an existing browser', () => {
@@ -309,6 +333,8 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         'sess-123',
         false,
+        undefined,
+        undefined,
         undefined,
         undefined,
         { emulationOs: 'windows' },
@@ -775,6 +801,8 @@ describe('agent-client bare-call isolation', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
+        undefined,
         { emulationOs: 'windows', screen: '1920x1080' },
       );
       const resumed = await getOrCreateSession(
@@ -810,12 +838,54 @@ describe('agent-client bare-call isolation', () => {
           opened.handle,
           undefined,
           undefined,
+          undefined,
+          undefined,
           { emulationOs: 'macos' },
         );
       } catch (error) {
         thrown = error;
       }
       expect((thrown as Error).message).to.match(/fixed when.*opens/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps a proxy-backed persona when only the handle is repeated', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-proxy-persona',
+        server.url,
+        'tok',
+        { proxy: 'datacenter', proxyCountry: 'us' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      );
+      const resumed = await getOrCreateSession(
+        'mcp-proxy-persona-follow-up',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+
+      expect(resumed.ws).to.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({ emulationOs: 'windows' });
     } finally {
       await server.close();
     }
@@ -835,6 +905,8 @@ describe('agent-client bare-call isolation', () => {
         false,
         undefined,
         'dropped-persona-handle',
+        undefined,
+        undefined,
         undefined,
         undefined,
         { emulationOs: 'windows', screen: '1920x1080' },
@@ -888,6 +960,8 @@ describe('agent-client bare-call isolation', () => {
           'shared-pending-persona',
           undefined,
           undefined,
+          undefined,
+          undefined,
           { emulationOs },
         );
 
@@ -926,7 +1000,9 @@ describe('agent-client bare-call isolation', () => {
           'profile-persona-handle',
           undefined,
           undefined,
-          { emulationOs: 'windows' },
+          undefined,
+          undefined,
+          { emulationOs: 'windows', screen: '1920x1080' },
         );
       } catch (error) {
         thrown = error;
@@ -1223,6 +1299,41 @@ describe('agent-client createProfile with os and humanlike', () => {
       expect(calledUrl.searchParams.has('emulationOs')).to.be.false;
       expect(calledUrl.searchParams.has('humanlike')).to.be.false;
     } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards emulationOs through profile creation like the shipped os alias', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ id: 'created-profile' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const server = await makeAcceptingServer();
+    try {
+      await getOrCreateSession(
+        'mcp-create-profile-emulation-os',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        { name: 'emulated-profile' },
+        undefined,
+        false,
+        undefined,
+        'emulated-profile-handle',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'macos' },
+      );
+
+      const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
+      expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
+    } finally {
+      fetchStub.restore();
       await server.close();
     }
   });

@@ -616,8 +616,10 @@ export function registerAgentTools(
       // bot tell). Forwarded as ?emulationOs; see agent-client buildAgentWsUrl.
       const os =
         typeof (params as { os?: unknown }).os === 'string'
-          ? (params as { os: string }).os
-          : 'windows';
+          ? (params as { os: PersonaOptions['emulationOs'] }).os
+          : undefined;
+      const emulationOs =
+        params.emulationOs ?? os ?? (params.sessionId ? undefined : 'windows');
       // Human-like cursor movement + pacing. Improves the passive score of
       // invisible anti-bot challenges (e.g. Revolut's post-passcode hCaptcha),
       // which weight real mouse/interaction signals; a machine-timed agent with
@@ -628,7 +630,7 @@ export function registerAgentTools(
           ? (params as { humanlike: boolean }).humanlike
           : true;
       const persona = {
-        emulationOs: params.emulationOs,
+        emulationOs: params.emulationOs ?? os,
         emulatedDevice: params.emulatedDevice,
         screen: params.screen,
         deviceScaleFactor: params.deviceScaleFactor,
@@ -641,9 +643,14 @@ export function registerAgentTools(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
         );
       }
-      if (createProfile && personaRequested) {
+      if (
+        createProfile &&
+        PERSONA_FIELDS.some(
+          (field) => field !== 'emulationOs' && params[field] !== undefined,
+        )
+      ) {
         throw new UserError(
-          'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
+          'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
         );
       }
       if (attachSessionId && personaRequested) {
@@ -681,7 +688,7 @@ export function registerAgentTools(
           proxy_country: proxy?.proxyCountry ?? null,
           proxy_sticky: !!proxy?.proxySticky,
           proxy_external: !!proxy?.externalProxyServer,
-          emulation_os: persona.emulationOs ?? null,
+          emulation_os: emulationOs,
           persona_requested: personaRequested,
           profile_used: !!profile,
           create_profile: !!createProfile,
@@ -739,7 +746,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
-            os,
+            emulationOs,
             humanlike,
             persona,
           );
@@ -776,7 +783,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
-            os,
+            emulationOs,
             humanlike,
             retryPersona,
           );

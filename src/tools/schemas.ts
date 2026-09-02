@@ -840,15 +840,24 @@ export const AgentParamsSchema = z
   .refine(
     (v) =>
       !v.createProfile ||
-      !PERSONA_FIELDS.some((field) => v[field] !== undefined),
+      !PERSONA_FIELDS.some(
+        (field) => field !== 'emulationOs' && v[field] !== undefined,
+      ),
     {
       message:
-        'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
+        'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
     },
   )
   .superRefine((v, ctx) => {
+    if (v.os && v.emulationOs && v.os !== v.emulationOs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['emulationOs'],
+        message: '`os` and `emulationOs` must match when both are provided.',
+      });
+    }
     const hasDesktopOs = ['windows', 'macos', 'linux'].includes(
-      v.emulationOs ?? '',
+      v.emulationOs ?? v.os ?? '',
     );
     if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
       ctx.addIssue({

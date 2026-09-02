@@ -252,6 +252,26 @@ describe('AgentParamsSchema persona', () => {
       ['slot without OS', { deviceSlot: 2 }, false],
       ['slot on Android', { emulationOs: 'android', deviceSlot: 2 }, false],
       ['desktop screen', { emulationOs: 'windows', screen: '1920x1080' }, true],
+      [
+        'desktop screen with OS alias',
+        { os: 'windows', screen: '1920x1080' },
+        true,
+      ],
+      [
+        'malformed desktop screen',
+        { emulationOs: 'windows', screen: 'wide' },
+        false,
+      ],
+      [
+        'undersized desktop screen',
+        { emulationOs: 'windows', screen: '320x200' },
+        false,
+      ],
+      [
+        'oversized desktop screen',
+        { emulationOs: 'windows', screen: '8000x8000' },
+        false,
+      ],
       ['screen without OS', { screen: '1920x1080' }, false],
       [
         'screen on Android',
@@ -308,8 +328,17 @@ describe('AgentParamsSchema persona', () => {
       ['persona launch', { emulationOs: 'windows' }, true],
       ['profile creation', { createProfile: { name: 'demo' } }, true],
       [
-        'profile creation with persona',
+        'profile creation with OS alias',
         { createProfile: { name: 'demo' }, emulationOs: 'windows' },
+        true,
+      ],
+      [
+        'profile creation with additional persona state',
+        {
+          createProfile: { name: 'demo' },
+          emulationOs: 'windows',
+          screen: '1920x1080',
+        },
         false,
       ],
     ];
@@ -324,6 +353,23 @@ describe('AgentParamsSchema persona', () => {
         name,
       ).to.equal(accepted);
     }
+  });
+
+  it('accepts matching OS aliases and rejects conflicting aliases', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'snapshot',
+        os: 'windows',
+        emulationOs: 'windows',
+      }).success,
+    ).to.equal(true);
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'snapshot',
+        os: 'macos',
+        emulationOs: 'windows',
+      }).success,
+    ).to.equal(false);
   });
 });
 

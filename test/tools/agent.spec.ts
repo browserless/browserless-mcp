@@ -917,13 +917,14 @@ describe('browserless_agent integration binding guard', () => {
 describe('browserless_agent persona creation guard', () => {
   afterEach(() => sinon.restore());
 
-  it('rejects createProfile with persona before connecting', async () => {
+  it('rejects createProfile with additional persona state before connecting', async () => {
     const execute = getAgentExecute('http://127.0.0.1:1');
     try {
       await execute(
         {
           createProfile: { name: 'demo' },
           emulationOs: 'windows',
+          screen: '1920x1080',
           commands: [
             { method: 'goto', params: { url: 'https://example.com' } },
           ],
@@ -1064,7 +1065,7 @@ describe('browserless_agent retry-guard (runCommands)', () => {
     try {
       const execute = getAgentExecute(srv.url);
       const opened = (await execute(
-        { method: 'snapshot', emulationOs: 'windows' },
+        { method: 'snapshot', emulationOs: 'macos' },
         ctx('retry-persona-open'),
       )) as { content: Array<{ text?: string }> };
       const openedText = opened.content
@@ -1084,7 +1085,7 @@ describe('browserless_agent retry-guard (runCommands)', () => {
       ).to.equal(2);
       expect(
         new URL(srv.upgradeUrls()[1]!, srv.url).searchParams.get('emulationOs'),
-      ).to.equal('windows');
+      ).to.equal('macos');
     } finally {
       await srv.close();
     }
@@ -1153,6 +1154,17 @@ describe('browserless_agent _prompt capture', () => {
     expect(props).to.include({ success: true, analytics_version: 2 });
     expect(props.duration_ms).to.be.a('number');
     expect(props).to.not.have.property('error_category');
+  });
+
+  it('reports the canonical emulation OS when the shipped alias is used', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+
+    await execute(
+      { method: 'close', os: 'macos' },
+      { ...mockContext, sessionId: 'analytics-os-alias' },
+    );
+
+    expect(fire.firstCall.args[2]).to.include({ emulation_os: 'macos' });
   });
 
   it('fires exactly one event carrying the classified category on failure', async () => {

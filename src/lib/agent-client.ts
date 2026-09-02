@@ -131,9 +131,16 @@ export const PersonaOptionsSchema = z.object({
     ),
   screen: z
     .string()
+    .refine((value) => {
+      const match = /^(\d{2,5})x(\d{2,5})$/.exec(value.trim());
+      if (!match) return false;
+      const width = Number(match[1]);
+      const height = Number(match[2]);
+      return width >= 640 && width <= 7680 && height >= 640 && height <= 7680;
+    }, 'screen must be WIDTHxHEIGHT with each dimension between 640 and 7680')
     .optional()
     .describe(
-      'Desktop screen as WIDTHxHEIGHT. Invalid values fall back to a seeded screen; ignored for Android.',
+      'Desktop screen as WIDTHxHEIGHT, with each dimension from 640 through 7680. Ignored for Android.',
     ),
   deviceScaleFactor: z
     .union([z.literal(1), z.literal(1.25)])
@@ -340,22 +347,26 @@ export const getSessionKey = (
   KEY_SEP +
   'conv#' +
   sessionHandle(mcpSessionId, token, echoedSessionId) +
-  proxyFingerprint(proxy) +
-  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
-  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
-  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-  // Different scope must key to a different WS, else a same-integration call
-  // silently reuses the first scope. Sorted so domain order doesn't fork the key.
-  (integrationId
-    ? KEY_SEP +
-      'int#' +
-      hashToken(
-        integrationId +
-          (allowedDomains?.length
-            ? '|' + [...allowedDomains].sort().join(',')
-            : ''),
-      )
-    : '');
+  (echoedSessionId
+    ? ''
+    : proxyFingerprint(proxy) +
+      (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
+      (createProfile
+        ? KEY_SEP + 'create#' + hashToken(createProfile.name)
+        : '') +
+      (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
+      // Different scope must key to a different WS until a returned handle
+      // identifies the browser. Sorted so domain order doesn't fork the key.
+      (integrationId
+        ? KEY_SEP +
+          'int#' +
+          hashToken(
+            integrationId +
+              (allowedDomains?.length
+                ? '|' + [...allowedDomains].sort().join(',')
+                : ''),
+          )
+        : ''));
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -384,6 +395,11 @@ export const buildAgentWsUrl = (
   humanlike?: boolean,
   persona?: PersonaOptions,
 ): string => {
+  if (os && persona?.emulationOs && os !== persona.emulationOs) {
+    throw new PersonaConflictError(
+      '`os` and `emulationOs` must match when both are provided.',
+    );
+  }
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
   // On attach (sessionId set) the creation session already owns proxy/profile from
@@ -424,7 +440,8 @@ export const buildAgentWsUrl = (
     // Opt the agent socket into the stealth stack with a spoofed desktop OS.
     // Without it the agent (BraveStealthBrowser) reports native Linux under a
     // Chrome-masked UA — an incoherent fingerprint anti-bot checks flag.
-    if (os) url.searchParams.set('emulationOs', os);
+    const emulationOs = persona?.emulationOs ?? os;
+    if (emulationOs) url.searchParams.set('emulationOs', emulationOs);
     // Human-like cursor/pacing — lifts the passive score of invisible anti-bot
     // challenges (the agent otherwise moves no mouse). Read at session creation.
     if (humanlike) url.searchParams.set('humanlike', 'true');
@@ -436,6 +453,7 @@ export const buildAgentWsUrl = (
         url.searchParams.set('allowedDomains', JSON.stringify(allowedDomains));
     }
     for (const field of PERSONA_FIELDS) {
+      if (field === 'emulationOs') continue;
       const value = persona?.[field];
       if (value !== undefined) url.searchParams.set(field, String(value));
     }
@@ -804,9 +822,20 @@ export const getOrCreateSession = async (
   persona?: PersonaOptions,
 ): Promise<ActiveSession> => {
   sweepSessions();
-  if (createProfile && hasPersona(persona)) {
+  if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(
-      'Persona options cannot be combined with profile creation. Create the profile first, then open a persona session.',
+      '`os` and `emulationOs` must match when both are provided.',
+    );
+  }
+  const effectiveOs = persona?.emulationOs ?? os;
+  if (
+    createProfile &&
+    PERSONA_FIELDS.some(
+      (field) => field !== 'emulationOs' && persona?.[field] !== undefined,
+    )
+  ) {
+    throw new PersonaConflictError(
+      'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
     );
   }
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -903,7 +932,13 @@ export const getOrCreateSession = async (
       creationSessionId = attachSessionId;
     } else if (createProfile) {
       creationSessionId = (
-        await postCreateProfile(apiUrl, token, createProfile, os, humanlike)
+        await postCreateProfile(
+          apiUrl,
+          token,
+          createProfile,
+          effectiveOs,
+          humanlike,
+        )
       ).id;
     }
     const ws = await connect(
@@ -916,9 +951,9 @@ export const getOrCreateSession = async (
       source,
       integrationId,
       allowedDomains,
-      os,
+      effectiveOs,
       humanlike,
-      effectivePersona,
+      createProfile ? undefined : effectivePersona,
     );
     const session: ActiveSession = {
       ws,
@@ -934,7 +969,7 @@ export const getOrCreateSession = async (
       handle,
       integrationId,
       allowedDomains,
-      os,
+      os: effectiveOs,
       humanlike,
       persona: effectivePersona,
       skillState: createSkillState(),
@@ -1003,7 +1038,7 @@ export const send = async (
         session.allowedDomains,
         session.os,
         session.humanlike,
-        session.persona,
+        session.creationSessionId ? undefined : session.persona,
       ).finally(() => {
         session.reconnecting = undefined;
       });
