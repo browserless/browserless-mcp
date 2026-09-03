@@ -30,10 +30,7 @@ export const clearExpiredStripeLinkContinuation = (
   session: ActiveSession,
 ): boolean => {
   const continuation = session.stripeLinkContinuation;
-  if (
-    continuation?.allowedNextAction !== 'resume' ||
-    continuation.validUntil > Date.now()
-  ) {
+  if (!continuation || continuation.validUntil > Date.now()) {
     return false;
   }
   session.stripeLinkContinuation = undefined;
@@ -307,12 +304,14 @@ export const getActiveSessionByHandle = (
   handle: string,
   apiUrl: string,
   token: string,
+  userId?: string,
 ): ActiveSession => {
   const matches = [...sessions.values()].filter(
     (session) =>
       session.handle === handle &&
       session.apiUrl === apiUrl &&
       session.token === token &&
+      session.userId === userId &&
       session.ws.readyState === WebSocket.OPEN,
   );
   if (matches.length !== 1) {
@@ -418,8 +417,8 @@ export const sessionHandle = (
   echoed?: string,
 ): string => echoed ?? mcpSessionId ?? `stdio:${hashToken(token)}`;
 
-// Profile is hashed so the eviction-logged key can't leak a user-identifying
-// name; token-prefixed so a caller can't echo another account's handle.
+// Profile and OAuth user ids are hashed so the eviction-logged key cannot leak
+// them; token-prefixed so a caller cannot echo another account's handle.
 export const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
@@ -430,6 +429,7 @@ export const getSessionKey = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  userId?: string,
 ): string =>
   `t:${hashToken(token)}` +
   KEY_SEP +
@@ -452,7 +452,8 @@ export const getSessionKey = (
             ? '|' + [...allowedDomains].sort().join(',')
             : ''),
       )
-    : '');
+    : '') +
+  (userId ? KEY_SEP + 'user#' + hashToken(userId) : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -918,6 +919,7 @@ export const getOrCreateSession = async (
   record?: boolean,
   persona?: PersonaOptions,
   onSession?: (reused: boolean, ageMs: number) => void,
+  userId?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
@@ -970,6 +972,7 @@ export const getOrCreateSession = async (
     handle,
     integrationId,
     allowedDomains,
+    userId,
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
@@ -1138,6 +1141,7 @@ export const getOrCreateSession = async (
       integrationId,
       allowedDomains,
       os: effectiveOs,
+      userId,
       humanlike,
       persona: effectivePersona,
       record,
@@ -1264,6 +1268,7 @@ export const closeSession = (
   integrationId?: string,
   allowedDomains?: string[],
   onSession?: (reused: boolean, ageMs: number) => void,
+  userId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -1275,6 +1280,7 @@ export const closeSession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
+    userId,
   );
   const session = sessions.get(key);
   if (session) {
@@ -1319,6 +1325,7 @@ export const destroySession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  userId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -1330,6 +1337,7 @@ export const destroySession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
+    userId,
   );
   const session = sessions.get(key);
   if (session) {

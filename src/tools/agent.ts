@@ -644,6 +644,7 @@ export function registerAgentTools(
       apiUrl,
       sessionId: mcpSessionId,
       attachSessionId,
+      userId,
     }) => {
       let commands: Array<{
         method: string;
@@ -886,6 +887,7 @@ export function registerAgentTools(
           integrationId,
           allowedDomains,
           onSession,
+          userId,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -916,6 +918,7 @@ export function registerAgentTools(
             record,
             persona,
             onSession,
+            userId,
           );
         } catch (connErr: unknown) {
           lastFailure = failureDetails(connErr, {
@@ -961,6 +964,7 @@ export function registerAgentTools(
             record,
             retryPersona,
             onSession,
+            userId,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -982,6 +986,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            userId,
           );
           return runCommands(true, retryPersona);
         }
@@ -1029,6 +1034,8 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              undefined,
+              userId,
             );
             results.push({ ...cmd, result: { closed: true } });
             closedDuringBatch = true;
@@ -1092,6 +1099,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              userId,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -1131,6 +1139,7 @@ export function registerAgentTools(
                 echoedSessionId,
                 integrationId,
                 allowedDomains,
+                userId,
               );
               if (!isRetry) {
                 return runCommands(true, agentSession.persona ?? retryPersona);
