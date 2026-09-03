@@ -1,3 +1,6 @@
+import type { McpConfig } from '../@types/types.js';
+import { assertAllowedApiUrl } from '../lib/api-url-guard.js';
+
 export interface SiteSkill {
   id: string; // `${host}/${slug}` — the loadable id
   host: string;
@@ -144,9 +147,16 @@ export const hydrateRemoteSkills = (
   url: string | undefined,
   apiUrl: string | undefined,
   token: string | undefined,
+  config: Pick<McpConfig, 'browserlessApiUrl' | 'allowedApiUrlHosts'>,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> => {
   if (!url || !apiUrl || !token) return Promise.resolve();
+
+  try {
+    assertAllowedApiUrl(apiUrl, config);
+  } catch {
+    return Promise.resolve();
+  }
 
   let host: string;
   try {

@@ -11,7 +11,9 @@ import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../../src/prompts/extract-content.js';
 import { registerUploadRoute } from '../../src/resources/upload-route.js';
 import { registerDownloadRoute } from '../../src/resources/download-route.js';
-import type { McpConfig } from '../../src/@types/types.js';
+import type { BrowserlessSession, McpConfig } from '../../src/@types/types.js';
+import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
+import { z } from 'zod';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -118,6 +120,88 @@ describe('MCP Server Integration', () => {
       await client.connect(transport);
       const caps = client.getServerCapabilities();
       expect(caps?.tools).to.deep.include({ listChanged: true });
+    } finally {
+      await client.close().catch(() => {});
+      await server.stop();
+    }
+  });
+
+  it('rejects disallowed httpStream overrides during authentication', async () => {
+    const port = await freePort();
+    server = new FastMCP<BrowserlessSession>({
+      name: 'browserless-mcp',
+      version: '0.1.0',
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    await server.start({ transportType: 'httpStream', httpStream: { port } });
+
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://localhost:${port}/mcp`),
+      {
+        requestInit: {
+          headers: {
+            authorization: 'Bearer token',
+            'x-browserless-api-url': 'http://127.0.0.1:9999',
+          },
+        },
+      },
+    );
+    try {
+      let error: unknown;
+      try {
+        await client.connect(transport);
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).to.be.instanceOf(Error);
+    } finally {
+      await client.close().catch(() => {});
+      await server.stop();
+    }
+  });
+
+  it('retains an allowed httpStream override in the authenticated session', async () => {
+    const port = await freePort();
+    server = new FastMCP<BrowserlessSession>({
+      name: 'browserless-mcp',
+      version: '0.1.0',
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    server.addTool({
+      name: 'session_api_url',
+      description: 'Returns the authenticated API URL for testing.',
+      parameters: z.object({}),
+      execute: async (_args, context) => context.session?.apiUrl ?? '',
+    });
+    await server.start({ transportType: 'httpStream', httpStream: { port } });
+
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://localhost:${port}/mcp`),
+      {
+        requestInit: {
+          headers: {
+            authorization: 'Bearer token',
+            'x-browserless-api-url': 'https://production-lon.browserless.io',
+          },
+        },
+      },
+    );
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: 'session_api_url',
+        arguments: {},
+      });
+      expect(result.content).to.deep.equal([
+        {
+          type: 'text',
+          text: 'https://production-lon.browserless.io',
+        },
+      ]);
     } finally {
       await client.close().catch(() => {});
       await server.stop();

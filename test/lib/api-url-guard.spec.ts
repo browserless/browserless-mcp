@@ -42,7 +42,8 @@ describe('API URL guard', () => {
       '//evil.com',
       'https://[::1]:80',
       `https://${'a'.repeat(300)}.com`,
-      `https://production-sfo.browserless.io/${'x'.repeat(8192)}\0`,
+      'https://production-sfo.browserless.io/path\0suffix',
+      `https://production-sfo.browserless.io/${'x'.repeat(8192)}`,
     ]) {
       expect(() => assertAllowedApiUrl(candidate, config), candidate).to.throw(
         InvalidApiUrlError,

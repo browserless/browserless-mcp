@@ -493,7 +493,7 @@ export function registerAgentTools(
       const siteHost =
         params.site ?? (id.includes('/') ? id.split('/')[0] : '');
       if (!compliant && siteHost) {
-        await hydrateRemoteSkills(`https://${siteHost}`, apiUrl, token);
+        await hydrateRemoteSkills(`https://${siteHost}`, apiUrl, token, config);
       }
       const body = compliant
         ? renderSkill(id as SkillId, true)
@@ -1029,7 +1029,7 @@ export function registerAgentTools(
           (lastResult as { url?: string } | undefined)?.url ??
           crossOriginBaseline;
         if (!compliant) {
-          await hydrateRemoteSkills(currentUrl, apiUrl, token);
+          await hydrateRemoteSkills(currentUrl, apiUrl, token, config);
         }
         const { skills: renderedSkills, siteNotice } = buildSurfaceExtras(
           compliant,

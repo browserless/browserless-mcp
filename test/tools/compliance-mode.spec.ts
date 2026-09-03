@@ -963,6 +963,7 @@ describe('compliance mode — compliant tool surface', () => {
         RECIPE_URL,
         'https://api.example.com',
         'test-token',
+        { browserlessApiUrl: 'https://api.example.com' },
         (async () =>
           ({
             ok: true,

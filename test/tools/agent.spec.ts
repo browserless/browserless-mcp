@@ -42,6 +42,7 @@ const seedSiteSkill = (host: string, task: string, body: string) =>
     `https://${host}`,
     'https://api.example.com',
     'test-token',
+    { browserlessApiUrl: 'https://api.example.com' },
     (async () =>
       ({
         ok: true,
