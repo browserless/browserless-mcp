@@ -867,6 +867,80 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  it('clears a blocked resume so a fresh checkout can start', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const freshCheckoutId = 'lkco_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef';
+    const browser = await makeRespondingServer((_method, rawParams) => {
+      const params = rawParams as { action?: string };
+      if (params.action === 'resume') {
+        return {
+          status: 'blocked',
+          instruction: 'Stripe Link checkout is blocked.',
+        };
+      }
+      return {
+        status: 'pending_approval',
+        approval_url: 'https://app.link.com/approve/fresh',
+        instruction: 'Approve the payment.',
+        checkout_id: freshCheckoutId,
+        _next: {
+          action: 'resume',
+          checkout_id: freshCheckoutId,
+          valid_until: VALID_UNTIL,
+        },
+      };
+    });
+    try {
+      const config = { ...mockConfig, browserlessApiUrl: browser.url };
+      const session = await getOrCreateSession(
+        'link-blocked-resume',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'resume',
+        validUntil: VALID_UNTIL_MS,
+      };
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, config);
+
+      await checkout(
+        {
+          action: 'resume',
+          browser_session_handle: session.handle,
+          checkout_id: checkoutId,
+        },
+        mockContext,
+      );
+
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+      await checkout(
+        {
+          action: 'create',
+          browser_session_handle: session.handle,
+          merchant: {
+            name: 'Shop',
+            url: 'https://shop.example.com/checkout',
+          },
+          amount_minor: 1_000,
+          currency: 'usd',
+          cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+          selectors: {
+            number: 'input[name=cardnumber]',
+            expiry: 'input[name=exp-date]',
+            cvc: 'input[name=cvc]',
+          },
+        },
+        mockContext,
+      );
+      expect(session.stripeLinkContinuation?.checkoutId).to.equal(
+        freshCheckoutId,
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('rejects an expired continuation locally before resume', async () => {
     let checkoutCalls = 0;
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
@@ -1095,6 +1169,7 @@ describe('Stripe Link tools', () => {
       );
       expect(createNew).not.to.have.property('action_url');
       expect(createNew).not.to.have.property('_next');
+      expect(session.stripeLinkContinuation).to.equal(undefined);
       expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
     } finally {
       await browser.close();

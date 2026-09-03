@@ -45,6 +45,8 @@ const TERMINAL_STATUSES = new Set([
   'failed',
   'canceled',
   'succeeded',
+  'blocked',
+  'abandoned',
 ]);
 const STRIPE_LINK_HOSTS = (host: string): boolean =>
   host === 'link.com' ||
