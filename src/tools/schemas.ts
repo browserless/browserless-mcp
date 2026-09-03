@@ -787,7 +787,7 @@ export const AgentParamsSchema = z
           'permit filling on the target sites.',
       ),
     allowedDomains: z
-      .array(z.string().trim().min(1))
+      .array(nulSafeString('allowedDomains entry'))
       .optional()
       .describe(
         'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +

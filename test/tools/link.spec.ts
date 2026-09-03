@@ -370,6 +370,52 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  it('directs an indeterminate create failure through browser-session cleanup', async () => {
+    const browser = await makeRespondingServer(() => new Promise(() => {}));
+    try {
+      const config = {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+        requestTimeout: 5,
+      };
+      const session = await getOrCreateSession(
+        'link-create-timeout',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, config);
+
+      try {
+        await execute(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: {
+              name: 'Shop',
+              url: 'https://shop.example.com/checkout',
+            },
+            amount_minor: 1_000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1_000 }],
+            selectors: {
+              number: 'input[name=cardnumber]',
+              expiry: 'input[name=exp-date]',
+              cvc: 'input[name=cvc]',
+            },
+          },
+          mockContext,
+        );
+        expect.fail('expected checkout creation to time out');
+      } catch (error) {
+        expect((error as Error).message).to.match(
+          /close this browser session before (creating|retrying)/i,
+        );
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('refuses to close the browser while the checkout has a resumable continuation', async () => {
     const browser = await makeRespondingServer(() => ({
       status: 'pending_approval',
@@ -781,6 +827,7 @@ describe('Stripe Link tools', () => {
               : {
                   checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
                   allowedNextAction,
+                  validUntil: VALID_UNTIL_MS,
                 };
           if (eviction === 'idle') {
             session.lastUsedAt = Date.now() - 16 * 60 * 1_000;
@@ -1061,10 +1108,13 @@ describe('Stripe Link tools', () => {
         },
         mockContext,
       );
-      expect(session.stripeLinkContinuation).to.deep.equal({
+      expect(session.stripeLinkContinuation).to.deep.include({
         checkoutId,
         allowedNextAction: 'report',
       });
+      expect(session.stripeLinkContinuation?.validUntil).to.be.greaterThan(
+        Date.now(),
+      );
 
       await checkout(
         {
@@ -1106,6 +1156,97 @@ describe('Stripe Link tools', () => {
     }
     expect((error as Error).message).to.match(/not open|Resume it/);
     expect(fetchStub.called).to.be.false;
+  });
+
+  it('does not accept another OAuth user’s browser handle under a shared API key', async () => {
+    const browser = await makeRespondingServer(() => ({ status: 'approved' }));
+    try {
+      const session = await getOrCreateSession(
+        'link-owner-a',
+        browser.url,
+        'shared-account-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-a',
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      let error: unknown;
+      try {
+        await execute(
+          {
+            action: 'resume',
+            browser_session_handle: session.handle,
+            checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+          },
+          {
+            ...mockContext,
+            session: {
+              token: 'shared-account-token',
+              apiUrl: browser.url,
+              accountId: 'account-1',
+              userId: 'user-b',
+              userRole: 'owner',
+              identityToken: 'user-b-jwt',
+            },
+          },
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect((error as Error).message).to.match(/not open|Resume it/);
+      expect(browser.hits()).to.equal(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('allows an expired outcome report continuation to be closed', async () => {
+    const browser = await makeRespondingServer(() => ({ status: 'ok' }));
+    try {
+      const session = await getOrCreateSession(
+        'link-expired-report',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+        allowedNextAction: 'report',
+        validUntil: Date.now() - 1,
+      };
+
+      closeSession(
+        'link-expired-report',
+        mockConfig.browserlessToken!,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        session.handle,
+      );
+
+      expect(() =>
+        getActiveSessionByHandle(
+          session.handle,
+          browser.url,
+          mockConfig.browserlessToken!,
+        ),
+      ).to.throw(/unavailable/);
+    } finally {
+      await browser.close();
+    }
   });
 
   it('keeps only validated requires-action handoffs and resume semantics', async () => {

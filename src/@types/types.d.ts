@@ -46,6 +46,8 @@ export interface BrowserlessSession extends Record<string, unknown> {
   attachSessionId?: string;
   /** Verified account id for OAuth/Supabase-authenticated sessions. */
   accountId?: string;
+  /** Verified Supabase user id used to scope browser session continuity. */
+  userId?: string;
   /** Authoritative Browserless account role from the verified Supabase user. */
   userRole?: 'owner' | 'admin' | 'viewer';
   /** Verified Supabase JWT retained only for role-enforced account mutations. */
@@ -55,6 +57,7 @@ export interface BrowserlessSession extends Record<string, unknown> {
 }
 
 export interface SupabaseJwtPayload {
+  id?: string;
   sub?: string;
   email?: string;
   app_metadata?: {
@@ -222,6 +225,9 @@ export interface ActiveSession {
   // after a drop. Feeds the session-cache key, so readonly.
   readonly integrationId?: string;
   readonly allowedDomains?: string[];
+  // Verified OAuth user identity. Accounts share API tokens, so this also feeds
+  // the session-cache key and prevents cross-user handle reuse.
+  readonly userId?: string;
   // Spoofed desktop OS for the stealth fingerprint (forwarded as ?emulationOs).
   // Re-sent on reconnect so the identity stays coherent after a drop.
   readonly os?: string;
@@ -241,16 +247,11 @@ export interface ActiveSession {
   lastActiveTargetId?: string | null;
   // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
   // payment data never enter the session cache.
-  stripeLinkContinuation?:
-    | {
-        checkoutId: string;
-        allowedNextAction: 'resume';
-        validUntil: number;
-      }
-    | {
-        checkoutId: string;
-        allowedNextAction: 'report';
-      };
+  stripeLinkContinuation?: {
+    checkoutId: string;
+    allowedNextAction: 'resume' | 'report';
+    validUntil: number;
+  };
 }
 
 /* ------------------------------------------------------------------ */

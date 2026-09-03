@@ -17,10 +17,13 @@ const SUPABASE_URL = 'https://test.supabase.co';
 const SERVICE_ROLE_KEY = 'test-service-role-key';
 
 /** Supabase Auth `/auth/v1/user` success — the authoritative, signature-verified user. */
-function supabaseUser(appMetadata: Record<string, unknown>): Response {
+function supabaseUser(
+  appMetadata: Record<string, unknown>,
+  userId = 'user-uuid',
+): Response {
   return new Response(
     JSON.stringify({
-      id: 'user-uuid',
+      id: userId,
       app_metadata: { role: 'owner', ...appMetadata },
     }),
     {
@@ -68,6 +71,7 @@ describe('account-resolver', () => {
 
     expect(result.apiKey).to.equal('resolved-key');
     expect(result.email).to.equal('user@example.com');
+    expect(result.userId).to.equal('user-uuid');
     expect(result.userRole).to.equal('owner');
 
     // First call must be the Supabase Auth verification with the USER's token.
@@ -179,7 +183,9 @@ describe('account-resolver', () => {
     const viewerJwt = buildFakeJwt({ sub: 'viewer' });
     fetchStub
       .onCall(0)
-      .resolves(supabaseUser({ accountId: 'acc-shared', role: 'owner' }));
+      .resolves(
+        supabaseUser({ accountId: 'acc-shared', role: 'owner' }, 'owner-user'),
+      );
     fetchStub
       .onCall(1)
       .resolves(
@@ -187,13 +193,20 @@ describe('account-resolver', () => {
       );
     fetchStub
       .onCall(2)
-      .resolves(supabaseUser({ accountId: 'acc-shared', role: 'viewer' }));
+      .resolves(
+        supabaseUser(
+          { accountId: 'acc-shared', role: 'viewer' },
+          'viewer-user',
+        ),
+      );
     const owner = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, ownerJwt);
     const viewer = await resolveApiKey(
       SUPABASE_URL,
       SERVICE_ROLE_KEY,
       viewerJwt,
     );
+    expect(owner.userId).to.equal('owner-user');
+    expect(viewer.userId).to.equal('viewer-user');
     expect(owner.userRole).to.equal('owner');
     expect(viewer.userRole).to.equal('viewer');
     expect(fetchStub.callCount).to.equal(3);

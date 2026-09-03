@@ -686,6 +686,65 @@ describe('agent-client bare-call isolation', () => {
       await server.close();
     }
   });
+
+  it('keeps an echoed handle scoped to its OAuth user', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const mine = await getOrCreateSession(
+        'mcp-user-a',
+        server.url,
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-a',
+      );
+      const theirs = await getOrCreateSession(
+        'mcp-user-b',
+        server.url,
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        mine.handle,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-b',
+      );
+      expect(theirs.ws).to.not.equal(mine.ws);
+      expect(
+        getActiveSessionByHandle(
+          mine.handle,
+          server.url,
+          'shared-token',
+          'user-b',
+        ),
+      ).to.equal(theirs);
+      expect(
+        getActiveSessionByHandle(
+          mine.handle,
+          server.url,
+          'shared-token',
+          'user-a',
+        ),
+      ).to.equal(mine);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe('agent-client session-cache isolation', () => {
@@ -758,6 +817,23 @@ describe('agent-client session handle', () => {
 
   it('scopes an echoed handle to its token so it cannot cross accounts', () => {
     expect(key('handle-1', 'tok-a')).to.not.equal(key('handle-1', 'tok-b'));
+  });
+
+  it('scopes an echoed handle to its OAuth user under a shared account token', () => {
+    const userKey = (userId: string) =>
+      getSessionKey(
+        'mcp-1',
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'handle-1',
+        undefined,
+        undefined,
+        userId,
+      );
+    expect(userKey('user-a')).to.not.equal(userKey('user-b'));
   });
 
   it('still separates conversations that echo different handles', () => {

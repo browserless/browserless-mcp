@@ -550,6 +550,7 @@ export function registerAgentTools(
       apiUrl,
       sessionId: mcpSessionId,
       attachSessionId,
+      userId,
     }) => {
       const commands: Array<{
         method: string;
@@ -693,6 +694,7 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
+          userId,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -720,6 +722,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
+            userId,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -753,6 +756,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
+            userId,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -771,6 +775,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            userId,
           );
           return runCommands(true);
         }
@@ -795,6 +800,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              userId,
             );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
@@ -843,6 +849,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              userId,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -881,6 +888,7 @@ export function registerAgentTools(
                 echoedSessionId,
                 integrationId,
                 allowedDomains,
+                userId,
               );
               if (!isRetry) {
                 return runCommands(true);

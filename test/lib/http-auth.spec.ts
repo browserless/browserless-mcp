@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
+import { clearResolverCache } from '../../src/lib/account-resolver.js';
 import { resolveBrowserlessAuth } from '../../src/lib/http-auth.js';
 
 const config = {
@@ -53,6 +55,48 @@ describe('resolveBrowserlessAuth', () => {
       config,
     );
     expect(fromQuery.source).to.equal('autologin');
+  });
+
+  it('retains the verified OAuth user identity with the shared account key', async () => {
+    clearResolverCache();
+    const jwt = 'header.payload.signature';
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    fetchStub.onFirstCall().resolves(
+      new Response(
+        JSON.stringify({
+          id: 'user-123',
+          app_metadata: { accountId: 'account-123', role: 'admin' },
+        }),
+        { status: 200 },
+      ),
+    );
+    fetchStub
+      .onSecondCall()
+      .resolves(
+        new Response(
+          JSON.stringify([
+            { api_key: 'shared-account-key', email: 'user@example.com' },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    try {
+      const auth = await resolveBrowserlessAuth(
+        { authHeader: `Bearer ${jwt}` },
+        config,
+      );
+      expect(auth).to.include({
+        token: 'shared-account-key',
+        accountId: 'account-123',
+        userId: 'user-123',
+        userRole: 'admin',
+        identityToken: jwt,
+      });
+    } finally {
+      sinon.restore();
+      clearResolverCache();
+    }
   });
 
   it('throws when no token is present', async () => {

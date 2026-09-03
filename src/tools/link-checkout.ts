@@ -17,6 +17,7 @@ import {
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
 
 const MAX_CHECKOUT_AMOUNT_MINOR = 5_000;
+const OUTCOME_REPORT_TTL_MS = 15 * 60 * 1_000;
 const CHECKOUT_ID_RE = /^lkco_[A-Za-z0-9_-]{32}$/;
 const HANDLE_RE = /^(s:|attach:)[A-Za-z0-9:_-]{3,200}$/;
 const STATUSES = new Set([
@@ -377,7 +378,7 @@ export function registerStripeLinkCheckoutTool(
       validateUrl: (params) => {
         if (params.action === 'create') validateHttpUrl(params.merchant.url);
       },
-      run: async ({ params, token, apiUrl, log }) => {
+      run: async ({ params, token, apiUrl, log, userId }) => {
         if (params.action === 'create') {
           const total = cartTotal(params.cart);
           if (!Number.isSafeInteger(total) || total !== params.amount_minor) {
@@ -392,6 +393,7 @@ export function registerStripeLinkCheckoutTool(
             params.browser_session_handle,
             apiUrl,
             token,
+            userId,
           );
         } catch {
           throw new UserError(
@@ -444,12 +446,20 @@ export function registerStripeLinkCheckoutTool(
             }
           }
           const { browser_session_handle: _handle, ...command } = params;
-          const response = await send(
-            session,
-            'stripeLinkCheckout',
-            command as Record<string, unknown>,
-            config.requestTimeout,
-          );
+          let response;
+          try {
+            response = await send(
+              session,
+              'stripeLinkCheckout',
+              command as Record<string, unknown>,
+              config.requestTimeout,
+            );
+          } catch (error) {
+            if (params.action !== 'create') throw error;
+            throw new UserError(
+              'Stripe Link checkout creation did not return a confirmed result. Close this browser session before retrying so any pending checkout is canceled safely.',
+            );
+          }
           if (response.error) {
             throw new UserError(
               'Stripe Link checkout could not continue safely in this browser session.',
@@ -495,6 +505,7 @@ export function registerStripeLinkCheckoutTool(
             session.stripeLinkContinuation = {
               checkoutId: params.checkout_id,
               allowedNextAction: 'report',
+              validUntil: Date.now() + OUTCOME_REPORT_TTL_MS,
             };
           }
           if (params.action === 'create') {

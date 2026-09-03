@@ -6,13 +6,15 @@ interface ResolvedAccount {
   apiKey: string;
   email: string;
   accountId: string;
+  userId: string;
   userRole: 'owner' | 'admin' | 'viewer';
 }
 
-type CachedAccount = Omit<ResolvedAccount, 'userRole'>;
+type CachedAccount = Omit<ResolvedAccount, 'userId' | 'userRole'>;
 
 interface VerifiedOwner {
   accountId: string;
+  userId: string;
   userRole: 'owner' | 'admin' | 'viewer';
 }
 
@@ -21,8 +23,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 // accountId -> {apiKey,email}: the (stable, non-security) PostgREST row lookup.
 const cache = new ResponseCache(CACHE_TTL_MS);
 
-// full-token-hash -> verified accountId: caches the Supabase verification so a
-// token that keeps hitting the server isn't re-verified on every request.
+// full-token-hash -> verified user/account identity: caches the Supabase
+// verification so a token isn't re-verified on every request.
 // TRADEOFF: a token revoked/expired at Supabase keeps resolving for up to this
 // TTL before the entry ages out and the next request re-verifies. 5 min is an
 // accepted window (access tokens are short-lived); shorten it if faster
@@ -88,6 +90,10 @@ async function verifyAccessToken(
   }
 
   const user = (await response.json()) as SupabaseJwtPayload;
+  const userId = user.id;
+  if (!userId) {
+    throw new Error('Supabase user response does not contain an id.');
+  }
   const accountId = user.app_metadata?.accountId;
   if (!accountId) {
     throw new Error(
@@ -99,7 +105,7 @@ async function verifyAccessToken(
   if (role !== 'owner' && role !== 'admin' && role !== 'viewer') {
     throw new Error('Supabase user does not contain a valid account role.');
   }
-  return { accountId, userRole: role };
+  return { accountId, userId, userRole: role };
 }
 
 /**
@@ -112,8 +118,8 @@ export async function resolveApiKey(
   serviceRoleKey: string,
   accessToken: string,
 ): Promise<ResolvedAccount> {
-  // Resolve the verified accountId from the token — from the short-lived verify
-  // cache if warm, otherwise by calling Supabase Auth. A failed verification
+  // Resolve the verified user/account identity from the short-lived cache when
+  // warm, otherwise by calling Supabase Auth. A failed verification
   // throws and is never cached, so a forged token can't poison the cache.
   const verifyKey = fullHash(accessToken);
   let verified = verifyCache.get<VerifiedOwner>(verifyKey);
@@ -125,14 +131,14 @@ export async function resolveApiKey(
     );
     verifyCache.set(verifyKey, verified);
   }
-  const { accountId, userRole } = verified;
+  const { accountId, userId, userRole } = verified;
 
   // Cache the stable accountId -> {apiKey,email} PostgREST lookup, keyed by the
   // verified account UUID.
   const cacheKey = `account:${accountId}`;
   const cached = cache.get<CachedAccount>(cacheKey);
   if (cached) {
-    return { ...cached, userRole };
+    return { ...cached, userId, userRole };
   }
 
   const url = `${supabaseUrl}/rest/v1/accounts?account_id=eq.${encodeURIComponent(accountId)}&select=api_key,email`;
@@ -167,7 +173,7 @@ export async function resolveApiKey(
   };
 
   cache.set(cacheKey, resolved);
-  return { ...resolved, userRole };
+  return { ...resolved, userId, userRole };
 }
 
 export function clearResolverCache(): void {

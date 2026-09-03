@@ -103,6 +103,16 @@ describe('browserless_agent reserved methods', () => {
     ).to.equal(false);
   });
 
+  it('rejects NUL characters in credential integration domains', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'snapshot',
+        integrationId: 'op_int_abc',
+        allowedDomains: ['https://example.com\u0000int#forged'],
+      }).success,
+    ).to.equal(false);
+  });
+
   it('rejects Stripe Link checkout at runtime if schema validation is bypassed', async () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const addToolSpy = sinon.spy(server, 'addTool');
@@ -938,6 +948,52 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent OAuth session ownership', () => {
+  afterEach(() => sinon.restore());
+
+  it('does not resume another OAuth user’s browser under a shared API key', async () => {
+    const srv = await makeRespondingServer(() => ({
+      url: '',
+      title: 'Example',
+      elements: [],
+      time: 1,
+    }));
+    try {
+      const execute = getAgentExecute(srv.url, 'httpStream');
+      const context = (userId: string, sessionId: string) => ({
+        ...mockContext,
+        sessionId,
+        session: {
+          token: 'shared-account-token',
+          apiUrl: srv.url,
+          accountId: 'account-1',
+          userId,
+          userRole: 'owner' as const,
+          identityToken: `${userId}-jwt`,
+        },
+      });
+      const opened = (await execute(
+        { method: 'snapshot' },
+        context('user-a', 'transport-a'),
+      )) as { content: Array<{ text?: string }> };
+      const handle = opened.content
+        .map((part) => part.text ?? '')
+        .join('\n')
+        .match(/sessionId: (s:[A-Za-z0-9:_-]+)/)?.[1];
+      expect(handle).to.be.a('string');
+
+      await execute(
+        { method: 'snapshot', sessionId: handle },
+        context('user-b', 'transport-b'),
+      );
+
+      expect(srv.hits()).to.equal(2);
+    } finally {
+      await srv.close();
+    }
+  });
+});
 
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());

@@ -92,6 +92,8 @@ export interface ToolRunContext<P> {
    * header). When set, the agent tool attaches to it instead of opening its own.
    */
   attachSessionId?: string;
+  /** Verified OAuth user id used to scope browser session continuity. */
+  userId?: string;
   /** Present only for OAuth sessions verified against Supabase Auth. */
   userRole?: 'owner' | 'admin' | 'viewer';
   /** Verified Supabase JWT used only for role-enforced account mutations. */
@@ -261,6 +263,7 @@ export function defineTool<P, R>(
           reportProgress,
           sessionId,
           attachSessionId: s?.attachSessionId,
+          userId: s?.userId,
           userRole: s?.userRole,
           identityToken: s?.identityToken,
         });
