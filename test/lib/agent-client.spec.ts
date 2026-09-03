@@ -1300,7 +1300,7 @@ describe('agent-client createProfile with os and humanlike', () => {
     sinon.restore();
   });
 
-  it('forwards non-default os and humanlike as query params to POST /profile', async () => {
+  it('forwards OS to profile creation and humanlike to the Agent attach', async () => {
     const server = await makeAcceptingServer();
     try {
       fetchStub = sinon.stub(globalThis, 'fetch').resolves(
@@ -1331,7 +1331,10 @@ describe('agent-client createProfile with os and humanlike', () => {
       const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
       expect(calledUrl.pathname).to.equal('/profile');
       expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
-      expect(calledUrl.searchParams.get('humanlike')).to.equal('true');
+      expect(calledUrl.searchParams.has('humanlike')).to.equal(false);
+      const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(attachUrl.searchParams.get('sessionId')).to.equal('sess-test-123');
+      expect(attachUrl.searchParams.get('humanlike')).to.equal('true');
     } finally {
       await server.close();
     }
@@ -1400,7 +1403,7 @@ describe('agent-client createProfile with os and humanlike', () => {
     }
   });
 
-  it('forwards humanlike=false explicitly when humanlike is false', async () => {
+  it('forwards humanlike=false explicitly on the Agent attach', async () => {
     const server = await makeAcceptingServer();
     try {
       fetchStub = sinon.stub(globalThis, 'fetch').resolves(
@@ -1429,7 +1432,10 @@ describe('agent-client createProfile with os and humanlike', () => {
 
       expect(fetchStub.calledOnce).to.be.true;
       const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
-      expect(calledUrl.searchParams.get('humanlike')).to.equal('false');
+      expect(calledUrl.searchParams.has('humanlike')).to.equal(false);
+      const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(attachUrl.searchParams.get('sessionId')).to.equal('sess-hl-false');
+      expect(attachUrl.searchParams.get('humanlike')).to.equal('false');
     } finally {
       await server.close();
     }
