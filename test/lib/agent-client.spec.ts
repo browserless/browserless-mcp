@@ -1126,6 +1126,39 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('rejects a conflicting proxy while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const open = (
+        mcpSessionId: string,
+        proxy: 'residential' | 'datacenter',
+      ) =>
+        getOrCreateSession(
+          mcpSessionId,
+          server.url,
+          'tok',
+          { proxy },
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'shared-pending-proxy',
+        );
+
+      const residential = open('mcp-pending-proxy-a', 'residential');
+      const datacenter = open('mcp-pending-proxy-b', 'datacenter').catch(
+        (error: unknown) => error,
+      );
+      expect((await residential).proxy).to.deep.equal({
+        proxy: 'residential',
+      });
+      expect(await datacenter).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects persona before allocating a profile-creation session', async () => {
     const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
       new Response(JSON.stringify({ id: 'created-profile' }), {

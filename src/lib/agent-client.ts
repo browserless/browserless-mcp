@@ -905,6 +905,16 @@ export const getOrCreateSession = async (
 
   if (
     existing &&
+    proxy !== undefined &&
+    proxyFingerprint(existing.proxy) !== proxyFingerprint(proxy)
+  ) {
+    throw new PersonaConflictError(
+      'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+    );
+  }
+
+  if (
+    existing &&
     requestedPersona &&
     hasPersona(requestedPersona) &&
     hasPersonaConflict(existing.persona, requestedPersona)
@@ -925,6 +935,14 @@ export const getOrCreateSession = async (
   const inFlight = pending.get(key);
   if (inFlight) {
     const session = await inFlight;
+    if (
+      proxy !== undefined &&
+      proxyFingerprint(session.proxy) !== proxyFingerprint(proxy)
+    ) {
+      throw new PersonaConflictError(
+        'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+      );
+    }
     if (
       requestedPersona &&
       hasPersona(requestedPersona) &&
