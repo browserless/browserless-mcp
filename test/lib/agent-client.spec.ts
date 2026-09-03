@@ -125,6 +125,23 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.get('proxySticky')).to.equal('false');
   });
 
+  it('preserves explicit rotating proxy behavior for the shipped OS alias', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        { proxy: 'datacenter', proxySticky: false },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        'windows',
+      ),
+    );
+    expect(url.searchParams.get('proxySticky')).to.equal('false');
+  });
+
   it('omits locale-match when false (server uses presence-only semantics)', () => {
     const url = new URL(
       buildAgentWsUrl('http://localhost:3000', 'tok', {
@@ -938,6 +955,51 @@ describe('agent-client bare-call isolation', () => {
       const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
       expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('windows');
       expect(reconnectUrl.searchParams.get('screen')).to.equal('1920x1080');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains the shipped OS alias when a dropped socket is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-os',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-os-handle',
+        undefined,
+        undefined,
+        'windows',
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-os-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-os-handle',
+      );
+
+      expect(resumed.persona).to.deep.equal({ emulationOs: 'windows' });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('windows');
     } finally {
       await server.close();
     }

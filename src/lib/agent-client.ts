@@ -423,7 +423,8 @@ export const buildAgentWsUrl = (
     if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
     if (
       proxy?.proxySticky ||
-      (persona?.emulationOs !== undefined && proxy?.proxySticky === false)
+      ((persona?.emulationOs ?? os) !== undefined &&
+        proxy?.proxySticky === false)
     ) {
       url.searchParams.set('proxySticky', String(proxy.proxySticky));
     }
@@ -825,6 +826,15 @@ export const getOrCreateSession = async (
     );
   }
   const effectiveOs = persona?.emulationOs ?? os;
+  const requestedPersona =
+    !attachSessionId && effectiveOs
+      ? {
+          ...persona,
+          emulationOs:
+            persona?.emulationOs ??
+            (effectiveOs as PersonaOptions['emulationOs']),
+        }
+      : persona;
   if (
     createProfile &&
     PERSONA_FIELDS.some(
@@ -857,13 +867,13 @@ export const getOrCreateSession = async (
 
   if (
     retainedPersona &&
-    persona &&
-    hasPersona(persona) &&
-    hasPersonaConflict(retainedPersona, persona)
+    requestedPersona &&
+    hasPersona(requestedPersona) &&
+    hasPersonaConflict(retainedPersona, requestedPersona)
   ) {
     throw new PersonaConflictError();
   }
-  const effectivePersona = retainedPersona ?? persona;
+  const effectivePersona = retainedPersona ?? requestedPersona;
   if (retainedPersona) {
     // Refresh insertion order so the bounded map behaves as a small LRU.
     retainedPersonas.delete(key);
@@ -878,9 +888,9 @@ export const getOrCreateSession = async (
 
   if (
     existing &&
-    persona &&
-    hasPersona(persona) &&
-    hasPersonaConflict(existing.persona, persona)
+    requestedPersona &&
+    hasPersona(requestedPersona) &&
+    hasPersonaConflict(existing.persona, requestedPersona)
   ) {
     throw new PersonaConflictError();
   }
@@ -899,9 +909,9 @@ export const getOrCreateSession = async (
   if (inFlight) {
     const session = await inFlight;
     if (
-      persona &&
-      hasPersona(persona) &&
-      hasPersonaConflict(session.persona, persona)
+      requestedPersona &&
+      hasPersona(requestedPersona) &&
+      hasPersonaConflict(session.persona, requestedPersona)
     ) {
       throw new PersonaConflictError();
     }
