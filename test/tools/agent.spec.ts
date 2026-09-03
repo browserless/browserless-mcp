@@ -14,6 +14,7 @@ import {
   buildSkillEventProps,
   registerAgentTools,
   sanitizeUpgradeBody,
+  validateSecretCaptureOrdering,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
@@ -82,6 +83,41 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
+
+describe('agent secret-capture preflight', () => {
+  it('rejects a screenshot after loadSecret before any command runs', () => {
+    try {
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { method: 'screenshot', params: {} },
+      ]);
+      expect.fail('expected secret-capture preflight to fail');
+    } catch (err) {
+      expect((err as Error).message).to.include('screenshot');
+      expect((err as Error).message).to.include('clearSecrets');
+    }
+  });
+
+  it('allows capture after clearSecrets or navigation', () => {
+    for (const method of ['clearSecrets', 'goto']) {
+      expect(() =>
+        validateSecretCaptureOrdering([
+          { method: 'loadSecret', params: { ref: 'password' } },
+          { method, params: {} },
+          { method: 'screenshot', params: {} },
+        ]),
+      ).not.to.throw();
+    }
+  });
+
+  it('rejects unclassified readbacks after loadSecret', () => {
+    for (const method of ['getTabs', 'querySelectorAll', 'title', 'url']) {
+      expect(() =>
+        validateSecretCaptureOrdering([{ method: 'loadSecret' }, { method }]),
+      ).to.throw(`${method} cannot run after loadSecret`);
+    }
+  });
+});
 
 describe('browserless_skill tool', () => {
   let server: FastMCP;
@@ -890,6 +926,92 @@ const getAgentExecute = (
 
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());
+
+  it('fails a missing declared capability before opening a WebSocket', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: {
+            vision: {
+              available: false,
+              availableAt: ['/stealth/bql'],
+            },
+          },
+        }),
+      ),
+    );
+    const execute = getAgentExecute('http://127.0.0.1:1');
+
+    try {
+      await execute(
+        {
+          method: 'snapshot',
+          requiredCapabilities: ['vision'],
+          profile: 'login-profile',
+          integrationId: 'op_int_a',
+          allowedDomains: ['example.com'],
+        },
+        { ...mockContext, sessionId: 'capability-guard' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.include('vision');
+      expect((err as Error).message).to.include('/stealth/bql');
+    }
+    expect(fetchStub.calledOnce).to.equal(true);
+    const url = new URL(fetchStub.firstCall.args[0] as string);
+    expect(url.searchParams.get('profile')).to.equal('login-profile');
+    expect(url.searchParams.get('integrationId')).to.equal('op_int_a');
+    expect(url.searchParams.get('allowedDomains')).to.equal('["example.com"]');
+  });
+
+  it('allows closing a session when capability discovery is unavailable', async () => {
+    const fetchStub = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('down'));
+    const execute = getAgentExecute('http://127.0.0.1:1');
+
+    const result = (await execute(
+      {
+        method: 'close',
+        requiredCapabilities: ['vision'],
+      },
+      { ...mockContext, sessionId: 'capability-close' },
+    )) as { content: Content[] };
+
+    expect((result.content[0] as { text: string }).text).to.equal(
+      'Browser session closed.',
+    );
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it('rejects an unsafe secret-capture batch before opening a WebSocket', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          {
+            commands: [
+              { method: 'loadSecret', params: { ref: 'password' } },
+              { method: 'screenshot' },
+            ],
+          },
+          { ...mockContext, sessionId: 'secret-capture-batch' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'screenshot cannot run after loadSecret',
+        );
+      }
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
 
   it('rejects integrationId combined with createProfile before connecting', async () => {
     // Dummy URL: the guard throws before any WebSocket/connect is attempted.

@@ -11,11 +11,13 @@ import {
   type StoredDownload,
 } from '../lib/download-store.js';
 import {
+  buildAgentWsUrl,
   getOrCreateSession,
   send,
   closeSession,
   destroySession,
   isRetryableUpgradeError,
+  preflightAgentCapabilities,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -82,6 +84,50 @@ export {
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
+const SECRET_SAFE_METHODS = new Set([
+  'click',
+  'type',
+  'select',
+  'checkbox',
+  'hover',
+  'scroll',
+  'waitForSelector',
+  'waitForTimeout',
+  'uploadFile',
+  'saveProfile',
+  'reportSkillOutcome',
+  'close',
+]);
+const TOP_FRAME_NAVIGATION_METHODS = new Set([
+  'goto',
+  'back',
+  'forward',
+  'reload',
+]);
+
+export const validateSecretCaptureOrdering = (
+  commands: ReadonlyArray<{
+    method: string;
+    params?: Record<string, unknown>;
+  }>,
+): void => {
+  let secretVisible = false;
+  for (const command of commands) {
+    if (command.method === 'loadSecret') {
+      secretVisible = true;
+    } else if (
+      command.method === 'clearSecrets' ||
+      TOP_FRAME_NAVIGATION_METHODS.has(command.method)
+    ) {
+      secretVisible = false;
+    } else if (secretVisible && !SECRET_SAFE_METHODS.has(command.method)) {
+      throw new Error(
+        `${command.method} cannot run after loadSecret while a credential may be on-screen. ` +
+          `Move the capture before loadSecret, or run clearSecrets or a top-frame navigation first.`,
+      );
+    }
+  }
+};
 
 const appendSkills = (
   base: string,
@@ -664,16 +710,6 @@ export function registerAgentTools(
         });
       };
 
-      const proxyCmd = commands.find((c) => c.method === 'proxy');
-      if (proxyCmd) {
-        lastCategory = 'INVALID_PARAMS';
-        sendAnalytics(false);
-        throw new UserError(
-          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
-            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
-        );
-      }
-
       if (commands.length === 1 && commands[0].method === 'close') {
         closeSession(
           mcpSessionId,
@@ -688,6 +724,50 @@ export function registerAgentTools(
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
+      }
+
+      try {
+        validateSecretCaptureOrdering(commands);
+      } catch (err) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false, err);
+        throw new UserError(
+          err instanceof Error
+            ? err.message
+            : 'Secret capture preflight failed.',
+        );
+      }
+
+      try {
+        await preflightAgentCapabilities(
+          buildAgentWsUrl(
+            apiUrl,
+            token,
+            proxy,
+            profile,
+            attachSessionId,
+            compliant,
+            integrationId,
+            allowedDomains,
+            os,
+            humanlike,
+          ),
+          params.requiredCapabilities ?? [],
+        );
+      } catch (err) {
+        sendAnalytics(false, err);
+        throw new UserError(
+          err instanceof Error ? err.message : 'Capability preflight failed.',
+        );
+      }
+
+      if (commands.some((c) => c.method === 'proxy')) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false);
+        throw new UserError(
+          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
+            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
+        );
       }
 
       // Open-only call: no real command (e.g. `createProfile`/`profile`/`proxy`
@@ -881,7 +961,6 @@ export function registerAgentTools(
 
             const classified = classifyAgentError({ err, cmd });
             lastCategory = classified.category;
-
             const prefix =
               commands.length > 1
                 ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `

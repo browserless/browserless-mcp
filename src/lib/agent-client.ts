@@ -30,9 +30,9 @@ export type {
 
 const ProxyOptionsObjectSchema = z.object({
   proxy: z
-    .enum(['residential'])
+    .enum(['residential', 'datacenter'])
     .optional()
-    .describe('Routing tier. Only "residential" is supported today.'),
+    .describe('Browserless proxy network: "residential" or "datacenter".'),
   proxyCountry: z
     .string()
     .regex(/^[A-Za-z]{2}$/, 'Must be a 2-letter ISO-2 country code')
@@ -92,14 +92,12 @@ const DEPENDENT_PROXY_FIELDS = [
 export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   (v) => {
     const hasDependent = DEPENDENT_PROXY_FIELDS.some((k) => v[k] !== undefined);
-    return (
-      !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer
-    );
+    return !hasDependent || v.proxy !== undefined || !!v.externalProxyServer;
   },
   {
     message:
       'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
-      "require proxy: 'residential' or externalProxyServer to be set; otherwise the API silently ignores them.",
+      'require proxy or externalProxyServer to be set; otherwise the API silently ignores them.',
   },
 );
 
@@ -352,6 +350,69 @@ export const buildAgentWsUrl = (
     }
   }
   return url.toString();
+};
+
+interface AgentCapability {
+  available?: boolean;
+  availableAt?: string[];
+}
+
+interface AgentCapabilityManifest {
+  version: number;
+  route: string;
+  capabilities: Record<string, AgentCapability>;
+}
+
+/** Validate declared plan requirements before opening a browser session. */
+export const preflightAgentCapabilities = async (
+  agentUrl: string,
+  required: string[],
+): Promise<void> => {
+  if (required.length === 0) return;
+
+  const url = new URL(agentUrl);
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.pathname += '/capabilities';
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(
+      `Capability discovery failed on /chromium/agent (${res.status}). Verify the token, plan, and route parameters.`,
+    );
+  }
+
+  let manifest: AgentCapabilityManifest;
+  try {
+    manifest = (await res.json()) as AgentCapabilityManifest;
+  } catch {
+    throw new Error('Capability discovery returned invalid JSON.');
+  }
+  if (
+    manifest?.version !== 1 ||
+    typeof manifest.route !== 'string' ||
+    !manifest.capabilities ||
+    typeof manifest.capabilities !== 'object'
+  ) {
+    throw new Error('Capability discovery returned an unsupported manifest.');
+  }
+
+  const missing = required.filter(
+    (name) => manifest.capabilities[name]?.available !== true,
+  );
+  if (missing.length === 0) return;
+
+  const details = missing.map((name) => {
+    const availableAt = manifest.capabilities[name]?.availableAt;
+    return Array.isArray(availableAt) &&
+      availableAt.length > 0 &&
+      availableAt.every((route) => typeof route === 'string')
+      ? `${name} (available on ${availableAt.join(', ')})`
+      : `${name} (not advertised by this endpoint)`;
+  });
+  throw new Error(
+    `Invalid parameters: required capabilities are unavailable on ${manifest.route}: ${details.join('; ')}.`,
+  );
 };
 
 // HTTP-status failures arrive on `unexpected-response` (typed as

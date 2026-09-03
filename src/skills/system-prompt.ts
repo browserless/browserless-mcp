@@ -27,8 +27,8 @@ Proxy config is a **top-level tool argument** (\`proxy\`, \`proxyCountry\`, etc.
 
 If you already opened a session without a proxy and now realize one is needed, you must \`close\` and start a new session with the proxy options set — there is no in-session switch.
 
-- \`proxy: "residential"\` — enable routing; \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
-- Geo/preset/sticky require \`proxy: "residential"\` or \`externalProxyServer\` set
+- \`proxy: "residential" | "datacenter"\` — choose a Browserless network; \`proxyCountry: "us"\` — geo (ISO-2); \`proxyState\` / \`proxyCity\` (paid plans, 401 otherwise); \`proxySticky: true\` — stable IP; \`proxyLocaleMatch: true\` — match locale; \`proxyPreset\` — named config; \`externalProxyServer: "http://u:p@host:port"\` — bring your own (http(s) only)
+- Geo/preset/sticky require \`proxy\` or \`externalProxyServer\` set
 
 ## Auth
 Never log in by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first**, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
