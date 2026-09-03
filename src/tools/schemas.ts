@@ -968,6 +968,14 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
     );
 
 const agentParamsObject = z.object({
+  requiredCapabilities: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      'Capabilities the planned flow requires (for example "vision", "os-spoofing", ' +
+        '"datacenter-proxy", or "secret-capture"). Browserless checks the selected ' +
+        'route and plan before opening a browser and names an available route on failure.',
+    ),
   method: z
     .string()
     .optional()

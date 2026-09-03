@@ -357,6 +357,18 @@ describe('AgentParamsSchema.proxy', () => {
     });
     expect(parsed.proxy).to.be.undefined;
   });
+
+  it('accepts explicit plan capability requirements', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'snapshot',
+      requiredCapabilities: ['vision', 'os-spoofing'],
+    });
+
+    expect(parsed.requiredCapabilities).to.deep.equal([
+      'vision',
+      'os-spoofing',
+    ]);
+  });
 });
 
 describe('AgentParamsSchema persona', () => {

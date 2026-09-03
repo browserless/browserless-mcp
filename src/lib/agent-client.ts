@@ -487,6 +487,69 @@ export const buildAgentWsUrl = (
   return url.toString();
 };
 
+interface AgentCapability {
+  available?: boolean;
+  availableAt?: string[];
+}
+
+interface AgentCapabilityManifest {
+  version: number;
+  route: string;
+  capabilities: Record<string, AgentCapability>;
+}
+
+/** Validate declared plan requirements before opening a browser session. */
+export const preflightAgentCapabilities = async (
+  agentUrl: string,
+  required: string[],
+): Promise<void> => {
+  if (required.length === 0) return;
+
+  const url = new URL(agentUrl);
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.pathname += '/capabilities';
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(
+      `Capability discovery failed on /chromium/agent (${res.status}). Verify the token, plan, and route parameters.`,
+    );
+  }
+
+  let manifest: AgentCapabilityManifest;
+  try {
+    manifest = (await res.json()) as AgentCapabilityManifest;
+  } catch {
+    throw new Error('Capability discovery returned invalid JSON.');
+  }
+  if (
+    manifest?.version !== 1 ||
+    typeof manifest.route !== 'string' ||
+    !manifest.capabilities ||
+    typeof manifest.capabilities !== 'object'
+  ) {
+    throw new Error('Capability discovery returned an unsupported manifest.');
+  }
+
+  const missing = required.filter(
+    (name) => manifest.capabilities[name]?.available !== true,
+  );
+  if (missing.length === 0) return;
+
+  const details = missing.map((name) => {
+    const availableAt = manifest.capabilities[name]?.availableAt;
+    return Array.isArray(availableAt) &&
+      availableAt.length > 0 &&
+      availableAt.every((route) => typeof route === 'string')
+      ? `${name} (available on ${availableAt.join(', ')})`
+      : `${name} (not advertised by this endpoint)`;
+  });
+  throw new Error(
+    `Invalid parameters: required capabilities are unavailable on ${manifest.route}: ${details.join('; ')}.`,
+  );
+};
+
 // HTTP-status failures arrive on `unexpected-response` (typed as
 // UpgradeError), so a 1006 close here only means a transport failure or a
 // server crash before any HTTP response.
