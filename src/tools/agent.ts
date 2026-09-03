@@ -619,7 +619,9 @@ export function registerAgentTools(
           ? (params as { os: PersonaOptions['emulationOs'] }).os
           : undefined;
       const emulationOs =
-        params.emulationOs ?? os ?? (params.sessionId ? undefined : 'windows');
+        params.emulationOs ??
+        os ??
+        (params.sessionId || attachSessionId ? undefined : 'windows');
       // Human-like cursor movement + pacing. Improves the passive score of
       // invisible anti-bot challenges (e.g. Revolut's post-passcode hCaptcha),
       // which weight real mouse/interaction signals; a machine-timed agent with

@@ -874,14 +874,19 @@ describe('formatConnectError with proxy-injected errors', () => {
 const getAgentExecute = (
   apiUrl: string,
   transport: McpConfig['transport'] = 'stdio',
+  analytics?: AnalyticsHelper,
 ): ((args: unknown, ctx: unknown) => unknown) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  registerAgentTools(server, {
-    ...mockConfig,
-    browserlessApiUrl: apiUrl,
-    transport,
-  });
+  registerAgentTools(
+    server,
+    {
+      ...mockConfig,
+      browserlessApiUrl: apiUrl,
+      transport,
+    },
+    analytics,
+  );
   const agentCall = addToolSpy
     .getCalls()
     .find((c) => c.args[0].name === 'browserless_agent');
@@ -916,6 +921,29 @@ describe('browserless_agent integration binding guard', () => {
 
 describe('browserless_agent persona creation guard', () => {
   afterEach(() => sinon.restore());
+
+  it('does not default a persona when attaching an existing browser', async () => {
+    const server = await makeRespondingServer(() => ({ elements: [] }));
+    try {
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const execute = getAgentExecute(server.url, 'stdio', analytics);
+      await execute(
+        { method: 'snapshot' },
+        {
+          ...mockContext,
+          sessionId: 'persona-attach-default',
+          session: { attachSessionId: 'existing-browser' },
+        },
+      );
+
+      const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(attachUrl.searchParams.has('emulationOs')).to.equal(false);
+      expect(fire.firstCall.args[2].emulation_os).to.equal(undefined);
+    } finally {
+      await server.close();
+    }
+  });
 
   it('rejects createProfile with additional persona state before connecting', async () => {
     const execute = getAgentExecute('http://127.0.0.1:1');
