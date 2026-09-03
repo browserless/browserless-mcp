@@ -118,6 +118,10 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
       const sel = ctx.cmd?.params?.selector;
       return typeof sel === 'string' && !sel.startsWith('< ');
     }
+    case 'command.selector-deep': {
+      const sel = ctx.cmd?.params?.selector;
+      return typeof sel === 'string' && sel.startsWith('< ');
+    }
   }
 };
 
@@ -135,6 +139,20 @@ const SKILL_SPECS: SkillSpec[] = [
         { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
         { kind: 'command.selector-not-deep' },
         { kind: 'command.method-not', methods: ['waitForSelector'] },
+      ],
+    ],
+  },
+  {
+    id: 'vision-fallback',
+    path: 'src/skills/vision-fallback.md',
+    refireAfter: 3,
+    triggers: [
+      // A click whose deep `< ` selector missed → escalate to coordinate-click.
+      // Click-only: the skill is coordinate-click, useless for reads (text/html).
+      [
+        { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
+        { kind: 'command.selector-deep' },
+        { kind: 'command.method', methods: ['click'] },
       ],
     ],
   },

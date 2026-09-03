@@ -72,6 +72,7 @@ const mockConfig: McpConfig = {
 
 const mockContext = {
   reportProgress: sinon.stub().resolves(),
+  signal: new AbortController().signal,
   log: {
     debug: sinon.stub(),
     error: sinon.stub(),
@@ -937,6 +938,32 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent integration binding guard', () => {
+  afterEach(() => sinon.restore());
+
+  it('rejects integrationId combined with createProfile before connecting', async () => {
+    // Dummy URL: the guard throws before any WebSocket/connect is attempted.
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    try {
+      await execute(
+        {
+          createProfile: { name: 'demo' },
+          integrationId: 'op_int_a',
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+          ],
+        },
+        { ...mockContext, sessionId: 'int-combo-guard' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.match(
+        /cannot be combined with profile creation/i,
+      );
+    }
+  });
+});
 
 describe('browserless_agent retry-guard (runCommands)', () => {
   // Each test uses a distinct mcpSessionId so the module-level session

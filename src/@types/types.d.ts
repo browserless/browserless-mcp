@@ -154,12 +154,17 @@ export interface SnapshotElement {
   name: string;
   selector: string;
   tag: string;
+  autocomplete?: string;
+  description?: string;
   text?: string;
   value?: string;
   type?: string;
   placeholder?: string;
   id?: string;
   href?: string;
+  formAction?: string;
+  formMethod?: string;
+  intentHint?: 'destructive' | 'signout' | 'signin' | 'reset';
   disabled?: boolean;
   checked?: boolean;
   focused?: boolean;
@@ -213,6 +218,15 @@ export interface ActiveSession {
   // Origin tag forwarded to the browser WS as `x-browserless-mcp-source` so the
   // server can attribute captured skills (mcp_client, cli_agent, …).
   readonly source?: string;
+  // 1Password binding, re-sent on reconnect so loadSecret keeps its resolver
+  // after a drop. Feeds the session-cache key, so readonly.
+  readonly integrationId?: string;
+  readonly allowedDomains?: string[];
+  // Spoofed desktop OS for the stealth fingerprint (forwarded as ?emulationOs).
+  // Re-sent on reconnect so the identity stays coherent after a drop.
+  readonly os?: string;
+  // Human-like cursor/pacing (forwarded as ?humanlike). Re-sent on reconnect.
+  readonly humanlike?: boolean;
   // Handle the caller echoes back as `sessionId`. Feeds the session-cache key,
   // and is re-keyed in place when an orphaned browser is adopted.
   handle: string;
@@ -289,7 +303,8 @@ export type SkillId =
   | 'autonomous-login'
   | 'auth-profile'
   | 'file-transfers'
-  | 'agentic-checkout';
+  | 'agentic-checkout'
+  | 'vision-fallback';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
@@ -330,7 +345,8 @@ export type Predicate =
   | { kind: 'command.method'; methods: string[] }
   | { kind: 'command.method-not'; methods: string[] }
   | { kind: 'command.method-prefix'; prefix: string }
-  | { kind: 'command.selector-not-deep' };
+  | { kind: 'command.selector-not-deep' }
+  | { kind: 'command.selector-deep' };
 
 /** AND-clause: every predicate must match. */
 export type Trigger = Predicate[];

@@ -43,6 +43,7 @@ const VALID_UNTIL_MS = Date.parse(VALID_UNTIL);
 
 const mockContext = {
   reportProgress: sinon.stub().resolves(),
+  signal: new AbortController().signal,
   log: {
     debug: sinon.stub(),
     error: sinon.stub(),

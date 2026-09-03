@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.25.0](https://github.com/browserless/browserless-mcp/compare/v1.24.0...v1.25.0) (2026-09-01)
+
+
+### Features
+
+* add vision fallback skill for clicking by coordinate when snapshot fails ([#274](https://github.com/browserless/browserless-mcp/issues/274)) ([d6c56a6](https://github.com/browserless/browserless-mcp/commit/d6c56a6ea20fa424e1be5f40b2b77f1822119159))
+
+## [1.24.0](https://github.com/browserless/browserless-mcp/compare/v1.23.0...v1.24.0) (2026-08-25)
+
+
+### Features
+
+* render snapshot context signals ([#273](https://github.com/browserless/browserless-mcp/issues/273)) ([0164050](https://github.com/browserless/browserless-mcp/commit/0164050bc7efd7c9522e124f4aca4beea8a21afc))
+* update `loadSecret` tool definition to mention mail OTP ([#267](https://github.com/browserless/browserless-mcp/issues/267)) ([c9d9988](https://github.com/browserless/browserless-mcp/commit/c9d99881ff56799377bbb95caa91e7296c37ede6))
+
+
+### Bug Fixes
+
+* PLT-1521 harden OAuth redirect matching ([#265](https://github.com/browserless/browserless-mcp/issues/265)) ([8ab07ab](https://github.com/browserless/browserless-mcp/commit/8ab07ab454f1f74a8f64e13196c62d16b157c2a9))
+
+## [1.23.0](https://github.com/browserless/browserless-mcp/compare/v1.22.1...v1.23.0) (2026-08-24)
+
+
+### Features
+
+* bind 1Password integration to agent sessions so loadSecret can resolve op:// refs ([#264](https://github.com/browserless/browserless-mcp/issues/264)) ([108007e](https://github.com/browserless/browserless-mcp/commit/108007e07bba49562f6ef70dbe9175d543e25438))
+
+## [1.22.1](https://github.com/browserless/browserless-mcp/compare/v1.22.0...v1.22.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* update replay rendering instructions ([#262](https://github.com/browserless/browserless-mcp/issues/262)) ([a7adbdb](https://github.com/browserless/browserless-mcp/commit/a7adbdbdecad24d15e1943f94a2b52da72f796a6))
+
 ## [1.22.0](https://github.com/browserless/browserless-mcp/compare/v1.21.0...v1.22.0) (2026-08-19)
 
 

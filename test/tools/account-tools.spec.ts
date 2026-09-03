@@ -491,7 +491,8 @@ describe('account-data tools', () => {
         };
 
         const text = (result.content[0] as { text: string }).text;
-        expect(text).to.include('render it inline as-is');
+        expect(text).to.include('write the resource to a .html file');
+        expect(text).to.include('never rebuild the player');
         expect(text).to.include('machine running this server');
         expect(text).to.not.include("open '");
         expect(

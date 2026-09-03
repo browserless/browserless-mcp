@@ -36,8 +36,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all twelve skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(12);
+  it('loads all thirteen skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(13);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -52,6 +52,7 @@ describe('skills/registry', () => {
       'auth-profile',
       'file-transfers',
       'agentic-checkout',
+      'vision-fallback',
     ]);
     for (const skill of skillsRegistry) {
       expect(skill.body, `${skill.id} body`).to.be.a('string').and.not.empty;
@@ -145,6 +146,38 @@ describe('skills/detectSkills - shadow-dom', () => {
     const fired = detectSkills(ctx, state);
     expect(fired).to.not.include('shadow-dom');
     expect(fired).to.include('dynamic-content');
+  });
+});
+
+describe('skills/detectSkills - vision-fallback', () => {
+  it('fires on a click whose deep selector missed', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: { method: 'click', params: { selector: '< button#missing' } },
+    };
+    expect(detectSkills(ctx, state)).to.include('vision-fallback');
+  });
+
+  it('does not fire for a non-click command — the skill is coordinate-click', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: {
+        method: 'type',
+        params: { selector: '< input#missing', text: 'x' },
+      },
+    };
+    expect(detectSkills(ctx, state)).to.not.include('vision-fallback');
+  });
+
+  it('does not fire when the click selector is not yet deep — shadow-dom is rung 1', () => {
+    const state = createSkillState();
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: { method: 'click', params: { selector: 'button#missing' } },
+    };
+    expect(detectSkills(ctx, state)).to.not.include('vision-fallback');
   });
 });
 

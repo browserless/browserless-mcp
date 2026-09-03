@@ -1,0 +1,506 @@
+import { expect } from 'chai';
+import RedisMock from 'ioredis-mock';
+import type { Redis } from 'ioredis';
+import {
+  OAuthProxy,
+  OAuthProxyError,
+  type OAuthProxyConfig,
+} from 'fastmcp/auth';
+import { getConfig } from '../../src/config.js';
+import {
+  BrowserlessOAuthProxy,
+  isAllowedOAuthRedirectUri,
+} from '../../src/lib/oauth-redirect-uri.js';
+import { RedisTokenStorage } from '../../src/lib/redis-token-storage.js';
+
+const EXACT_CALLBACKS = [
+  'https://claude.ai/api/mcp/auth_callback',
+  'https://chatgpt.com/connector_platform_oauth_redirect',
+  'cursor://anysphere.cursor-mcp/oauth/callback',
+  'https://api.devin.ai/mcp/oauth/callback',
+  'https://api.beta.devin.ai/mcp/oauth/callback',
+  'https://api.itsdev.in/mcp/oauth/callback',
+  'https://www.make.com/oauth/cb/mcp',
+  'https://us1.make.celonis.com/oauth/cb/mcp',
+  'https://eu1.make.celonis.com/oauth/cb/mcp',
+];
+
+const WILDCARD_CALLBACKS = [
+  'http://localhost:31337/callback',
+  'http://127.0.0.1:4567/callback',
+  'https://chatgpt.com/connector/oauth/browserless',
+];
+
+const LOOKALIKE_CALLBACKS = [
+  'https://apixdevin.ai/mcp/oauth/callback',
+  'https://api.betaxdevin.ai/mcp/oauth/callback',
+  'https://wwwxmake.com/oauth/cb/mcp',
+  'https://us1.makexcelonis.com/oauth/cb/mcp',
+  'https://eu1.makexcelonis.com/oauth/cb/mcp',
+];
+
+const LOOPBACK_CONFUSION_CALLBACKS = [
+  'http://localhost.evil.example:31337/callback',
+  'http://127.0.0.1.evil.example:31337/callback',
+  'http://localhost:31337@evil.example/callback',
+  'http://@localhost:31337/callback',
+  'http://user@localhost:31337/callback',
+  'http://user:password@127.0.0.1:31337/callback',
+];
+
+function buildConfig(
+  overrides: Partial<OAuthProxyConfig> = {},
+): OAuthProxyConfig {
+  return {
+    allowedRedirectUriPatterns: getConfig().oauthAllowedRedirectUriPatterns,
+    baseUrl: 'http://127.0.0.1:18081',
+    consentRequired: false,
+    enableTokenSwap: false,
+    scopes: ['email'],
+    upstreamAuthorizationEndpoint: 'http://127.0.0.1:9/oauth/authorize',
+    upstreamClientId: 'upstream-client-id',
+    upstreamClientSecret: 'upstream-client-secret',
+    upstreamTokenEndpoint: 'http://127.0.0.1:9/oauth/token',
+    ...overrides,
+  };
+}
+
+describe('Browserless OAuth redirect URI validation', () => {
+  let originalAdditionalPatterns: string | undefined;
+  let patterns: string[];
+
+  before(() => {
+    originalAdditionalPatterns =
+      process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
+    delete process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
+    patterns = getConfig().oauthAllowedRedirectUriPatterns;
+  });
+
+  after(() => {
+    if (originalAdditionalPatterns === undefined) {
+      delete process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
+    } else {
+      process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS =
+        originalAdditionalPatterns;
+    }
+  });
+
+  for (const redirectUri of [...EXACT_CALLBACKS, ...WILDCARD_CALLBACKS]) {
+    it(`accepts configured callback ${redirectUri}`, () => {
+      expect(isAllowedOAuthRedirectUri(redirectUri, patterns)).to.equal(true);
+    });
+  }
+
+  for (const redirectUri of [
+    ...LOOKALIKE_CALLBACKS,
+    ...LOOPBACK_CONFUSION_CALLBACKS,
+    'https://evil.example/callback',
+    'not a URI',
+  ]) {
+    it(`rejects unsafe callback ${redirectUri}`, () => {
+      expect(isAllowedOAuthRedirectUri(redirectUri, patterns)).to.equal(false);
+    });
+  }
+
+  it('treats only * and ? as glob metacharacters', () => {
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb/a+b', [
+        'https://client.example/cb/a+b',
+      ]),
+    ).to.equal(true);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb/axb', [
+        'https://client.example/cb/a+b',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb/one', [
+        'https://client.example/cb/*',
+      ]),
+    ).to.equal(true);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb/one/two', [
+        'https://client.example/cb/*',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb/x', [
+        'https://client.example/cb/?',
+      ]),
+    ).to.equal(true);
+  });
+
+  it('keeps wildcards inside their URL component boundaries', () => {
+    const cases = [
+      {
+        redirectUri: 'https://client.corp.example.com/cb',
+        pattern: 'https://*.corp.example.com/cb',
+        expected: true,
+      },
+      {
+        redirectUri: 'https://evil.example/a.corp.example.com/cb',
+        pattern: 'https://*.corp.example.com/cb',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://one.two.corp.example.com/cb',
+        pattern: 'https://*.corp.example.com/cb',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/value',
+        pattern: 'https://client.example/cb/*',
+        expected: true,
+      },
+      {
+        redirectUri: 'https://client.example/cb/one/two',
+        pattern: 'https://client.example/cb/*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/x',
+        pattern: 'https://client.example/cb/?',
+        expected: true,
+      },
+      {
+        redirectUri: 'https://client.example/cb//',
+        pattern: 'https://client.example/cb/?',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/value?next=attacker.example',
+        pattern: 'https://client.example/cb/*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb/value#fragment',
+        pattern: 'https://client.example/cb/*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb',
+        pattern: '*',
+        expected: false,
+      },
+      {
+        redirectUri: 'https://client.example/cb',
+        pattern: 'https://client.example:/cb',
+        expected: false,
+      },
+    ];
+
+    for (const { redirectUri, pattern, expected } of cases) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, [pattern]),
+        `${pattern} against ${redirectUri}`,
+      ).to.equal(expected);
+    }
+  });
+
+  it('does not let a path glob reach the query or fragment', () => {
+    // The shipped allowlist's only path wildcard. A glob that swallowed '?' or
+    // '#' would widen it past the connector id it is meant to stand in for.
+    expect(
+      isAllowedOAuthRedirectUri(
+        'https://chatgpt.com/connector/oauth/browserless',
+        patterns,
+      ),
+    ).to.equal(true);
+
+    for (const redirectUri of [
+      'https://chatgpt.com/connector/oauth/x?code=stolen',
+      'https://chatgpt.com/connector/oauth/x#fragment',
+      'https://chatgpt.com/connector/oauth/#@evil.example',
+      'https://chatgpt.com/connector/oauth/x?a=1#b',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(false);
+    }
+  });
+
+  it('still allows loopback clients their own path, query, and fragment', () => {
+    // hasExpectedLoopbackHost pins the host here, so the broad loopback path
+    // costs nothing and desktop clients keep working.
+    for (const redirectUri of [
+      'http://localhost:3000/cb?state=1',
+      'http://localhost:3000/cb#done',
+      'http://127.0.0.1:8976/oauth/callback?x=1',
+      // Root callback with no path at all — legal, and some clients use it.
+      'http://localhost:3000',
+      'http://localhost:3000?state=1',
+      'http://localhost:3000#done',
+      'http://127.0.0.1:8976?state=1',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(true);
+    }
+  });
+
+  it('refuses a pattern whose glob would extend the host', () => {
+    // The suffix is a path only when it starts with '/'. A glob placed straight
+    // after the authority extends the HOST, so these patterns are ambiguous and
+    // are dropped rather than honoured.
+    expect(
+      isAllowedOAuthRedirectUri('https://client.examplex', [
+        'https://client.example?',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://foo.comX/cb', ['https://foo.com?/cb']),
+    ).to.equal(false);
+
+    // A host glob is honoured, but it stops at every authority delimiter,
+    // including the ones that start the query and the fragment.
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example#fragment', [
+        'https://client.example*',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example?next=1', [
+        'https://client.example*',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('https://client.exampleXYZ', [
+        'https://client.example*',
+      ]),
+    ).to.equal(true);
+  });
+
+  it('refuses a non-loopback pattern that spells a fragment', () => {
+    // RFC 6749 3.1.2 forbids a fragment on a redirect endpoint, so a pattern
+    // carrying one describes no valid client and is dropped, not honoured.
+    for (const pattern of [
+      'https://client.example/cb#done',
+      'https://client.example/cb*#done',
+      'https://client.example/#',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri('https://client.example/cb#done', [pattern]),
+        pattern,
+      ).to.equal(false);
+    }
+
+    // Dropping the pattern must not drop the rest of the allowlist.
+    expect(
+      isAllowedOAuthRedirectUri('https://client.example/cb', [
+        'https://client.example/cb#done',
+        'https://client.example/cb',
+      ]),
+    ).to.equal(true);
+  });
+
+  it('keeps the loopback host pinned however permissive its path is', () => {
+    // The permissive loopback suffix must not become a way past the host.
+    for (const redirectUri of [
+      'http://localhost:3000@evil.example/cb',
+      'http://localhost.evil.example:3000?state=1',
+      'http://localhost:3000.evil.example/cb',
+    ]) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(false);
+    }
+  });
+
+  it('rejects an empty allowlist', () => {
+    expect(isAllowedOAuthRedirectUri('http://localhost:3000', [])).to.equal(
+      false,
+    );
+  });
+
+  it('uses safe loopback defaults when patterns are undefined', () => {
+    expect(
+      isAllowedOAuthRedirectUri('http://localhost:3000/callback', undefined),
+    ).to.equal(true);
+    expect(
+      isAllowedOAuthRedirectUri(
+        'http://localhost.evil.example:3000/callback',
+        undefined,
+      ),
+    ).to.equal(false);
+  });
+
+  it('does not let glob metacharacters extend a loopback hostname', () => {
+    expect(
+      isAllowedOAuthRedirectUri('http://localhost', ['http://localhost']),
+    ).to.equal(true);
+    expect(
+      isAllowedOAuthRedirectUri('http://localhost.evil.example/callback', [
+        'http://localhost*/callback',
+      ]),
+    ).to.equal(false);
+    expect(
+      isAllowedOAuthRedirectUri('http://127.0.0.1.evil.example/callback', [
+        'http://127.0.0.1*/callback',
+      ]),
+    ).to.equal(false);
+  });
+
+  it('rejects empty userinfo even when a configured glob would match it', () => {
+    expect(
+      isAllowedOAuthRedirectUri('http://@localhost:31337/callback', [
+        'http://*@localhost:*',
+      ]),
+    ).to.equal(false);
+  });
+
+  it('rejects every unsafe callback through the public DCR seam', async () => {
+    const proxy = new BrowserlessOAuthProxy(buildConfig());
+    try {
+      for (const redirectUri of [
+        ...LOOKALIKE_CALLBACKS,
+        ...LOOPBACK_CONFUSION_CALLBACKS,
+      ]) {
+        try {
+          await proxy.registerClient({ redirect_uris: [redirectUri] });
+          expect.fail(`accepted ${redirectUri}`);
+        } catch (error) {
+          expect(error).to.be.instanceOf(OAuthProxyError);
+          expect((error as OAuthProxyError).code).to.equal(
+            'invalid_redirect_uri',
+          );
+        }
+      }
+    } finally {
+      proxy.destroy();
+    }
+  });
+
+  it('returns invalid_client_metadata for malformed redirect lists', async () => {
+    const proxy = new BrowserlessOAuthProxy(buildConfig());
+    const requests = [
+      {},
+      { redirect_uris: null },
+      { redirect_uris: {} },
+      { redirect_uris: 'https://api.devin.ai/mcp/oauth/callback' },
+      { redirect_uris: [] },
+    ];
+
+    try {
+      for (const request of requests) {
+        try {
+          await proxy.registerClient(
+            request as unknown as Parameters<
+              BrowserlessOAuthProxy['registerClient']
+            >[0],
+          );
+          expect.fail(`accepted ${JSON.stringify(request)}`);
+        } catch (error) {
+          expect(error).to.be.instanceOf(OAuthProxyError);
+          expect((error as OAuthProxyError).code).to.equal(
+            'invalid_client_metadata',
+          );
+        }
+      }
+    } finally {
+      proxy.destroy();
+    }
+  });
+
+  it('does not persist a mixed valid and unsafe redirect list', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const proxy = new BrowserlessOAuthProxy({
+      ...buildConfig(),
+      encryptionKey: false,
+      tokenStorage: new RedisTokenStorage(redis),
+    });
+
+    try {
+      try {
+        await proxy.registerClient({
+          redirect_uris: [EXACT_CALLBACKS[0], LOOKALIKE_CALLBACKS[0]],
+        });
+        expect.fail('accepted a mixed redirect list');
+      } catch (error) {
+        expect(error).to.be.instanceOf(OAuthProxyError);
+        expect((error as OAuthProxyError).code).to.equal(
+          'invalid_redirect_uri',
+        );
+      }
+      expect(await redis.keys('mcp:oauth:client:*')).to.deep.equal([]);
+    } finally {
+      proxy.destroy();
+      await redis.quit();
+    }
+  });
+
+  it('delegates valid registration and authorization with Redis storage', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const proxy = new BrowserlessOAuthProxy({
+      ...buildConfig(),
+      encryptionKey: false,
+      tokenStorage: new RedisTokenStorage(redis),
+    });
+
+    try {
+      const redirectUri = 'https://api.devin.ai/mcp/oauth/callback';
+      const registration = await proxy.registerClient({
+        redirect_uris: [redirectUri],
+      });
+      expect(
+        await redis.get(`mcp:oauth:client:${registration.client_id}`),
+      ).to.be.a('string');
+
+      const response = await proxy.authorize({
+        client_id: registration.client_id,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        state: 'client-state',
+      });
+      expect(response.status).to.equal(302);
+      expect(response.headers.get('location')).to.include(
+        '127.0.0.1:9/oauth/authorize',
+      );
+    } finally {
+      proxy.destroy();
+      await redis.quit();
+    }
+  });
+
+  it('revalidates a vulnerable pre-existing registration at authorize time', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const storage = new RedisTokenStorage(redis);
+    const vulnerable = new OAuthProxy({
+      ...buildConfig({
+        allowedRedirectUriPatterns: ['https://api.devin.ai/mcp/oauth/callback'],
+      }),
+      encryptionKey: false,
+      tokenStorage: storage,
+    });
+    const hardened = new BrowserlessOAuthProxy({
+      ...buildConfig(),
+      encryptionKey: false,
+      tokenStorage: storage,
+    });
+
+    try {
+      const registration = await vulnerable.registerClient({
+        redirect_uris: ['https://apixdevin.ai/mcp/oauth/callback'],
+      });
+
+      try {
+        await hardened.authorize({
+          client_id: registration.client_id,
+          redirect_uri: 'https://apixdevin.ai/mcp/oauth/callback',
+          response_type: 'code',
+          state: 'client-state',
+        });
+        expect.fail('accepted a vulnerable persisted registration');
+      } catch (error) {
+        expect(error).to.be.instanceOf(OAuthProxyError);
+        expect((error as OAuthProxyError).code).to.equal('invalid_request');
+      }
+    } finally {
+      vulnerable.destroy();
+      hardened.destroy();
+      await redis.quit();
+    }
+  });
+});

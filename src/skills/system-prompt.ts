@@ -49,6 +49,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
+- \`vision-fallback\` — click by coordinate when the snapshot can't surface an element
 - \`tabs\` — multi-tab workflows, peek-without-switching
 
 ## Snapshot Rules
@@ -58,6 +59,8 @@ Load manually via **browserless_skill** if suspected but not injected:
 - Snapshot VALID after: type, hover, scroll, evaluate
 - Expect new content? → re-snapshot
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
+- Snapshot lines may include \`desc="..."\`, \`action=METHOD URL\`, \`autocomplete=...\`, and intent markers (\`⚠ destructive\`, \`⚠ sign-out\`, \`sign-in\`, \`reset\`)
+- Before activating or navigating to a control marked \`⚠ destructive\` or \`⚠ sign-out\`, confirm that the action is actually intended; an unlabeled destructive control is a common trap
 - Snapshots after the first return a **diff** vs. your previous snapshot: only \`+\` new / \`~\` changed / \`-\` removed elements, plus a count of unchanged ones omitted. Unchanged elements stay valid — keep using their refs from the earlier snapshot. If that earlier snapshot is no longer in your context (summarized/trimmed away), request \`snapshot { full: true }\` to get the complete element list again.
 
 ## Selectors
@@ -174,6 +177,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - \`snapshot-misses\` — truncated/empty snapshots, image-rendered content
 - \`dynamic-content\` — choosing the right \`wait*\` method
 - \`screenshots\` — when to screenshot vs. snapshot, scope and format choices
+- \`vision-fallback\` — click by coordinate when the snapshot can't surface an element
 - \`tabs\` — multi-tab workflows, peek-without-switching
 
 ## Snapshot Rules
@@ -183,6 +187,8 @@ Load manually via **browserless_skill** if suspected but not injected:
 - Snapshot VALID after: type, hover, scroll
 - Expect new content? → re-snapshot
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
+- Snapshot lines may include \`desc="..."\`, \`action=METHOD URL\`, \`autocomplete=...\`, and intent markers (\`⚠ destructive\`, \`⚠ sign-out\`, \`sign-in\`, \`reset\`)
+- Before activating or navigating to a control marked \`⚠ destructive\` or \`⚠ sign-out\`, confirm that the action is actually intended; an unlabeled destructive control is a common trap
 - Snapshots after the first return a **diff** vs. your previous snapshot: only \`+\` new / \`~\` changed / \`-\` removed elements, plus a count of unchanged ones omitted. Unchanged elements stay valid — keep using their refs from the earlier snapshot. If that earlier snapshot is no longer in your context, request \`snapshot { full: true }\` for the complete element list again.
 
 ## Selectors
@@ -314,6 +320,7 @@ Available in-house skills:
 - **snapshot-misses** — truncated/empty snapshots, image-rendered content
 - **dynamic-content** — choosing the right \`wait*\` method after async triggers
 - **screenshots** — when to screenshot vs. snapshot, scope and format choices
+- **vision-fallback** — click by coordinate when a "< " deep selector still can't surface the element (shadow DOM, nested iframe, canvas)
 - **tabs** — multi-tab workflows, peek-without-switching
 - **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
