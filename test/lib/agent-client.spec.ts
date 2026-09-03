@@ -908,6 +908,92 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('retains proxy routing when a dropped session is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-proxy',
+        server.url,
+        'tok',
+        { proxy: 'datacenter', proxyCountry: 'us' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-proxy-handle',
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-proxy-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-proxy-handle',
+      );
+
+      expect(resumed.proxy).to.deep.equal({
+        proxy: 'datacenter',
+        proxyCountry: 'us',
+      });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('proxy')).to.equal('datacenter');
+      expect(reconnectUrl.searchParams.get('proxyCountry')).to.equal('us');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a proxy change for an echoed session handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-proxy-conflict',
+        server.url,
+        'tok',
+        { proxy: 'datacenter' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'proxy-conflict-handle',
+      );
+
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-proxy-conflict-2',
+          server.url,
+          'tok',
+          { proxy: 'residential' },
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          opened.handle,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect((thrown as Error).message).to.match(/proxy.*fixed/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('retains persona when a dropped socket is recreated by handle', async () => {
     const server = await makeAcceptingServer();
     try {

@@ -131,8 +131,9 @@ export const PersonaOptionsSchema = z.object({
     ),
   screen: z
     .string()
+    .trim()
     .refine((value) => {
-      const match = /^(\d{2,5})x(\d{2,5})$/.exec(value.trim());
+      const match = /^(\d{2,5})x(\d{2,5})$/.exec(value);
       if (!match) return false;
       const width = Number(match[1]);
       const height = Number(match[2]);
@@ -241,14 +242,15 @@ const sessions = new Map<string, ActiveSession>();
 // getOrCreateSession callers await the same promise instead of each
 // opening their own WebSocket.
 const pending = new Map<string, Promise<ActiveSession>>();
-// Retain creation-state persona across socket eviction so an echoed handle can
-// recreate coherently without requiring callers to repeat options.
+// Retain creation-state persona and proxy routing across socket eviction so an
+// echoed handle can recreate coherently without repeating first-call options.
 const retainedPersonas = new Map<string, PersonaOptions>();
+const retainedProxies = new Map<string, ProxyOptions>();
 
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;
-const MAX_RETAINED_PERSONAS = 500;
+const MAX_RETAINED_CONFIGS = 500;
 // mcp session id -> last time a request arrived on it. `disconnect` is the
 // primary signal, but a client that abandons a transport never sends one.
 const mcpSeenAt = new Map<string, number>();
@@ -863,6 +865,22 @@ export const getOrCreateSession = async (
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
   const retainedPersona = retainedPersonas.get(key);
+  const retainedProxy = retainedProxies.get(key);
+
+  if (
+    retainedProxy &&
+    proxy !== undefined &&
+    proxyFingerprint(retainedProxy) !== proxyFingerprint(proxy)
+  ) {
+    throw new PersonaConflictError(
+      'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+    );
+  }
+  const effectiveProxy = retainedProxy ?? proxy;
+  if (retainedProxy) {
+    retainedProxies.delete(key);
+    retainedProxies.set(key, retainedProxy);
+  }
 
   if (
     retainedPersona &&
@@ -944,7 +962,7 @@ export const getOrCreateSession = async (
     const ws = await connect(
       apiUrl,
       token,
-      proxy,
+      effectiveProxy,
       profile,
       creationSessionId,
       compliant,
@@ -960,7 +978,7 @@ export const getOrCreateSession = async (
       msgId: 0,
       apiUrl,
       token,
-      proxy,
+      proxy: effectiveProxy,
       profile,
       createProfile,
       creationSessionId,
@@ -979,10 +997,19 @@ export const getOrCreateSession = async (
     if (hasPersona(effectivePersona)) {
       retainedPersonas.delete(key);
       retainedPersonas.set(key, effectivePersona!);
-      while (retainedPersonas.size > MAX_RETAINED_PERSONAS) {
+      while (retainedPersonas.size > MAX_RETAINED_CONFIGS) {
         const oldest = retainedPersonas.keys().next().value;
         if (oldest === undefined) break;
         retainedPersonas.delete(oldest);
+      }
+    }
+    if (effectiveProxy && proxyFingerprint(effectiveProxy)) {
+      retainedProxies.delete(key);
+      retainedProxies.set(key, effectiveProxy);
+      while (retainedProxies.size > MAX_RETAINED_CONFIGS) {
+        const oldest = retainedProxies.keys().next().value;
+        if (oldest === undefined) break;
+        retainedProxies.delete(oldest);
       }
     }
 
@@ -1102,6 +1129,7 @@ export const closeSession = (
     sessions.delete(key);
   }
   retainedPersonas.delete(key);
+  retainedProxies.delete(key);
 };
 
 /**

@@ -235,6 +235,16 @@ describe('AgentParamsSchema persona', () => {
     ]);
   });
 
+  it('normalizes surrounding whitespace in a desktop screen', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'snapshot',
+      emulationOs: 'windows',
+      screen: ' 1920x1080 ',
+    });
+
+    expect(parsed.screen).to.equal('1920x1080');
+  });
+
   it('enforces device and slot persona relationships locally', () => {
     const cases: Array<[string, Record<string, unknown>, boolean]> = [
       [
