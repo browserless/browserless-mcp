@@ -98,6 +98,7 @@ describe('defineTool analytics', () => {
       success: false,
       error_category: 'user_error',
       analytics_version: 2,
+      api_url: mockConfig.browserlessApiUrl,
     });
   });
 

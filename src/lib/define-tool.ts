@@ -175,7 +175,7 @@ export function defineTool<P, R>(
             'For HTTP: pass Authorization: Bearer <token> header.',
         );
       }
-      const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+      let apiUrl = config.browserlessApiUrl;
 
       setAmplitudeToolContext(s, token, prompt);
 
@@ -230,6 +230,7 @@ export function defineTool<P, R>(
             }
             throw error;
           }
+          apiUrl = s.apiUrl;
         }
         def.validateUrl?.(params);
 
