@@ -1144,6 +1144,7 @@ const COMPLIANT_COMMANDS_DESCRIPTION =
 // Shared top-level fields for both compliant schemas (rich + slim projection)
 // so they can't drift; `.strict()` on each rejects any prohibited/removed key.
 const compliantParamsObject = z.object({
+  requiredCapabilities: agentParamsObject.shape.requiredCapabilities,
   rationale: z
     .string()
     .optional()
