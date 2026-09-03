@@ -1,5 +1,6 @@
 import type { FastMCP } from 'fastmcp';
 import {
+  downloadOwner,
   downloadUri,
   storeDownload,
   FILE_TRANSFER_MAX_BYTES,
@@ -17,8 +18,8 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   app.post('/upload', async (c) => {
     // Raw Hono routes bypass FastMCP's authenticate, so gate on the same token
     // rules as the MCP surface — no anonymous drops.
-    const denied = await guardRouteAuth(c, config);
-    if (denied) return denied;
+    const auth = await guardRouteAuth(c, config);
+    if (auth instanceof Response) return auth;
 
     let file: unknown;
     try {
@@ -56,6 +57,7 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
       file.name || 'upload',
       file.type || 'application/octet-stream',
       buf,
+      downloadOwner(auth.token),
     );
     return c.json({
       ok: true,

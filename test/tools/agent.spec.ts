@@ -19,7 +19,11 @@ import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { downloadUri, storeDownload } from '../../src/lib/download-store.js';
+import {
+  downloadOwner,
+  downloadUri,
+  storeDownload,
+} from '../../src/lib/download-store.js';
 import {
   ProfileNotFoundError,
   UpgradeError,
@@ -391,7 +395,7 @@ describe('normalizeUploadCommand', () => {
       method: 'uploadFile',
       params: { selector: 'input', files: [{ path }] },
     };
-    await normalizeUploadCommand(cmd, 'stdio');
+    await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
 
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.path).to.be.undefined;
@@ -412,6 +416,7 @@ describe('normalizeUploadCommand', () => {
         cmd,
         'httpStream',
         'https://mcp.example.com',
+        'test-token',
       );
     } catch (e) {
       threw = true;
@@ -430,20 +435,22 @@ describe('normalizeUploadCommand', () => {
       method: 'uploadFile',
       params: { selector: 'input', files: [{ content: 'YWJj', name: 'a' }] },
     };
-    await normalizeUploadCommand(cmd, 'httpStream');
+    await normalizeUploadCommand(cmd, 'httpStream', undefined, 'test-token');
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.content).to.equal('YWJj');
 
     const other = { method: 'click', params: { selector: 'a' } };
-    await normalizeUploadCommand(other, 'stdio');
+    await normalizeUploadCommand(other, 'stdio', undefined, 'test-token');
     expect(other.params.selector).to.equal('a');
   });
 
   it('resolves a download handle to base64 content (any transport)', async () => {
+    const token = 'owner-token';
     const record = await storeDownload(
       'grabbed.bin',
       'application/octet-stream',
       Buffer.from('Hello World!'),
+      downloadOwner(token),
     );
     const cmd = {
       method: 'uploadFile',
@@ -452,13 +459,37 @@ describe('normalizeUploadCommand', () => {
         files: [{ handle: downloadUri(record.id) }],
       },
     };
-    await normalizeUploadCommand(cmd, 'httpStream');
+    await normalizeUploadCommand(cmd, 'httpStream', undefined, token);
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.handle).to.be.undefined;
     expect(file.name).to.equal('grabbed.bin');
     expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
       'Hello World!',
     );
+  });
+
+  it('rejects a download handle owned by another token', async () => {
+    const record = await storeDownload(
+      'private.bin',
+      'application/octet-stream',
+      Buffer.from('private'),
+      downloadOwner('owner-token'),
+    );
+    const cmd = {
+      method: 'uploadFile',
+      params: { files: [{ handle: downloadUri(record.id) }] },
+    };
+
+    let threw = false;
+    try {
+      await normalizeUploadCommand(cmd, 'httpStream', undefined, 'other-token');
+    } catch (error) {
+      threw = true;
+      expect((error as Error).message).to.match(/Unknown upload handle/);
+    }
+    expect(threw).to.be.true;
+    expect((cmd.params.files[0] as Record<string, unknown>).content).to.be
+      .undefined;
   });
 
   it('throws on an unknown upload handle', async () => {
@@ -468,7 +499,7 @@ describe('normalizeUploadCommand', () => {
     };
     let threw = false;
     try {
-      await normalizeUploadCommand(cmd, 'stdio');
+      await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
     } catch (e) {
       threw = true;
       expect((e as Error).message).to.match(/Unknown upload handle/);
@@ -495,6 +526,9 @@ describe('formatDownloads (httpStream)', () => {
     expect(text).to.match(
       /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
     );
+    const urlId = text.match(/\/download\/([0-9a-f]{32})\?token=/)?.[1];
+    const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
+    expect(urlId).to.equal(handleId);
     expect(text).to.include('single use');
     // The base64 must never appear in the returned content.
     expect(JSON.stringify(content)).to.not.include('YWJj');
