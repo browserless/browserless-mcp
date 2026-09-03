@@ -35,7 +35,7 @@ export const resolveBrowserlessAuth = async (
   >,
 ): Promise<ResolvedBrowserlessAuth> => {
   const override = input.apiUrlHeader ?? input.browserlessUrlQuery;
-  if (override) assertAllowedApiUrl(override, config);
+  if (override !== undefined) assertAllowedApiUrl(override, config);
   const apiUrl = override ?? config.browserlessApiUrl;
 
   // A pre-created session id to attach to, threaded by the autologin runner.

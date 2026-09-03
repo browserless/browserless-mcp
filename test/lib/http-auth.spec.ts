@@ -52,6 +52,7 @@ describe('resolveBrowserlessAuth', () => {
   it('rejects disallowed header and query api url overrides', async () => {
     for (const input of [
       { apiUrlHeader: 'https://eu.example.com' },
+      { apiUrlHeader: '' },
       { browserlessUrlQuery: 'http://127.0.0.1:9999' },
     ]) {
       try {

@@ -176,16 +176,6 @@ export function defineTool<P, R>(
         );
       }
       const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
-      if (s?.apiUrl) {
-        try {
-          assertAllowedApiUrl(s.apiUrl, config);
-        } catch (error) {
-          if (error instanceof InvalidApiUrlError) {
-            throw new UserError(error.message);
-          }
-          throw error;
-        }
-      }
 
       setAmplitudeToolContext(s, token, prompt);
 
@@ -231,6 +221,16 @@ export function defineTool<P, R>(
         });
 
       try {
+        if (s?.apiUrl !== undefined) {
+          try {
+            assertAllowedApiUrl(s.apiUrl, config);
+          } catch (error) {
+            if (error instanceof InvalidApiUrlError) {
+              throw new UserError(error.message);
+            }
+            throw error;
+          }
+        }
         def.validateUrl?.(params);
 
         await reportProgress({ progress: 0, total: 100 });

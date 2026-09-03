@@ -80,7 +80,7 @@ describe('defineTool analytics', () => {
   it('rejects a disallowed session apiUrl before running the tool', async () => {
     const run = sinon.stub().resolves({});
     const fetchStub = sinon.stub(globalThis, 'fetch');
-    const { execute } = register({ run });
+    const { execute, fire, props } = register({ run });
 
     const err = await rejects(
       execute({}, {
@@ -92,6 +92,13 @@ describe('defineTool analytics', () => {
     expect(err).to.be.instanceOf(UserError);
     expect(run.called).to.be.false;
     expect(fetchStub.called).to.be.false;
+    expect(mockContext.reportProgress.called).to.be.false;
+    expect(fire.calledOnce).to.be.true;
+    expect(props()).to.include({
+      success: false,
+      error_category: 'user_error',
+      analytics_version: 2,
+    });
   });
 
   it('passes an allowed session apiUrl to the tool', async () => {
