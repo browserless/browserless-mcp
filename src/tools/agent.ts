@@ -312,7 +312,11 @@ const describeReadyDownload = (
     );
   }
   const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
-  const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  const tokenQ = `?token=${
+    opts.token === undefined
+      ? '<YOUR_BROWSERLESS_TOKEN>'
+      : encodeURIComponent(opts.token)
+  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +

@@ -534,6 +534,24 @@ describe('formatDownloads (httpStream)', () => {
     expect(JSON.stringify(content)).to.not.include('YWJj');
   });
 
+  it('URL-encodes tokens in the download recipe', async () => {
+    const token = 'token+with&reserved#characters';
+    const content = await formatDownloads(
+      [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token,
+      },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    const url = text.match(/curl -s "([^"]+)"/)?.[1];
+    expect(url).to.exist;
+    expect(new URL(url!).searchParams.get('token')).to.equal(token);
+  });
+
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {
     const content = await formatDownloads(
       [

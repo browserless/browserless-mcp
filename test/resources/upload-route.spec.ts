@@ -52,6 +52,25 @@ describe('upload route', () => {
     expect(await owner.text()).to.equal('upload bytes');
   });
 
+  it('preserves URL-reserved characters in the owner token', async () => {
+    const route = app();
+    const token = 'owner+with&reserved#characters';
+    const body = new FormData();
+    body.set('file', new File(['upload bytes'], 'fixture.bin'));
+    const response = await route.request(
+      `/upload?token=${encodeURIComponent(token)}`,
+      { method: 'POST', body },
+    );
+    const { handle } = (await response.json()) as { handle: string };
+    const id = handle.replace('browserless-download://', '');
+
+    const owner = await route.request(
+      `/download/${id}?token=${encodeURIComponent(token)}`,
+    );
+    expect(owner.status).to.equal(200);
+    expect(await owner.text()).to.equal('upload bytes');
+  });
+
   it('rejects files over 50 MiB', async () => {
     const response = await upload(app(), new ArrayBuffer(51 * 1024 * 1024));
     expect(response.status).to.equal(413);
