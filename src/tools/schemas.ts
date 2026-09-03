@@ -244,7 +244,8 @@ const ClearSecretsCommandSchema = z.object({
   method: z
     .literal('clearSecrets')
     .describe(
-      'Re-enable screenshot, PDF, and liveURL captures after a loadSecret login ' +
+      'Re-enable screenshot, PDF, liveURL, and page-content-read captures ' +
+        '(evaluate/html/text/querySelector/cookies) after a loadSecret login ' +
         'once the credential is no longer visible. Required for single-page apps ' +
         'that do not navigate; replay remains masked.',
     ),
