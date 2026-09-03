@@ -9,6 +9,8 @@ import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
 import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../../src/prompts/extract-content.js';
+import { registerUploadRoute } from '../../src/resources/upload-route.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -49,6 +51,40 @@ describe('MCP Server Integration', () => {
 
     // If we get here without errors, the server is properly configured
     expect(server).to.exist;
+  });
+
+  it('rejects unsafe API URL overrides on file routes', async () => {
+    server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
+    registerUploadRoute(server, mockConfig);
+    registerDownloadRoute(server, mockConfig);
+    const app = server.getApp();
+
+    for (const [method, path] of [
+      ['POST', '/upload'],
+      ['GET', '/download/missing'],
+    ] as const) {
+      const response = await app.request(`http://example.test${path}`, {
+        method,
+        headers: {
+          authorization: 'Bearer token',
+          'x-browserless-api-url': 'http://127.0.0.1:9999',
+        },
+      });
+      expect(response.status).to.equal(400);
+      expect(await response.json()).to.deep.equal({
+        ok: false,
+        error: 'Invalid x-browserless-api-url',
+      });
+    }
+  });
+
+  it('preserves 401 on file routes when the token is absent', async () => {
+    server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
+    registerUploadRoute(server, mockConfig);
+    const response = await server
+      .getApp()
+      .request('http://example.test/upload', { method: 'POST' });
+    expect(response.status).to.equal(401);
   });
 
   it('starts and stops cleanly in httpStream mode', async () => {

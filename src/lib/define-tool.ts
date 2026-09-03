@@ -16,6 +16,7 @@ import type {
   BrowserlessSession,
   McpConfig,
 } from '../@types/types.js';
+import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 
 /**
  * Minimal log surface tools use. Tools only call the level methods with a
@@ -175,6 +176,16 @@ export function defineTool<P, R>(
         );
       }
       const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+      if (s?.apiUrl) {
+        try {
+          assertAllowedApiUrl(s.apiUrl, config);
+        } catch (error) {
+          if (error instanceof InvalidApiUrlError) {
+            throw new UserError(error.message);
+          }
+          throw error;
+        }
+      }
 
       setAmplitudeToolContext(s, token, prompt);
 

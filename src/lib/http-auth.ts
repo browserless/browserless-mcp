@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { resolveApiKey } from './account-resolver.js';
 import type { McpConfig } from '../@types/types.js';
+import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 
 export interface ResolvedBrowserlessAuth {
   token: string;
@@ -32,11 +33,15 @@ export const resolveBrowserlessAuth = async (
   input: AuthInput,
   config: Pick<
     McpConfig,
-    'browserlessApiUrl' | 'supabaseUrl' | 'supabaseServiceRoleKey'
+    | 'browserlessApiUrl'
+    | 'allowedApiUrlHosts'
+    | 'supabaseUrl'
+    | 'supabaseServiceRoleKey'
   >,
 ): Promise<ResolvedBrowserlessAuth> => {
-  const apiUrl =
-    input.apiUrlHeader ?? input.browserlessUrlQuery ?? config.browserlessApiUrl;
+  const override = input.apiUrlHeader ?? input.browserlessUrlQuery;
+  if (override) assertAllowedApiUrl(override, config);
+  const apiUrl = override ?? config.browserlessApiUrl;
 
   // A pre-created session id to attach to, threaded by the autologin runner.
   // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
@@ -91,7 +96,10 @@ export const guardRouteAuth = async (
       config,
     );
     return null;
-  } catch {
+  } catch (error) {
+    if (error instanceof InvalidApiUrlError) {
+      return c.json({ ok: false, error: 'Invalid x-browserless-api-url' }, 400);
+    }
     return c.json({ ok: false, error: 'Unauthorized' }, 401);
   }
 };
