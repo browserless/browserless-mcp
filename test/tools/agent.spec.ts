@@ -987,6 +987,29 @@ describe('browserless_agent integration binding guard', () => {
     expect(fetchStub.called).to.equal(false);
   });
 
+  it('rejects proxy commands before capability discovery', async () => {
+    const fetchStub = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('down'));
+    const execute = getAgentExecute('http://127.0.0.1:1');
+
+    try {
+      await execute(
+        {
+          commands: [{ method: 'proxy' }],
+          requiredCapabilities: ['vision'],
+        },
+        { ...mockContext, sessionId: 'invalid-proxy-command' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.include(
+        '"proxy" is not a BQL mutation',
+      );
+    }
+    expect(fetchStub.called).to.equal(false);
+  });
+
   it('rejects an unsafe secret-capture batch before opening a WebSocket', async () => {
     const srv = await makeRespondingServer(() => ({}));
     try {

@@ -738,6 +738,15 @@ export function registerAgentTools(
         );
       }
 
+      if (commands.some((c) => c.method === 'proxy')) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false);
+        throw new UserError(
+          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
+            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
+        );
+      }
+
       try {
         await preflightAgentCapabilities(
           buildAgentWsUrl(
@@ -758,15 +767,6 @@ export function registerAgentTools(
         sendAnalytics(false, err);
         throw new UserError(
           err instanceof Error ? err.message : 'Capability preflight failed.',
-        );
-      }
-
-      if (commands.some((c) => c.method === 'proxy')) {
-        lastCategory = 'INVALID_PARAMS';
-        sendAnalytics(false);
-        throw new UserError(
-          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
-            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
         );
       }
 
