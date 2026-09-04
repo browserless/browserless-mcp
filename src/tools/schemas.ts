@@ -683,13 +683,15 @@ const specificCommandSchemas = [
 const KNOWN_METHODS = new Set<string>(
   specificCommandSchemas.map((schema) => schema.shape.method.value),
 );
+const RESERVED_AGENT_METHODS = new Set(['stripeLinkCheckout']);
 
 // fallback for non typed bql methods
 const GenericCommandSchema = z.object({
   method: z
     .string()
-    .refine((m) => !KNOWN_METHODS.has(m), {
-      message: 'method has a typed schema and is validated there, not here',
+    .refine((m) => !KNOWN_METHODS.has(m) && !RESERVED_AGENT_METHODS.has(m), {
+      message:
+        'method is reserved or has a typed schema and cannot use the generic agent path',
     })
     .describe('The BQL method name'),
   params: z
@@ -756,6 +758,9 @@ export const AgentParamsSchema = z
   .object({
     method: z
       .string()
+      .refine((method) => !RESERVED_AGENT_METHODS.has(method), {
+        message: 'method is reserved for a dedicated MCP tool',
+      })
       .optional()
       .default('')
       .describe(
@@ -807,7 +812,7 @@ export const AgentParamsSchema = z
           'permit filling on the target sites.',
       ),
     allowedDomains: z
-      .array(z.string().trim().min(1))
+      .array(nulSafeString('allowedDomains entry'))
       .optional()
       .describe(
         'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +

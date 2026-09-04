@@ -14,6 +14,7 @@ import {
   normalizeUploadCommand,
   persistRecording,
   buildSkillEventProps,
+  AgentParamsSchema,
   registerAgentTools,
   sanitizeUpgradeBody,
 } from '../../src/tools/agent.js';
@@ -77,6 +78,7 @@ const mockConfig: McpConfig = {
 
 const mockContext = {
   reportProgress: sinon.stub().resolves(),
+  signal: new AbortController().signal,
   log: {
     debug: sinon.stub(),
     error: sinon.stub(),
@@ -88,6 +90,65 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
+
+describe('browserless_agent reserved methods', () => {
+  it('rejects Stripe Link checkout through single and batch schemas', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'stripeLinkCheckout',
+        params: { action: 'create' },
+      }).success,
+    ).to.equal(false);
+    expect(
+      AgentParamsSchema.safeParse({
+        commands: [
+          { method: 'snapshot', params: {} },
+          { method: 'stripeLinkCheckout', params: { action: 'create' } },
+        ],
+      }).success,
+    ).to.equal(false);
+  });
+
+  it('rejects NUL characters in credential integration domains', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'snapshot',
+        integrationId: 'op_int_abc',
+        allowedDomains: ['https://example.com\u0000int#forged'],
+      }).success,
+    ).to.equal(false);
+  });
+
+  it('rejects Stripe Link checkout at runtime if schema validation is bypassed', async () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addToolSpy = sinon.spy(server, 'addTool');
+    registerAgentTools(server, mockConfig);
+    const execute = addToolSpy
+      .getCalls()
+      .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
+      .execute;
+
+    for (const params of [
+      { method: 'stripeLinkCheckout', params: { action: 'create' } },
+      {
+        commands: [
+          { method: 'snapshot', params: {} },
+          { method: 'stripeLinkCheckout', params: { action: 'create' } },
+        ],
+      },
+    ]) {
+      let error: unknown;
+      try {
+        await execute(params, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error).message).to.match(
+        /reserved.*browserless_link_checkout/i,
+      );
+    }
+  });
+});
 
 describe('browserless_skill tool', () => {
   let server: FastMCP;
@@ -923,6 +984,144 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent checkout guidance authentication', () => {
+  const checkoutSnapshot = (): SnapshotResult => ({
+    url: 'https://shop.example.com/checkout',
+    title: 'Checkout',
+    elements: [
+      {
+        ref: 1,
+        role: 'textbox',
+        name: 'Card number',
+        selector: 'input[name=cardnumber]',
+        tag: 'input',
+      },
+      {
+        ref: 2,
+        role: 'button',
+        name: 'Pay now',
+        selector: 'button[type=submit]',
+        tag: 'button',
+      },
+    ],
+    time: 1,
+  });
+
+  const stubStripeLinkStatus = (status: 'connected' | 'not_connected') =>
+    sinon.stub(globalThis, 'fetch').callsFake(async (input) => {
+      const url = String(input);
+      const body = url.includes('/integrations/stripe-link/status')
+        ? { status, instruction: 'Check Stripe Link status.' }
+        : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+  const textOf = (result: unknown) =>
+    ((result as { content: Array<{ text?: string }> }).content ?? [])
+      .map((part) => part.text ?? '')
+      .join('\n');
+
+  afterEach(() => sinon.restore());
+
+  it('does not enable checkout guidance from either snapshot path when Stripe Link is disconnected', async () => {
+    stubStripeLinkStatus('not_connected');
+
+    for (const path of ['success', 'error'] as const) {
+      const srv = await makeRespondingServer(() => {
+        if (path === 'success') return checkoutSnapshot();
+        const error = {
+          code: 'SELECTOR_NOT_FOUND',
+          message: 'checkout control changed',
+          snapshot: checkoutSnapshot(),
+        };
+        return new AgentErrorFrame(error);
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        let text: string;
+        try {
+          text = textOf(
+            await execute(
+              { method: 'snapshot' },
+              { ...mockContext, sessionId: `link-disconnected-${path}` },
+            ),
+          );
+        } catch (error) {
+          text = (error as Error).message;
+        }
+        expect(text, path).to.not.include('SKILL: agentic-checkout');
+      } finally {
+        await srv.close();
+      }
+    }
+  });
+
+  it('enables checkout guidance when Stripe Link status is connected', async () => {
+    stubStripeLinkStatus('connected');
+    const srv = await makeRespondingServer(() => checkoutSnapshot());
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = await execute(
+        { method: 'snapshot' },
+        { ...mockContext, sessionId: 'link-connected' },
+      );
+
+      expect(textOf(result)).to.include('SKILL: agentic-checkout');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+describe('browserless_agent OAuth session ownership', () => {
+  afterEach(() => sinon.restore());
+
+  it('does not resume another OAuth user’s browser under a shared API key', async () => {
+    const srv = await makeRespondingServer(() => ({
+      url: '',
+      title: 'Example',
+      elements: [],
+      time: 1,
+    }));
+    try {
+      const execute = getAgentExecute(srv.url, 'httpStream');
+      const context = (userId: string, sessionId: string) => ({
+        ...mockContext,
+        sessionId,
+        session: {
+          token: 'shared-account-token',
+          apiUrl: srv.url,
+          accountId: 'account-1',
+          userId,
+          userRole: 'owner' as const,
+          identityToken: `${userId}-jwt`,
+        },
+      });
+      const opened = (await execute(
+        { method: 'snapshot' },
+        context('user-a', 'transport-a'),
+      )) as { content: Array<{ text?: string }> };
+      const handle = opened.content
+        .map((part) => part.text ?? '')
+        .join('\n')
+        .match(/sessionId: (s:[A-Za-z0-9:_-]+)/)?.[1];
+      expect(handle).to.be.a('string');
+
+      await execute(
+        { method: 'snapshot', sessionId: handle },
+        context('user-b', 'transport-b'),
+      );
+
+      expect(srv.hits()).to.equal(2);
+    } finally {
+      await srv.close();
+    }
+  });
+});
 
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());

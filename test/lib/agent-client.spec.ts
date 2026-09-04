@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import {
   buildAgentWsUrl,
+  getActiveSessionByHandle,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -37,13 +38,14 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.pathname).to.equal('/browserless/chromium/agent');
   });
 
-  it('uses ws:// for http and only sets token when no proxy options are passed', () => {
+  it('uses ws:// for http and lets the backend apply the plan timeout', () => {
     const url = new URL(buildAgentWsUrl('http://localhost:3000', 'tok'));
     expect(url.protocol).to.equal('ws:');
     expect(url.host).to.equal('localhost:3000');
     expect(url.pathname).to.equal('/chromium/agent');
     expect([...url.searchParams.keys()]).to.deep.equal(['token']);
     expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.searchParams.has('timeout')).to.equal(false);
   });
 
   it('uses wss:// for https', () => {
@@ -684,6 +686,142 @@ describe('agent-client bare-call isolation', () => {
       await server.close();
     }
   });
+
+  it('keeps an echoed handle scoped to its OAuth user', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const mine = await getOrCreateSession(
+        'mcp-user-a',
+        server.url,
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-a',
+      );
+      const theirs = await getOrCreateSession(
+        'mcp-user-b',
+        server.url,
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        mine.handle,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-b',
+      );
+      expect(theirs.ws).to.not.equal(mine.ws);
+      expect(
+        getActiveSessionByHandle(
+          mine.handle,
+          server.url,
+          'shared-token',
+          'user-b',
+        ),
+      ).to.equal(theirs);
+      expect(
+        getActiveSessionByHandle(
+          mine.handle,
+          server.url,
+          'shared-token',
+          'user-a',
+        ),
+      ).to.equal(mine);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('agent-client recording-mode reuse', () => {
+  const open = (url: string, record: boolean | undefined, handle?: string) =>
+    getOrCreateSession(
+      'mcp-recording-mode',
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      record,
+    );
+
+  for (const [initial, requested] of [
+    [false, true],
+    [true, false],
+  ] as const) {
+    it(`rejects an explicit record=${requested} change on a record=${initial} session`, async () => {
+      const server = await makeAcceptingServer();
+      try {
+        const existing = await open(server.url, initial);
+        let error: unknown;
+        try {
+          await open(server.url, requested, existing.handle);
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(Error);
+        expect((error as Error).message).to.match(/recording mode/i);
+        expect(isRetryableUpgradeError(error)).to.equal(false);
+      } finally {
+        await server.close();
+      }
+    });
+  }
+
+  it('rejects an explicit mismatch while the handled session is opening', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const handle = 's:recording-mode-in-flight';
+      const opening = open(server.url, false, handle);
+      let error: unknown;
+      try {
+        await open(server.url, true, handle);
+      } catch (caught) {
+        error = caught;
+      }
+      await opening;
+      expect(error).to.be.instanceOf(Error);
+      expect((error as Error).message).to.match(/recording mode/i);
+      expect(isRetryableUpgradeError(error)).to.equal(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reuses the existing recording mode when record is omitted', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const existing = await open(server.url, true);
+      const reused = await open(server.url, undefined, existing.handle);
+      expect(reused.ws).to.equal(existing.ws);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe('agent-client session-cache isolation', () => {
@@ -758,6 +896,23 @@ describe('agent-client session handle', () => {
     expect(key('handle-1', 'tok-a')).to.not.equal(key('handle-1', 'tok-b'));
   });
 
+  it('scopes an echoed handle to its OAuth user under a shared account token', () => {
+    const userKey = (userId: string) =>
+      getSessionKey(
+        'mcp-1',
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'handle-1',
+        undefined,
+        undefined,
+        userId,
+      );
+    expect(userKey('user-a')).to.not.equal(userKey('user-b'));
+  });
+
   it('still separates conversations that echo different handles', () => {
     expect(key('handle-1')).to.not.equal(key('handle-2'));
   });
@@ -793,6 +948,30 @@ describe('agent-client session handle', () => {
       // Same churned session id, but the handle was dropped — a new browser.
       const dropped = await getOrCreateSession('mcp-2', server.url, 'tok');
       expect(dropped.ws).to.not.equal(first.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('resolves only the exact open handle/token/API tuple without reconnecting', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const active = await getOrCreateSession('mcp-1', server.url, 'tok');
+      expect(
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.equal(active);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'wrong-token'),
+      ).to.throw(/unavailable/);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, 'https://other.example', 'tok'),
+      ).to.throw(/unavailable/);
+
+      active.ws.close();
+      await new Promise((resolve) => active.ws.once('close', resolve));
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.throw(/unavailable/);
     } finally {
       await server.close();
     }

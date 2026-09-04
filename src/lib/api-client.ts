@@ -21,9 +21,12 @@ import type {
   SmartScrapeRequest,
   SmartScrapeResult,
   SmartScraperResponse,
+  StripeLinkAction,
+  StripeLinkConnectionResponse,
 } from '../@types/types.js';
 import { retryWithBackoff } from './retry.js';
 import { ResponseCache } from './cache.js';
+import { DEFAULT_API_SERVER_URL } from '../config.js';
 
 /**
  * Thrown when an API call references a profile that does not exist for the
@@ -190,6 +193,159 @@ async function readGeneric(res: Response): Promise<GenericApiResult> {
   };
 }
 
+const optionalString = (
+  value: unknown,
+  field: string,
+  maximumLength: number,
+): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maximumLength
+  ) {
+    throw new Error(`Browserless returned an invalid ${field}`);
+  }
+  return value;
+};
+
+const stripeOwnedHttpsUrl = (
+  value: unknown,
+  field: string,
+): string | undefined => {
+  const raw = optionalString(value, field, 2_048);
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Browserless returned an invalid ${field}`);
+  }
+  const host = url.hostname.toLowerCase();
+  const owned =
+    host === 'stripe.com' ||
+    host.endsWith('.stripe.com') ||
+    host === 'link.com' ||
+    host.endsWith('.link.com');
+  if (
+    url.protocol !== 'https:' ||
+    (url.port && url.port !== '443') ||
+    url.username ||
+    url.password ||
+    !owned
+  ) {
+    throw new Error(`Browserless returned an untrusted ${field}`);
+  }
+  return raw;
+};
+
+const responseObject = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Browserless returned an invalid Stripe Link response');
+  }
+  return value as Record<string, unknown>;
+};
+
+const normalizeStripeLinkConnection = (
+  value: unknown,
+): StripeLinkConnectionResponse => {
+  const body = responseObject(value);
+  if (body.status !== 'connected' && body.status !== 'not_connected') {
+    throw new Error('Browserless returned an invalid Stripe Link status');
+  }
+  const instruction = optionalString(
+    body.instruction,
+    'Stripe Link instruction',
+    1_000,
+  );
+  if (!instruction) {
+    throw new Error('Browserless returned an invalid Stripe Link instruction');
+  }
+  return compact({
+    status: body.status,
+    authorization_url: stripeOwnedHttpsUrl(
+      body.authorization_url,
+      'Stripe Link authorization URL',
+    ),
+    instruction,
+  }) as StripeLinkConnectionResponse;
+};
+
+const callStripeLinkAccountMutation = async (
+  config: ResolvedConfig,
+  action: 'connect' | 'disconnect',
+  identityToken: string | undefined,
+): Promise<StripeLinkConnectionResponse> => {
+  if (!identityToken) {
+    throw new Error(
+      'Stripe Link wallet mutations require authenticated owner or admin access',
+    );
+  }
+  const field =
+    action === 'connect' ? 'connectStripeLink' : 'disconnectStripeLink';
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    config.requestTimeout + 5_000,
+  );
+  try {
+    const apiServer = config.apiServerUrl ?? DEFAULT_API_SERVER_URL;
+    const rawEndpoint = `${apiServer.replace(/\/+$/, '')}/graphql`;
+    let endpoint: URL;
+    try {
+      endpoint = new URL(rawEndpoint);
+    } catch {
+      throw new Error(
+        'Stripe Link wallet management is not configured correctly',
+      );
+    }
+    const trustedHost =
+      endpoint.hostname === 'api.browserless.io' ||
+      endpoint.hostname === 'dev-api.browserless.io';
+    if (
+      endpoint.protocol !== 'https:' ||
+      !trustedHost ||
+      (endpoint.port && endpoint.port !== '443') ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.pathname !== '/graphql' ||
+      endpoint.search ||
+      endpoint.hash
+    ) {
+      throw new Error(
+        'Stripe Link wallet management is not configured correctly',
+      );
+    }
+    const response = await fetch(endpoint.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${identityToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `mutation StripeLinkWalletMutation { ${field} { status authorizationUrl instruction } }`,
+      }),
+      signal: controller.signal,
+    });
+    const body = (await response.json().catch(() => null)) as {
+      data?: Record<string, unknown>;
+      errors?: unknown;
+    } | null;
+    if (!response.ok || !body?.data || body.errors) {
+      throw new Error(
+        'Stripe Link wallet management is temporarily unavailable',
+      );
+    }
+    const result = responseObject(body.data[field]);
+    return normalizeStripeLinkConnection({
+      ...result,
+      authorization_url: result.authorizationUrl,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 export function createApiClient(
   config: ResolvedConfig,
   cache?: ResponseCache,
@@ -280,6 +436,24 @@ export function createApiClient(
         query: { limit: params?.limit, offset: params?.offset },
         timeout: config.requestTimeout,
       });
+    },
+
+    async stripeLinkConnection(
+      action: StripeLinkAction,
+      identityToken?: string,
+    ): Promise<StripeLinkConnectionResponse> {
+      if (action !== 'status') {
+        return callStripeLinkAccountMutation(config, action, identityToken);
+      }
+      const request = {
+        path: '/integrations/stripe-link/status',
+        method: 'GET' as const,
+      };
+      const result = await apiFetch<Record<string, unknown>>(config, {
+        ...request,
+        timeout: config.requestTimeout,
+      });
+      return normalizeStripeLinkConnection(result);
     },
 
     async getStatus(): Promise<{ ok: boolean; message: string }> {
