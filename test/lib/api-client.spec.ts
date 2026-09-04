@@ -5,7 +5,7 @@ import {
   ProfileNotFoundError,
 } from '../../src/lib/api-client.js';
 import { ResponseCache } from '../../src/lib/cache.js';
-import type { McpConfig } from '../../src/@types/types.js';
+import type { McpConfig, SmartScrapeRequest } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig & { browserlessToken: string } = {
   browserlessToken: 'test-token',
@@ -40,6 +40,8 @@ const mockSuccessResponse = {
   pdf: null,
   markdown: '# Hello',
   links: null,
+  rawText: null,
+  metadata: null,
 };
 
 describe('createApiClient', () => {
@@ -72,8 +74,10 @@ describe('createApiClient', () => {
       expect(url).to.include('timeout=30000');
       expect(options.method).to.equal('POST');
       const body = JSON.parse(options.body);
-      expect(body.url).to.equal('https://example.com');
-      expect(body.formats).to.deep.equal(['markdown']);
+      expect(body).to.deep.equal({
+        url: 'https://example.com',
+        formats: ['markdown'],
+      });
     });
 
     it('returns parsed response', async () => {
@@ -146,6 +150,87 @@ describe('createApiClient', () => {
       await client.smartScrape({ url: 'https://other.com' });
 
       expect(fetchStub.calledTwice).to.be.true;
+    });
+
+    it('keys and forwards content-shaping options without header-order collisions', async () => {
+      fetchStub.callsFake(async (_url, options) => {
+        const body = JSON.parse(String(options.body));
+        return new Response(
+          JSON.stringify({
+            ...mockSuccessResponse,
+            content: body.onlyMainContent ? 'main' : 'full',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      });
+
+      const cache = new ResponseCache(mockConfig.cacheTtlMs);
+      const cacheSet = sinon.spy(cache, 'set');
+      const client = createApiClient(mockConfig, cache);
+      const full = await client.smartScrape({
+        url: 'https://example.com',
+        headers: { 'X-Trace': 'trace-value', 'X-Api-Key': 'TOP-SECRET-123' },
+      });
+      const main = await client.smartScrape({
+        url: 'https://example.com',
+        onlyMainContent: true,
+        includeTags: ['article'],
+        excludeTags: ['nav'],
+        headers: { 'X-Api-Key': 'TOP-SECRET-123', 'X-Trace': 'trace-value' },
+        waitFor: 1500,
+      });
+      const fullAgain = await client.smartScrape({
+        url: 'https://example.com',
+        headers: { 'x-api-key': 'TOP-SECRET-123', 'x-trace': 'trace-value' },
+      });
+
+      expect(fetchStub.calledTwice).to.be.true;
+      expect(full.content).to.equal('full');
+      expect(main.content).to.equal('main');
+      expect(fullAgain.content).to.equal('full');
+      expect(fullAgain.cacheHit).to.be.true;
+      for (const [key] of cacheSet.args) {
+        expect(key).not.to.include('x-api-key');
+        expect(key).not.to.include('TOP-SECRET-123');
+        expect(JSON.parse(key).headers).to.match(/^[0-9a-f]{16}$/);
+      }
+      expect(JSON.parse(fetchStub.secondCall.args[1].body)).to.deep.equal({
+        url: 'https://example.com',
+        formats: ['markdown'],
+        onlyMainContent: true,
+        includeTags: ['article'],
+        excludeTags: ['nav'],
+        headers: { 'X-Api-Key': 'TOP-SECRET-123', 'X-Trace': 'trace-value' },
+        waitFor: 1500,
+      });
+    });
+
+    it('isolates the cache by each shaping option', async () => {
+      fetchStub.callsFake(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(mockSuccessResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+      const client = createApiClient(mockConfig);
+      const variants: Array<Partial<SmartScrapeRequest>> = [
+        { onlyMainContent: true },
+        { includeTags: ['article'] },
+        { excludeTags: ['nav'] },
+        { waitFor: 100 },
+        { headers: { 'X-A': 'a' } },
+        { headers: { 'X-B': 'a' } },
+        { headers: { 'X-A': 'b' } },
+      ];
+
+      await client.smartScrape({ url: 'https://example.com' });
+      for (const fields of variants) {
+        await client.smartScrape({ url: 'https://example.com', ...fields });
+      }
+
+      expect(fetchStub.callCount).to.equal(variants.length + 1);
     });
 
     it('isolates cache entries by API URL when the cache is shared', async () => {
