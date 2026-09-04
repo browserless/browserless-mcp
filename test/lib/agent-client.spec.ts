@@ -749,6 +749,81 @@ describe('agent-client bare-call isolation', () => {
   });
 });
 
+describe('agent-client recording-mode reuse', () => {
+  const open = (url: string, record: boolean | undefined, handle?: string) =>
+    getOrCreateSession(
+      'mcp-recording-mode',
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      record,
+    );
+
+  for (const [initial, requested] of [
+    [false, true],
+    [true, false],
+  ] as const) {
+    it(`rejects an explicit record=${requested} change on a record=${initial} session`, async () => {
+      const server = await makeAcceptingServer();
+      try {
+        const existing = await open(server.url, initial);
+        let error: unknown;
+        try {
+          await open(server.url, requested, existing.handle);
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(Error);
+        expect((error as Error).message).to.match(/recording mode/i);
+        expect(isRetryableUpgradeError(error)).to.equal(false);
+      } finally {
+        await server.close();
+      }
+    });
+  }
+
+  it('rejects an explicit mismatch while the handled session is opening', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const handle = 's:recording-mode-in-flight';
+      const opening = open(server.url, false, handle);
+      let error: unknown;
+      try {
+        await open(server.url, true, handle);
+      } catch (caught) {
+        error = caught;
+      }
+      await opening;
+      expect(error).to.be.instanceOf(Error);
+      expect((error as Error).message).to.match(/recording mode/i);
+      expect(isRetryableUpgradeError(error)).to.equal(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reuses the existing recording mode when record is omitted', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const existing = await open(server.url, true);
+      const reused = await open(server.url, undefined, existing.handle);
+      expect(reused.ws).to.equal(existing.ws);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe('agent-client session-cache isolation', () => {
   it('keeps distinct sessions for the same mcpSessionId+token with different profiles', async () => {
     const server = await makeAcceptingServer();
