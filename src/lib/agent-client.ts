@@ -393,6 +393,7 @@ export const buildAgentWsUrl = (
   os?: string,
   humanlike?: boolean,
   persona?: PersonaOptions,
+  record?: boolean,
 ): string => {
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(
@@ -460,6 +461,8 @@ export const buildAgentWsUrl = (
       if (value !== undefined) url.searchParams.set(field, String(value));
     }
   }
+  // Recording is armed only when launching a new browser.
+  if (record) url.searchParams.set('record', 'true');
   return url.toString();
 };
 
@@ -667,6 +670,7 @@ const connect = (
   os?: string,
   humanlike?: boolean,
   persona?: PersonaOptions,
+  record?: boolean,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -681,6 +685,7 @@ const connect = (
       os,
       humanlike,
       persona,
+      record,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -819,6 +824,7 @@ export const getOrCreateSession = async (
   os?: string,
   humanlike?: boolean,
   persona?: PersonaOptions,
+  record?: boolean,
 ): Promise<ActiveSession> => {
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
@@ -990,6 +996,7 @@ export const getOrCreateSession = async (
       effectiveOs,
       humanlike,
       createProfile ? undefined : effectivePersona,
+      record,
     );
     const session: ActiveSession = {
       ws,
@@ -1008,6 +1015,7 @@ export const getOrCreateSession = async (
       os: effectiveOs,
       humanlike,
       persona: effectivePersona,
+      record,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -1084,6 +1092,7 @@ export const send = async (
         session.os,
         session.humanlike,
         session.creationSessionId ? undefined : session.persona,
+        session.record,
       ).finally(() => {
         session.reconnecting = undefined;
       });

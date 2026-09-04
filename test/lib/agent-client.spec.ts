@@ -272,7 +272,7 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.has('allowedDomains')).to.equal(false);
   });
 
-  it('forwards persona options only on the full surface', () => {
+  it('forwards persona options and recording together on the full surface', () => {
     const persona = {
       emulationOs: 'windows' as const,
       emulatedDevice: 'pixel-8',
@@ -293,6 +293,7 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         undefined,
         persona,
+        true,
       ),
     );
     expect(Object.fromEntries(full.searchParams)).to.include({
@@ -301,6 +302,7 @@ describe('agent-client buildAgentWsUrl', () => {
       screen: '1920x1080',
       deviceScaleFactor: '1.25',
       deviceSlot: '3',
+      record: 'true',
     });
 
     const compliant = new URL(

@@ -631,6 +631,22 @@ const CloseCommandSchema = z.object({
   params: z.object({}).optional().default({}),
 });
 
+const StartRecordingCommandSchema = z.object({
+  method: z.literal('startRecording'),
+  params: z
+    .object({
+      width: z.number().optional(),
+      height: z.number().optional(),
+    })
+    .optional()
+    .default({}),
+});
+
+const StopRecordingCommandSchema = z.object({
+  method: z.literal('stopRecording'),
+  params: z.object({}).optional().default({}),
+});
+
 // Fully-typed command variants, each keyed by a `method` literal so they can be
 // dispatched by the discriminated union below.
 const specificCommandSchemas = [
@@ -663,6 +679,8 @@ const specificCommandSchemas = [
   ScreenshotCommandSchema,
   UploadFileCommandSchema,
   GetDownloadsCommandSchema,
+  StartRecordingCommandSchema,
+  StopRecordingCommandSchema,
   CloseCommandSchema,
 ] as const;
 
@@ -767,6 +785,13 @@ export const AgentParamsSchema = z
         'Changing requires close() + a new session call.',
     ),
     ...PersonaOptionsSchema.shape,
+    record: z
+      .boolean()
+      .optional()
+      .describe(
+        'Arm screen-video recording at session launch. Use `startRecording` / ' +
+          '`stopRecording`; stopping returns a single-use WebM link, never bytes.',
+      ),
     profile: profileField(
       'when the agent session connects',
       ' `profile` binds each call to its hydrated session — you MUST pass it on ' +
@@ -846,6 +871,21 @@ export const AgentParamsSchema = z
     {
       message:
         'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
+    },
+  )
+  .refine(
+    ({ commands = [] }) =>
+      commands.every(
+        (command, index) =>
+          command.method !== 'stopRecording' ||
+          index === commands.length - 1 ||
+          (index === commands.length - 2 &&
+            commands.at(-1)?.method === 'close'),
+      ),
+    {
+      message:
+        '`stopRecording` must be the final command, except before `close`',
+      path: ['commands'],
     },
   )
   .superRefine((v, ctx) => {

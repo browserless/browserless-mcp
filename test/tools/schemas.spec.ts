@@ -383,6 +383,27 @@ describe('AgentParamsSchema persona', () => {
   });
 });
 
+describe('AgentParamsSchema recording batches', () => {
+  it('requires stopRecording to be final except before close', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        commands: [
+          { method: 'stopRecording', params: {} },
+          { method: 'snapshot', params: {} },
+        ],
+      }).success,
+    ).to.equal(false);
+    expect(
+      AgentParamsSchema.safeParse({
+        commands: [
+          { method: 'stopRecording', params: {} },
+          { method: 'close', params: {} },
+        ],
+      }).success,
+    ).to.equal(true);
+  });
+});
+
 // The shared `profileField` helper refines profile names to reject NUL
 // characters — the session-key separator in agent-client.ts is '\u0000',
 // so a profile containing NUL could collide with another key. These tests
