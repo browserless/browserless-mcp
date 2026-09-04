@@ -3,7 +3,6 @@ import sinon from 'sinon';
 import {
   buildAgentWsUrl,
   closeSession,
-  destroySession,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -689,7 +688,7 @@ describe('agent-client bare-call isolation', () => {
 });
 
 describe('agent-client session-cache isolation', () => {
-  const open = (sid: string, url: string, record: boolean, handle?: string) =>
+  const open = (sid: string, url: string, record?: boolean, handle?: string) =>
     getOrCreateSession(
       sid,
       url,
@@ -752,37 +751,68 @@ describe('agent-client session-cache isolation', () => {
     }
   });
 
-  for (const [verb, end] of [
-    ['closes', closeSession],
-    ['destroys', destroySession],
+  it('reuses a recorded session when record is omitted', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const recorded = await open('mcp-record-reuse', server.url, true);
+      const reused = await open(
+        'mcp-record-reuse-2',
+        server.url,
+        undefined,
+        recorded.handle,
+      );
+
+      expect(reused.ws).to.equal(recorded.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('closes a recorded session when record is omitted', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const sid = 'mcp-record-close';
+      const recorded = await open(sid, server.url, true);
+      closeSession(
+        'mcp-record-close-2',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        recorded.handle,
+      );
+
+      expect(
+        (await open(sid, server.url, true, recorded.handle)).ws,
+      ).to.not.equal(recorded.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  for (const [initial, requested] of [
+    [false, true],
+    [true, false],
   ] as const) {
-    it(`${verb} only the session with the requested recording mode`, async () => {
+    it(`rejects an explicit record=${requested} change on a record=${initial} session`, async () => {
       const server = await makeAcceptingServer();
       try {
-        const sid = `mcp-record-${verb}`;
-        const plain = await open(sid, server.url, false);
-        const recorded = await open(sid, server.url, true, plain.handle);
-
-        expect(recorded.ws).to.not.equal(plain.ws);
-        end(
-          sid,
-          'tok',
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          plain.handle,
-          undefined,
-          undefined,
-          true,
+        const existing = await open(
+          `mcp-record-${initial}`,
+          server.url,
+          initial,
         );
+        const error = await open(
+          `mcp-record-${requested}`,
+          server.url,
+          requested,
+          existing.handle,
+        ).catch((caught: unknown) => caught);
 
-        expect((await open(sid, server.url, false, plain.handle)).ws).to.equal(
-          plain.ws,
-        );
-        expect(
-          (await open(sid, server.url, true, plain.handle)).ws,
-        ).to.not.equal(recorded.ws);
+        expect(error).to.be.instanceOf(Error);
+        expect((error as Error).message).to.match(/recording mode/i);
+        expect(isRetryableUpgradeError(error)).to.equal(false);
       } finally {
         await server.close();
       }

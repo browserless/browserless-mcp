@@ -150,7 +150,21 @@ export class ProfileNotFoundError extends UpgradeError {
 // stacks more lingering sessions against the same limit, so stop instead.
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
+class SessionReuseError extends Error {}
+
+const assertCompatibleRecordingMode = (
+  session: ActiveSession,
+  record: boolean | undefined,
+): void => {
+  if (record !== undefined && record !== (session.record ?? false)) {
+    throw new SessionReuseError(
+      'Browser recording mode cannot be changed on an open session. Omit record to reuse it, or close the session before changing the record option.',
+    );
+  }
+};
+
 export const isRetryableUpgradeError = (err: unknown): boolean => {
+  if (err instanceof SessionReuseError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -261,7 +275,6 @@ export const getSessionKey = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
-  record?: boolean,
 ): string =>
   `t:${hashToken(token)}` +
   KEY_SEP +
@@ -282,8 +295,7 @@ export const getSessionKey = (
             ? '|' + [...allowedDomains].sort().join(',')
             : ''),
       )
-    : '') +
-  (record ? KEY_SEP + 'record' : '');
+    : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -735,7 +747,6 @@ export const getOrCreateSession = async (
     handle,
     integrationId,
     allowedDomains,
-    record,
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
@@ -745,13 +756,18 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
+    assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
     return existing;
   }
 
   // Another caller is already creating a session for this key — share it.
   const inFlight = pending.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const session = await inFlight;
+    assertCompatibleRecordingMode(session, record);
+    return session;
+  }
 
   // Clean up stale session if any
   if (existing) {
@@ -906,7 +922,6 @@ export const closeSession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
-  record?: boolean,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -918,7 +933,6 @@ export const closeSession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
-    record,
   );
   const session = sessions.get(key);
   if (session) {
@@ -946,7 +960,6 @@ export const destroySession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
-  record?: boolean,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -958,7 +971,6 @@ export const destroySession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
-    record,
   );
   const session = sessions.get(key);
   if (session) {
