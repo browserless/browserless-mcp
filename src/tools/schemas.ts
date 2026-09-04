@@ -881,6 +881,16 @@ export const AgentParamsSchema = z
       'one) cannot both be set',
   })
   .refine(
+    ({ method, params, commands }) =>
+      commands !== undefined ||
+      method !== 'clearSecrets' ||
+      ClearSecretsCommandSchema.safeParse({ method, params }).success,
+    {
+      message: '`clearSecrets` does not accept parameters',
+      path: ['params'],
+    },
+  )
+  .refine(
     ({ commands = [] }) =>
       commands.every(
         (command, index) =>
