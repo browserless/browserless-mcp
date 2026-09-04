@@ -399,7 +399,8 @@ export const preflightAgentCapabilities = async (
     manifest?.version !== 1 ||
     typeof manifest.route !== 'string' ||
     !manifest.capabilities ||
-    typeof manifest.capabilities !== 'object'
+    typeof manifest.capabilities !== 'object' ||
+    Array.isArray(manifest.capabilities)
   ) {
     throw new Error('Capability discovery returned an unsupported manifest.');
   }

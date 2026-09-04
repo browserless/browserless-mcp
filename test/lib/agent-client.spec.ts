@@ -362,6 +362,25 @@ describe('agent-client capability preflight', () => {
     }
   });
 
+  it('rejects an array-valued capability map', async () => {
+    sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: [],
+        }),
+      ),
+    );
+
+    try {
+      await preflightAgentCapabilities(agentUrl(), ['vision']);
+      expect.fail('expected capability preflight to fail');
+    } catch (err) {
+      expect((err as Error).message).to.include('unsupported manifest');
+    }
+  });
+
   it('rejects invalid JSON and tolerates malformed route alternatives', async () => {
     const fetchStub = sinon.stub(globalThis, 'fetch');
     const rejectsWith = async (expected: string) => {
