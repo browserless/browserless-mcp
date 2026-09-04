@@ -424,6 +424,70 @@ export const formatScreenshotToDisk = async (
   return content;
 };
 
+/** Persist stopRecording's WebM outside model context and return a handle. */
+export const persistRecording = async (
+  result: unknown,
+  sessionId: string | undefined,
+): Promise<unknown> => {
+  const value = (result as { value?: string } | null)?.value;
+  // No payload (recording failed / nothing captured) → leave the result as-is
+  // so the error surfaces to the caller unchanged.
+  if (!value) return result;
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const decodedBytes = Math.floor((value.length * 3) / 4) - padding;
+  if (decodedBytes > FILE_TRANSFER_MAX_BYTES) {
+    return {
+      recording: false,
+      error:
+        `Recording is ${decodedBytes} bytes, over the ` +
+        `${FILE_TRANSFER_MAX_BYTES}-byte download limit — record a shorter clip.`,
+    };
+  }
+  const buf = Buffer.from(value, 'base64');
+  if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
+    return {
+      recording: false,
+      error:
+        `Recording is ${buf.byteLength} bytes, over the ` +
+        `${FILE_TRANSFER_MAX_BYTES}-byte download limit — record a shorter clip.`,
+    };
+  }
+  return {
+    recording: true,
+    download: await storeDownload(
+      'recording.webm',
+      'video/webm',
+      buf,
+      sessionId,
+    ),
+  };
+};
+
+// Surface a persisted recording as a single-use download handle (never bytes).
+export const formatRecordingToDisk = (
+  result: unknown,
+  caption: string,
+  skills: string,
+  opts: FormatOpts,
+): Content[] => {
+  const r = result as { download?: StoredDownload; error?: string } | null;
+  const text = r?.download
+    ? [
+        caption.trimEnd(),
+        `Recording saved to disk (not shown inline):\n- ${describeReadyDownload(
+          r.download,
+          opts,
+        )}`,
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    : `${caption}${r?.error ?? 'Recording failed.'}`;
+
+  const content: Content[] = [{ type: 'text', text }];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
+};
+
 type SkillToolParams = { id?: string; site?: string };
 
 export const buildSkillEventProps = (
@@ -646,6 +710,7 @@ export function registerAgentTools(
       const createProfile = params.createProfile;
       const integrationId = params.integrationId;
       const allowedDomains = params.allowedDomains;
+      const record = params.record;
       // Spoofed desktop OS for the agent's stealth fingerprint. Defaults to
       // windows so the agent presents a coherent, low-risk desktop identity
       // rather than its native Linux (Chrome-masked UA over "Linux x86_64" is a
@@ -792,6 +857,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
+            record,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -825,6 +891,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
+            record,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -1034,6 +1101,10 @@ export function registerAgentTools(
             }
           }
 
+          if (cmd.method === 'stopRecording') {
+            resp.result = await persistRecording(resp.result, mcpSessionId);
+          }
+
           results.push({ method: cmd.method, result: resp.result });
         }
 
@@ -1227,6 +1298,19 @@ export function registerAgentTools(
             mcpBaseUrl: config.mcpBaseUrl,
             token,
           });
+        } else if (last.method === 'stopRecording') {
+          // Video is never inlined → always a single-use download handle.
+          baseContent = formatRecordingToDisk(
+            lastResult,
+            batchPrefix,
+            skillsText,
+            {
+              transport: config.transport,
+              sessionId: mcpSessionId,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            },
+          );
         } else if (
           last.method === 'screenshot' &&
           lastCmd.params?.toDisk === true

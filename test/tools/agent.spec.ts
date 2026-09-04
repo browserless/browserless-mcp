@@ -7,10 +7,12 @@ import {
   formatConnectError,
   formatDownloads,
   formatErrorMessage,
+  formatRecordingToDisk,
   formatScreenshotContent,
   formatScreenshotToDisk,
   formatSnapshot,
   normalizeUploadCommand,
+  persistRecording,
   buildSkillEventProps,
   registerAgentTools,
   sanitizeUpgradeBody,
@@ -20,7 +22,11 @@ import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { downloadUri, storeDownload } from '../../src/lib/download-store.js';
+import {
+  downloadUri,
+  FILE_TRANSFER_MAX_BYTES,
+  storeDownload,
+} from '../../src/lib/download-store.js';
 import {
   ProfileNotFoundError,
   UpgradeError,
@@ -397,6 +403,36 @@ describe('formatScreenshotToDisk', () => {
         transport: 'stdio',
       }),
     ).to.be.null;
+  });
+});
+
+describe('recording downloads', () => {
+  it('stores base64 WebM bytes and formats only its handle', async () => {
+    const base64 = Buffer.from('webm').toString('base64');
+    const result = (await persistRecording({ value: base64 }, 'session')) as {
+      download: Parameters<typeof formatRecordingToDisk>[0];
+    };
+    const content = formatRecordingToDisk(result, '', '', {
+      transport: 'stdio',
+    });
+
+    expect(JSON.stringify(content)).to.include('recording.webm');
+    expect(JSON.stringify(content)).to.not.include(base64);
+  });
+
+  it('rejects recordings over the transfer limit', async () => {
+    const value = 'A'.repeat(4 * Math.ceil((FILE_TRANSFER_MAX_BYTES + 1) / 3));
+    const decode = sinon
+      .stub(Buffer, 'from')
+      .throws(new Error('must reject before decoding'));
+    try {
+      expect(await persistRecording({ value }, undefined)).to.deep.include({
+        recording: false,
+      });
+      expect(decode.called).to.equal(false);
+    } finally {
+      decode.restore();
+    }
   });
 });
 
