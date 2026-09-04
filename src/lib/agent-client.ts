@@ -1134,6 +1134,7 @@ export const getOrCreateSession = async (
       persona: effectivePersona,
       record,
       skillState: createSkillState(),
+      secretVisible: false,
       lastUsedAt: Date.now(),
     };
     createdAt.set(session, Date.now());
