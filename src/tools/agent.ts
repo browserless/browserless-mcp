@@ -815,8 +815,8 @@ export function registerAgentTools(
             allowedDomains,
             emulationOs,
             humanlike,
-            persona,
             record,
+            persona,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -853,8 +853,8 @@ export function registerAgentTools(
             allowedDomains,
             emulationOs,
             humanlike,
-            retryPersona,
             record,
+            retryPersona,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting

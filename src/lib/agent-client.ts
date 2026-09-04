@@ -392,8 +392,8 @@ export const buildAgentWsUrl = (
   allowedDomains?: string[],
   os?: string,
   humanlike?: boolean,
-  persona?: PersonaOptions,
   record?: boolean,
+  persona?: PersonaOptions,
 ): string => {
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(
@@ -669,8 +669,8 @@ const connect = (
   allowedDomains?: string[],
   os?: string,
   humanlike?: boolean,
-  persona?: PersonaOptions,
   record?: boolean,
+  persona?: PersonaOptions,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -684,8 +684,8 @@ const connect = (
       allowedDomains,
       os,
       humanlike,
-      persona,
       record,
+      persona,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -823,8 +823,8 @@ export const getOrCreateSession = async (
   allowedDomains?: string[],
   os?: string,
   humanlike?: boolean,
-  persona?: PersonaOptions,
   record?: boolean,
+  persona?: PersonaOptions,
 ): Promise<ActiveSession> => {
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
@@ -995,8 +995,8 @@ export const getOrCreateSession = async (
       allowedDomains,
       effectiveOs,
       humanlike,
-      createProfile ? undefined : effectivePersona,
       record,
+      createProfile ? undefined : effectivePersona,
     );
     const session: ActiveSession = {
       ws,
@@ -1091,8 +1091,8 @@ export const send = async (
         session.allowedDomains,
         session.os,
         session.humanlike,
-        session.creationSessionId ? undefined : session.persona,
         session.record,
+        session.creationSessionId ? undefined : session.persona,
       ).finally(() => {
         session.reconnecting = undefined;
       });

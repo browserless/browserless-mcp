@@ -119,6 +119,7 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { emulationOs: 'windows' },
       ),
     );
@@ -272,7 +273,7 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.has('allowedDomains')).to.equal(false);
   });
 
-  it('forwards persona options and recording together on the full surface', () => {
+  it('preserves the published recording argument while adding persona options', () => {
     const persona = {
       emulationOs: 'windows' as const,
       emulatedDevice: 'pixel-8',
@@ -292,8 +293,9 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         undefined,
         undefined,
-        persona,
+        // `record` shipped in v1.26 at this position; persona stays appended.
         true,
+        persona,
       ),
     );
     expect(Object.fromEntries(full.searchParams)).to.include({
@@ -313,6 +315,7 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         undefined,
         true,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -338,6 +341,7 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         'macos',
         undefined,
+        undefined,
         { emulationOs: 'windows' },
       ),
     ).to.throw(PersonaConflictError, /os.*emulationOs/i);
@@ -352,6 +356,7 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         'sess-123',
         false,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -822,6 +827,7 @@ describe('agent-client bare-call isolation', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { emulationOs: 'windows', screen: '1920x1080' },
       );
       const resumed = await getOrCreateSession(
@@ -859,6 +865,7 @@ describe('agent-client bare-call isolation', () => {
           undefined,
           undefined,
           undefined,
+          undefined,
           { emulationOs: 'macos' },
         );
       } catch (error) {
@@ -882,6 +889,7 @@ describe('agent-client bare-call isolation', () => {
         undefined,
         undefined,
         false,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -1014,6 +1022,7 @@ describe('agent-client bare-call isolation', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { emulationOs: 'windows', screen: '1920x1080' },
       );
       const closed = new Promise<void>((resolve) =>
@@ -1112,6 +1121,7 @@ describe('agent-client bare-call isolation', () => {
           undefined,
           undefined,
           undefined,
+          undefined,
           { emulationOs },
         );
 
@@ -1181,6 +1191,7 @@ describe('agent-client bare-call isolation', () => {
           false,
           undefined,
           'profile-persona-handle',
+          undefined,
           undefined,
           undefined,
           undefined,
@@ -1509,6 +1520,7 @@ describe('agent-client createProfile with os and humanlike', () => {
         false,
         undefined,
         'emulated-profile-handle',
+        undefined,
         undefined,
         undefined,
         undefined,
