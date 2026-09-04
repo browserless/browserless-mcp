@@ -196,9 +196,14 @@ describe('compliance mode — compliant tool surface', () => {
       ).to.be.false;
     });
 
-    it('rejects the circumvention commands (solve/evaluate/loadSecret)', () => {
+    it('rejects the circumvention commands (solve/evaluate/loadSecret/clearSecrets)', () => {
       const agent = captureTools(true).byName.get('browserless_agent')!;
-      for (const method of ['solve', 'evaluate', 'loadSecret']) {
+      for (const method of [
+        'solve',
+        'evaluate',
+        'loadSecret',
+        'clearSecrets',
+      ]) {
         expect(
           agent.parameters.safeParse({ commands: [{ method, params: {} }] })
             .success,
@@ -234,7 +239,7 @@ describe('compliance mode — compliant tool surface', () => {
       // Mirrors the top-level EXPECTED_KEYS guard for the command-method
       // dimension: navigation + read + interaction (click/type/select/etc. are
       // legitimate automation, not circumvention); the prohibited classes —
-      // solve/evaluate/loadSecret and top-level proxy/profile — stay out.
+      // solve/evaluate/loadSecret/clearSecrets and top-level proxy/profile — stay out.
       const EXPECTED_METHODS = [
         'goto',
         'back',
