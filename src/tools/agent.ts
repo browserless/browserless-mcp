@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import {
+  downloadOwner,
   downloadUri,
   getDownload,
   storeDownload,
@@ -200,7 +201,8 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
 export const normalizeUploadCommand = async (
   cmd: { method: string; params: Record<string, unknown> },
   transport: McpConfig['transport'],
-  mcpBaseUrl?: string,
+  mcpBaseUrl: string | undefined,
+  token: string,
 ): Promise<void> => {
   if (cmd.method !== 'uploadFile') return;
   const files = cmd.params.files;
@@ -214,7 +216,7 @@ export const normalizeUploadCommand = async (
     let defaultName: string;
 
     if (typeof f.handle === 'string' && f.handle) {
-      const record = getDownload(f.handle);
+      const record = getDownload(f.handle, downloadOwner(token));
       if (!record) {
         throw new UserError(
           `Unknown upload handle "${f.handle}". Pass a handle returned by ` +
@@ -276,6 +278,7 @@ const describeFailedDownload = (d: DownloadEntry): string => {
 // tagged to the MCP session for cleanup. Returns null for failed/empty entries.
 const persistDownload = async (
   d: DownloadEntry,
+  token: string | undefined,
   sessionId?: string,
 ): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
   if (d.error || !d.data || !d.filename) return null;
@@ -283,6 +286,7 @@ const persistDownload = async (
     d.filename,
     d.mimeType ?? 'application/octet-stream',
     Buffer.from(d.data, 'base64'),
+    downloadOwner(token ?? ''),
     sessionId,
   );
 };
@@ -308,7 +312,11 @@ const describeReadyDownload = (
     );
   }
   const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
-  const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  const tokenQ = `?token=${
+    opts.token === undefined
+      ? '<YOUR_BROWSERLESS_TOKEN>'
+      : encodeURIComponent(opts.token)
+  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
@@ -329,7 +337,7 @@ export const formatDownloads = async (
       lines.push(`- ${describeInProgressDownload(d)}`);
       continue;
     }
-    const record = await persistDownload(d, opts.sessionId);
+    const record = await persistDownload(d, opts.token, opts.sessionId);
     lines.push(
       `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
     );
@@ -363,6 +371,7 @@ export const formatScreenshotToDisk = async (
     `screenshot.${ext}`,
     mimeType,
     Buffer.from(base64, 'base64'),
+    downloadOwner(opts.token ?? ''),
     opts.sessionId,
   );
 
@@ -381,6 +390,7 @@ export const formatScreenshotToDisk = async (
 /** Persist stopRecording's WebM outside model context and return a handle. */
 export const persistRecording = async (
   result: unknown,
+  token: string | undefined,
   sessionId: string | undefined,
 ): Promise<unknown> => {
   const value = (result as { value?: string } | null)?.value;
@@ -412,6 +422,7 @@ export const persistRecording = async (
       'recording.webm',
       'video/webm',
       buf,
+      downloadOwner(token ?? ''),
       sessionId,
     ),
   };
@@ -1023,7 +1034,11 @@ export function registerAgentTools(
           }
 
           if (cmd.method === 'stopRecording') {
-            resp.result = await persistRecording(resp.result, mcpSessionId);
+            resp.result = await persistRecording(
+              resp.result,
+              token,
+              mcpSessionId,
+            );
           }
 
           results.push({ method: cmd.method, result: resp.result });
@@ -1300,6 +1315,7 @@ export function registerAgentTools(
             cmd,
             config.transport,
             config.mcpBaseUrl,
+            token,
           );
         }
         const result = await runCommands(false);

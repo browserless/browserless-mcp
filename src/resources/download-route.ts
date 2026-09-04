@@ -1,6 +1,6 @@
 import type { FastMCP } from 'fastmcp';
 import { readFile, rm } from 'node:fs/promises';
-import { consumeDownload } from '../lib/download-store.js';
+import { consumeDownload, downloadOwner } from '../lib/download-store.js';
 import { guardRouteAuth } from '../lib/http-auth.js';
 import type { McpConfig } from '../@types/types.js';
 
@@ -24,11 +24,14 @@ export function registerDownloadRoute(
   const app = server.getApp();
 
   app.get('/download/:id', async (c) => {
-    const denied = await guardRouteAuth(c, config);
-    if (denied) return denied;
+    const auth = await guardRouteAuth(c, config);
+    if (auth instanceof Response) return auth;
 
     // Single-use: consume removes it from the registry so a second GET 404s.
-    const record = consumeDownload(c.req.param('id'));
+    const record = consumeDownload(
+      c.req.param('id'),
+      downloadOwner(auth.token),
+    );
     if (!record) {
       return c.json(
         {
