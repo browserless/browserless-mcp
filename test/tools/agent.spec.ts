@@ -1004,6 +1004,29 @@ describe('browserless_agent persona creation guard', () => {
   });
 });
 
+describe('browserless_agent recording creation guard', () => {
+  afterEach(() => sinon.restore());
+
+  it('rejects recording while attaching before connecting', async () => {
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    try {
+      await execute(
+        { method: 'snapshot', record: true },
+        {
+          ...mockContext,
+          sessionId: 'recording-attach-guard',
+          session: { attachSessionId: 'existing-browser' },
+        },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.match(
+        /recording.*cannot.*attached browser/i,
+      );
+    }
+  });
+});
+
 describe('browserless_agent retry-guard (runCommands)', () => {
   // Each test uses a distinct mcpSessionId so the module-level session
   // cache can't return a stale entry from a prior case.
@@ -1228,7 +1251,10 @@ describe('browserless_agent _prompt capture', () => {
       { ...mockContext, sessionId: 'analytics-os-alias' },
     );
 
-    expect(fire.firstCall.args[2]).to.include({ emulation_os: 'macos' });
+    expect(fire.firstCall.args[2]).to.include({
+      emulation_os: 'macos',
+      persona_requested: true,
+    });
   });
 
   it('fires exactly one event carrying the classified category on failure', async () => {

@@ -862,6 +862,11 @@ export const AgentParamsSchema = z
       '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
       'one) cannot both be set',
   })
+  .refine((v) => !(v.record && v.createProfile), {
+    message:
+      'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+    path: ['record'],
+  })
   .refine(
     (v) =>
       !v.createProfile ||

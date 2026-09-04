@@ -407,6 +407,11 @@ export const buildAgentWsUrl = (
   // emulationOs is likewise carried by the running browser on reconnect (enterprise
   // restores requestedEmulationOs from the instance), so it's only set on a fresh connect.
   if (sessionId) {
+    if (record) {
+      throw new PersonaConflictError(
+        'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
+      );
+    }
     if (hasPersona(persona)) {
       throw new Error(
         'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
@@ -830,6 +835,16 @@ export const getOrCreateSession = async (
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(
       '`os` and `emulationOs` must match when both are provided.',
+    );
+  }
+  if (record && createProfile) {
+    throw new PersonaConflictError(
+      'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+    );
+  }
+  if (record && attachSessionId) {
+    throw new PersonaConflictError(
+      'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
     );
   }
   const effectiveOs = persona?.emulationOs ?? os;

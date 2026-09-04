@@ -366,6 +366,24 @@ describe('agent-client buildAgentWsUrl', () => {
     ).to.throw(/cannot redefine an attached browser/i);
   });
 
+  it('rejects recording while attaching an existing browser', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      ),
+    ).to.throw(/recording.*cannot.*attached browser/i);
+  });
+
   it('skips integrationId when attaching to an existing session', () => {
     const url = new URL(
       buildAgentWsUrl(
@@ -1202,6 +1220,45 @@ describe('agent-client bare-call isolation', () => {
         thrown = error;
       }
       expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect(fetchStub.called).to.equal(false);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it('rejects recording before allocating a profile-creation session', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ id: 'created-profile' }), {
+        status: 200,
+      }),
+    );
+    try {
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-create-profile-recording',
+          'http://127.0.0.1:1',
+          'tok',
+          undefined,
+          undefined,
+          { name: 'demo' },
+          undefined,
+          false,
+          undefined,
+          'profile-recording-handle',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          true,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect((thrown as Error).message).to.match(
+        /recording.*cannot.*profile creation/i,
+      );
       expect(fetchStub.called).to.equal(false);
     } finally {
       fetchStub.restore();

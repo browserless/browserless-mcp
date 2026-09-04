@@ -627,9 +627,9 @@ export function registerAgentTools(
               params: c.params ?? {},
             }))
           : [{ method: params.method ?? '', params: params.params ?? {} }];
-      const personaRequested = PERSONA_FIELDS.some(
-        (field) => params[field] !== undefined,
-      );
+      const personaRequested =
+        params.os !== undefined ||
+        PERSONA_FIELDS.some((field) => params[field] !== undefined);
 
       // Defense-in-depth: even if the schema were mis-built, compliant never
       // forwards a non-allowlisted method, auth-profile, or proxy arg to the backend.
@@ -708,6 +708,16 @@ export function registerAgentTools(
       if (createProfile && integrationId) {
         throw new UserError(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
+        );
+      }
+      if (record && createProfile) {
+        throw new UserError(
+          'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+        );
+      }
+      if (record && attachSessionId) {
+        throw new UserError(
+          'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
         );
       }
       if (

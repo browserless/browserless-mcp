@@ -384,6 +384,23 @@ describe('AgentParamsSchema persona', () => {
 });
 
 describe('AgentParamsSchema recording batches', () => {
+  it('rejects recording during profile creation', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        createProfile: { name: 'demo' },
+        record: true,
+        method: 'snapshot',
+      }).success,
+    ).to.equal(false);
+    expect(
+      AgentParamsSchema.safeParse({
+        createProfile: { name: 'demo' },
+        record: false,
+        method: 'snapshot',
+      }).success,
+    ).to.equal(true);
+  });
+
   it('requires stopRecording to be final except before close', () => {
     expect(
       AgentParamsSchema.safeParse({
