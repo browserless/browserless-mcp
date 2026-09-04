@@ -413,7 +413,7 @@ export const buildAgentWsUrl = (
         'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
       );
     }
-    if (hasPersona(persona)) {
+    if (hasPersona(persona) || os !== undefined) {
       throw new Error(
         'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
       );
@@ -922,7 +922,7 @@ export const getOrCreateSession = async (
     retainedPersonas.set(key, retainedPersona);
   }
 
-  if (attachSessionId && hasPersona(persona)) {
+  if (attachSessionId && (hasPersona(persona) || effectiveOs !== undefined)) {
     throw new PersonaConflictError(
       'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
     );
@@ -1023,7 +1023,7 @@ export const getOrCreateSession = async (
       source,
       integrationId,
       allowedDomains,
-      effectiveOs,
+      createProfile ? undefined : effectiveOs,
       humanlike,
       record,
       createProfile ? undefined : effectivePersona,

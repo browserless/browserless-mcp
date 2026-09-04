@@ -366,6 +366,22 @@ describe('agent-client buildAgentWsUrl', () => {
     ).to.throw(/cannot redefine an attached browser/i);
   });
 
+  it('rejects the legacy OS alias while attaching an existing browser', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        undefined,
+        undefined,
+        'windows',
+      ),
+    ).to.throw(/cannot redefine an attached browser/i);
+  });
+
   it('rejects recording while attaching an existing browser', () => {
     expect(() =>
       buildAgentWsUrl(
@@ -1357,6 +1373,29 @@ describe('agent-client bare-call isolation', () => {
     } finally {
       fetchStub.restore();
     }
+  });
+
+  it('rejects the legacy OS alias before attaching an existing browser', async () => {
+    const thrown = await getOrCreateSession(
+      'mcp-attach-os',
+      'http://127.0.0.1:1',
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      'sess-123',
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'windows',
+    ).catch((error: unknown) => error);
+
+    expect(thrown).to.be.instanceOf(PersonaConflictError);
+    expect((thrown as Error).message).to.match(
+      /cannot redefine an attached browser/i,
+    );
   });
 
   it('keeps an echoed handle scoped to its own token', async () => {
