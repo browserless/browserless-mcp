@@ -1,14 +1,10 @@
+import type { IncomingMessage } from 'node:http';
 import type { Context } from 'hono';
 import { resolveApiKey } from './account-resolver.js';
-import type { McpConfig } from '../@types/types.js';
+import type { BrowserlessSession, McpConfig } from '../@types/types.js';
+import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 
-export interface ResolvedBrowserlessAuth {
-  token: string;
-  apiUrl: string;
-  attachSessionId?: string;
-  source?: string;
-  accountId?: string;
-}
+export type ResolvedBrowserlessAuth = BrowserlessSession;
 
 export interface AuthInput {
   authHeader?: string;
@@ -32,11 +28,15 @@ export const resolveBrowserlessAuth = async (
   input: AuthInput,
   config: Pick<
     McpConfig,
-    'browserlessApiUrl' | 'supabaseUrl' | 'supabaseServiceRoleKey'
+    | 'browserlessApiUrl'
+    | 'allowedApiUrlHosts'
+    | 'supabaseUrl'
+    | 'supabaseServiceRoleKey'
   >,
 ): Promise<ResolvedBrowserlessAuth> => {
-  const apiUrl =
-    input.apiUrlHeader ?? input.browserlessUrlQuery ?? config.browserlessApiUrl;
+  const override = input.apiUrlHeader ?? input.browserlessUrlQuery;
+  if (override !== undefined) assertAllowedApiUrl(override, config);
+  const apiUrl = override ?? config.browserlessApiUrl;
 
   // A pre-created session id to attach to, threaded by the autologin runner.
   // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
@@ -76,6 +76,29 @@ export const resolveBrowserlessAuth = async (
   );
 };
 
+export const resolveBrowserlessRequestAuth = (
+  request: IncomingMessage,
+  config: McpConfig,
+): Promise<ResolvedBrowserlessAuth> => {
+  const params = new URLSearchParams(request.url?.split('?')[1] ?? '');
+  return resolveBrowserlessAuth(
+    {
+      authHeader: request.headers.authorization as string | undefined,
+      tokenQuery: params.get('token') || undefined,
+      apiUrlHeader: request.headers['x-browserless-api-url'] as
+        string | undefined,
+      browserlessUrlQuery: params.get('browserlessUrl') || undefined,
+      sessionIdHeader: request.headers['x-browserless-session-id'] as
+        string | undefined,
+      sessionIdQuery: params.get('browserlessSessionId') || undefined,
+      sourceHeader: request.headers['x-browserless-mcp-source'] as
+        string | undefined,
+      sourceQuery: params.get('mcpSource') || undefined,
+    },
+    config,
+  );
+};
+
 export const guardRouteAuth = async (
   c: Context,
   config: Parameters<typeof resolveBrowserlessAuth>[1],
@@ -91,7 +114,10 @@ export const guardRouteAuth = async (
       config,
     );
     return null;
-  } catch {
+  } catch (error) {
+    if (error instanceof InvalidApiUrlError) {
+      return c.json({ ok: false, error: 'Invalid x-browserless-api-url' }, 400);
+    }
     return c.json({ ok: false, error: 'Unauthorized' }, 401);
   }
 };
