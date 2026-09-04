@@ -27,6 +27,13 @@ describe('agent system prompt contextual snapshot guidance', () => {
     });
   }
 
+  it('documents proxy options inside the top-level proxy object', () => {
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      '`{ "proxy": { "proxy": "residential", "proxyCountry": "us" } }`',
+    );
+    expect(AGENT_SYSTEM_PROMPT).to.include('fields belong inside that object');
+  });
+
   it('guides full-mode agents through SPA capture recovery after loadSecret', () => {
     expect(AGENT_SYSTEM_PROMPT).to.include('clearSecrets');
     expect(AGENT_SYSTEM_PROMPT).to.include('single-page app');

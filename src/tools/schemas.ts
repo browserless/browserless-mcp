@@ -765,6 +765,15 @@ const CreateProfileSchema = z
       '(via browserless_skill) for the full create-then-save recipe.',
   );
 
+const RequiredCapabilitiesSchema = z
+  .array(z.string().trim().min(1))
+  .optional()
+  .describe(
+    'Capabilities the planned flow requires (for example "vision", "os-spoofing", ' +
+      '"datacenter-proxy", or "secret-capture"). Browserless checks the selected ' +
+      'route and plan before opening a browser and names an available route on failure.',
+  );
+
 export const AgentParamsSchema = z
   .object({
     method: z
@@ -789,6 +798,7 @@ export const AgentParamsSchema = z
           'Use this to batch actions that share the same page state (e.g. filling a form: ' +
           'type email + type password + click submit). Do NOT batch across navigations.',
       ),
+    requiredCapabilities: RequiredCapabilitiesSchema,
     proxy: ProxyOptionsSchema.optional().describe(
       'Residential / external proxy config. Read once at session creation. ' +
         'Changing requires close() + a new session call.',
@@ -871,6 +881,16 @@ export const AgentParamsSchema = z
       'one) cannot both be set',
   })
   .refine(
+    ({ method, params, commands }) =>
+      commands !== undefined ||
+      method !== 'clearSecrets' ||
+      ClearSecretsCommandSchema.safeParse({ method, params }).success,
+    {
+      message: '`clearSecrets` does not accept parameters',
+      path: ['params'],
+    },
+  )
+  .refine(
     ({ commands = [] }) =>
       commands.every(
         (command, index) =>
@@ -944,6 +964,7 @@ export const CompliantAgentParamsSchema = z
       .describe(
         'Short user-facing reason for this call (<=50 chars, present-continuous).',
       ),
+    requiredCapabilities: RequiredCapabilitiesSchema,
     sessionId: sessionIdField,
   })
   .strict();

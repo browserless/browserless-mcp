@@ -91,6 +91,28 @@ describe('ProxyOptionsSchema', () => {
       ).to.not.throw();
     });
 
+    it('accepts the datacenter proxy tier', () => {
+      expect(ProxyOptionsSchema.parse({ proxy: 'datacenter' }).proxy).to.equal(
+        'datacenter',
+      );
+      expect(() =>
+        ProxyOptionsSchema.parse({
+          proxy: 'datacenter',
+          proxyCountry: 'US',
+          proxySticky: true,
+        }),
+      ).to.not.throw();
+    });
+
+    it('rejects a residential preset with the datacenter proxy', () => {
+      expect(() =>
+        ProxyOptionsSchema.parse({
+          proxy: 'datacenter',
+          proxyPreset: 'px_amazon01',
+        }),
+      ).to.throw();
+    });
+
     it('accepts externalProxyServer alone', () => {
       expect(() =>
         ProxyOptionsSchema.parse({
@@ -176,6 +198,18 @@ describe('AgentParamsSchema.proxy', () => {
       params: { url: 'https://example.com' },
     });
     expect(parsed.proxy).to.be.undefined;
+  });
+
+  it('accepts explicit plan capability requirements', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'snapshot',
+      requiredCapabilities: ['vision', 'os-spoofing'],
+    });
+
+    expect(parsed.requiredCapabilities).to.deep.equal([
+      'vision',
+      'os-spoofing',
+    ]);
   });
 });
 
@@ -314,7 +348,11 @@ describe('clearSecrets command', () => {
     ]) {
       expect(
         AgentParamsSchema.safeParse({ commands: [command] }).success,
-        JSON.stringify(command),
+        `batch: ${JSON.stringify(command)}`,
+      ).to.equal(true);
+      expect(
+        AgentParamsSchema.safeParse(command).success,
+        `single: ${JSON.stringify(command)}`,
       ).to.equal(true);
     }
   });
@@ -324,6 +362,14 @@ describe('clearSecrets command', () => {
       commands: [
         { method: 'clearSecrets', params: { unexpected: 'not-allowed' } },
       ],
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('rejects unexpected clearSecrets params in single-command form', () => {
+    const result = AgentParamsSchema.safeParse({
+      method: 'clearSecrets',
+      params: { unexpected: 'not-allowed' },
     });
     expect(result.success).to.equal(false);
   });

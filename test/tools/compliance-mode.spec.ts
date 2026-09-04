@@ -174,6 +174,16 @@ describe('compliance mode — compliant tool surface', () => {
         .be.true;
     });
 
+    it('accepts capability requirements', () => {
+      const agent = captureTools(true).byName.get('browserless_agent')!;
+      expect(
+        agent.parameters.safeParse({
+          commands: [VALID_GOTO],
+          requiredCapabilities: ['vision'],
+        }).success,
+      ).to.be.true;
+    });
+
     it('rejects an empty or missing commands array', () => {
       const agent = captureTools(true).byName.get('browserless_agent')!;
       expect(
@@ -671,7 +681,12 @@ describe('compliance mode — compliant tool surface', () => {
     const EXPECTED_KEYS: Record<string, string[]> = {
       // `sessionId` re-binds the caller to the browser it already had — a
       // continuity handle, not a capability.
-      browserless_agent: ['commands', 'rationale', 'sessionId'],
+      browserless_agent: [
+        'commands',
+        'rationale',
+        'requiredCapabilities',
+        'sessionId',
+      ],
       browserless_export: [
         'bestAttempt',
         'gotoOptions',
