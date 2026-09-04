@@ -985,6 +985,98 @@ const getAgentExecute = (
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
 
+describe('browserless_agent checkout guidance authentication', () => {
+  const checkoutSnapshot = (): SnapshotResult => ({
+    url: 'https://shop.example.com/checkout',
+    title: 'Checkout',
+    elements: [
+      {
+        ref: 1,
+        role: 'textbox',
+        name: 'Card number',
+        selector: 'input[name=cardnumber]',
+        tag: 'input',
+      },
+      {
+        ref: 2,
+        role: 'button',
+        name: 'Pay now',
+        selector: 'button[type=submit]',
+        tag: 'button',
+      },
+    ],
+    time: 1,
+  });
+
+  const stubStripeLinkStatus = (status: 'connected' | 'not_connected') =>
+    sinon.stub(globalThis, 'fetch').callsFake(async (input) => {
+      const url = String(input);
+      const body = url.includes('/integrations/stripe-link/status')
+        ? { status, instruction: 'Check Stripe Link status.' }
+        : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+  const textOf = (result: unknown) =>
+    ((result as { content: Array<{ text?: string }> }).content ?? [])
+      .map((part) => part.text ?? '')
+      .join('\n');
+
+  afterEach(() => sinon.restore());
+
+  it('does not enable checkout guidance from either snapshot path when Stripe Link is disconnected', async () => {
+    stubStripeLinkStatus('not_connected');
+
+    for (const path of ['success', 'error'] as const) {
+      const srv = await makeRespondingServer(() => {
+        if (path === 'success') return checkoutSnapshot();
+        const error = {
+          code: 'SELECTOR_NOT_FOUND',
+          message: 'checkout control changed',
+          snapshot: checkoutSnapshot(),
+        };
+        return new AgentErrorFrame(error);
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        let text: string;
+        try {
+          text = textOf(
+            await execute(
+              { method: 'snapshot' },
+              { ...mockContext, sessionId: `link-disconnected-${path}` },
+            ),
+          );
+        } catch (error) {
+          text = (error as Error).message;
+        }
+        expect(text, path).to.not.include('SKILL: agentic-checkout');
+      } finally {
+        await srv.close();
+      }
+    }
+  });
+
+  it('enables checkout guidance when Stripe Link status is connected', async () => {
+    stubStripeLinkStatus('connected');
+    const srv = await makeRespondingServer(() => checkoutSnapshot());
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = await execute(
+        { method: 'snapshot' },
+        { ...mockContext, sessionId: 'link-connected' },
+      );
+
+      expect(textOf(result)).to.include('SKILL: agentic-checkout');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('browserless_agent OAuth session ownership', () => {
   afterEach(() => sinon.restore());
 
