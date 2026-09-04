@@ -750,6 +750,7 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
+          record,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -830,6 +831,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            record,
           );
           return runCommands(true);
         }
@@ -854,6 +856,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              record,
             );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
@@ -902,6 +905,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              record,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -940,6 +944,7 @@ export function registerAgentTools(
                 echoedSessionId,
                 integrationId,
                 allowedDomains,
+                record,
               );
               if (!isRetry) {
                 return runCommands(true);

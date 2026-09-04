@@ -223,6 +223,7 @@ export interface ActiveSession {
   // Human-like cursor/pacing (forwarded as ?humanlike). Re-sent on reconnect.
   readonly humanlike?: boolean;
   // Recording capability for replacement browsers after an unexpected drop.
+  // Feeds the session-cache key, so readonly.
   readonly record?: boolean;
   // Handle the caller echoes back as `sessionId`. Feeds the session-cache key,
   // and is re-keyed in place when an orphaned browser is adopted.

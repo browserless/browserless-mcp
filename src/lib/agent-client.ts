@@ -261,6 +261,7 @@ export const getSessionKey = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  record?: boolean,
 ): string =>
   `t:${hashToken(token)}` +
   KEY_SEP +
@@ -281,7 +282,8 @@ export const getSessionKey = (
             ? '|' + [...allowedDomains].sort().join(',')
             : ''),
       )
-    : '');
+    : '') +
+  (record ? KEY_SEP + 'record' : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -733,6 +735,7 @@ export const getOrCreateSession = async (
     handle,
     integrationId,
     allowedDomains,
+    record,
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
@@ -903,6 +906,7 @@ export const closeSession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  record?: boolean,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -914,6 +918,7 @@ export const closeSession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
+    record,
   );
   const session = sessions.get(key);
   if (session) {
@@ -941,6 +946,7 @@ export const destroySession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  record?: boolean,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -952,6 +958,7 @@ export const destroySession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
+    record,
   );
   const session = sessions.get(key);
   if (session) {

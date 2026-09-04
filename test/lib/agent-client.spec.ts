@@ -2,6 +2,8 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import {
   buildAgentWsUrl,
+  closeSession,
+  destroySession,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -687,6 +689,25 @@ describe('agent-client bare-call isolation', () => {
 });
 
 describe('agent-client session-cache isolation', () => {
+  const open = (sid: string, url: string, record: boolean, handle?: string) =>
+    getOrCreateSession(
+      sid,
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      record,
+    );
+
   it('keeps distinct sessions for the same mcpSessionId+token with different profiles', async () => {
     const server = await makeAcceptingServer();
     try {
@@ -730,6 +751,43 @@ describe('agent-client session-cache isolation', () => {
       await server.close();
     }
   });
+
+  for (const [verb, end] of [
+    ['closes', closeSession],
+    ['destroys', destroySession],
+  ] as const) {
+    it(`${verb} only the session with the requested recording mode`, async () => {
+      const server = await makeAcceptingServer();
+      try {
+        const sid = `mcp-record-${verb}`;
+        const plain = await open(sid, server.url, false);
+        const recorded = await open(sid, server.url, true, plain.handle);
+
+        expect(recorded.ws).to.not.equal(plain.ws);
+        end(
+          sid,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          plain.handle,
+          undefined,
+          undefined,
+          true,
+        );
+
+        expect((await open(sid, server.url, false, plain.handle)).ws).to.equal(
+          plain.ws,
+        );
+        expect(
+          (await open(sid, server.url, true, plain.handle)).ws,
+        ).to.not.equal(recorded.ws);
+      } finally {
+        await server.close();
+      }
+    });
+  }
 });
 
 describe('agent-client session handle', () => {
