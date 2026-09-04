@@ -939,6 +939,16 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
         '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
         'one) cannot both be set',
     })
+    .refine(
+      ({ method, params, commands }) =>
+        commands !== undefined ||
+        method !== 'clearSecrets' ||
+        ClearSecretsCommandSchema.safeParse({ method, params }).success,
+      {
+        message: '`clearSecrets` does not accept parameters',
+        path: ['params'],
+      },
+    )
     .refine(refineRecordCreateProfile, {
       message:
         'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',

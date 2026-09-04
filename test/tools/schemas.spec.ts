@@ -698,7 +698,11 @@ describe('clearSecrets command', () => {
     ]) {
       expect(
         AgentParamsSchema.safeParse({ commands: [command] }).success,
-        JSON.stringify(command),
+        `batch: ${JSON.stringify(command)}`,
+      ).to.equal(true);
+      expect(
+        AgentParamsSchema.safeParse(command).success,
+        `single: ${JSON.stringify(command)}`,
       ).to.equal(true);
     }
   });
@@ -708,6 +712,14 @@ describe('clearSecrets command', () => {
       commands: [
         { method: 'clearSecrets', params: { unexpected: 'not-allowed' } },
       ],
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('rejects unexpected clearSecrets params in single-command form', () => {
+    const result = AgentParamsSchema.safeParse({
+      method: 'clearSecrets',
+      params: { unexpected: 'not-allowed' },
     });
     expect(result.success).to.equal(false);
   });
