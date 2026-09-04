@@ -1176,6 +1176,7 @@ describe('Stripe Link tools', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         'user-a',
       );
       const execute = captureExecute(registerStripeLinkCheckoutTool, {
