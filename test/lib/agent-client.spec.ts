@@ -756,7 +756,12 @@ describe('agent-client connect (upgrade error handling)', () => {
 describe('agent-client bare-call isolation', () => {
   const bare = (sid: string | undefined, url: string) =>
     getOrCreateSession(sid, url, 'tok');
-  const echo = (sid: string | undefined, url: string, handle: string) =>
+  const echo = (
+    sid: string | undefined,
+    url: string,
+    handle: string,
+    record?: boolean,
+  ) =>
     getOrCreateSession(
       sid,
       url,
@@ -765,9 +770,14 @@ describe('agent-client bare-call isolation', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
+      false,
       undefined,
       handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      record,
     );
 
   // Regression: tasks in one conversation hashed to one key, so every task after
@@ -822,6 +832,28 @@ describe('agent-client bare-call isolation', () => {
       expect(churned.ws).to.equal(opened.ws);
       const onStdio = await echo(undefined, server.url, opened.handle);
       expect(onStdio.ws).to.equal(opened.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects enabling recording on an existing unrecorded session', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const unrecorded = await bare('mcp-record-off', server.url);
+      expect(
+        (await echo('mcp-record-off-2', server.url, unrecorded.handle, false))
+          .ws,
+      ).to.equal(unrecorded.ws);
+
+      const enableError = await echo(
+        'mcp-record-off-3',
+        server.url,
+        unrecorded.handle,
+        true,
+      ).catch((error: unknown) => error);
+      expect(enableError).to.be.instanceOf(PersonaConflictError);
+      expect((enableError as Error).message).to.match(/recording.*fixed/i);
     } finally {
       await server.close();
     }
@@ -1151,6 +1183,29 @@ describe('agent-client bare-call isolation', () => {
         emulationOs: 'windows',
       });
       expect(await macos).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a recording-mode change while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const unrecorded = echo(
+        'mcp-pending-record-a',
+        server.url,
+        'shared-pending-record',
+        false,
+      );
+      const recorded = echo(
+        'mcp-pending-record-b',
+        server.url,
+        'shared-pending-record',
+        true,
+      ).catch((error: unknown) => error);
+
+      expect((await unrecorded).record).to.equal(false);
+      expect(await recorded).to.be.instanceOf(PersonaConflictError);
     } finally {
       await server.close();
     }

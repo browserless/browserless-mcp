@@ -934,6 +934,12 @@ export const getOrCreateSession = async (
     );
   }
 
+  if (existing && record !== undefined && Boolean(existing.record) !== record) {
+    throw new PersonaConflictError(
+      'Recording mode is fixed when a browser session opens. Close the session before changing it.',
+    );
+  }
+
   if (
     existing &&
     requestedPersona &&
@@ -962,6 +968,11 @@ export const getOrCreateSession = async (
     ) {
       throw new PersonaConflictError(
         'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+      );
+    }
+    if (record !== undefined && Boolean(session.record) !== record) {
+      throw new PersonaConflictError(
+        'Recording mode is fixed when a browser session opens. Close the session before changing it.',
       );
     }
     if (
