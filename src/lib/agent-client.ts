@@ -67,8 +67,8 @@ const ProxyOptionsObjectSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Named proxy preset (e.g. "px_amazon01"). Supported presets are ' +
-        'plan-dependent; ask Browserless support for the list available to your token.',
+      'Residential-only proxy preset (e.g. "px_amazon01"). Supported presets ' +
+        'are plan-dependent; ask Browserless support for the list available to your token.',
     ),
   externalProxyServer: z
     .string()
@@ -86,7 +86,6 @@ const DEPENDENT_PROXY_FIELDS = [
   'proxyCity',
   'proxySticky',
   'proxyLocaleMatch',
-  'proxyPreset',
 ] as const;
 
 export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
@@ -96,10 +95,12 @@ export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   },
   {
     message:
-      'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
+      'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch ' +
       'require proxy or externalProxyServer to be set; otherwise the API silently ignores them.',
   },
-);
+).refine((v) => v.proxyPreset === undefined || v.proxy === 'residential', {
+  message: 'proxyPreset requires proxy to be "residential".',
+});
 
 export const PROXY_FIELDS = Object.keys(
   ProxyOptionsObjectSchema.shape,

@@ -103,6 +103,15 @@ describe('ProxyOptionsSchema', () => {
       ).to.not.throw();
     });
 
+    it('rejects a residential preset with the datacenter proxy', () => {
+      expect(() =>
+        ProxyOptionsSchema.parse({
+          proxy: 'datacenter',
+          proxyPreset: 'px_amazon01',
+        }),
+      ).to.throw();
+    });
+
     it('accepts externalProxyServer alone', () => {
       expect(() =>
         ProxyOptionsSchema.parse({
