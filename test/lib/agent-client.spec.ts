@@ -709,7 +709,12 @@ describe('agent-client connect (upgrade error handling)', () => {
 describe('agent-client bare-call isolation', () => {
   const bare = (sid: string | undefined, url: string) =>
     getOrCreateSession(sid, url, 'tok');
-  const echo = (sid: string | undefined, url: string, handle: string) =>
+  const echo = (
+    sid: string | undefined,
+    url: string,
+    handle: string,
+    record?: boolean,
+  ) =>
     getOrCreateSession(
       sid,
       url,
@@ -721,6 +726,11 @@ describe('agent-client bare-call isolation', () => {
       undefined,
       undefined,
       handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      record,
     );
 
   // Regression: tasks in one conversation hashed to one key, so every task after
@@ -775,6 +785,31 @@ describe('agent-client bare-call isolation', () => {
       expect(churned.ws).to.equal(opened.ws);
       const onStdio = await echo(undefined, server.url, opened.handle);
       expect(onStdio.ws).to.equal(opened.ws);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects enabling recording on a reused browser', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await bare('mcp-record', server.url);
+      try {
+        await echo('mcp-record-2', server.url, opened.handle, true);
+        expect.fail('expected recording mode mismatch');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'Recording mode cannot change on an open browser session',
+        );
+        expect(isRetryableUpgradeError(err)).to.equal(false);
+      }
+      const resumed = await echo(
+        'mcp-record-2',
+        server.url,
+        opened.handle,
+        false,
+      );
+      expect(resumed.ws).to.equal(opened.ws);
     } finally {
       await server.close();
     }

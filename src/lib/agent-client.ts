@@ -142,6 +142,8 @@ export class ProfileNotFoundError extends UpgradeError {
   }
 }
 
+class SessionConfigurationError extends Error {}
+
 // Upgrade statuses where a one-shot retry cannot help: bad request (400),
 // bad auth (401), forbidden by plan/policy (403), missing resource (404), or
 // concurrency limit (429). Retrying a 429 just opens another session and
@@ -149,6 +151,7 @@ export class ProfileNotFoundError extends UpgradeError {
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
+  if (err instanceof SessionConfigurationError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -761,6 +764,17 @@ const sendMessage = (
     ws.send(JSON.stringify(msg));
   });
 
+const validateRecordingMode = (
+  session: ActiveSession,
+  requested: boolean | undefined,
+): void => {
+  if (requested === undefined || requested === (session.record ?? false))
+    return;
+  throw new SessionConfigurationError(
+    'Recording mode cannot change on an open browser session. Close it and open a new session with the requested record setting.',
+  );
+};
+
 export const getOrCreateSession = async (
   mcpSessionId: string | undefined,
   apiUrl: string,
@@ -803,13 +817,18 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
+    validateRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
     return existing;
   }
 
   // Another caller is already creating a session for this key — share it.
   const inFlight = pending.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const session = await inFlight;
+    validateRecordingMode(session, record);
+    return session;
+  }
 
   // Clean up stale session if any
   if (existing) {
