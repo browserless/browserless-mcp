@@ -50,9 +50,10 @@ const elementText = (
     .filter(Boolean)
     .join(' ');
 
-const isAuthenticatedPaymentStage = (ctx: DetectContext): boolean => {
-  if (!ctx.authenticated || !ctx.snapshot) return false;
-  const snapshot = ctx.snapshot;
+export const isPaymentStage = (
+  snapshot: DetectContext['snapshot'],
+): boolean => {
+  if (!snapshot) return false;
   const hasPaymentField = snapshot.elements.some(
     (el) => el.tag === 'input' && PAYMENT_FIELD_RE.test(elementText(el)),
   );
@@ -64,6 +65,9 @@ const isAuthenticatedPaymentStage = (ctx: DetectContext): boolean => {
   ].join(' ');
   return PAYMENT_STAGE_RE.test(pageText);
 };
+
+const isAuthenticatedPaymentStage = (ctx: DetectContext): boolean =>
+  !!ctx.authenticated && isPaymentStage(ctx.snapshot);
 
 const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
   switch (p.kind) {

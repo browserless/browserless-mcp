@@ -38,6 +38,7 @@ import { AnalyticsHelper } from '../lib/analytics.js';
 import { failureDetails } from '../lib/failure-details.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
+  isPaymentStage,
   markFired,
   renderSkill,
   renderSkills,
@@ -635,6 +636,7 @@ export function registerAgentTools(
       openWorldHint: true,
     },
     run: async ({
+      client,
       params,
       prompt,
       log,
@@ -817,6 +819,19 @@ export function registerAgentTools(
         sessionAgeMs = ageMs;
       };
       let lastFailure: Record<string, unknown> | undefined;
+
+      const hasConnectedStripeLinkWallet = async (
+        snapshot: SnapshotResult | undefined,
+      ): Promise<boolean> => {
+        if (!isPaymentStage(snapshot)) return false;
+        try {
+          return (
+            (await client.stripeLinkConnection('status')).status === 'connected'
+          );
+        } catch {
+          return false;
+        }
+      };
 
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
@@ -1185,9 +1200,7 @@ export function registerAgentTools(
                 error: err,
                 cmd,
                 apiUrl,
-                // The live WebSocket is Browserless-authenticated; profile
-                // presence is not merchant-auth state.
-                authenticated: true,
+                authenticated: await hasConnectedStripeLinkWallet(err.snapshot),
               },
               agentSession.skillState,
               compliant,
@@ -1286,7 +1299,7 @@ export function registerAgentTools(
             cmd: lastCmd,
             resp: lastResult,
             apiUrl,
-            authenticated: true,
+            authenticated: await hasConnectedStripeLinkWallet(lastSnapshot),
           },
           agentSession.skillState,
           compliant,
