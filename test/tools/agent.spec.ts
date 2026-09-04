@@ -910,14 +910,19 @@ describe('formatConnectError with proxy-injected errors', () => {
 const getAgentExecute = (
   apiUrl: string,
   transport: McpConfig['transport'] = 'stdio',
+  analytics?: AnalyticsHelper,
 ): ((args: unknown, ctx: unknown) => unknown) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  registerAgentTools(server, {
-    ...mockConfig,
-    browserlessApiUrl: apiUrl,
-    transport,
-  });
+  registerAgentTools(
+    server,
+    {
+      ...mockConfig,
+      browserlessApiUrl: apiUrl,
+      transport,
+    },
+    analytics,
+  );
   const agentCall = addToolSpy
     .getCalls()
     .find((c) => c.args[0].name === 'browserless_agent');
@@ -945,6 +950,78 @@ describe('browserless_agent integration binding guard', () => {
     } catch (err) {
       expect((err as Error).message).to.match(
         /cannot be combined with profile creation/i,
+      );
+    }
+  });
+});
+
+describe('browserless_agent persona creation guard', () => {
+  afterEach(() => sinon.restore());
+
+  it('does not default a persona when attaching an existing browser', async () => {
+    const server = await makeRespondingServer(() => ({ elements: [] }));
+    try {
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const execute = getAgentExecute(server.url, 'stdio', analytics);
+      await execute(
+        { method: 'snapshot' },
+        {
+          ...mockContext,
+          sessionId: 'persona-attach-default',
+          session: { attachSessionId: 'existing-browser' },
+        },
+      );
+
+      const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(attachUrl.searchParams.has('emulationOs')).to.equal(false);
+      expect(fire.firstCall.args[2].emulation_os).to.equal(undefined);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects createProfile with additional persona state before connecting', async () => {
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    try {
+      await execute(
+        {
+          createProfile: { name: 'demo' },
+          emulationOs: 'windows',
+          screen: '1920x1080',
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+          ],
+        },
+        { ...mockContext, sessionId: 'persona-create-guard' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.match(
+        /persona.*cannot be combined with profile creation/i,
+      );
+    }
+  });
+});
+
+describe('browserless_agent recording creation guard', () => {
+  afterEach(() => sinon.restore());
+
+  it('rejects recording while attaching before connecting', async () => {
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    try {
+      await execute(
+        { method: 'snapshot', record: true },
+        {
+          ...mockContext,
+          sessionId: 'recording-attach-guard',
+          session: { attachSessionId: 'existing-browser' },
+        },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.match(
+        /recording.*cannot.*attached browser/i,
       );
     }
   });
@@ -1053,6 +1130,53 @@ describe('browserless_agent retry-guard (runCommands)', () => {
       await srv.close();
     }
   });
+
+  it('preserves a live session persona when recovering from a browser crash', async () => {
+    let snapshots = 0;
+    const srv = await makeRespondingServer((method) => {
+      if (method !== 'snapshot') return {};
+      snapshots += 1;
+      if (snapshots === 2) {
+        return new AgentErrorFrame({
+          code: 'BROWSER_CRASHED',
+          message: 'browser crashed',
+        });
+      }
+      return {
+        url: 'https://example.com/',
+        title: 'Example',
+        elements: [],
+        time: 1,
+      };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const opened = (await execute(
+        { method: 'snapshot', emulationOs: 'macos' },
+        ctx('retry-persona-open'),
+      )) as { content: Array<{ text?: string }> };
+      const openedText = opened.content
+        .map((item) => item.text ?? '')
+        .join('\n');
+      const sessionId = /sessionId: (\S+)/.exec(openedText)?.[1];
+      expect(sessionId).to.match(/^s:/);
+
+      await execute(
+        { method: 'snapshot', sessionId },
+        ctx('retry-persona-follow-up'),
+      );
+
+      expect(
+        srv.hits(),
+        'the browser-crash recovery opened one replacement',
+      ).to.equal(2);
+      expect(
+        new URL(srv.upgradeUrls()[1]!, srv.url).searchParams.get('emulationOs'),
+      ).to.equal('macos');
+    } finally {
+      await srv.close();
+    }
+  });
 });
 
 describe('browserless_agent _prompt capture', () => {
@@ -1117,6 +1241,20 @@ describe('browserless_agent _prompt capture', () => {
     expect(props).to.include({ success: true, analytics_version: 2 });
     expect(props.duration_ms).to.be.a('number');
     expect(props).to.not.have.property('error_category');
+  });
+
+  it('reports the canonical emulation OS when the shipped alias is used', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+
+    await execute(
+      { method: 'close', os: 'macos' },
+      { ...mockContext, sessionId: 'analytics-os-alias' },
+    );
+
+    expect(fire.firstCall.args[2]).to.include({
+      emulation_os: 'macos',
+      persona_requested: true,
+    });
   });
 
   it('fires exactly one event carrying the classified category on failure', async () => {

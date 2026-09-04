@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { ProxyOptionsSchema } from '../lib/agent-client.js';
+import {
+  PERSONA_FIELDS,
+  PersonaOptionsSchema,
+  ProxyOptionsSchema,
+} from '../lib/agent-client.js';
 
 // NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
 // fromCharCode so the literal control character never appears in source.
@@ -777,9 +781,10 @@ export const AgentParamsSchema = z
           'type email + type password + click submit). Do NOT batch across navigations.',
       ),
     proxy: ProxyOptionsSchema.optional().describe(
-      'Residential / external proxy config. Read once at session creation. ' +
+      'Residential, datacenter, or external proxy config. Read once at session creation. ' +
         'Changing requires close() + a new session call.',
     ),
+    ...PersonaOptionsSchema.shape,
     record: z
       .boolean()
       .optional()
@@ -857,6 +862,22 @@ export const AgentParamsSchema = z
       '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
       'one) cannot both be set',
   })
+  .refine((v) => !(v.record && v.createProfile), {
+    message:
+      'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+    path: ['record'],
+  })
+  .refine(
+    (v) =>
+      !v.createProfile ||
+      !PERSONA_FIELDS.some(
+        (field) => field !== 'emulationOs' && v[field] !== undefined,
+      ),
+    {
+      message:
+        'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
+    },
+  )
   .refine(
     ({ commands = [] }) =>
       commands.every(
@@ -871,7 +892,59 @@ export const AgentParamsSchema = z
         '`stopRecording` must be the final command, except before `close`',
       path: ['commands'],
     },
-  );
+  )
+  .superRefine((v, ctx) => {
+    if (v.os && v.emulationOs && v.os !== v.emulationOs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['emulationOs'],
+        message: '`os` and `emulationOs` must match when both are provided.',
+      });
+    }
+    const hasDesktopOs = ['windows', 'macos', 'linux'].includes(
+      v.emulationOs ?? v.os ?? '',
+    );
+    if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['emulatedDevice'],
+        message: 'emulatedDevice requires emulationOs="android".',
+      });
+    }
+    if (v.deviceSlot !== undefined && !hasDesktopOs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['deviceSlot'],
+        message:
+          'deviceSlot requires a desktop emulationOs (windows, macos, or linux).',
+      });
+    }
+    if (v.screen !== undefined && !hasDesktopOs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['screen'],
+        message:
+          'screen requires a desktop emulationOs (windows, macos, or linux).',
+      });
+    }
+    if (v.deviceScaleFactor !== undefined) {
+      if (!hasDesktopOs) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['deviceScaleFactor'],
+          message:
+            'deviceScaleFactor requires a desktop emulationOs (windows, macos, or linux).',
+        });
+      }
+      if (v.screen === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['deviceScaleFactor'],
+          message: 'deviceScaleFactor requires screen.',
+        });
+      }
+    }
+  });
 
 // ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
 // De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,

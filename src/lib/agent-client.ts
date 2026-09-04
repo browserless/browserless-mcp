@@ -9,6 +9,7 @@ import type {
   ActiveSession,
   AgentMessage,
   AgentResponse,
+  PersonaOptions,
   ProxyOptions,
 } from '../@types/types.js';
 
@@ -16,6 +17,7 @@ import type {
 // need (e.g. a hosted Agent constructor that takes `proxy?: ProxyOptions`).
 export type {
   ProxyOptions,
+  PersonaOptions,
   ActiveSession,
   AgentMessage,
   AgentResponse,
@@ -30,9 +32,11 @@ export type {
 
 const ProxyOptionsObjectSchema = z.object({
   proxy: z
-    .enum(['residential'])
+    .enum(['residential', 'datacenter'])
     .optional()
-    .describe('Routing tier. Only "residential" is supported today.'),
+    .describe(
+      'Routing tier. Datacenter is cheaper per MB; residential is less likely to be blocked.',
+    ),
   proxyCountry: z
     .string()
     .regex(/^[A-Za-z]{2}$/, 'Must be a 2-letter ISO-2 country code')
@@ -93,19 +97,81 @@ export const ProxyOptionsSchema = ProxyOptionsObjectSchema.refine(
   (v) => {
     const hasDependent = DEPENDENT_PROXY_FIELDS.some((k) => v[k] !== undefined);
     return (
-      !hasDependent || v.proxy === 'residential' || !!v.externalProxyServer
+      !hasDependent ||
+      v.proxy === 'residential' ||
+      v.proxy === 'datacenter' ||
+      !!v.externalProxyServer
     );
   },
   {
     message:
       'proxyCountry/proxyState/proxyCity/proxySticky/proxyLocaleMatch/proxyPreset ' +
-      "require proxy: 'residential' or externalProxyServer to be set; otherwise the API silently ignores them.",
+      "require proxy: 'residential'/'datacenter' or externalProxyServer to be set; otherwise the API silently ignores them.",
   },
-);
+).refine((v) => v.proxyPreset === undefined || v.proxy === 'residential', {
+  message: 'proxyPreset is supported only with proxy: "residential".',
+});
 
 export const PROXY_FIELDS = Object.keys(
   ProxyOptionsObjectSchema.shape,
 ) as Array<keyof ProxyOptions>;
+
+export const PersonaOptionsSchema = z.object({
+  emulationOs: z
+    .enum(['windows', 'macos', 'linux', 'android'])
+    .optional()
+    .describe(
+      'OS persona for platform spoofing. Set on the first call before navigation.',
+    ),
+  emulatedDevice: z
+    .string()
+    .optional()
+    .describe(
+      'Android device slug, used only with emulationOs="android". Unknown slugs select a seeded device.',
+    ),
+  screen: z
+    .string()
+    .trim()
+    .refine((value) => {
+      const match = /^(\d{2,5})x(\d{2,5})$/.exec(value);
+      if (!match) return false;
+      const width = Number(match[1]);
+      const height = Number(match[2]);
+      return width >= 640 && width <= 7680 && height >= 640 && height <= 7680;
+    }, 'screen must be WIDTHxHEIGHT with each dimension between 640 and 7680')
+    .optional()
+    .describe(
+      'Desktop screen as WIDTHxHEIGHT, with each dimension from 640 through 7680. Ignored for Android.',
+    ),
+  deviceScaleFactor: z
+    .union([z.literal(1), z.literal(1.25)])
+    .optional()
+    .describe('Desktop device pixel ratio. Ignored for Android.'),
+  deviceSlot: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      'Stable desktop device slot. The server validates the account-specific upper bound.',
+    ),
+});
+
+export const PERSONA_FIELDS = Object.keys(PersonaOptionsSchema.shape) as Array<
+  keyof PersonaOptions
+>;
+
+const hasPersona = (persona?: PersonaOptions): boolean =>
+  !!persona && PERSONA_FIELDS.some((field) => persona[field] !== undefined);
+
+const hasPersonaConflict = (
+  existing: PersonaOptions | undefined,
+  requested: PersonaOptions,
+): boolean =>
+  PERSONA_FIELDS.some(
+    (field) =>
+      requested[field] !== undefined && existing?.[field] !== requested[field],
+  );
 
 /**
  * Thrown when the agent WebSocket upgrade is rejected with a non-101 HTTP
@@ -144,6 +210,16 @@ export class ProfileNotFoundError extends UpgradeError {
   }
 }
 
+/** A caller attempted to redefine immutable persona state on a live browser. */
+export class PersonaConflictError extends Error {
+  constructor(
+    message = 'Persona options are fixed when a browser session opens. Close the session before changing them.',
+  ) {
+    super(message);
+    this.name = 'PersonaConflictError';
+  }
+}
+
 // Upgrade statuses where a one-shot retry cannot help: bad request (400),
 // bad auth (401), forbidden by plan/policy (403), missing resource (404), or
 // concurrency limit (429). Retrying a 429 just opens another session and
@@ -151,6 +227,7 @@ export class ProfileNotFoundError extends UpgradeError {
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
 export const isRetryableUpgradeError = (err: unknown): boolean => {
+  if (err instanceof PersonaConflictError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -165,10 +242,16 @@ const sessions = new Map<string, ActiveSession>();
 // getOrCreateSession callers await the same promise instead of each
 // opening their own WebSocket.
 const pending = new Map<string, Promise<ActiveSession>>();
+// Retain creation-state persona and proxy routing across socket eviction so an
+// echoed handle can recreate coherently without repeating first-call options.
+const retainedPersonas = new Map<string, PersonaOptions>();
+// null is an explicit no-proxy configuration; absence means no retained state.
+const retainedProxies = new Map<string, ProxyOptions | null>();
 
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;
+const MAX_RETAINED_CONFIGS = 500;
 // mcp session id -> last time a request arrived on it. `disconnect` is the
 // primary signal, but a client that abandons a transport never sends one.
 const mcpSeenAt = new Map<string, number>();
@@ -266,12 +349,14 @@ export const getSessionKey = (
   KEY_SEP +
   'conv#' +
   sessionHandle(mcpSessionId, token, echoedSessionId) +
-  proxyFingerprint(proxy) +
+  // A returned handle identifies proxy state; profile and integration bindings
+  // remain contractual scope and must be repeated on every call.
+  (echoedSessionId ? '' : proxyFingerprint(proxy)) +
   (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
   (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-  // Different scope must key to a different WS, else a same-integration call
-  // silently reuses the first scope. Sorted so domain order doesn't fork the key.
+  // Different integration scope must key to a different WS. Sorted so domain
+  // order doesn't fork the key.
   (integrationId
     ? KEY_SEP +
       'int#' +
@@ -294,8 +379,8 @@ const apiEndpoint = (apiUrl: string, path: string, ws = false): URL => {
 };
 
 /**
- * Build the WebSocket URL for `/chromium/agent`, appending `token` plus proxy
- * params. Boolean proxy flags follow the API's presence-only contract.
+ * Build the WebSocket URL for `/chromium/agent`, appending `token`, proxy, and
+ * persona params. Boolean proxy flags follow the API's presence-only contract.
  */
 export const buildAgentWsUrl = (
   apiUrl: string,
@@ -309,7 +394,13 @@ export const buildAgentWsUrl = (
   os?: string,
   humanlike?: boolean,
   record?: boolean,
+  persona?: PersonaOptions,
 ): string => {
+  if (os && persona?.emulationOs && os !== persona.emulationOs) {
+    throw new PersonaConflictError(
+      '`os` and `emulationOs` must match when both are provided.',
+    );
+  }
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
   // On attach (sessionId set) the creation session already owns proxy/profile from
@@ -317,7 +408,19 @@ export const buildAgentWsUrl = (
   // emulationOs is likewise carried by the running browser on reconnect (enterprise
   // restores requestedEmulationOs from the instance), so it's only set on a fresh connect.
   if (sessionId) {
+    if (record) {
+      throw new PersonaConflictError(
+        'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
+      );
+    }
+    if (hasPersona(persona) || os !== undefined) {
+      throw new PersonaConflictError(
+        'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
+      );
+    }
     url.searchParams.set('sessionId', sessionId);
+    if (humanlike !== undefined)
+      url.searchParams.set('humanlike', String(humanlike));
     return url.toString();
   }
   // Compliant surface exposes no proxy/profile — the schema and run()-layer
@@ -329,7 +432,13 @@ export const buildAgentWsUrl = (
       url.searchParams.set('proxyCountry', proxy.proxyCountry);
     if (proxy?.proxyState) url.searchParams.set('proxyState', proxy.proxyState);
     if (proxy?.proxyCity) url.searchParams.set('proxyCity', proxy.proxyCity);
-    if (proxy?.proxySticky) url.searchParams.set('proxySticky', 'true');
+    if (
+      proxy?.proxySticky ||
+      ((persona?.emulationOs ?? os) !== undefined &&
+        proxy?.proxySticky === false)
+    ) {
+      url.searchParams.set('proxySticky', String(proxy.proxySticky));
+    }
     if (proxy?.proxyLocaleMatch)
       url.searchParams.set('proxyLocaleMatch', 'true');
     if (proxy?.proxyPreset)
@@ -340,7 +449,8 @@ export const buildAgentWsUrl = (
     // Opt the agent socket into the stealth stack with a spoofed desktop OS.
     // Without it the agent (BraveStealthBrowser) reports native Linux under a
     // Chrome-masked UA — an incoherent fingerprint anti-bot checks flag.
-    if (os) url.searchParams.set('emulationOs', os);
+    const emulationOs = persona?.emulationOs ?? os;
+    if (emulationOs) url.searchParams.set('emulationOs', emulationOs);
     // Human-like cursor/pacing — lifts the passive score of invisible anti-bot
     // challenges (the agent otherwise moves no mouse). Read at session creation.
     if (humanlike) url.searchParams.set('humanlike', 'true');
@@ -350,6 +460,11 @@ export const buildAgentWsUrl = (
       url.searchParams.set('integrationId', integrationId);
       if (allowedDomains?.length)
         url.searchParams.set('allowedDomains', JSON.stringify(allowedDomains));
+    }
+    for (const field of PERSONA_FIELDS) {
+      if (field === 'emulationOs') continue;
+      const value = persona?.[field];
+      if (value !== undefined) url.searchParams.set(field, String(value));
     }
   }
   // Recording is armed only when launching a new browser.
@@ -504,13 +619,10 @@ const postCreateProfile = async (
   token: string,
   createProfile: CreateProfileParams,
   os?: string,
-  humanlike?: boolean,
 ): Promise<CreationSessionInfo> => {
   const url = apiEndpoint(apiUrl, '/profile');
   url.searchParams.set('token', token);
   if (os) url.searchParams.set('emulationOs', os);
-  if (humanlike !== undefined)
-    url.searchParams.set('humanlike', String(humanlike));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CREATE_PROFILE_TIMEOUT_MS);
@@ -564,6 +676,7 @@ const connect = (
   os?: string,
   humanlike?: boolean,
   record?: boolean,
+  persona?: PersonaOptions,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -578,6 +691,7 @@ const connect = (
       os,
       humanlike,
       record,
+      persona,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -716,8 +830,44 @@ export const getOrCreateSession = async (
   os?: string,
   humanlike?: boolean,
   record?: boolean,
+  persona?: PersonaOptions,
 ): Promise<ActiveSession> => {
   sweepSessions();
+  if (os && persona?.emulationOs && os !== persona.emulationOs) {
+    throw new PersonaConflictError(
+      '`os` and `emulationOs` must match when both are provided.',
+    );
+  }
+  if (record && createProfile) {
+    throw new PersonaConflictError(
+      'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+    );
+  }
+  if (record && attachSessionId) {
+    throw new PersonaConflictError(
+      'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
+    );
+  }
+  const effectiveOs = persona?.emulationOs ?? os;
+  const requestedPersona =
+    !attachSessionId && effectiveOs
+      ? {
+          ...persona,
+          emulationOs:
+            persona?.emulationOs ??
+            (effectiveOs as PersonaOptions['emulationOs']),
+        }
+      : persona;
+  if (
+    createProfile &&
+    PERSONA_FIELDS.some(
+      (field) => field !== 'emulationOs' && persona?.[field] !== undefined,
+    )
+  ) {
+    throw new PersonaConflictError(
+      'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
+    );
+  }
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
   // conversation shares the MCP session id, so the guess collided them onto one page.
   const handle =
@@ -736,6 +886,72 @@ export const getOrCreateSession = async (
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
+  const retainedPersona = retainedPersonas.get(key);
+  const hasRetainedProxy = retainedProxies.has(key);
+  const retainedProxy = retainedProxies.get(key);
+
+  if (
+    hasRetainedProxy &&
+    proxy !== undefined &&
+    proxyFingerprint(retainedProxy ?? undefined) !== proxyFingerprint(proxy)
+  ) {
+    throw new PersonaConflictError(
+      'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+    );
+  }
+  const effectiveProxy = hasRetainedProxy
+    ? (retainedProxy ?? undefined)
+    : proxy;
+  if (hasRetainedProxy) {
+    retainedProxies.delete(key);
+    retainedProxies.set(key, retainedProxy ?? null);
+  }
+
+  if (
+    retainedPersona &&
+    requestedPersona &&
+    hasPersona(requestedPersona) &&
+    hasPersonaConflict(retainedPersona, requestedPersona)
+  ) {
+    throw new PersonaConflictError();
+  }
+  const effectivePersona = retainedPersona ?? requestedPersona;
+  if (retainedPersona) {
+    // Refresh insertion order so the bounded map behaves as a small LRU.
+    retainedPersonas.delete(key);
+    retainedPersonas.set(key, retainedPersona);
+  }
+
+  if (attachSessionId && (hasPersona(persona) || effectiveOs !== undefined)) {
+    throw new PersonaConflictError(
+      'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
+    );
+  }
+
+  if (
+    existing &&
+    proxy !== undefined &&
+    proxyFingerprint(existing.proxy) !== proxyFingerprint(proxy)
+  ) {
+    throw new PersonaConflictError(
+      'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+    );
+  }
+
+  if (existing && record !== undefined && Boolean(existing.record) !== record) {
+    throw new PersonaConflictError(
+      'Recording mode is fixed when a browser session opens. Close the session before changing it.',
+    );
+  }
+
+  if (
+    existing &&
+    requestedPersona &&
+    hasPersona(requestedPersona) &&
+    hasPersonaConflict(existing.persona, requestedPersona)
+  ) {
+    throw new PersonaConflictError();
+  }
 
   if (
     existing &&
@@ -748,7 +964,30 @@ export const getOrCreateSession = async (
 
   // Another caller is already creating a session for this key — share it.
   const inFlight = pending.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const session = await inFlight;
+    if (
+      proxy !== undefined &&
+      proxyFingerprint(session.proxy) !== proxyFingerprint(proxy)
+    ) {
+      throw new PersonaConflictError(
+        'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+      );
+    }
+    if (record !== undefined && Boolean(session.record) !== record) {
+      throw new PersonaConflictError(
+        'Recording mode is fixed when a browser session opens. Close the session before changing it.',
+      );
+    }
+    if (
+      requestedPersona &&
+      hasPersona(requestedPersona) &&
+      hasPersonaConflict(session.persona, requestedPersona)
+    ) {
+      throw new PersonaConflictError();
+    }
+    return session;
+  }
 
   // Clean up stale session if any
   if (existing) {
@@ -771,29 +1010,30 @@ export const getOrCreateSession = async (
       creationSessionId = attachSessionId;
     } else if (createProfile) {
       creationSessionId = (
-        await postCreateProfile(apiUrl, token, createProfile, os, humanlike)
+        await postCreateProfile(apiUrl, token, createProfile, effectiveOs)
       ).id;
     }
     const ws = await connect(
       apiUrl,
       token,
-      proxy,
+      effectiveProxy,
       profile,
       creationSessionId,
       compliant,
       source,
       integrationId,
       allowedDomains,
-      os,
+      createProfile ? undefined : effectiveOs,
       humanlike,
       record,
+      createProfile ? undefined : effectivePersona,
     );
     const session: ActiveSession = {
       ws,
       msgId: 0,
       apiUrl,
       token,
-      proxy,
+      proxy: effectiveProxy,
       profile,
       createProfile,
       creationSessionId,
@@ -802,12 +1042,30 @@ export const getOrCreateSession = async (
       handle,
       integrationId,
       allowedDomains,
-      os,
+      os: effectiveOs,
       humanlike,
+      persona: effectivePersona,
       record,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
+
+    if (hasPersona(effectivePersona)) {
+      retainedPersonas.delete(key);
+      retainedPersonas.set(key, effectivePersona!);
+      while (retainedPersonas.size > MAX_RETAINED_CONFIGS) {
+        const oldest = retainedPersonas.keys().next().value;
+        if (oldest === undefined) break;
+        retainedPersonas.delete(oldest);
+      }
+    }
+    retainedProxies.delete(key);
+    retainedProxies.set(key, effectiveProxy ?? null);
+    while (retainedProxies.size > MAX_RETAINED_CONFIGS) {
+      const oldest = retainedProxies.keys().next().value;
+      if (oldest === undefined) break;
+      retainedProxies.delete(oldest);
+    }
 
     // Auto-cleanup on close
     ws.on('close', (code: number, reason: Buffer) => {
@@ -862,6 +1120,7 @@ export const send = async (
         session.os,
         session.humanlike,
         session.record,
+        session.creationSessionId ? undefined : session.persona,
       ).finally(() => {
         session.reconnecting = undefined;
       });
@@ -924,6 +1183,8 @@ export const closeSession = (
     }
     sessions.delete(key);
   }
+  retainedPersonas.delete(key);
+  retainedProxies.delete(key);
 };
 
 /**

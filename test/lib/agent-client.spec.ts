@@ -5,6 +5,7 @@ import {
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
+  PersonaConflictError,
   ProfileNotFoundError,
   proxyFingerprint,
   sessionHandle,
@@ -70,6 +71,17 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.searchParams.get('proxy')).to.equal('residential');
   });
 
+  it('sets proxy=datacenter when requested', () => {
+    const url = new URL(
+      buildAgentWsUrl('http://localhost:3000', 'tok', {
+        proxy: 'datacenter',
+        proxyCountry: 'us',
+      }),
+    );
+    expect(url.searchParams.get('proxy')).to.equal('datacenter');
+    expect(url.searchParams.get('proxyCountry')).to.equal('us');
+  });
+
   it('passes country, sticky, and locale-match flags', () => {
     const proxy: ProxyOptions = {
       proxy: 'residential',
@@ -92,6 +104,43 @@ describe('agent-client buildAgentWsUrl', () => {
       }),
     );
     expect(url.searchParams.has('proxySticky')).to.equal(false);
+  });
+
+  it('preserves explicit rotating proxy behavior for a persona session', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        { proxy: 'datacenter', proxySticky: false },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      ),
+    );
+    expect(url.searchParams.get('proxySticky')).to.equal('false');
+  });
+
+  it('preserves explicit rotating proxy behavior for the shipped OS alias', () => {
+    const url = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        { proxy: 'datacenter', proxySticky: false },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        'windows',
+      ),
+    );
+    expect(url.searchParams.get('proxySticky')).to.equal('false');
   });
 
   it('omits locale-match when false (server uses presence-only semantics)', () => {
@@ -222,6 +271,133 @@ describe('agent-client buildAgentWsUrl', () => {
     );
     expect(url.searchParams.has('integrationId')).to.equal(false);
     expect(url.searchParams.has('allowedDomains')).to.equal(false);
+  });
+
+  it('preserves the published recording argument while adding persona options', () => {
+    const persona = {
+      emulationOs: 'windows' as const,
+      emulatedDevice: 'pixel-8',
+      screen: '1920x1080',
+      deviceScaleFactor: 1.25 as const,
+      deviceSlot: 3,
+    };
+    const full = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        // `record` shipped in v1.26 at this position; persona stays appended.
+        true,
+        persona,
+      ),
+    );
+    expect(Object.fromEntries(full.searchParams)).to.include({
+      emulationOs: 'windows',
+      emulatedDevice: 'pixel-8',
+      screen: '1920x1080',
+      deviceScaleFactor: '1.25',
+      deviceSlot: '3',
+      record: 'true',
+    });
+
+    const compliant = new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        persona,
+      ),
+    );
+    for (const field of Object.keys(persona)) {
+      expect(compliant.searchParams.has(field), field).to.equal(false);
+    }
+  });
+
+  it('rejects conflicting OS aliases before serializing the URL', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        'macos',
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      ),
+    ).to.throw(PersonaConflictError, /os.*emulationOs/i);
+  });
+
+  it('rejects redefining persona while attaching an existing browser', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      ),
+    ).to.throw(/cannot redefine an attached browser/i);
+  });
+
+  it('rejects the legacy OS alias while attaching an existing browser', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        undefined,
+        undefined,
+        'windows',
+      ),
+    ).to.throw(PersonaConflictError, /cannot redefine an attached browser/i);
+  });
+
+  it('rejects recording while attaching an existing browser', () => {
+    expect(() =>
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        'sess-123',
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      ),
+    ).to.throw(/recording.*cannot.*attached browser/i);
   });
 
   it('skips integrationId when attaching to an existing session', () => {
@@ -358,6 +534,10 @@ describe('agent-client isRetryableUpgradeError', () => {
 
   it('retries on plain errors (network failures, timeouts)', () => {
     expect(isRetryableUpgradeError(new Error('ECONNREFUSED'))).to.equal(true);
+  });
+
+  it('does not retry persona conflicts that would destroy the live session', () => {
+    expect(isRetryableUpgradeError(new PersonaConflictError())).to.equal(false);
   });
 });
 
@@ -592,7 +772,12 @@ describe('agent-client connect (upgrade error handling)', () => {
 describe('agent-client bare-call isolation', () => {
   const bare = (sid: string | undefined, url: string) =>
     getOrCreateSession(sid, url, 'tok');
-  const echo = (sid: string | undefined, url: string, handle: string) =>
+  const echo = (
+    sid: string | undefined,
+    url: string,
+    handle: string,
+    record?: boolean,
+  ) =>
     getOrCreateSession(
       sid,
       url,
@@ -601,9 +786,14 @@ describe('agent-client bare-call isolation', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
+      false,
       undefined,
       handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      record,
     );
 
   // Regression: tasks in one conversation hashed to one key, so every task after
@@ -661,6 +851,551 @@ describe('agent-client bare-call isolation', () => {
     } finally {
       await server.close();
     }
+  });
+
+  it('rejects enabling recording on an existing unrecorded session', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const unrecorded = await bare('mcp-record-off', server.url);
+      expect(
+        (await echo('mcp-record-off-2', server.url, unrecorded.handle, false))
+          .ws,
+      ).to.equal(unrecorded.ws);
+
+      const enableError = await echo(
+        'mcp-record-off-3',
+        server.url,
+        unrecorded.handle,
+        true,
+      ).catch((error: unknown) => error);
+      expect(enableError).to.be.instanceOf(PersonaConflictError);
+      expect((enableError as Error).message).to.match(/recording.*fixed/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains persona on an echoed handle and rejects a conflicting persona', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-persona',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows', screen: '1920x1080' },
+      );
+      const resumed = await getOrCreateSession(
+        'mcp-persona-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+      expect(resumed.ws).to.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({
+        emulationOs: 'windows',
+        screen: '1920x1080',
+      });
+
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-persona-2',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          opened.handle,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { emulationOs: 'macos' },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect((thrown as Error).message).to.match(/fixed when.*opens/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps a proxy-backed persona when only the handle is repeated', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-proxy-persona',
+        server.url,
+        'tok',
+        { proxy: 'datacenter', proxyCountry: 'us' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows' },
+      );
+      const resumed = await getOrCreateSession(
+        'mcp-proxy-persona-follow-up',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+
+      expect(resumed.ws).to.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({ emulationOs: 'windows' });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains proxy routing when a dropped session is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-proxy',
+        server.url,
+        'tok',
+        { proxy: 'datacenter', proxyCountry: 'us' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-proxy-handle',
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-proxy-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-proxy-handle',
+      );
+
+      expect(resumed.proxy).to.deep.equal({
+        proxy: 'datacenter',
+        proxyCountry: 'us',
+      });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('proxy')).to.equal('datacenter');
+      expect(reconnectUrl.searchParams.get('proxyCountry')).to.equal('us');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains a no-proxy configuration when a dropped session is recreated', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await bare('mcp-dropped-no-proxy', server.url);
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const changedProxy = await getOrCreateSession(
+        'mcp-dropped-no-proxy-2',
+        server.url,
+        'tok',
+        { proxy: 'datacenter' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      ).catch((error: unknown) => error);
+      expect(changedProxy).to.be.instanceOf(PersonaConflictError);
+      expect((changedProxy as Error).message).to.match(/proxy.*fixed/i);
+
+      const resumed = await echo(
+        'mcp-dropped-no-proxy-3',
+        server.url,
+        opened.handle,
+      );
+      expect(resumed.proxy).to.equal(undefined);
+      expect(
+        new URL(server.upgradeUrls()[1]!, server.url).searchParams.has('proxy'),
+      ).to.equal(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a proxy change for an echoed session handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-proxy-conflict',
+        server.url,
+        'tok',
+        { proxy: 'datacenter' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'proxy-conflict-handle',
+      );
+
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-proxy-conflict-2',
+          server.url,
+          'tok',
+          { proxy: 'residential' },
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          opened.handle,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect((thrown as Error).message).to.match(/proxy.*fixed/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains persona when a dropped socket is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-persona',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-persona-handle',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'windows', screen: '1920x1080' },
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-persona-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-persona-handle',
+      );
+
+      expect(resumed.ws).to.not.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({
+        emulationOs: 'windows',
+        screen: '1920x1080',
+      });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('windows');
+      expect(reconnectUrl.searchParams.get('screen')).to.equal('1920x1080');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains the shipped OS alias when a dropped socket is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-os',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-os-handle',
+        undefined,
+        undefined,
+        'windows',
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-os-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-os-handle',
+      );
+
+      expect(resumed.persona).to.deep.equal({ emulationOs: 'windows' });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('windows');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a conflicting persona while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const open = (mcpSessionId: string, emulationOs: 'windows' | 'macos') =>
+        getOrCreateSession(
+          mcpSessionId,
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'shared-pending-persona',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { emulationOs },
+        );
+
+      const windows = open('mcp-pending-a', 'windows');
+      const macos = open('mcp-pending-b', 'macos').catch(
+        (error: unknown) => error,
+      );
+      expect((await windows).persona).to.deep.equal({
+        emulationOs: 'windows',
+      });
+      expect(await macos).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a recording-mode change while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const unrecorded = echo(
+        'mcp-pending-record-a',
+        server.url,
+        'shared-pending-record',
+        false,
+      );
+      const recorded = echo(
+        'mcp-pending-record-b',
+        server.url,
+        'shared-pending-record',
+        true,
+      ).catch((error: unknown) => error);
+
+      expect((await unrecorded).record).to.equal(false);
+      expect(await recorded).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a conflicting proxy while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const open = (
+        mcpSessionId: string,
+        proxy: 'residential' | 'datacenter',
+      ) =>
+        getOrCreateSession(
+          mcpSessionId,
+          server.url,
+          'tok',
+          { proxy },
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'shared-pending-proxy',
+        );
+
+      const residential = open('mcp-pending-proxy-a', 'residential');
+      const datacenter = open('mcp-pending-proxy-b', 'datacenter').catch(
+        (error: unknown) => error,
+      );
+      expect((await residential).proxy).to.deep.equal({
+        proxy: 'residential',
+      });
+      expect(await datacenter).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects persona before allocating a profile-creation session', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ id: 'created-profile' }), {
+        status: 200,
+      }),
+    );
+    try {
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-create-profile-persona',
+          'http://127.0.0.1:1',
+          'tok',
+          undefined,
+          undefined,
+          { name: 'demo' },
+          undefined,
+          false,
+          undefined,
+          'profile-persona-handle',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { emulationOs: 'windows', screen: '1920x1080' },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect(fetchStub.called).to.equal(false);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it('rejects recording before allocating a profile-creation session', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ id: 'created-profile' }), {
+        status: 200,
+      }),
+    );
+    try {
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-create-profile-recording',
+          'http://127.0.0.1:1',
+          'tok',
+          undefined,
+          undefined,
+          { name: 'demo' },
+          undefined,
+          false,
+          undefined,
+          'profile-recording-handle',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          true,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect((thrown as Error).message).to.match(
+        /recording.*cannot.*profile creation/i,
+      );
+      expect(fetchStub.called).to.equal(false);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it('rejects the legacy OS alias before attaching an existing browser', async () => {
+    const thrown = await getOrCreateSession(
+      'mcp-attach-os',
+      'http://127.0.0.1:1',
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      'sess-123',
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'windows',
+    ).catch((error: unknown) => error);
+
+    expect(thrown).to.be.instanceOf(PersonaConflictError);
+    expect((thrown as Error).message).to.match(
+      /cannot redefine an attached browser/i,
+    );
   });
 
   it('keeps an echoed handle scoped to its own token', async () => {
@@ -887,7 +1622,7 @@ describe('agent-client createProfile with os and humanlike', () => {
     sinon.restore();
   });
 
-  it('forwards non-default os and humanlike as query params to POST /profile', async () => {
+  it('forwards OS to profile creation and humanlike to the Agent attach', async () => {
     const server = await makeAcceptingServer();
     try {
       fetchStub = sinon.stub(globalThis, 'fetch').resolves(
@@ -918,7 +1653,10 @@ describe('agent-client createProfile with os and humanlike', () => {
       const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
       expect(calledUrl.pathname).to.equal('/profile');
       expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
-      expect(calledUrl.searchParams.get('humanlike')).to.equal('true');
+      expect(calledUrl.searchParams.has('humanlike')).to.equal(false);
+      const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(attachUrl.searchParams.get('sessionId')).to.equal('sess-test-123');
+      expect(attachUrl.searchParams.get('humanlike')).to.equal('true');
     } finally {
       await server.close();
     }
@@ -952,7 +1690,43 @@ describe('agent-client createProfile with os and humanlike', () => {
     }
   });
 
-  it('forwards humanlike=false explicitly when humanlike is false', async () => {
+  it('forwards emulationOs through profile creation like the shipped os alias', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(JSON.stringify({ id: 'created-profile' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const server = await makeAcceptingServer();
+    try {
+      await getOrCreateSession(
+        'mcp-create-profile-emulation-os',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        { name: 'emulated-profile' },
+        undefined,
+        false,
+        undefined,
+        'emulated-profile-handle',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { emulationOs: 'macos' },
+      );
+
+      const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
+      expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
+    } finally {
+      fetchStub.restore();
+      await server.close();
+    }
+  });
+
+  it('forwards humanlike=false explicitly on the Agent attach', async () => {
     const server = await makeAcceptingServer();
     try {
       fetchStub = sinon.stub(globalThis, 'fetch').resolves(
@@ -981,7 +1755,10 @@ describe('agent-client createProfile with os and humanlike', () => {
 
       expect(fetchStub.calledOnce).to.be.true;
       const calledUrl = new URL(fetchStub.firstCall.args[0] as string);
-      expect(calledUrl.searchParams.get('humanlike')).to.equal('false');
+      expect(calledUrl.searchParams.has('humanlike')).to.equal(false);
+      const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(attachUrl.searchParams.get('sessionId')).to.equal('sess-hl-false');
+      expect(attachUrl.searchParams.get('humanlike')).to.equal('false');
     } finally {
       await server.close();
     }

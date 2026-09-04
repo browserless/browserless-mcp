@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
 import {
+  PERSONA_FIELDS,
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
@@ -80,6 +81,25 @@ describe('ProxyOptionsSchema', () => {
   });
 
   describe('dependent-field refinement', () => {
+    const tierCases: Array<[string, Record<string, unknown>, boolean]> = [
+      ['residential preset', { proxy: 'residential', proxyPreset: 'px' }, true],
+      ['datacenter geo', { proxy: 'datacenter', proxyCountry: 'us' }, true],
+      ['datacenter sticky', { proxy: 'datacenter', proxySticky: true }, true],
+      ['datacenter preset', { proxy: 'datacenter', proxyPreset: 'px' }, false],
+      [
+        'external preset',
+        { externalProxyServer: 'http://host', proxyPreset: 'px' },
+        false,
+      ],
+      ['orphan preset', { proxyPreset: 'px' }, false],
+    ];
+
+    for (const [name, value, accepted] of tierCases) {
+      it(`${accepted ? 'accepts' : 'rejects'} ${name}`, () => {
+        expect(ProxyOptionsSchema.safeParse(value).success).to.equal(accepted);
+      });
+    }
+
     it('accepts an empty object', () => {
       expect(() => ProxyOptionsSchema.parse({})).to.not.throw();
     });
@@ -87,6 +107,16 @@ describe('ProxyOptionsSchema', () => {
     it('accepts proxy alone', () => {
       expect(() =>
         ProxyOptionsSchema.parse({ proxy: 'residential' }),
+      ).to.not.throw();
+    });
+
+    it('accepts datacenter with geo and sticky fields', () => {
+      expect(() =>
+        ProxyOptionsSchema.parse({
+          proxy: 'datacenter',
+          proxyCountry: 'us',
+          proxySticky: true,
+        }),
       ).to.not.throw();
     });
 
@@ -178,7 +208,199 @@ describe('AgentParamsSchema.proxy', () => {
   });
 });
 
+describe('AgentParamsSchema persona', () => {
+  it('accepts every persona option on the top-level Agent surface', () => {
+    const desktop = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      emulationOs: 'windows',
+      screen: '1920x1080',
+      deviceScaleFactor: 1.25,
+      deviceSlot: 3,
+    });
+    const android = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      emulationOs: 'android',
+      emulatedDevice: 'pixel-8',
+    });
+    expect(desktop.deviceSlot).to.equal(3);
+    expect(android.emulatedDevice).to.equal('pixel-8');
+    expect(PERSONA_FIELDS).to.have.members([
+      'emulationOs',
+      'emulatedDevice',
+      'screen',
+      'deviceScaleFactor',
+      'deviceSlot',
+    ]);
+  });
+
+  it('normalizes surrounding whitespace in a desktop screen', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'snapshot',
+      emulationOs: 'windows',
+      screen: ' 1920x1080 ',
+    });
+
+    expect(parsed.screen).to.equal('1920x1080');
+  });
+
+  it('enforces device and slot persona relationships locally', () => {
+    const cases: Array<[string, Record<string, unknown>, boolean]> = [
+      [
+        'Android device',
+        { emulationOs: 'android', emulatedDevice: 'pixel-8' },
+        true,
+      ],
+      ['device without OS', { emulatedDevice: 'pixel-8' }, false],
+      [
+        'device on desktop',
+        { emulationOs: 'windows', emulatedDevice: 'pixel-8' },
+        false,
+      ],
+      ['desktop slot', { emulationOs: 'windows', deviceSlot: 2 }, true],
+      ['slot without OS', { deviceSlot: 2 }, false],
+      ['slot on Android', { emulationOs: 'android', deviceSlot: 2 }, false],
+      ['desktop screen', { emulationOs: 'windows', screen: '1920x1080' }, true],
+      [
+        'desktop screen with OS alias',
+        { os: 'windows', screen: '1920x1080' },
+        true,
+      ],
+      [
+        'malformed desktop screen',
+        { emulationOs: 'windows', screen: 'wide' },
+        false,
+      ],
+      [
+        'undersized desktop screen',
+        { emulationOs: 'windows', screen: '320x200' },
+        false,
+      ],
+      [
+        'oversized desktop screen',
+        { emulationOs: 'windows', screen: '8000x8000' },
+        false,
+      ],
+      ['screen without OS', { screen: '1920x1080' }, false],
+      [
+        'screen on Android',
+        { emulationOs: 'android', screen: '1920x1080' },
+        false,
+      ],
+      [
+        'desktop screen with DPR',
+        {
+          emulationOs: 'windows',
+          screen: '1920x1080',
+          deviceScaleFactor: 1.25,
+        },
+        true,
+      ],
+      [
+        'DPR without screen',
+        { emulationOs: 'windows', deviceScaleFactor: 1.25 },
+        false,
+      ],
+      [
+        'DPR without OS',
+        { screen: '1920x1080', deviceScaleFactor: 1.25 },
+        false,
+      ],
+    ];
+    for (const [name, extra, accepted] of cases) {
+      expect(
+        AgentParamsSchema.safeParse({ method: 'snapshot', ...extra }).success,
+        name,
+      ).to.equal(accepted);
+    }
+  });
+
+  it('rejects unknown operating systems, DPRs, and invalid slots', () => {
+    for (const extra of [
+      { emulationOs: 'plan9' },
+      { deviceScaleFactor: 2 },
+      { deviceSlot: -1 },
+      { deviceSlot: 1.5 },
+    ]) {
+      expect(() =>
+        AgentParamsSchema.parse({
+          method: 'goto',
+          params: { url: 'https://example.com' },
+          ...extra,
+        }),
+      ).to.throw();
+    }
+  });
+
+  it('enforces the persona creation relationship matrix', () => {
+    const cases: Array<[string, Record<string, unknown>, boolean]> = [
+      ['persona launch', { emulationOs: 'windows' }, true],
+      ['profile creation', { createProfile: { name: 'demo' } }, true],
+      [
+        'profile creation with OS alias',
+        { createProfile: { name: 'demo' }, emulationOs: 'windows' },
+        true,
+      ],
+      [
+        'profile creation with additional persona state',
+        {
+          createProfile: { name: 'demo' },
+          emulationOs: 'windows',
+          screen: '1920x1080',
+        },
+        false,
+      ],
+    ];
+    for (const [name, extra, accepted] of cases) {
+      expect(
+        AgentParamsSchema.safeParse({
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+          ],
+          ...extra,
+        }).success,
+        name,
+      ).to.equal(accepted);
+    }
+  });
+
+  it('accepts matching OS aliases and rejects conflicting aliases', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'snapshot',
+        os: 'windows',
+        emulationOs: 'windows',
+      }).success,
+    ).to.equal(true);
+    expect(
+      AgentParamsSchema.safeParse({
+        method: 'snapshot',
+        os: 'macos',
+        emulationOs: 'windows',
+      }).success,
+    ).to.equal(false);
+  });
+});
+
 describe('AgentParamsSchema recording batches', () => {
+  it('rejects recording during profile creation', () => {
+    expect(
+      AgentParamsSchema.safeParse({
+        createProfile: { name: 'demo' },
+        record: true,
+        method: 'snapshot',
+      }).success,
+    ).to.equal(false);
+    expect(
+      AgentParamsSchema.safeParse({
+        createProfile: { name: 'demo' },
+        record: false,
+        method: 'snapshot',
+      }).success,
+    ).to.equal(true);
+  });
+
   it('requires stopRecording to be final except before close', () => {
     expect(
       AgentParamsSchema.safeParse({
