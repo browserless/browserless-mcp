@@ -7,10 +7,12 @@ import {
   formatConnectError,
   formatDownloads,
   formatErrorMessage,
+  formatRecordingToDisk,
   formatScreenshotContent,
   formatScreenshotToDisk,
   formatSnapshot,
   normalizeUploadCommand,
+  persistRecording,
   buildSkillEventProps,
   registerAgentTools,
   sanitizeUpgradeBody,
@@ -20,8 +22,11 @@ import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  clearSession,
   downloadOwner,
   downloadUri,
+  FILE_TRANSFER_MAX_BYTES,
+  getDownload,
   storeDownload,
 } from '../../src/lib/download-store.js';
 import {
@@ -365,6 +370,38 @@ describe('formatScreenshotToDisk', () => {
         transport: 'stdio',
       }),
     ).to.be.null;
+  });
+});
+
+describe('recording downloads', () => {
+  it('stores base64 WebM bytes and formats only its handle', async () => {
+    const base64 = Buffer.from('webm').toString('base64');
+    const result = (await persistRecording(
+      { value: base64 },
+      'test-token',
+      'session',
+    )) as { download: Parameters<typeof formatRecordingToDisk>[0] };
+    const content = formatRecordingToDisk(result, '', '', {
+      transport: 'stdio',
+    });
+
+    expect(JSON.stringify(content)).to.include('recording.webm');
+    expect(JSON.stringify(content)).to.not.include(base64);
+  });
+
+  it('rejects recordings over the transfer limit', async () => {
+    const value = 'A'.repeat(4 * Math.ceil((FILE_TRANSFER_MAX_BYTES + 1) / 3));
+    const decode = sinon
+      .stub(Buffer, 'from')
+      .throws(new Error('must reject before decoding'));
+    try {
+      expect(
+        await persistRecording({ value }, undefined, undefined),
+      ).to.deep.include({ recording: false });
+      expect(decode.called).to.equal(false);
+    } finally {
+      decode.restore();
+    }
   });
 });
 
@@ -939,6 +976,35 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent recording ownership', () => {
+  afterEach(() => sinon.restore());
+
+  it('stores a recording under the authenticated token owner', async () => {
+    const sessionId = 'recording-owner-session';
+    const srv = await makeRespondingServer((method) =>
+      method === 'stopRecording'
+        ? { value: Buffer.from('webm').toString('base64') }
+        : {},
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = (await execute(
+        { method: 'stopRecording' },
+        { ...mockContext, sessionId },
+      )) as { content: Content[] };
+      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+        .text;
+      const path = text.split('- ')[1].split(' (')[0];
+
+      expect(getDownload(path, downloadOwner('test-token'))).to.exist;
+      expect(getDownload(path, downloadOwner('other-token'))).to.be.undefined;
+    } finally {
+      clearSession(sessionId);
+      await srv.close();
+    }
+  });
+});
 
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());

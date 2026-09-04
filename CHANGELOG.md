@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/browserless/browserless-mcp/compare/v1.25.0...v1.26.0) (2026-09-03)
+
+
+### Features
+
+* add recording functionality to mcp agent AUTO-376 ([#284](https://github.com/browserless/browserless-mcp/issues/284)) ([c1d422f](https://github.com/browserless/browserless-mcp/commit/c1d422f549910699b31bd5b25e54fcaeb5b45215))
+
 ## [1.25.0](https://github.com/browserless/browserless-mcp/compare/v1.24.0...v1.25.0) (2026-09-01)
 
 
