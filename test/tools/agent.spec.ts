@@ -1072,6 +1072,78 @@ describe('browserless_agent integration binding guard', () => {
     }
   });
 
+  it('rejects capture in a later call reusing a secret-bearing session', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    const execute = getAgentExecute(srv.url);
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { ...mockContext, sessionId: 'secret-cross-call-1' },
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+      expect(handle).to.match(/^s:/);
+
+      try {
+        await execute(
+          { method: 'screenshot', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-cross-call-2' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'screenshot cannot run after loadSecret',
+        );
+      }
+    } finally {
+      if (handle) {
+        await execute(
+          { method: 'close', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-cross-call-2' },
+        );
+      }
+      await srv.close();
+    }
+  });
+
+  it('keeps capture blocked when top-frame navigation does not occur', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'back' ? null : {},
+    );
+    const execute = getAgentExecute(srv.url);
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { ...mockContext, sessionId: 'secret-no-navigation-1' },
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+
+      try {
+        await execute(
+          {
+            commands: [{ method: 'back' }, { method: 'screenshot' }],
+            sessionId: handle,
+          },
+          { ...mockContext, sessionId: 'secret-no-navigation-2' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'screenshot cannot run after loadSecret',
+        );
+      }
+    } finally {
+      if (handle) {
+        await execute(
+          { method: 'close', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-no-navigation-2' },
+        );
+      }
+      await srv.close();
+    }
+  });
+
   it('rejects integrationId combined with createProfile before connecting', async () => {
     // Dummy URL: the guard throws before any WebSocket/connect is attempted.
     const execute = getAgentExecute('http://127.0.0.1:1');

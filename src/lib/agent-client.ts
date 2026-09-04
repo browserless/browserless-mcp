@@ -867,6 +867,7 @@ export const getOrCreateSession = async (
       humanlike,
       record,
       skillState: createSkillState(),
+      secretVisible: false,
       lastUsedAt: Date.now(),
     };
 

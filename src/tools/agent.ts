@@ -110,8 +110,9 @@ export const validateSecretCaptureOrdering = (
     method: string;
     params?: Record<string, unknown>;
   }>,
+  initiallyVisible = false,
 ): void => {
-  let secretVisible = false;
+  let secretVisible = initiallyVisible;
   for (const command of commands) {
     if (command.method === 'loadSecret') {
       secretVisible = true;
@@ -923,6 +924,17 @@ export function registerAgentTools(
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         let promptSent = false;
         for (const cmd of commands) {
+          try {
+            validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
+          } catch (err) {
+            lastCategory = 'INVALID_PARAMS';
+            throw new UserError(
+              err instanceof Error
+                ? err.message
+                : 'Secret capture preflight failed.',
+            );
+          }
+
           if (cmd.method === 'close') {
             closeSession(
               mcpSessionId,
@@ -1090,6 +1102,18 @@ export function registerAgentTools(
                 .filter(Boolean)
                 .join('\n\n'),
             );
+          }
+
+          if (cmd.method === 'loadSecret') {
+            agentSession.secretVisible = true;
+          } else if (
+            cmd.method === 'clearSecrets' ||
+            (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method) &&
+              resp.result !== null &&
+              typeof resp.result === 'object' &&
+              (resp.result as { rejected?: unknown }).rejected !== true)
+          ) {
+            agentSession.secretVisible = false;
           }
 
           // Capture the first URL we observe in the batch as a fallback
