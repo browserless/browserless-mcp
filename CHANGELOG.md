@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.0](https://github.com/browserless/browserless-mcp/compare/v1.26.0...v1.27.0) (2026-09-04)
+
+
+### Features
+
+* **AUTO-367:** expose clearSecrets to browser agents ([#290](https://github.com/browserless/browserless-mcp/issues/290)) ([d70500c](https://github.com/browserless/browserless-mcp/commit/d70500c5478f6c6ef9ba967845133f1c02fd9420))
+
 ## [1.26.0](https://github.com/browserless/browserless-mcp/compare/v1.25.0...v1.26.0) (2026-09-03)
 
 
