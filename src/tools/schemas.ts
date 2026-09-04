@@ -240,6 +240,18 @@ const LoadSecretCommandSchema = z.object({
   }),
 });
 
+const ClearSecretsCommandSchema = z.object({
+  method: z
+    .literal('clearSecrets')
+    .describe(
+      'Re-enable screenshot, PDF, liveURL, and page-content-read captures ' +
+        '(evaluate/html/text/querySelector/cookies) after a loadSecret login ' +
+        'once the credential is no longer visible. Required for single-page apps ' +
+        'that do not navigate; replay remains masked.',
+    ),
+  params: z.object({}).strict().optional().default({}),
+});
+
 const SelectCommandSchema = z.object({
   method: z.literal('select'),
   params: z.object({
@@ -658,6 +670,7 @@ const specificCommandSchemas = [
   ClickCommandSchema,
   TypeCommandSchema,
   LoadSecretCommandSchema,
+  ClearSecretsCommandSchema,
   SelectCommandSchema,
   CheckboxCommandSchema,
   HoverCommandSchema,
@@ -901,6 +914,8 @@ const compliantCommandSchemas = [
   WaitForResponseCommandSchema,
   LiveURLCommandSchema,
   ScreenshotCommandSchema,
+  // No loadSecret/clearSecrets: the compliance surface cannot fill secrets,
+  // so its capture gate never arms and there is nothing to clear.
   // No uploadFile/getDownloads: upload impersonates a human write (vendor-TOS),
   // download is the paired file-I/O — a compliant web agent reads, doesn't move files.
   CloseCommandSchema,

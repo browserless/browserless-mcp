@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { AgentCommandSchema } from '../../src/tools/schemas.js';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
 import {
@@ -302,6 +303,36 @@ describe('loadSecret command', () => {
       ],
     });
     expect(result.success).to.equal(false);
+  });
+});
+
+describe('clearSecrets command', () => {
+  it('accepts clearSecrets with params omitted or empty', () => {
+    for (const command of [
+      { method: 'clearSecrets' },
+      { method: 'clearSecrets', params: {} },
+    ]) {
+      expect(
+        AgentParamsSchema.safeParse({ commands: [command] }).success,
+        JSON.stringify(command),
+      ).to.equal(true);
+    }
+  });
+
+  it('rejects unexpected clearSecrets params through the typed command arm', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [
+        { method: 'clearSecrets', params: { unexpected: 'not-allowed' } },
+      ],
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('describes when clearSecrets is needed in the published command schema', () => {
+    const schema = JSON.stringify(AgentCommandSchema.toJSONSchema());
+    expect(schema).to.include('clearSecrets');
+    expect(schema).to.include('single-page apps');
+    expect(schema).to.include('replay remains masked');
   });
 });
 
