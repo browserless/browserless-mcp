@@ -1014,6 +1014,45 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('retains a no-proxy configuration when a dropped session is recreated', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await bare('mcp-dropped-no-proxy', server.url);
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const changedProxy = await getOrCreateSession(
+        'mcp-dropped-no-proxy-2',
+        server.url,
+        'tok',
+        { proxy: 'datacenter' },
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      ).catch((error: unknown) => error);
+      expect(changedProxy).to.be.instanceOf(PersonaConflictError);
+      expect((changedProxy as Error).message).to.match(/proxy.*fixed/i);
+
+      const resumed = await echo(
+        'mcp-dropped-no-proxy-3',
+        server.url,
+        opened.handle,
+      );
+      expect(resumed.proxy).to.equal(undefined);
+      expect(
+        new URL(server.upgradeUrls()[1]!, server.url).searchParams.has('proxy'),
+      ).to.equal(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects a proxy change for an echoed session handle', async () => {
     const server = await makeAcceptingServer();
     try {

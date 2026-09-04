@@ -245,7 +245,8 @@ const pending = new Map<string, Promise<ActiveSession>>();
 // Retain creation-state persona and proxy routing across socket eviction so an
 // echoed handle can recreate coherently without repeating first-call options.
 const retainedPersonas = new Map<string, PersonaOptions>();
-const retainedProxies = new Map<string, ProxyOptions>();
+// null is an explicit no-proxy configuration; absence means no retained state.
+const retainedProxies = new Map<string, ProxyOptions | null>();
 
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
@@ -886,21 +887,24 @@ export const getOrCreateSession = async (
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
   const retainedPersona = retainedPersonas.get(key);
+  const hasRetainedProxy = retainedProxies.has(key);
   const retainedProxy = retainedProxies.get(key);
 
   if (
-    retainedProxy &&
+    hasRetainedProxy &&
     proxy !== undefined &&
-    proxyFingerprint(retainedProxy) !== proxyFingerprint(proxy)
+    proxyFingerprint(retainedProxy ?? undefined) !== proxyFingerprint(proxy)
   ) {
     throw new PersonaConflictError(
       'Proxy options are fixed when a browser session opens. Close the session before changing them.',
     );
   }
-  const effectiveProxy = retainedProxy ?? proxy;
-  if (retainedProxy) {
+  const effectiveProxy = hasRetainedProxy
+    ? (retainedProxy ?? undefined)
+    : proxy;
+  if (hasRetainedProxy) {
     retainedProxies.delete(key);
-    retainedProxies.set(key, retainedProxy);
+    retainedProxies.set(key, retainedProxy ?? null);
   }
 
   if (
@@ -1055,14 +1059,12 @@ export const getOrCreateSession = async (
         retainedPersonas.delete(oldest);
       }
     }
-    if (effectiveProxy && proxyFingerprint(effectiveProxy)) {
-      retainedProxies.delete(key);
-      retainedProxies.set(key, effectiveProxy);
-      while (retainedProxies.size > MAX_RETAINED_CONFIGS) {
-        const oldest = retainedProxies.keys().next().value;
-        if (oldest === undefined) break;
-        retainedProxies.delete(oldest);
-      }
+    retainedProxies.delete(key);
+    retainedProxies.set(key, effectiveProxy ?? null);
+    while (retainedProxies.size > MAX_RETAINED_CONFIGS) {
+      const oldest = retainedProxies.keys().next().value;
+      if (oldest === undefined) break;
+      retainedProxies.delete(oldest);
     }
 
     // Auto-cleanup on close
