@@ -379,7 +379,7 @@ describe('agent-client buildAgentWsUrl', () => {
         undefined,
         'windows',
       ),
-    ).to.throw(/cannot redefine an attached browser/i);
+    ).to.throw(PersonaConflictError, /cannot redefine an attached browser/i);
   });
 
   it('rejects recording while attaching an existing browser', () => {

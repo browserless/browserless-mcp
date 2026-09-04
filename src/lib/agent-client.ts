@@ -414,7 +414,7 @@ export const buildAgentWsUrl = (
       );
     }
     if (hasPersona(persona) || os !== undefined) {
-      throw new Error(
+      throw new PersonaConflictError(
         'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
       );
     }
