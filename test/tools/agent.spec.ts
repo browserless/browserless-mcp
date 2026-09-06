@@ -22,8 +22,11 @@ import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  clearSession,
+  downloadOwner,
   downloadUri,
   FILE_TRANSFER_MAX_BYTES,
+  getDownload,
   storeDownload,
 } from '../../src/lib/download-store.js';
 import {
@@ -373,9 +376,11 @@ describe('formatScreenshotToDisk', () => {
 describe('recording downloads', () => {
   it('stores base64 WebM bytes and formats only its handle', async () => {
     const base64 = Buffer.from('webm').toString('base64');
-    const result = (await persistRecording({ value: base64 }, 'session')) as {
-      download: Parameters<typeof formatRecordingToDisk>[0];
-    };
+    const result = (await persistRecording(
+      { value: base64 },
+      'test-token',
+      'session',
+    )) as { download: Parameters<typeof formatRecordingToDisk>[0] };
     const content = formatRecordingToDisk(result, '', '', {
       transport: 'stdio',
     });
@@ -390,9 +395,9 @@ describe('recording downloads', () => {
       .stub(Buffer, 'from')
       .throws(new Error('must reject before decoding'));
     try {
-      expect(await persistRecording({ value }, undefined)).to.deep.include({
-        recording: false,
-      });
+      expect(
+        await persistRecording({ value }, undefined, undefined),
+      ).to.deep.include({ recording: false });
       expect(decode.called).to.equal(false);
     } finally {
       decode.restore();
@@ -427,7 +432,7 @@ describe('normalizeUploadCommand', () => {
       method: 'uploadFile',
       params: { selector: 'input', files: [{ path }] },
     };
-    await normalizeUploadCommand(cmd, 'stdio');
+    await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
 
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.path).to.be.undefined;
@@ -448,6 +453,7 @@ describe('normalizeUploadCommand', () => {
         cmd,
         'httpStream',
         'https://mcp.example.com',
+        'test-token',
       );
     } catch (e) {
       threw = true;
@@ -466,20 +472,22 @@ describe('normalizeUploadCommand', () => {
       method: 'uploadFile',
       params: { selector: 'input', files: [{ content: 'YWJj', name: 'a' }] },
     };
-    await normalizeUploadCommand(cmd, 'httpStream');
+    await normalizeUploadCommand(cmd, 'httpStream', undefined, 'test-token');
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.content).to.equal('YWJj');
 
     const other = { method: 'click', params: { selector: 'a' } };
-    await normalizeUploadCommand(other, 'stdio');
+    await normalizeUploadCommand(other, 'stdio', undefined, 'test-token');
     expect(other.params.selector).to.equal('a');
   });
 
   it('resolves a download handle to base64 content (any transport)', async () => {
+    const token = 'owner-token';
     const record = await storeDownload(
       'grabbed.bin',
       'application/octet-stream',
       Buffer.from('Hello World!'),
+      downloadOwner(token),
     );
     const cmd = {
       method: 'uploadFile',
@@ -488,13 +496,37 @@ describe('normalizeUploadCommand', () => {
         files: [{ handle: downloadUri(record.id) }],
       },
     };
-    await normalizeUploadCommand(cmd, 'httpStream');
+    await normalizeUploadCommand(cmd, 'httpStream', undefined, token);
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.handle).to.be.undefined;
     expect(file.name).to.equal('grabbed.bin');
     expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
       'Hello World!',
     );
+  });
+
+  it('rejects a download handle owned by another token', async () => {
+    const record = await storeDownload(
+      'private.bin',
+      'application/octet-stream',
+      Buffer.from('private'),
+      downloadOwner('owner-token'),
+    );
+    const cmd = {
+      method: 'uploadFile',
+      params: { files: [{ handle: downloadUri(record.id) }] },
+    };
+
+    let threw = false;
+    try {
+      await normalizeUploadCommand(cmd, 'httpStream', undefined, 'other-token');
+    } catch (error) {
+      threw = true;
+      expect((error as Error).message).to.match(/Unknown upload handle/);
+    }
+    expect(threw).to.be.true;
+    expect((cmd.params.files[0] as Record<string, unknown>).content).to.be
+      .undefined;
   });
 
   it('throws on an unknown upload handle', async () => {
@@ -504,7 +536,7 @@ describe('normalizeUploadCommand', () => {
     };
     let threw = false;
     try {
-      await normalizeUploadCommand(cmd, 'stdio');
+      await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
     } catch (e) {
       threw = true;
       expect((e as Error).message).to.match(/Unknown upload handle/);
@@ -531,9 +563,30 @@ describe('formatDownloads (httpStream)', () => {
     expect(text).to.match(
       /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
     );
+    const urlId = text.match(/\/download\/([0-9a-f]{32})\?token=/)?.[1];
+    const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
+    expect(urlId).to.equal(handleId);
     expect(text).to.include('single use');
     // The base64 must never appear in the returned content.
     expect(JSON.stringify(content)).to.not.include('YWJj');
+  });
+
+  it('URL-encodes tokens in the download recipe', async () => {
+    const token = 'token+with&reserved#characters';
+    const content = await formatDownloads(
+      [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token,
+      },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    const url = text.match(/curl -s "([^"]+)"/)?.[1];
+    expect(url).to.exist;
+    expect(new URL(url!).searchParams.get('token')).to.equal(token);
   });
 
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {
@@ -923,6 +976,35 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent recording ownership', () => {
+  afterEach(() => sinon.restore());
+
+  it('stores a recording under the authenticated token owner', async () => {
+    const sessionId = 'recording-owner-session';
+    const srv = await makeRespondingServer((method) =>
+      method === 'stopRecording'
+        ? { value: Buffer.from('webm').toString('base64') }
+        : {},
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = (await execute(
+        { method: 'stopRecording' },
+        { ...mockContext, sessionId },
+      )) as { content: Content[] };
+      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+        .text;
+      const path = text.split('- ')[1].split(' (')[0];
+
+      expect(getDownload(path, downloadOwner('test-token'))).to.exist;
+      expect(getDownload(path, downloadOwner('other-token'))).to.be.undefined;
+    } finally {
+      clearSession(sessionId);
+      await srv.close();
+    }
+  });
+});
 
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());
