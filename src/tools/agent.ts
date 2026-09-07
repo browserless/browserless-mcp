@@ -45,14 +45,15 @@ import {
   siteRecipeNotice,
   hydrateRemoteSkills,
 } from '../skills/sites.js';
-import { AgentParamsSchema } from './schemas.js';
+import { AgentCommandSchema, AgentToolParamsSchema } from './schemas.js';
 import {
   isCompliant,
   detectVisibleSkills,
   COMPLIANT_SKILLS,
   COMPLIANT_SKILL_TOOL_DESCRIPTION,
   COMPLIANT_AGENT_METHODS,
-  CompliantAgentParamsSchema,
+  CompliantAgentCommandSchema,
+  CompliantAgentToolParamsSchema,
 } from './compliance.js';
 import {
   AGENT_SYSTEM_PROMPT,
@@ -604,11 +605,16 @@ export function registerAgentTools(
         : AGENT_SYSTEM_PROMPT +
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
       sessionContinuityNote(config.transport),
+    // The tool advertises the slim, OpenAI-importable schemas — the rich
+    // per-command union renders to a JSON Schema too deep/large for OpenAI's
+    // hosted-MCP tool import, which rejects the whole tools/list with 424. run()
+    // re-validates any command batch against the rich per-command contract
+    // below, and the compliant surface adds its method/key guards.
     // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
-    // supertypes both schemas; FastMCP's runtime schema + compliance spec are the real guards.
+    // supertypes both schemas; run()'s re-validation + compliance spec are the real guards.
     parameters: (compliant
-      ? CompliantAgentParamsSchema
-      : AgentParamsSchema) as z.ZodType<AgentToolParams>,
+      ? CompliantAgentToolParamsSchema
+      : AgentToolParamsSchema) as z.ZodType<AgentToolParams>,
     annotations: {
       title: 'Browserless Agent',
       readOnlyHint: false,
@@ -626,7 +632,7 @@ export function registerAgentTools(
       sessionId: mcpSessionId,
       attachSessionId,
     }) => {
-      const commands: Array<{
+      let commands: Array<{
         method: string;
         params: Record<string, unknown>;
       }> =
@@ -668,6 +674,38 @@ export function registerAgentTools(
             'Credential integrations are not available on this endpoint.',
           );
         }
+      }
+
+      // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
+      // import accepts it; re-validate a provided batch against the full
+      // per-command contract here (the method/key guards above own their
+      // specific messages). Single-command calls stay loose, as before — the
+      // browser backend validates their params.
+      if (params.commands && params.commands.length > 0) {
+        const commandContract = z
+          .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
+          .safeParse(params.commands);
+        if (!commandContract.success) {
+          throw new UserError(
+            commandContract.error.issues
+              .map(
+                (i) =>
+                  (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
+              )
+              .join('; '),
+          );
+        }
+        // Forward the parsed batch, not the raw one: the per-command schemas
+        // apply typed defaults and strip unknown keys (the flat boundary schema
+        // does neither), matching the behaviour when the rich schema validated
+        // at the boundary.
+        commands = commandContract.data.map((c) => {
+          const parsed = c as {
+            method: string;
+            params?: Record<string, unknown>;
+          };
+          return { method: parsed.method, params: parsed.params ?? {} };
+        });
       }
 
       const proxy = params.proxy;

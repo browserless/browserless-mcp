@@ -765,126 +765,180 @@ const CreateProfileSchema = z
       '(via browserless_skill) for the full create-then-save recipe.',
   );
 
-export const AgentParamsSchema = z
-  .object({
-    method: z
-      .string()
-      .optional()
-      .default('')
-      .describe(
-        'The BQL method to execute (used for single-command calls). ' +
-          'When using "commands" array, this field is ignored.',
-      ),
-    params: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .default({})
-      .describe('Parameters for the method (used for single-command calls).'),
-    commands: z
-      .array(AgentCommandSchema)
-      .optional()
-      .describe(
-        'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
-          'are ignored and commands are executed sequentially. Only the final result is returned. ' +
-          'Use this to batch actions that share the same page state (e.g. filling a form: ' +
-          'type email + type password + click submit). Do NOT batch across navigations.',
-      ),
-    proxy: ProxyOptionsSchema.optional().describe(
-      'Residential / external proxy config. Read once at session creation. ' +
-        'Changing requires close() + a new session call.',
+const COMMANDS_DESCRIPTION =
+  'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
+  'are ignored and commands are executed sequentially. Only the final result is returned. ' +
+  'Use this to batch actions that share the same page state (e.g. filling a form: ' +
+  'type email + type password + click submit). Do NOT batch across navigations.';
+
+// A command as advertised to MCP clients. The authoritative per-command contract
+// (typed params keyed by method) is AgentCommandSchema, but that discriminated
+// union renders to a JSON Schema too deep and large for OpenAI's hosted-MCP tool
+// import — OpenAI validates every tool's schema on import and rejects the whole
+// tools/list with `424 (Failed Dependency)` when one is out of bounds, which
+// breaks every hosted-agent flow that drives this MCP. The tool therefore
+// advertises this flat shape; the agent handler re-validates against
+// AgentCommandSchema and the browser backend validates each command's params.
+// Shared by both flat tool-command schemas below (the full surface uses a
+// free-string method, the compliant surface an allowlist enum).
+const flatCommandParams = z
+  .record(z.string(), z.unknown())
+  .optional()
+  .describe('Parameters for the method (see the tool description).');
+
+const AgentToolCommandSchema = z.object({
+  method: z
+    .string()
+    .describe(
+      'The BQL method name, e.g. "goto", "click", "type", "snapshot", ' +
+        '"screenshot". See the tool description for the full command list.',
     ),
-    record: z
-      .boolean()
-      .optional()
-      .describe(
-        'Arm screen-video recording at session launch. Use `startRecording` / ' +
-          '`stopRecording`; stopping returns a single-use WebM link, never bytes.',
-      ),
-    profile: profileField(
-      'when the agent session connects',
-      ' `profile` binds each call to its hydrated session — you MUST pass it on ' +
-        'every call in a multi-call flow, not just the first. A call that omits ' +
-        '`profile` runs in the default, un-hydrated session and will look logged ' +
-        'out; if that happens, re-issue the call WITH `profile` before concluding ' +
-        'the session expired. A different `profile` value opens a separate session.',
-    ),
-    createProfile: CreateProfileSchema.optional(),
-    integrationId: nulSafeString('integrationId')
-      .optional()
-      .describe(
-        'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
-          'session so `loadSecret` can resolve `op://vault/item/field` references. Find ' +
-          'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
-          'flow (like `profile`); a call that omits it runs with no vault bound and ' +
-          '`loadSecret` returns CredentialNotResolved. Pair with `allowedDomains` to ' +
-          'permit filling on the target sites.',
-      ),
-    allowedDomains: z
-      .array(z.string().trim().min(1))
-      .optional()
-      .describe(
-        'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +
-          "Only meaningful with `integrationId`. Defaults to the integration's configured " +
-          'origins; set it to fill on additional sites. loadSecret is refused on any origin ' +
-          'not covered here.',
-      ),
-    os: z
-      .enum(['windows', 'macos', 'linux'])
-      .optional()
-      .describe(
-        'Desktop OS to spoof for the stealth fingerprint (navigator.platform, UA, ' +
-          'UA-CH client hints, GPU/font signals). Defaults to "windows" so the agent ' +
-          'presents a coherent, low-risk desktop identity instead of its native Linux ' +
-          '(a Chrome-masked UA over "Linux x86_64" is a bot tell that anti-bot checks ' +
-          'flag). Forwarded to the browser as ?emulationOs; read once at session creation.',
-      ),
-    humanlike: z
-      .boolean()
-      .optional()
-      .describe(
-        'Human-like cursor movement + pacing for clicks/scrolls. Improves the passive ' +
-          'score of invisible anti-bot challenges (which weight real mouse/interaction ' +
-          'signals). Defaults on. Forwarded as ?humanlike; read once at session creation.',
-      ),
-    rationale: z
-      .string()
-      .optional()
-      .describe(
-        'A short user-facing reason for this call. HARD BUDGET: 50 characters. ' +
-          'Surfaced live in interactive UIs as the progress label. Write it for ' +
-          'a human watching, in present-continuous form ("Logging in", "Filling ' +
-          'the search form", "Checking the time", "Closing the cookie banner"). ' +
-          'If your first draft is longer than 50 chars, REWORD IT to fit — ' +
-          'compress to the essence; do NOT just chop. Bad: "Read page title and ' +
-          'body text to determine why snapshot is empty" (64). Good: "Diagnosing ' +
-          'empty snapshot" (24). Bad: "Filling out a very detailed multi-field ' +
-          'signup form" (51). Good: "Filling the signup form" (23). Never use ' +
-          'jargon, raw method names ("evaluate", "click"), JS, full URLs, or ' +
-          'credentials. Include exactly one per `browserless_agent` call, even ' +
-          'when batching commands.',
-      ),
-    sessionId: sessionIdField,
-  })
-  .refine((v) => !(v.profile && v.createProfile), {
-    message:
-      '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
-      'one) cannot both be set',
-  })
-  .refine(
-    ({ commands = [] }) =>
-      commands.every(
-        (command, index) =>
-          command.method !== 'stopRecording' ||
-          index === commands.length - 1 ||
-          (index === commands.length - 2 &&
-            commands.at(-1)?.method === 'close'),
-      ),
-    {
+  params: flatCommandParams,
+});
+
+// Top-level invariants, shared by the full validation schema and the slim tool
+// schema so both enforce them identically.
+const refineProfileExclusive = (v: {
+  profile?: unknown;
+  createProfile?: unknown;
+}): boolean => !(v.profile && v.createProfile);
+const refineStopRecordingLast = (v: {
+  commands?: ReadonlyArray<{ method?: string }>;
+}): boolean => {
+  const commands = v.commands ?? [];
+  return commands.every(
+    (command, index) =>
+      command.method !== 'stopRecording' ||
+      index === commands.length - 1 ||
+      (index === commands.length - 2 && commands.at(-1)?.method === 'close'),
+  );
+};
+
+// Apply both top-level agent invariants to a params object so the rich
+// validation schema and its slim tool projection can never drift.
+const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
+  schema
+    .refine(refineProfileExclusive, {
+      message:
+        '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
+        'one) cannot both be set',
+    })
+    .refine(refineStopRecordingLast, {
       message:
         '`stopRecording` must be the final command, except before `close`',
       path: ['commands'],
-    },
-  );
+    });
+
+const agentParamsObject = z.object({
+  method: z
+    .string()
+    .optional()
+    .default('')
+    .describe(
+      'The BQL method to execute (used for single-command calls). ' +
+        'When using "commands" array, this field is ignored.',
+    ),
+  params: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .default({})
+    .describe('Parameters for the method (used for single-command calls).'),
+  commands: z
+    .array(AgentCommandSchema)
+    .optional()
+    .describe(COMMANDS_DESCRIPTION),
+  proxy: ProxyOptionsSchema.optional().describe(
+    'Residential / external proxy config. Read once at session creation. ' +
+      'Changing requires close() + a new session call.',
+  ),
+  record: z
+    .boolean()
+    .optional()
+    .describe(
+      'Arm screen-video recording at session launch. Use `startRecording` / ' +
+        '`stopRecording`; stopping returns a single-use WebM link, never bytes.',
+    ),
+  profile: profileField(
+    'when the agent session connects',
+    ' `profile` binds each call to its hydrated session — you MUST pass it on ' +
+      'every call in a multi-call flow, not just the first. A call that omits ' +
+      '`profile` runs in the default, un-hydrated session and will look logged ' +
+      'out; if that happens, re-issue the call WITH `profile` before concluding ' +
+      'the session expired. A different `profile` value opens a separate session.',
+  ),
+  createProfile: CreateProfileSchema.optional(),
+  integrationId: nulSafeString('integrationId')
+    .optional()
+    .describe(
+      'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
+        'session so `loadSecret` can resolve `op://vault/item/field` references. Find ' +
+        'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
+        'flow (like `profile`); a call that omits it runs with no vault bound and ' +
+        '`loadSecret` returns CredentialNotResolved. Pair with `allowedDomains` to ' +
+        'permit filling on the target sites.',
+    ),
+  allowedDomains: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +
+        "Only meaningful with `integrationId`. Defaults to the integration's configured " +
+        'origins; set it to fill on additional sites. loadSecret is refused on any origin ' +
+        'not covered here.',
+    ),
+  os: z
+    .enum(['windows', 'macos', 'linux'])
+    .optional()
+    .describe(
+      'Desktop OS to spoof for the stealth fingerprint (navigator.platform, UA, ' +
+        'UA-CH client hints, GPU/font signals). Defaults to "windows" so the agent ' +
+        'presents a coherent, low-risk desktop identity instead of its native Linux ' +
+        '(a Chrome-masked UA over "Linux x86_64" is a bot tell that anti-bot checks ' +
+        'flag). Forwarded to the browser as ?emulationOs; read once at session creation.',
+    ),
+  humanlike: z
+    .boolean()
+    .optional()
+    .describe(
+      'Human-like cursor movement + pacing for clicks/scrolls. Improves the passive ' +
+        'score of invisible anti-bot challenges (which weight real mouse/interaction ' +
+        'signals). Defaults on. Forwarded as ?humanlike; read once at session creation.',
+    ),
+  rationale: z
+    .string()
+    .optional()
+    .describe(
+      'A short user-facing reason for this call. HARD BUDGET: 50 characters. ' +
+        'Surfaced live in interactive UIs as the progress label. Write it for ' +
+        'a human watching, in present-continuous form ("Logging in", "Filling ' +
+        'the search form", "Checking the time", "Closing the cookie banner"). ' +
+        'If your first draft is longer than 50 chars, REWORD IT to fit — ' +
+        'compress to the essence; do NOT just chop. Bad: "Read page title and ' +
+        'body text to determine why snapshot is empty" (64). Good: "Diagnosing ' +
+        'empty snapshot" (24). Bad: "Filling out a very detailed multi-field ' +
+        'signup form" (51). Good: "Filling the signup form" (23). Never use ' +
+        'jargon, raw method names ("evaluate", "click"), JS, full URLs, or ' +
+        'credentials. Include exactly one per `browserless_agent` call, even ' +
+        'when batching commands.',
+    ),
+  sessionId: sessionIdField,
+});
+
+export const AgentParamsSchema = withAgentInvariants(agentParamsObject);
+
+// OpenAI-importable projection of AgentParamsSchema: identical top-level fields
+// and invariants, but `commands` uses the flat AgentToolCommandSchema so the
+// generated JSON Schema stays within OpenAI's hosted-MCP tool-import limits.
+// This is what the browserless_agent tool advertises; run() re-validates each
+// command against AgentCommandSchema for the full per-command contract.
+export const AgentToolParamsSchema = withAgentInvariants(
+  agentParamsObject.extend({
+    commands: z
+      .array(AgentToolCommandSchema)
+      .optional()
+      .describe(COMMANDS_DESCRIPTION),
+  }),
+);
 
 // ── Compliant surface variant (see ./compliance.ts) ──────────────────────────
 // De-fanged agent surface: drops prohibited commands/config (CAPTCHA, JS, proxy,
@@ -926,25 +980,60 @@ export const COMPLIANT_AGENT_METHODS: ReadonlySet<string> = new Set<string>(
   compliantCommandSchemas.map((s) => s.shape.method.value),
 );
 
+// The compliant per-command contract: a strict discriminated union over the
+// allowlisted methods. Shared by CompliantAgentParamsSchema and re-validated in
+// run() (the advertised tool schema flattens `commands` for OpenAI import).
+export const CompliantAgentCommandSchema = z.discriminatedUnion(
+  'method',
+  compliantCommandSchemas,
+);
+
+const COMPLIANT_COMMANDS_DESCRIPTION =
+  'Batch of browser navigation, read, and interaction commands ' +
+  '(click, type, scroll, etc.) executed sequentially against the page ' +
+  'the user specifies. Only the final result is returned.';
+
+// Shared top-level fields for both compliant schemas (rich + slim projection)
+// so they can't drift; `.strict()` on each rejects any prohibited/removed key.
+const compliantParamsObject = z.object({
+  rationale: z
+    .string()
+    .optional()
+    .describe(
+      'Short user-facing reason for this call (<=50 chars, present-continuous).',
+    ),
+  sessionId: sessionIdField,
+});
+
 // No profile/createProfile: zero auth-profile capability. profile hydrates a
 // saved session (see profileField) — belongs with the hidden autonomous-login skills.
-export const CompliantAgentParamsSchema = z
-  .object({
+export const CompliantAgentParamsSchema = compliantParamsObject
+  .extend({
     commands: z
-      .array(z.discriminatedUnion('method', compliantCommandSchemas))
+      .array(CompliantAgentCommandSchema)
       .min(1)
-      .describe(
-        'Batch of browser navigation, read, and interaction commands ' +
-          '(click, type, scroll, etc.) executed sequentially against the page ' +
-          'the user specifies. Only the final result is returned.',
-      ),
-    rationale: z
-      .string()
-      .optional()
-      .describe(
-        'Short user-facing reason for this call (<=50 chars, present-continuous).',
-      ),
-    sessionId: sessionIdField,
+      .describe(COMPLIANT_COMMANDS_DESCRIPTION),
+  })
+  .strict();
+
+// OpenAI-importable projection of CompliantAgentParamsSchema (see
+// AgentToolParamsSchema). `commands` is flattened so the emitted JSON Schema is
+// importable, but `method` stays pinned to the compliant allowlist enum (not a
+// free string) so the advertised compliant schema itself still rejects
+// circumvention / raw-BQL methods — a deliberate de-fanging of this surface.
+const CompliantAgentToolCommandSchema = z.object({
+  method: z
+    .enum(Array.from(COMPLIANT_AGENT_METHODS) as [string, ...string[]])
+    .describe('An allowed navigation / read / interaction method.'),
+  params: flatCommandParams,
+});
+
+export const CompliantAgentToolParamsSchema = compliantParamsObject
+  .extend({
+    commands: z
+      .array(CompliantAgentToolCommandSchema)
+      .min(1)
+      .describe(COMPLIANT_COMMANDS_DESCRIPTION),
   })
   .strict();
 
