@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.1](https://github.com/browserless/browserless-mcp/compare/v1.28.0...v1.28.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* restore OpenAI hosted-MCP import by pinning mcp-proxy to 6.5.1 ([#298](https://github.com/browserless/browserless-mcp/issues/298)) ([b83cc4c](https://github.com/browserless/browserless-mcp/commit/b83cc4c2688358b2008267d73c35d2957a53698f))
+
 ## [1.28.0](https://github.com/browserless/browserless-mcp/compare/v1.27.0...v1.28.0) (2026-09-07)
 
 
