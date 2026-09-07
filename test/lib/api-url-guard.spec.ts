@@ -51,7 +51,33 @@ describe('API URL guard', () => {
     }
   });
 
-  it('accepts only the configured host for custom deployments', () => {
+  for (const candidate of [
+    'https://production-sfo.browserless.io#',
+    'https://production-sfo.browserless.io?',
+    'https://.browserless.io',
+  ]) {
+    it(`rejects ${candidate}`, () => {
+      expect(() => assertAllowedApiUrl(candidate, config)).to.throw(
+        InvalidApiUrlError,
+      );
+    });
+  }
+
+  for (const candidate of [
+    'http://browserless-cloud:9999',
+    'https://browserless-cloud:3000',
+  ]) {
+    it(`rejects an alternate configured origin: ${candidate}`, () => {
+      expect(() =>
+        assertAllowedApiUrl(candidate, {
+          ...config,
+          browserlessApiUrl: 'http://browserless-cloud:3000',
+        }),
+      ).to.throw(InvalidApiUrlError);
+    });
+  }
+
+  it('accepts only the configured origin for custom deployments', () => {
     for (const browserlessApiUrl of [
       'http://browserless-cloud:3000',
       'https://your-browserless-instance.example.com',
@@ -84,8 +110,25 @@ describe('API URL guard', () => {
   });
 
   it('has no additional hosts by default', () => {
-    expect(allowedApiUrlHosts(config)).to.deep.equal([
-      'production-sfo.browserless.io',
-    ]);
+    expect(allowedApiUrlHosts(config)).to.deep.equal([]);
+  });
+
+  it('does not disguise invalid operator configuration as a client error', () => {
+    expect(() =>
+      assertAllowedApiUrl('http://custom.example', {
+        ...config,
+        browserlessApiUrl: 'not-a-url',
+      }),
+    )
+      .to.throw(TypeError)
+      .and.not.to.be.instanceOf(InvalidApiUrlError);
+  });
+
+  it('accepts equivalent origins and path-bearing configured URLs', () => {
+    expect(() =>
+      assertAllowedApiUrl('http://custom.example:80/subpath', {
+        browserlessApiUrl: 'http://custom.example/base',
+      }),
+    ).not.to.throw();
   });
 });
