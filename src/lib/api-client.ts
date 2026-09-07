@@ -200,6 +200,11 @@ export function createApiClient(
     async smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult> {
       const formats = params.formats ?? ['markdown'];
       const tokenHash = hashToken(config.browserlessToken);
+      const canonicalHeaders = params.headers
+        ? Object.entries(params.headers)
+            .map(([name, value]) => [name.toLowerCase(), value])
+            .sort(([a], [b]) => a.localeCompare(b))
+        : null;
       const cacheKey = JSON.stringify({
         t: tokenHash,
         // The api URL can be overridden per-session, so two backends sharing
@@ -210,6 +215,13 @@ export function createApiClient(
         // Profiles inject auth state — a cache hit across profiles would
         // leak one user's session into another's response.
         profile: params.profile ?? null,
+        onlyMainContent: params.onlyMainContent ?? false,
+        includeTags: params.includeTags ?? [],
+        excludeTags: params.excludeTags ?? [],
+        waitFor: params.waitFor ?? null,
+        headers: canonicalHeaders
+          ? hashToken(JSON.stringify(canonicalHeaders))
+          : null,
       });
 
       const cached = _cache.get<SmartScraperResponse>(cacheKey);
@@ -221,7 +233,15 @@ export function createApiClient(
       const result = await apiFetch<SmartScraperResponse>(config, {
         path: '/smart-scrape',
         query: { timeout, profile: params.profile },
-        body: { url: params.url, formats },
+        body: compact({
+          url: params.url,
+          formats,
+          onlyMainContent: params.onlyMainContent || undefined,
+          includeTags: params.includeTags,
+          excludeTags: params.excludeTags,
+          headers: params.headers,
+          waitFor: params.waitFor,
+        }),
         timeout,
         profile: params.profile,
       });
