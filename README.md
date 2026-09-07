@@ -66,9 +66,9 @@ Load a skill explicitly:
 }
 ```
 
-### Residential proxy (`browserless_agent`)
+### Built-in proxy (`browserless_agent`)
 
-Pass a top-level `proxy` object on `browserless_agent` to route the session through residential IPs. Use this when targets IP-block datacenter traffic.
+Pass a top-level `proxy` object on `browserless_agent` to route the session through datacenter or residential IPs. Datacenter is cheaper per MB; residential is less likely to be blocked.
 
 ```jsonc
 {
@@ -90,18 +90,34 @@ Pass a top-level `proxy` object on `browserless_agent` to route the session thro
 
 | Field                 | Notes                                                                                                                                         |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `proxy`               | `"residential"` — only value supported today.                                                                                                 |
+| `proxy`               | `"datacenter"` for lower cost or `"residential"` when targets block datacenter traffic.                                                       |
 | `proxyCountry`        | ISO-2 country code (`"us"`, `"de"`). Auto-normalized to lowercase. Non-letter values are rejected.                                            |
 | `proxyState`          | US state name with whitespace replaced by underscores (`"new_york"`). Paid-plan gated — non-eligible tokens get a 401.                        |
 | `proxyCity`           | City target. Paid/enterprise plan gated — non-eligible tokens get a 401.                                                                      |
 | `proxySticky`         | Stable IP while the underlying WebSocket stays open. Reconnects (idle drop, network blip, browser crash) allocate a new sticky id and new IP. |
 | `proxyLocaleMatch`    | Match `navigator` locale to the proxy IP country.                                                                                             |
-| `proxyPreset`         | Named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.                            |
+| `proxyPreset`         | Residential-only named preset (e.g. `"px_amazon01"`). Available presets are plan-dependent — ask Browserless support for your list.           |
 | `externalProxyServer` | Bring-your-own upstream, e.g. `http://user:pass@host:port`. Must be `http://` or `https://`.                                                  |
 
-> **Note:** `proxyCountry` / `proxyState` / `proxyCity` / `proxySticky` / `proxyLocaleMatch` / `proxyPreset` require either `proxy: "residential"` or `externalProxyServer` to be set. The MCP rejects this combination at validation time; without it, the API would silently ignore them.
+> **Note:** Geo, sticky, and locale options require either a built-in `proxy` tier or `externalProxyServer`; `proxyPreset` requires `proxy: "residential"`. The MCP rejects unsupported combinations instead of letting the API silently ignore them.
 
 The `proxy` object is read once at session creation. To change it, call `close` and start a new session — the agent client keys sessions on the proxy fingerprint, so passing a different config will land on a fresh WebSocket.
+
+### OS persona (`browserless_agent`)
+
+Agent sessions can opt into a coherent OS persona with top-level creation options:
+
+| Field               | Notes                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| `emulationOs`       | `"windows"`, `"macos"`, `"linux"`, or `"android"`. Enables platform spoofing.             |
+| `emulatedDevice`    | Android device slug; used only with `emulationOs: "android"`.                             |
+| `screen`            | Desktop screen in `WIDTHxHEIGHT` form.                                                    |
+| `deviceScaleFactor` | Desktop device pixel ratio: `1` or `1.25`.                                                |
+| `deviceSlot`        | Non-negative stable desktop-device slot; the server validates the account-specific range. |
+
+Set persona options on the first call before navigation and reuse the returned
+`sessionId` afterward. Persona is fixed for the life of that browser session;
+close it before selecting a different persona.
 
 ## Configuration
 

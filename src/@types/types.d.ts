@@ -28,7 +28,10 @@ import type {
 } from '../tools/crawl.js';
 import type { AgentParamsSchema } from '../tools/agent.js';
 import type { CreateProfileParams } from '../tools/schemas.js';
-import type { ProxyOptionsSchema } from '../lib/agent-client.js';
+import type {
+  PersonaOptionsSchema,
+  ProxyOptionsSchema,
+} from '../lib/agent-client.js';
 
 /* ------------------------------------------------------------------ */
 /*  Session & auth                                                     */
@@ -197,11 +200,13 @@ export interface SnapshotResult {
 export interface ActiveSession {
   ws: WebSocket;
   msgId: number;
-  // Identity fields: these feed the session-cache key (see getSessionKey).
-  // Mutating them post-creation would desync the cache, so they're readonly.
+  // Creation identity fields are immutable. Most feed the session-cache key;
+  // persona is retained on the handle and checked before reuse.
   readonly apiUrl: string;
   readonly token: string;
   readonly proxy?: ProxyOptions;
+  /** Persona fixed when the underlying browser session is created. */
+  readonly persona?: PersonaOptions;
   readonly profile?: string;
   // When set, this session was opened in profile-creation mode: the WS is bound
   // to a creation session from POST /profile rather than a fresh launch. Feeds
@@ -355,6 +360,7 @@ export type SmartScraperResponse = z.infer<typeof SmartScraperResponseSchema>;
 export type FunctionParams = z.infer<typeof FunctionParamsSchema>;
 export type ExportParams = z.infer<typeof ExportParamsSchema>;
 export type ProxyOptions = z.infer<typeof ProxyOptionsSchema>;
+export type PersonaOptions = z.infer<typeof PersonaOptionsSchema>;
 export type SearchSource = z.infer<typeof SearchSourceSchema>;
 export type SearchCategory = z.infer<typeof SearchCategorySchema>;
 export type TimeBasedOptions = z.infer<typeof TimeBasedOptionsSchema>;
