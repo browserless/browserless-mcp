@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.28.0](https://github.com/browserless/browserless-mcp/compare/v1.27.0...v1.28.0) (2026-09-07)
+
+
+### Features
+
+* expose Smart Scrape content shaping ([#285](https://github.com/browserless/browserless-mcp/issues/285)) ([a78861a](https://github.com/browserless/browserless-mcp/commit/a78861a128eec62c9fa213896259649e70791f75))
+
+
+### Bug Fixes
+
+* isolate stored downloads by token ([#291](https://github.com/browserless/browserless-mcp/issues/291)) ([4421589](https://github.com/browserless/browserless-mcp/commit/4421589eebd21cf17d64fa43ac591baca2dbbe05))
+* keep the browserless_agent tool schema importable by OpenAI hosted MCP ([#297](https://github.com/browserless/browserless-mcp/issues/297)) ([7cd7260](https://github.com/browserless/browserless-mcp/commit/7cd7260764cd8d50a8395bafbc5b927f48ff963c))
+
 ## [1.27.0](https://github.com/browserless/browserless-mcp/compare/v1.26.0...v1.27.0) (2026-09-04)
 
 
