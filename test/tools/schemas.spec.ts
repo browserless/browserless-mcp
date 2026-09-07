@@ -1,5 +1,8 @@
 import { expect } from 'chai';
-import { AgentCommandSchema } from '../../src/tools/schemas.js';
+import {
+  AgentCommandSchema,
+  AgentToolParamsSchema,
+} from '../../src/tools/schemas.js';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
 import {
@@ -333,6 +336,40 @@ describe('clearSecrets command', () => {
     expect(schema).to.include('clearSecrets');
     expect(schema).to.include('single-page apps');
     expect(schema).to.include('replay remains masked');
+  });
+});
+
+describe('browserless_agent tool schema (OpenAI hosted-MCP import)', () => {
+  // The tool advertises AgentToolParamsSchema, whose `commands` is a flat shape
+  // rather than the rich per-command discriminated union. That union renders to
+  // a JSON Schema too deep/large for OpenAI's hosted-MCP tool import, which
+  // rejects the whole tools/list with 424 and takes down every hosted-agent
+  // flow. run() re-validates against AgentParamsSchema, so the full per-command
+  // contract is still enforced — these tests pin both halves of that split.
+  const strictParamCase = {
+    commands: [
+      { method: 'clearSecrets', params: { unexpected: 'not-allowed' } },
+    ],
+  };
+
+  it('advertises a flat commands schema (no inlined per-command union)', () => {
+    expect(
+      AgentToolParamsSchema.safeParse(strictParamCase).success,
+      'tool schema must stay flat so OpenAI can import the tool list',
+    ).to.equal(true);
+    expect(
+      AgentParamsSchema.safeParse(strictParamCase).success,
+      'the full contract stays strict (enforced in run())',
+    ).to.equal(false);
+  });
+
+  it('still enforces top-level invariants (profile vs createProfile)', () => {
+    expect(
+      AgentToolParamsSchema.safeParse({
+        profile: 'github',
+        createProfile: { name: 'github' },
+      }).success,
+    ).to.equal(false);
   });
 });
 
