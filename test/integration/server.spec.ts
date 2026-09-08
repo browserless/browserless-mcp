@@ -7,10 +7,10 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
+import { registerUploadRoute } from '../../src/resources/upload-route.js';
 import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../../src/prompts/extract-content.js';
-import { registerUploadRoute } from '../../src/resources/upload-route.js';
-import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import type { BrowserlessSession, McpConfig } from '../../src/@types/types.js';
 import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
 import { z } from 'zod';
@@ -80,13 +80,23 @@ describe('MCP Server Integration', () => {
     }
   });
 
-  it('preserves 401 on file routes when the token is absent', async () => {
+  it('rejects unauthenticated file transfer routes', async () => {
     server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
     registerUploadRoute(server, mockConfig);
-    const response = await server
-      .getApp()
-      .request('http://example.test/upload', { method: 'POST' });
-    expect(response.status).to.equal(401);
+    registerDownloadRoute(server, mockConfig);
+
+    const upload = new FormData();
+    upload.set('file', new File(['data'], 'fixture.txt'));
+    expect(
+      (
+        await server
+          .getApp()
+          .request('/upload', { method: 'POST', body: upload })
+      ).status,
+    ).to.equal(401);
+    expect(
+      (await server.getApp().request('/download/anything')).status,
+    ).to.equal(401);
   });
 
   it('starts and stops cleanly in httpStream mode', async () => {

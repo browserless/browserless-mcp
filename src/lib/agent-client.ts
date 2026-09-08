@@ -150,7 +150,21 @@ export class ProfileNotFoundError extends UpgradeError {
 // stacks more lingering sessions against the same limit, so stop instead.
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
+class SessionReuseError extends Error {}
+
+const assertCompatibleRecordingMode = (
+  session: ActiveSession,
+  record: boolean | undefined,
+): void => {
+  if (record !== undefined && record !== (session.record ?? false)) {
+    throw new SessionReuseError(
+      'Browser recording mode cannot be changed on an open session. Omit record to reuse it, or close the session before changing the record option.',
+    );
+  }
+};
+
 export const isRetryableUpgradeError = (err: unknown): boolean => {
+  if (err instanceof SessionReuseError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -308,6 +322,7 @@ export const buildAgentWsUrl = (
   allowedDomains?: string[],
   os?: string,
   humanlike?: boolean,
+  record?: boolean,
 ): string => {
   const url = apiEndpoint(apiUrl, '/chromium/agent', true);
   url.searchParams.set('token', token);
@@ -351,6 +366,8 @@ export const buildAgentWsUrl = (
         url.searchParams.set('allowedDomains', JSON.stringify(allowedDomains));
     }
   }
+  // Recording is armed only when launching a new browser.
+  if (record) url.searchParams.set('record', 'true');
   return url.toString();
 };
 
@@ -560,6 +577,7 @@ const connect = (
   allowedDomains?: string[],
   os?: string,
   humanlike?: boolean,
+  record?: boolean,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -573,6 +591,7 @@ const connect = (
       allowedDomains,
       os,
       humanlike,
+      record,
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
@@ -710,6 +729,7 @@ export const getOrCreateSession = async (
   allowedDomains?: string[],
   os?: string,
   humanlike?: boolean,
+  record?: boolean,
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -736,13 +756,18 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
+    assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
     return existing;
   }
 
   // Another caller is already creating a session for this key — share it.
   const inFlight = pending.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const session = await inFlight;
+    assertCompatibleRecordingMode(session, record);
+    return session;
+  }
 
   // Clean up stale session if any
   if (existing) {
@@ -780,6 +805,7 @@ export const getOrCreateSession = async (
       allowedDomains,
       os,
       humanlike,
+      record,
     );
     const session: ActiveSession = {
       ws,
@@ -797,6 +823,7 @@ export const getOrCreateSession = async (
       allowedDomains,
       os,
       humanlike,
+      record,
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
@@ -853,6 +880,7 @@ export const send = async (
         session.allowedDomains,
         session.os,
         session.humanlike,
+        session.record,
       ).finally(() => {
         session.reconnecting = undefined;
       });

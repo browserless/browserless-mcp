@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.28.1](https://github.com/browserless/browserless-mcp/compare/v1.28.0...v1.28.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* restore OpenAI hosted-MCP import by pinning mcp-proxy to 6.5.1 ([#298](https://github.com/browserless/browserless-mcp/issues/298)) ([b83cc4c](https://github.com/browserless/browserless-mcp/commit/b83cc4c2688358b2008267d73c35d2957a53698f))
+
+## [1.28.0](https://github.com/browserless/browserless-mcp/compare/v1.27.0...v1.28.0) (2026-09-07)
+
+
+### Features
+
+* expose Smart Scrape content shaping ([#285](https://github.com/browserless/browserless-mcp/issues/285)) ([a78861a](https://github.com/browserless/browserless-mcp/commit/a78861a128eec62c9fa213896259649e70791f75))
+
+
+### Bug Fixes
+
+* isolate stored downloads by token ([#291](https://github.com/browserless/browserless-mcp/issues/291)) ([4421589](https://github.com/browserless/browserless-mcp/commit/4421589eebd21cf17d64fa43ac591baca2dbbe05))
+* keep the browserless_agent tool schema importable by OpenAI hosted MCP ([#297](https://github.com/browserless/browserless-mcp/issues/297)) ([7cd7260](https://github.com/browserless/browserless-mcp/commit/7cd7260764cd8d50a8395bafbc5b927f48ff963c))
+
+## [1.27.0](https://github.com/browserless/browserless-mcp/compare/v1.26.0...v1.27.0) (2026-09-04)
+
+
+### Features
+
+* **AUTO-367:** expose clearSecrets to browser agents ([#290](https://github.com/browserless/browserless-mcp/issues/290)) ([d70500c](https://github.com/browserless/browserless-mcp/commit/d70500c5478f6c6ef9ba967845133f1c02fd9420))
+
+## [1.26.0](https://github.com/browserless/browserless-mcp/compare/v1.25.0...v1.26.0) (2026-09-03)
+
+
+### Features
+
+* add recording functionality to mcp agent AUTO-376 ([#284](https://github.com/browserless/browserless-mcp/issues/284)) ([c1d422f](https://github.com/browserless/browserless-mcp/commit/c1d422f549910699b31bd5b25e54fcaeb5b45215))
+
 ## [1.25.0](https://github.com/browserless/browserless-mcp/compare/v1.24.0...v1.25.0) (2026-09-01)
 
 

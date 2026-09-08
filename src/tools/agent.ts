@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import {
+  downloadOwner,
   downloadUri,
   getDownload,
   storeDownload,
@@ -44,14 +45,15 @@ import {
   siteRecipeNotice,
   hydrateRemoteSkills,
 } from '../skills/sites.js';
-import { AgentParamsSchema } from './schemas.js';
+import { AgentCommandSchema, AgentToolParamsSchema } from './schemas.js';
 import {
   isCompliant,
   detectVisibleSkills,
   COMPLIANT_SKILLS,
   COMPLIANT_SKILL_TOOL_DESCRIPTION,
   COMPLIANT_AGENT_METHODS,
-  CompliantAgentParamsSchema,
+  CompliantAgentCommandSchema,
+  CompliantAgentToolParamsSchema,
 } from './compliance.js';
 import {
   AGENT_SYSTEM_PROMPT,
@@ -200,7 +202,8 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
 export const normalizeUploadCommand = async (
   cmd: { method: string; params: Record<string, unknown> },
   transport: McpConfig['transport'],
-  mcpBaseUrl?: string,
+  mcpBaseUrl: string | undefined,
+  token: string,
 ): Promise<void> => {
   if (cmd.method !== 'uploadFile') return;
   const files = cmd.params.files;
@@ -214,7 +217,7 @@ export const normalizeUploadCommand = async (
     let defaultName: string;
 
     if (typeof f.handle === 'string' && f.handle) {
-      const record = getDownload(f.handle);
+      const record = getDownload(f.handle, downloadOwner(token));
       if (!record) {
         throw new UserError(
           `Unknown upload handle "${f.handle}". Pass a handle returned by ` +
@@ -276,6 +279,7 @@ const describeFailedDownload = (d: DownloadEntry): string => {
 // tagged to the MCP session for cleanup. Returns null for failed/empty entries.
 const persistDownload = async (
   d: DownloadEntry,
+  token: string | undefined,
   sessionId?: string,
 ): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
   if (d.error || !d.data || !d.filename) return null;
@@ -283,6 +287,7 @@ const persistDownload = async (
     d.filename,
     d.mimeType ?? 'application/octet-stream',
     Buffer.from(d.data, 'base64'),
+    downloadOwner(token ?? ''),
     sessionId,
   );
 };
@@ -308,7 +313,11 @@ const describeReadyDownload = (
     );
   }
   const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
-  const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  const tokenQ = `?token=${
+    opts.token === undefined
+      ? '<YOUR_BROWSERLESS_TOKEN>'
+      : encodeURIComponent(opts.token)
+  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
@@ -329,7 +338,7 @@ export const formatDownloads = async (
       lines.push(`- ${describeInProgressDownload(d)}`);
       continue;
     }
-    const record = await persistDownload(d, opts.sessionId);
+    const record = await persistDownload(d, opts.token, opts.sessionId);
     lines.push(
       `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
     );
@@ -363,6 +372,7 @@ export const formatScreenshotToDisk = async (
     `screenshot.${ext}`,
     mimeType,
     Buffer.from(base64, 'base64'),
+    downloadOwner(opts.token ?? ''),
     opts.sessionId,
   );
 
@@ -372,6 +382,72 @@ export const formatScreenshotToDisk = async (
   ]
     .filter(Boolean)
     .join('\n\n');
+
+  const content: Content[] = [{ type: 'text', text }];
+  if (skills) content.push({ type: 'text', text: skills });
+  return content;
+};
+
+/** Persist stopRecording's WebM outside model context and return a handle. */
+export const persistRecording = async (
+  result: unknown,
+  token: string | undefined,
+  sessionId: string | undefined,
+): Promise<unknown> => {
+  const value = (result as { value?: string } | null)?.value;
+  // No payload (recording failed / nothing captured) → leave the result as-is
+  // so the error surfaces to the caller unchanged.
+  if (!value) return result;
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const decodedBytes = Math.floor((value.length * 3) / 4) - padding;
+  if (decodedBytes > FILE_TRANSFER_MAX_BYTES) {
+    return {
+      recording: false,
+      error:
+        `Recording is ${decodedBytes} bytes, over the ` +
+        `${FILE_TRANSFER_MAX_BYTES}-byte download limit — record a shorter clip.`,
+    };
+  }
+  const buf = Buffer.from(value, 'base64');
+  if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
+    return {
+      recording: false,
+      error:
+        `Recording is ${buf.byteLength} bytes, over the ` +
+        `${FILE_TRANSFER_MAX_BYTES}-byte download limit — record a shorter clip.`,
+    };
+  }
+  return {
+    recording: true,
+    download: await storeDownload(
+      'recording.webm',
+      'video/webm',
+      buf,
+      downloadOwner(token ?? ''),
+      sessionId,
+    ),
+  };
+};
+
+// Surface a persisted recording as a single-use download handle (never bytes).
+export const formatRecordingToDisk = (
+  result: unknown,
+  caption: string,
+  skills: string,
+  opts: FormatOpts,
+): Content[] => {
+  const r = result as { download?: StoredDownload; error?: string } | null;
+  const text = r?.download
+    ? [
+        caption.trimEnd(),
+        `Recording saved to disk (not shown inline):\n- ${describeReadyDownload(
+          r.download,
+          opts,
+        )}`,
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    : `${caption}${r?.error ?? 'Recording failed.'}`;
 
   const content: Content[] = [{ type: 'text', text }];
   if (skills) content.push({ type: 'text', text: skills });
@@ -529,11 +605,16 @@ export function registerAgentTools(
         : AGENT_SYSTEM_PROMPT +
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
       sessionContinuityNote(config.transport),
+    // The tool advertises the slim, OpenAI-importable schemas — the rich
+    // per-command union renders to a JSON Schema too deep/large for OpenAI's
+    // hosted-MCP tool import, which rejects the whole tools/list with 424. run()
+    // re-validates any command batch against the rich per-command contract
+    // below, and the compliant surface adds its method/key guards.
     // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
-    // supertypes both schemas; FastMCP's runtime schema + compliance spec are the real guards.
+    // supertypes both schemas; run()'s re-validation + compliance spec are the real guards.
     parameters: (compliant
-      ? CompliantAgentParamsSchema
-      : AgentParamsSchema) as z.ZodType<AgentToolParams>,
+      ? CompliantAgentToolParamsSchema
+      : AgentToolParamsSchema) as z.ZodType<AgentToolParams>,
     annotations: {
       title: 'Browserless Agent',
       readOnlyHint: false,
@@ -551,7 +632,7 @@ export function registerAgentTools(
       sessionId: mcpSessionId,
       attachSessionId,
     }) => {
-      const commands: Array<{
+      let commands: Array<{
         method: string;
         params: Record<string, unknown>;
       }> =
@@ -595,11 +676,44 @@ export function registerAgentTools(
         }
       }
 
+      // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
+      // import accepts it; re-validate a provided batch against the full
+      // per-command contract here (the method/key guards above own their
+      // specific messages). Single-command calls stay loose, as before — the
+      // browser backend validates their params.
+      if (params.commands && params.commands.length > 0) {
+        const commandContract = z
+          .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
+          .safeParse(params.commands);
+        if (!commandContract.success) {
+          throw new UserError(
+            commandContract.error.issues
+              .map(
+                (i) =>
+                  (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
+              )
+              .join('; '),
+          );
+        }
+        // Forward the parsed batch, not the raw one: the per-command schemas
+        // apply typed defaults and strip unknown keys (the flat boundary schema
+        // does neither), matching the behaviour when the rich schema validated
+        // at the boundary.
+        commands = commandContract.data.map((c) => {
+          const parsed = c as {
+            method: string;
+            params?: Record<string, unknown>;
+          };
+          return { method: parsed.method, params: parsed.params ?? {} };
+        });
+      }
+
       const proxy = params.proxy;
       const profile = params.profile;
       const createProfile = params.createProfile;
       const integrationId = params.integrationId;
       const allowedDomains = params.allowedDomains;
+      const record = params.record;
       // Spoofed desktop OS for the agent's stealth fingerprint. Defaults to
       // windows so the agent presents a coherent, low-risk desktop identity
       // rather than its native Linux (Chrome-masked UA over "Linux x86_64" is a
@@ -712,6 +826,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
+            record,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -745,6 +860,7 @@ export function registerAgentTools(
             allowedDomains,
             os,
             humanlike,
+            record,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -955,6 +1071,14 @@ export function registerAgentTools(
             }
           }
 
+          if (cmd.method === 'stopRecording') {
+            resp.result = await persistRecording(
+              resp.result,
+              token,
+              mcpSessionId,
+            );
+          }
+
           results.push({ method: cmd.method, result: resp.result });
         }
 
@@ -1148,6 +1272,19 @@ export function registerAgentTools(
             mcpBaseUrl: config.mcpBaseUrl,
             token,
           });
+        } else if (last.method === 'stopRecording') {
+          // Video is never inlined → always a single-use download handle.
+          baseContent = formatRecordingToDisk(
+            lastResult,
+            batchPrefix,
+            skillsText,
+            {
+              transport: config.transport,
+              sessionId: mcpSessionId,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            },
+          );
         } else if (
           last.method === 'screenshot' &&
           lastCmd.params?.toDisk === true
@@ -1216,6 +1353,7 @@ export function registerAgentTools(
             cmd,
             config.transport,
             config.mcpBaseUrl,
+            token,
           );
         }
         const result = await runCommands(false);

@@ -100,7 +100,21 @@ describe('resolveBrowserlessAuth', () => {
 
 describe('guardRouteAuth', () => {
   const app = new Hono();
-  app.get('*', async (c) => (await guardRouteAuth(c, config)) ?? c.text('ok'));
+  app.get('*', async (c) => {
+    const auth = await guardRouteAuth(c, config);
+    return auth instanceof Response ? auth : c.json(auth);
+  });
+
+  it('retains the authenticated token for file ownership', async () => {
+    const response = await app.request('http://example.test/', {
+      headers: { authorization: 'Bearer owner-token' },
+    });
+    expect(response.status).to.equal(200);
+    expect(await response.json()).to.include({
+      token: 'owner-token',
+      apiUrl: config.browserlessApiUrl,
+    });
+  });
 
   it('returns 400 for an invalid api url override', async () => {
     const response = await app.request('http://example.test/', {
