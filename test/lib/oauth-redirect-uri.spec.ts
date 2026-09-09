@@ -467,9 +467,14 @@ describe('Browserless OAuth redirect URI validation', () => {
   it('revalidates a vulnerable pre-existing registration at authorize time', async () => {
     const redis = new RedisMock() as unknown as Redis;
     const storage = new RedisTokenStorage(redis);
+    // Seed a client whose redirect URI the *current* hardened rules forbid, to
+    // prove authorize() re-validates persisted records. Base fastmcp now escapes
+    // the dot in its own allowlist glob, so it rejects this apix/api lookalike at
+    // registerClient — model the pre-hardening (or looser-path) persistence by
+    // configuring the seeding proxy to permit exactly this URI.
     const vulnerable = new OAuthProxy({
       ...buildConfig({
-        allowedRedirectUriPatterns: ['https://api.devin.ai/mcp/oauth/callback'],
+        allowedRedirectUriPatterns: ['https://apixdevin.ai/mcp/oauth/callback'],
       }),
       encryptionKey: false,
       tokenStorage: storage,

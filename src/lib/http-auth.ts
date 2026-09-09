@@ -91,9 +91,9 @@ export const resolveBrowserlessAuth = async (
 export const guardRouteAuth = async (
   c: Context,
   config: Parameters<typeof resolveBrowserlessAuth>[1],
-): Promise<Response | null> => {
+): Promise<Response | ResolvedBrowserlessAuth> => {
   try {
-    await resolveBrowserlessAuth(
+    return await resolveBrowserlessAuth(
       {
         authHeader: c.req.header('authorization'),
         tokenQuery: c.req.query('token'),
@@ -102,7 +102,6 @@ export const guardRouteAuth = async (
       },
       config,
     );
-    return null;
   } catch {
     return c.json({ ok: false, error: 'Unauthorized' }, 401);
   }
