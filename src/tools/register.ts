@@ -10,6 +10,8 @@ import { registerFunctionTool } from './function.js';
 import { registerMapTool } from './map.js';
 import { registerCrawlTool } from './crawl.js';
 import { registerProfilesTool } from './profiles.js';
+import { registerStripeLinkConnectTool } from './link-connect.js';
+import { registerStripeLinkCheckoutTool } from './link-checkout.js';
 import { registerAccountTool } from './account.js';
 import { registerUsageTool } from './usage.js';
 import { registerSessionsTool } from './sessions.js';
@@ -93,6 +95,14 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerProfilesTool(server, config, analytics),
+    },
+    {
+      surface: 'full',
+      register: () => registerStripeLinkConnectTool(server, config, analytics),
+    },
+    {
+      surface: 'full',
+      register: () => registerStripeLinkCheckoutTool(server, config, analytics),
     },
     {
       surface: 'full',

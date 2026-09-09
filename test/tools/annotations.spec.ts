@@ -9,6 +9,8 @@ import { registerSearchTool } from '../../src/tools/search.js';
 import { registerMapTool } from '../../src/tools/map.js';
 import { registerCrawlTool } from '../../src/tools/crawl.js';
 import { registerPerformanceTool } from '../../src/tools/performance.js';
+import { registerStripeLinkConnectTool } from '../../src/tools/link-connect.js';
+import { registerStripeLinkCheckoutTool } from '../../src/tools/link-checkout.js';
 import { registerAccountTool } from '../../src/tools/account.js';
 import { registerUsageTool } from '../../src/tools/usage.js';
 import { registerSessionsTool } from '../../src/tools/sessions.js';
@@ -46,6 +48,8 @@ const registrars = [
   registerMapTool,
   registerCrawlTool,
   registerPerformanceTool,
+  registerStripeLinkConnectTool,
+  registerStripeLinkCheckoutTool,
   registerAccountTool,
   registerUsageTool,
   registerSessionsTool,

@@ -22,6 +22,42 @@ export type {
   AgentError,
 } from '../@types/types.js';
 
+const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
+
+export const clearExpiredStripeLinkContinuation = (
+  session: ActiveSession,
+): boolean => {
+  const continuation = session.stripeLinkContinuation;
+  if (!continuation || continuation.validUntil > Date.now()) {
+    return false;
+  }
+  session.stripeLinkContinuation = undefined;
+  session.skillState.fired.delete('agentic-checkout');
+  return true;
+};
+
+export const acquireStripeLinkSessionOperation = async (
+  session: ActiveSession,
+): Promise<() => void> => {
+  const previous = stripeLinkOperations.get(session) ?? Promise.resolve();
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  const queued = previous.then(() => gate);
+  stripeLinkOperations.set(session, queued);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseGate();
+    if (stripeLinkOperations.get(session) === queued) {
+      stripeLinkOperations.delete(session);
+    }
+  };
+};
+
 /* ------------------------------------------------------------------ */
 /*  Proxy schemas — used by agent.ts's AgentParamsSchema and by the    */
 /*  session key fingerprinting below. Co-located here to avoid a       */
@@ -180,6 +216,30 @@ const sessions = new Map<string, ActiveSession>();
 // opening their own WebSocket.
 const pending = new Map<string, Promise<ActiveSession>>();
 
+/** Resolve only the already-open handled browser; never reconnect or adopt. */
+export const getActiveSessionByHandle = (
+  handle: string,
+  apiUrl: string,
+  token: string,
+  userId?: string,
+): ActiveSession => {
+  const matches = [...sessions.values()].filter(
+    (session) =>
+      session.handle === handle &&
+      session.apiUrl === apiUrl &&
+      session.token === token &&
+      session.userId === userId &&
+      session.ws.readyState === WebSocket.OPEN,
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      'The requested browser session is unavailable. Open or resume it with browserless_agent first.',
+    );
+  }
+  matches[0].lastUsedAt = Date.now();
+  return matches[0];
+};
+
 const DEFAULT_TIMEOUT = 60_000;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSIONS = 500;
@@ -209,16 +269,26 @@ const closeAndDelete = (key: string, reason: string): void => {
 
 // Sweep idle sessions and enforce a hard cap. Called on every
 // getOrCreateSession; cheap because the map is bounded.
-const sweepSessions = (): void => {
-  const now = Date.now();
+export const sweepSessions = (
+  now = Date.now(),
+  maxSessions = MAX_SESSIONS,
+): void => {
   for (const [key, session] of sessions) {
+    clearExpiredStripeLinkContinuation(session);
+    if (stripeLinkOperations.has(session) || session.stripeLinkContinuation) {
+      continue;
+    }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
       closeAndDelete(key, 'idle');
     }
   }
-  if (sessions.size <= MAX_SESSIONS) return;
-  const overage = sessions.size - MAX_SESSIONS;
+  if (sessions.size <= maxSessions) return;
+  const overage = sessions.size - maxSessions;
   const oldest = [...sessions.entries()]
+    .filter(
+      ([, session]) =>
+        !stripeLinkOperations.has(session) && !session.stripeLinkContinuation,
+    )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
   for (const [key] of oldest) {
@@ -263,8 +333,8 @@ export const sessionHandle = (
   echoed?: string,
 ): string => echoed ?? mcpSessionId ?? `stdio:${hashToken(token)}`;
 
-// Profile is hashed so the eviction-logged key can't leak a user-identifying
-// name; token-prefixed so a caller can't echo another account's handle.
+// Profile and OAuth user ids are hashed so the eviction-logged key cannot leak
+// them; token-prefixed so a caller cannot echo another account's handle.
 export const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
@@ -275,6 +345,7 @@ export const getSessionKey = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  userId?: string,
 ): string =>
   `t:${hashToken(token)}` +
   KEY_SEP +
@@ -295,7 +366,8 @@ export const getSessionKey = (
             ? '|' + [...allowedDomains].sort().join(',')
             : ''),
       )
-    : '');
+    : '') +
+  (userId ? KEY_SEP + 'user#' + hashToken(userId) : '');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -308,8 +380,11 @@ const apiEndpoint = (apiUrl: string, path: string, ws = false): URL => {
 };
 
 /**
- * Build the WebSocket URL for `/chromium/agent`, appending `token` plus proxy
- * params. Boolean proxy flags follow the API's presence-only contract.
+ * Build the WebSocket URL for `/chromium/agent`: normalize trailing slashes,
+ * swap http(s)→ws(s), and append token plus proxy params. Timeout is omitted so
+ * the backend applies the authenticated plan maximum (free through enterprise)
+ * instead of the MCP accidentally shortening or exceeding that entitlement.
+ * Boolean proxy flags follow the API's presence-only contract.
  */
 export const buildAgentWsUrl = (
   apiUrl: string,
@@ -730,6 +805,7 @@ export const getOrCreateSession = async (
   os?: string,
   humanlike?: boolean,
   record?: boolean,
+  userId?: string,
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -747,6 +823,7 @@ export const getOrCreateSession = async (
     handle,
     integrationId,
     allowedDomains,
+    userId,
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
@@ -821,6 +898,7 @@ export const getOrCreateSession = async (
       handle,
       integrationId,
       allowedDomains,
+      userId,
       os,
       humanlike,
       record,
@@ -922,6 +1000,7 @@ export const closeSession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  userId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -933,9 +1012,24 @@ export const closeSession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
+    userId,
   );
   const session = sessions.get(key);
   if (session) {
+    if (stripeLinkOperations.has(session)) {
+      throw new Error(
+        'A Stripe Link checkout operation is in progress in this browser. Wait for it to finish before closing the browser.',
+      );
+    }
+    clearExpiredStripeLinkContinuation(session);
+    if (session.stripeLinkContinuation) {
+      const action = session.stripeLinkContinuation.allowedNextAction;
+      throw new Error(
+        action === 'resume'
+          ? 'A Stripe Link checkout is pending in this browser. Resume or cancel it before closing the browser.'
+          : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',
+      );
+    }
     try {
       session.ws.close();
     } catch {
@@ -960,6 +1054,7 @@ export const destroySession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  userId?: string,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -971,6 +1066,7 @@ export const destroySession = (
     echoedSessionId,
     integrationId,
     allowedDomains,
+    userId,
   );
   const session = sessions.get(key);
   if (session) {

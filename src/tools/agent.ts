@@ -34,6 +34,7 @@ import {
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
+  isPaymentStage,
   markFired,
   renderSkill,
   renderSkills,
@@ -622,6 +623,7 @@ export function registerAgentTools(
       openWorldHint: true,
     },
     run: async ({
+      client,
       params,
       prompt,
       log,
@@ -631,6 +633,7 @@ export function registerAgentTools(
       apiUrl,
       sessionId: mcpSessionId,
       attachSessionId,
+      userId,
     }) => {
       let commands: Array<{
         method: string;
@@ -682,6 +685,13 @@ export function registerAgentTools(
       // specific messages). Single-command calls stay loose, as before — the
       // browser backend validates their params.
       if (params.commands && params.commands.length > 0) {
+        // A reserved internal method owns its own tool; surface that before the
+        // generic per-command contract masks it with a less helpful message.
+        if (params.commands.some((c) => c.method === 'stripeLinkCheckout')) {
+          throw new UserError(
+            'stripeLinkCheckout is reserved for browserless_link_checkout.',
+          );
+        }
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands);
@@ -749,6 +759,19 @@ export function registerAgentTools(
 
       let lastCategory: ErrorCategory | undefined;
 
+      const hasConnectedStripeLinkWallet = async (
+        snapshot: SnapshotResult | undefined,
+      ): Promise<boolean> => {
+        if (!isPaymentStage(snapshot)) return false;
+        try {
+          return (
+            (await client.stripeLinkConnection('status')).status === 'connected'
+          );
+        } catch {
+          return false;
+        }
+      };
+
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
@@ -788,6 +811,14 @@ export function registerAgentTools(
         );
       }
 
+      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false);
+        throw new UserError(
+          'stripeLinkCheckout is reserved for browserless_link_checkout.',
+        );
+      }
+
       if (commands.length === 1 && commands[0].method === 'close') {
         closeSession(
           mcpSessionId,
@@ -799,6 +830,7 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
+          userId,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -827,6 +859,7 @@ export function registerAgentTools(
             os,
             humanlike,
             record,
+            userId,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -861,6 +894,7 @@ export function registerAgentTools(
             os,
             humanlike,
             record,
+            userId,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -879,6 +913,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            userId,
           );
           return runCommands(true);
         }
@@ -903,6 +938,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              userId,
             );
             results.push({ method: 'close', result: { closed: true } });
             closedDuringBatch = true;
@@ -951,6 +987,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              userId,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -989,6 +1026,7 @@ export function registerAgentTools(
                 echoedSessionId,
                 integrationId,
                 allowedDomains,
+                userId,
               );
               if (!isRetry) {
                 return runCommands(true);
@@ -1028,7 +1066,13 @@ export function registerAgentTools(
             });
 
             const triggered = detectVisibleSkills(
-              { snapshot: err.snapshot, error: err, cmd, apiUrl },
+              {
+                snapshot: err.snapshot,
+                error: err,
+                cmd,
+                apiUrl,
+                authenticated: await hasConnectedStripeLinkWallet(err.snapshot),
+              },
               agentSession.skillState,
               compliant,
             );
@@ -1119,6 +1163,7 @@ export function registerAgentTools(
             cmd: lastCmd,
             resp: lastResult,
             apiUrl,
+            authenticated: await hasConnectedStripeLinkWallet(lastSnapshot),
           },
           agentSession.skillState,
           compliant,

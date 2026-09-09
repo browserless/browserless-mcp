@@ -117,7 +117,7 @@ export const makeStallingServer = async (
 
 // for tests only
 export const makeRespondingServer = async (
-  responder: (method: string, params: unknown) => unknown,
+  responder: (method: string, params: unknown) => unknown | Promise<unknown>,
 ): Promise<RejectingServerHandle> => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
@@ -126,13 +126,13 @@ export const makeRespondingServer = async (
     upgrades++;
     socket.on('error', () => {});
     wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.on('message', (data: Buffer) => {
+      ws.on('message', async (data: Buffer) => {
         const msg = JSON.parse(data.toString('utf8')) as {
           id: string;
           method: string;
           params: unknown;
         };
-        const out = responder(msg.method, msg.params);
+        const out = await responder(msg.method, msg.params);
         ws.send(
           JSON.stringify(
             out instanceof AgentErrorFrame
