@@ -706,6 +706,13 @@ export function registerAgentTools(
       // specific messages). Legacy single-command calls stay loose; outcome
       // reports need local validation because delivery is best-effort.
       if (params.commands?.length || params.method === 'reportOutcome') {
+        // A reserved internal method owns its own tool; surface that before the
+        // generic per-command contract masks it with a less helpful message.
+        if (params.commands?.some((c) => c.method === 'stripeLinkCheckout')) {
+          throw new UserError(
+            'stripeLinkCheckout is reserved for browserless_link_checkout.',
+          );
+        }
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands?.length ? params.commands : commands);
