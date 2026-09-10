@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.29.0](https://github.com/browserless/browserless-mcp/compare/v1.28.1...v1.29.0) (2026-09-10)
+
+
+### Features
+
+* add MCP client usage attribution ([#307](https://github.com/browserless/browserless-mcp/issues/307)) ([3cde2c3](https://github.com/browserless/browserless-mcp/commit/3cde2c3ddf57edb5f5812037d095560a2ab7fd10))
+
+
+### Bug Fixes
+
+* allow Cursor's hosted MCP OAuth redirect URI ([#309](https://github.com/browserless/browserless-mcp/issues/309)) ([3959ac3](https://github.com/browserless/browserless-mcp/commit/3959ac38ba4f82331052bb989d67a1b971d184e3))
+* validate agent navigation URL schemes ([#306](https://github.com/browserless/browserless-mcp/issues/306)) ([04fdf93](https://github.com/browserless/browserless-mcp/commit/04fdf934ad7d65444f4d1ff6de429a0790b1f8dc))
+* validate client API URL overrides ([#292](https://github.com/browserless/browserless-mcp/issues/292)) ([81e6fe3](https://github.com/browserless/browserless-mcp/commit/81e6fe396c400c1ae7c9cc52764372014c1290f8))
+
 ## [1.28.1](https://github.com/browserless/browserless-mcp/compare/v1.28.0...v1.28.1) (2026-09-07)
 
 
