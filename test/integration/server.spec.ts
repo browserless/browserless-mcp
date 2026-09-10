@@ -2,6 +2,13 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { createServer } from 'node:net';
 import { FastMCP } from 'fastmcp';
+import { z } from 'zod';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
+import { defineTool } from '../../src/lib/define-tool.js';
+import {
+  authInputFromRequest,
+  resolveBrowserlessAuth,
+} from '../../src/lib/http-auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
@@ -11,7 +18,7 @@ import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import { registerUploadRoute } from '../../src/resources/upload-route.js';
 import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../../src/prompts/extract-content.js';
-import type { McpConfig } from '../../src/@types/types.js';
+import type { BrowserlessSession, McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -38,6 +45,66 @@ describe('MCP Server Integration', () => {
 
   afterEach(async () => {
     sinon.restore();
+  });
+
+  it('emits attribution for a real streamable-HTTP session', async () => {
+    const port = await freePort();
+    const authenticatedServer = new FastMCP<BrowserlessSession>({
+      name: 'attribution-test',
+      version: '0.1.0',
+      authenticate: async (request) =>
+        (await resolveBrowserlessAuth(
+          authInputFromRequest(request),
+          mockConfig,
+        )) as BrowserlessSession,
+    });
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    defineTool(authenticatedServer, mockConfig, analytics, {
+      name: 'test_tool',
+      description: 'Local attribution test',
+      parameters: z.object({}),
+      run: async () => 'ok',
+      format: () => [{ type: 'text', text: 'ok' }],
+    });
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    try {
+      await authenticatedServer.start({
+        transportType: 'httpStream',
+        httpStream: { port },
+      });
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://localhost:${port}/mcp`),
+          {
+            requestInit: {
+              headers: {
+                Authorization: `Bearer ${'a'.repeat(24)}`,
+                'User-Agent': 'Attribution-Probe/2.3',
+              },
+            },
+          },
+        ),
+      );
+      expect(
+        await client.callTool({ name: 'test_tool', arguments: {} }),
+      ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+      expect(fire.calledOnce).to.be.true;
+      expect(fire.firstCall.args[2]).to.include({
+        source: 'mcp_client',
+        client_name: 'test-client',
+        client_version: '0.0.0',
+        auth_method: 'api_key_header',
+        transport: 'streamable-http',
+        user_agent: 'Attribution-Probe/2.3',
+        user_agent_family: 'attribution-probe',
+        client_family: 'other',
+        usage_mode: 'unknown',
+      });
+    } finally {
+      await client.close();
+      await authenticatedServer.stop();
+    }
   });
 
   it('creates a fully configured server with all components', () => {

@@ -13,7 +13,10 @@ import { clearSession } from './lib/download-store.js';
 import { dropMcpSession } from './lib/agent-client.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
-import { resolveBrowserlessAuth } from './lib/http-auth.js';
+import {
+  authInputFromRequest,
+  resolveBrowserlessAuth,
+} from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
@@ -111,21 +114,8 @@ const oauthProvider =
 const hybridAuthenticate =
   config.transport === 'httpStream'
     ? async (request: IncomingMessage) => {
-        const params = new URLSearchParams(request.url?.split('?')[1] ?? '');
         return (await resolveBrowserlessAuth(
-          {
-            authHeader: request.headers.authorization as string | undefined,
-            tokenQuery: params.get('token') || undefined,
-            apiUrlHeader: request.headers['x-browserless-api-url'] as
-              string | undefined,
-            browserlessUrlQuery: params.get('browserlessUrl') || undefined,
-            sessionIdHeader: request.headers['x-browserless-session-id'] as
-              string | undefined,
-            sessionIdQuery: params.get('browserlessSessionId') || undefined,
-            sourceHeader: request.headers['x-browserless-mcp-source'] as
-              string | undefined,
-            sourceQuery: params.get('mcpSource') || undefined,
-          },
+          authInputFromRequest(request),
           config,
         )) as BrowserlessSession;
       }

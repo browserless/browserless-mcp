@@ -164,7 +164,11 @@ export function defineTool<P, R>(
       // for the unconstrained generic. Tools see the typed session via this helper
       // and never cast token/apiUrl themselves.
       const s = session as BrowserlessSession | undefined;
-      const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
+      const mcpSource = resolveMcpSource(
+        s,
+        mcpClient?.version,
+        config.transport,
+      );
 
       const token = s?.token ?? config.browserlessToken;
       if (!token) {

@@ -29,6 +29,7 @@ import type {
 import type { AgentParamsSchema } from '../tools/agent.js';
 import type { CreateProfileParams } from '../tools/schemas.js';
 import type { ProxyOptionsSchema } from '../lib/agent-client.js';
+import type { AuthMethod, McpTransport } from '../lib/attribution.js';
 
 /* ------------------------------------------------------------------ */
 /*  Session & auth                                                     */
@@ -48,6 +49,12 @@ export interface BrowserlessSession extends Record<string, unknown> {
   accountId?: string;
   /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
   source?: string;
+  /** How the HTTP session's token was obtained. */
+  authMethod?: AuthMethod;
+  /** HTTP endpoint the session was created on. */
+  transport?: McpTransport;
+  /** Sanitized user-agent header (at most 200 characters). */
+  userAgent?: string;
 }
 
 export interface SupabaseJwtPayload {
