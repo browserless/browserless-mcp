@@ -75,7 +75,55 @@ const rejects = async (promise: Promise<unknown>): Promise<Error> => {
 };
 
 describe('defineTool analytics', () => {
+  beforeEach(() => mockContext.reportProgress.resetHistory());
   afterEach(() => sinon.restore());
+
+  it('emits session attribution without leaking authentication credentials', async () => {
+    const { execute, fire, skill, props } = register({
+      run: async ({ analytics, token, mcpSource }) => {
+        analytics?.fireSkill(token, { skill_id: 'forms', ...mcpSource });
+        return {};
+      },
+    });
+    const token = 'private-session-token-value';
+    await execute({}, {
+      ...mockContext,
+      session: {
+        token,
+        apiUrl: mockConfig.browserlessApiUrl,
+        authMethod: 'api_key_header',
+        transport: 'sse',
+        userAgent: 'python-httpx/0.28',
+      },
+      client: { version: { name: 'mcp', version: '0.1.0' } },
+    } as never);
+    const attribution = {
+      source: 'mcp_client',
+      client_name: 'mcp',
+      client_version: '0.1.0',
+      auth_method: 'api_key_header',
+      transport: 'sse',
+      user_agent: 'python-httpx/0.28',
+      user_agent_family: 'python-httpx',
+      client_family: 'sdk_default',
+      usage_mode: 'deployed',
+    };
+    expect(fire.calledOnce).to.be.true;
+    expect(props()).to.include({
+      ...attribution,
+      success: true,
+      analytics_version: 2,
+    });
+    expect(props().duration_ms).to.be.a('number');
+    expect(skill.firstCall.args[1]).to.include(attribution);
+    expect(Object.values(props())).not.to.include(token);
+    expect(
+      Object.values(props()).some(
+        (value) => typeof value === 'string' && value.startsWith('eyJ'),
+      ),
+    ).to.be.false;
+    expect(props()).not.to.have.property('authorization');
+  });
 
   it('rejects a disallowed session apiUrl before running the tool', async () => {
     const run = sinon.stub().resolves({});

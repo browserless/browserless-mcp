@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { resolveApiKey } from './account-resolver.js';
 import type { BrowserlessSession, McpConfig } from '../@types/types.js';
 import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
+import { sanitizeUserAgent } from './attribution.js';
 
 export type ResolvedBrowserlessAuth = BrowserlessSession;
 
@@ -15,6 +16,29 @@ export interface AuthInput {
   sessionIdQuery?: string;
   sourceHeader?: string;
   sourceQuery?: string;
+  userAgentHeader?: string | string[];
+  requestPath?: string;
+}
+
+export function authInputFromRequest(
+  request: Pick<IncomingMessage, 'headers' | 'url'>,
+): AuthInput {
+  const params = new URLSearchParams(request.url?.split('?')[1] ?? '');
+  return {
+    authHeader: request.headers.authorization as string | undefined,
+    tokenQuery: params.get('token') || undefined,
+    apiUrlHeader: request.headers['x-browserless-api-url'] as
+      string | undefined,
+    browserlessUrlQuery: params.get('browserlessUrl') || undefined,
+    sessionIdHeader: request.headers['x-browserless-session-id'] as
+      string | undefined,
+    sessionIdQuery: params.get('browserlessSessionId') || undefined,
+    sourceHeader: request.headers['x-browserless-mcp-source'] as
+      string | undefined,
+    sourceQuery: params.get('mcpSource') || undefined,
+    userAgentHeader: request.headers['user-agent'],
+    requestPath: request.url,
+  };
 }
 
 /**
@@ -34,6 +58,10 @@ export const resolveBrowserlessAuth = async (
     | 'supabaseServiceRoleKey'
   >,
 ): Promise<ResolvedBrowserlessAuth> => {
+  const transport = input.requestPath?.split('?')[0].startsWith('/sse')
+    ? 'sse'
+    : 'streamable-http';
+  const userAgent = sanitizeUserAgent(input.userAgentHeader).user_agent;
   const override = input.apiUrlHeader ?? input.browserlessUrlQuery;
   if (override !== undefined) assertAllowedApiUrl(override, config);
   const apiUrl = override ?? config.browserlessApiUrl;
@@ -56,7 +84,17 @@ export const resolveBrowserlessAuth = async (
   // A plain key (header or ?token=) is used directly and wins over JWT exchange.
   const plainKey = (isJwt ? undefined : headerToken) ?? input.tokenQuery;
   if (plainKey) {
-    return { token: plainKey, apiUrl, attachSessionId, source };
+    const authMethod =
+      !isJwt && headerToken ? 'api_key_header' : 'api_key_query';
+    return {
+      token: plainKey,
+      apiUrl,
+      attachSessionId,
+      source,
+      authMethod,
+      transport,
+      userAgent,
+    };
   }
 
   // A JWT is exchanged for the account's Browserless API key via PostgREST.
@@ -66,7 +104,16 @@ export const resolveBrowserlessAuth = async (
       config.supabaseServiceRoleKey,
       headerToken,
     );
-    return { token: apiKey, apiUrl, attachSessionId, source, accountId };
+    return {
+      token: apiKey,
+      apiUrl,
+      attachSessionId,
+      source,
+      accountId,
+      authMethod: 'oauth',
+      transport,
+      userAgent,
+    };
   }
 
   throw new Error(
@@ -80,23 +127,7 @@ export const resolveBrowserlessRequestAuth = (
   request: IncomingMessage,
   config: McpConfig,
 ): Promise<ResolvedBrowserlessAuth> => {
-  const params = new URLSearchParams(request.url?.split('?')[1] ?? '');
-  return resolveBrowserlessAuth(
-    {
-      authHeader: request.headers.authorization as string | undefined,
-      tokenQuery: params.get('token') || undefined,
-      apiUrlHeader: request.headers['x-browserless-api-url'] as
-        string | undefined,
-      browserlessUrlQuery: params.get('browserlessUrl') || undefined,
-      sessionIdHeader: request.headers['x-browserless-session-id'] as
-        string | undefined,
-      sessionIdQuery: params.get('browserlessSessionId') || undefined,
-      sourceHeader: request.headers['x-browserless-mcp-source'] as
-        string | undefined,
-      sourceQuery: params.get('mcpSource') || undefined,
-    },
-    config,
-  );
+  return resolveBrowserlessAuth(authInputFromRequest(request), config);
 };
 
 export const guardRouteAuth = async (
