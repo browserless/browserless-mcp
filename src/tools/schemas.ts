@@ -17,6 +17,24 @@ const nulSafeString = (label: string) =>
       message: `${label} must not contain NUL characters`,
     });
 
+// Agent commands use these schemas rather than defineTool's validateUrl hook.
+// Parse the URL so malformed authorities fail validation too.
+const httpUrlString = (label: string) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (v) => {
+        try {
+          return ['http:', 'https:'].includes(new URL(v).protocol);
+        } catch {
+          return false;
+        }
+      },
+      { message: `${label} must be an http:// or https:// URL` },
+    );
+
 export function profileField(whenLoaded: string, extra = '') {
   const description =
     `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
@@ -48,7 +66,9 @@ const WaitUntilSchema = z.enum([
 const GotoCommandSchema = z.object({
   method: z.literal('goto'),
   params: z.object({
-    url: z.string().describe('The URL to navigate to'),
+    url: httpUrlString('url').describe(
+      'The URL to navigate to. Must be http:// or https://.',
+    ),
     waitUntil: WaitUntilSchema.optional().describe(
       'When to consider navigation complete. Defaults to "domcontentloaded". Avoid networkidle0/networkidle2 unless explicitly needed — they hang on SPAs and dynamic sites.',
     ),
@@ -109,10 +129,11 @@ const CreateTabCommandSchema = z.object({
   params: z
     .object({
       url: z
-        .string()
+        .union([httpUrlString('url'), z.literal('about:blank')])
         .optional()
         .describe(
-          'URL to open in the new tab. Defaults to about:blank if omitted.',
+          'URL to open in the new tab. Must be http:// or https:// (or the ' +
+            'literal "about:blank"). Defaults to about:blank if omitted.',
         ),
       activate: z
         .boolean()
