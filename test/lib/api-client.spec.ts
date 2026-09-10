@@ -80,6 +80,25 @@ describe('createApiClient', () => {
       });
     });
 
+    it('preserves the exact request URL for an allowed API override', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient({
+        ...mockConfig,
+        browserlessApiUrl: 'https://production-lon.browserless.io',
+      });
+      await client.smartScrape({ url: 'https://example.com' });
+
+      expect(fetchStub.firstCall.args[0]).to.equal(
+        'https://production-lon.browserless.io/smart-scrape?token=test-token&timeout=30000',
+      );
+    });
+
     it('returns parsed response', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {

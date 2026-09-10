@@ -71,6 +71,26 @@ describe('config.oauthAllowedRedirectUriPatterns', () => {
   });
 });
 
+describe('config.allowedApiUrlHosts', () => {
+  const key = 'MCP_ALLOWED_API_URL_HOSTS';
+  const original = process.env[key];
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  });
+
+  it('parses comma-separated hosts and defaults to none', () => {
+    delete process.env[key];
+    expect(getConfig().allowedApiUrlHosts).to.deep.equal([]);
+    process.env[key] = ' extra.example.com, other.example.net ';
+    expect(getConfig().allowedApiUrlHosts).to.deep.equal([
+      'extra.example.com',
+      'other.example.net',
+    ]);
+  });
+});
+
 describe('config.complianceMode', () => {
   const COMPLIANCE_KEY = 'MCP_COMPLIANCE_MODE';
   let original: string | undefined;

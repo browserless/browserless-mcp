@@ -152,6 +152,8 @@ https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://prod
 
 When both headers and query parameters are present, headers take precedence.
 
+API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
+
 ### Claude Desktop
 
 Add to your `claude_desktop_config.json`:
@@ -235,6 +237,7 @@ Then point your MCP client at `http://localhost:8080/mcp` using the same header/
 | ---------------------------- | -------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BROWSERLESS_TOKEN`          | Yes      | —                                        | Your Browserless API token                                                                                                                                 |
 | `BROWSERLESS_API_URL`        | No       | `https://production-sfo.browserless.io`  | API endpoint (for self-hosted Browserless)                                                                                                                 |
+| `MCP_ALLOWED_API_URL_HOSTS`  | No       | —                                        | Comma-separated hosts allowed for client-supplied API URL overrides, in addition to Browserless and the configured API origin                              |
 | `BROWSERLESS_API_SERVER`     | No       | `https://api.browserless.io`             | Account API host — backs `browserless_account`, `_usage`, `_sessions` and `_logs`. A different host from `BROWSERLESS_API_URL`, which is a browser runtime |
 | `BROWSERLESS_REPLAY_CDN_URL` | No       | `https://d3uycvholi7jx8.cloudfront.net/` | Origin serving session-replay artifacts. Replay paths are origin-checked against it                                                                        |
 | `TRANSPORT`                  | No       | `stdio`                                  | Transport type: `stdio` or `httpStream`                                                                                                                    |

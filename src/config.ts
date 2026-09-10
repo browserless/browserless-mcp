@@ -48,6 +48,7 @@ export function getConfig(): McpConfig {
   return {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
+    allowedApiUrlHosts: parseCsv(process.env.MCP_ALLOWED_API_URL_HOSTS),
     apiServerUrl: process.env.BROWSERLESS_API_SERVER ?? DEFAULT_API_SERVER_URL,
     replayCdnUrl:
       process.env.BROWSERLESS_REPLAY_CDN_URL ?? DEFAULT_REPLAY_CDN_URL,

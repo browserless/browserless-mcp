@@ -25,12 +25,15 @@ const fakeFetch =
   async () =>
     ({ ok, json: async () => skills }) as unknown as Response;
 
+const apiUrlConfig = { browserlessApiUrl: 'https://api.test' };
+
 // Populate the manifest for shop.example the way a live fetch would.
 const seedShop = () =>
   hydrateRemoteSkills(
     'https://shop.example/x',
     'https://api.test',
     'tok',
+    apiUrlConfig,
     fakeFetch([{ task: 'search', title: 'Shop Search', skill_md: SKILL_BODY }]),
   );
 
@@ -123,12 +126,14 @@ describe('site skills', function () {
         'https://c.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         counting,
       );
       await hydrateRemoteSkills(
         'https://c.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         counting,
       );
       expect(calls).to.equal(1);
@@ -150,12 +155,14 @@ describe('site skills', function () {
           'https://shop.example/a',
           'https://api.test',
           'tok',
+          apiUrlConfig,
           slow,
         ),
         hydrateRemoteSkills(
           'https://shop.example/b',
           'https://api.test',
           'tok',
+          apiUrlConfig,
           slow,
         ),
       ]);
@@ -173,6 +180,7 @@ describe('site skills', function () {
         'https://f.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         throwing,
       );
       expect(listSiteSkillsForHost('f.example')).to.deep.equal([]);
@@ -194,6 +202,7 @@ describe('site skills', function () {
         'https://r.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         flaky,
       );
       expect(listSiteSkillsForHost('r.example')).to.deep.equal([]);
@@ -202,6 +211,7 @@ describe('site skills', function () {
         'https://r.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         flaky,
       );
       expect(calls).to.equal(2);
@@ -220,12 +230,14 @@ describe('site skills', function () {
         'https://e.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         emptyOk,
       );
       await hydrateRemoteSkills(
         'https://e.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         emptyOk,
       );
       expect(calls).to.equal(1);
@@ -247,12 +259,14 @@ describe('site skills', function () {
         'https://t.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         counting,
       );
       await hydrateRemoteSkills(
         'https://t.example',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         counting,
       );
       expect(calls).to.equal(2);
@@ -267,6 +281,7 @@ describe('site skills', function () {
         'https://shop.example/x',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         fakeFetch([
           { task: 'browse', title: 'Shop Browse', skill_md: SKILL_BODY },
         ]),
@@ -280,6 +295,7 @@ describe('site skills', function () {
         'https://shop.example/x',
         'https://api.test',
         'tok',
+        apiUrlConfig,
         fakeFetch([]),
       );
       expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
@@ -291,21 +307,62 @@ describe('site skills', function () {
         undefined,
         'https://api.test',
         'tok',
+        apiUrlConfig,
         fakeFetch([]),
       );
       await hydrateRemoteSkills(
         'https://x.example',
         undefined,
         'tok',
+        apiUrlConfig,
         fakeFetch([]),
       );
       await hydrateRemoteSkills(
         'https://x.example',
         'https://api.test',
         undefined,
+        apiUrlConfig,
         fakeFetch([]),
       );
       expect(listSiteSkillsForHost('x.example')).to.deep.equal([]);
+    });
+
+    it('rejects a disallowed API URL before fetching or exposing the token', async function () {
+      let calls = 0;
+      const counting: typeof fetch = async () => {
+        calls++;
+        return { ok: true, json: async () => [] } as unknown as Response;
+      };
+
+      await hydrateRemoteSkills(
+        'https://shop.example',
+        'http://127.0.0.1:9999',
+        'secret-token',
+        apiUrlConfig,
+        counting,
+      );
+
+      expect(calls).to.equal(0);
+    });
+
+    it('preserves the exact allowed skills endpoint', async function () {
+      let requestedUrl = '';
+      const recording: typeof fetch = async (input) => {
+        requestedUrl = String(input);
+        return { ok: true, json: async () => [] } as unknown as Response;
+      };
+
+      await hydrateRemoteSkills(
+        'https://shop.example/path',
+        'https://production-lon.browserless.io',
+        'secret token',
+        apiUrlConfig,
+        recording,
+      );
+
+      expect(requestedUrl).to.equal(
+        'https://production-lon.browserless.io/skills?domain=shop.example&token=secret%20token',
+      );
     });
   });
 });

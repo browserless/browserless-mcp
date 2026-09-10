@@ -77,6 +77,48 @@ const rejects = async (promise: Promise<unknown>): Promise<Error> => {
 describe('defineTool analytics', () => {
   afterEach(() => sinon.restore());
 
+  it('rejects a disallowed session apiUrl before running the tool', async () => {
+    const run = sinon.stub().resolves({});
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    const { execute, fire, props } = register({ run });
+
+    const err = await rejects(
+      execute({}, {
+        ...mockContext,
+        session: { token: 'token', apiUrl: 'http://127.0.0.1:9999' },
+      } as never),
+    );
+
+    expect(err).to.be.instanceOf(UserError);
+    expect(run.called).to.be.false;
+    expect(fetchStub.called).to.be.false;
+    expect(mockContext.reportProgress.called).to.be.false;
+    expect(fire.calledOnce).to.be.true;
+    expect(props()).to.include({
+      success: false,
+      error_category: 'user_error',
+      analytics_version: 2,
+      api_url: mockConfig.browserlessApiUrl,
+    });
+  });
+
+  it('passes an allowed session apiUrl to the tool', async () => {
+    const run = sinon.stub().resolves({});
+    const { execute } = register({ run });
+
+    await execute({}, {
+      ...mockContext,
+      session: {
+        token: 'token',
+        apiUrl: 'https://production-lon.browserless.io',
+      },
+    } as never);
+
+    expect(run.firstCall.args[0].apiUrl).to.equal(
+      'https://production-lon.browserless.io',
+    );
+  });
+
   it('fires exactly one enriched event on success', async () => {
     const { execute, fire, props } = register({
       analyticsProps: () => ({ pages: 3 }),
