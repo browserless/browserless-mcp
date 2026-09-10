@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   AgentCommandSchema,
   AgentToolParamsSchema,
+  CompliantAgentCommandSchema,
 } from '../../src/tools/schemas.js';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
@@ -9,6 +10,117 @@ import {
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
+
+for (const [name, schema] of [
+  ['AgentCommandSchema', AgentCommandSchema],
+  ['CompliantAgentCommandSchema', CompliantAgentCommandSchema],
+] as const) {
+  describe(`${name} navigation URLs`, () => {
+    it('preserves HTTP and HTTPS URLs for navigation and new tabs', () => {
+      for (const method of ['goto', 'createTab'] as const) {
+        for (const url of ['http://example.com', 'https://example.com']) {
+          expect(schema.parse({ method, params: { url } })).to.deep.equal({
+            method,
+            params: { url },
+          });
+        }
+      }
+    });
+
+    it('rejects unsupported schemes and malformed goto URLs', () => {
+      for (const url of [
+        'file:///etc/passwd',
+        'chrome://settings',
+        'javascript:alert(1)',
+        'ftp://host/',
+        'ws://host/',
+        'about:blank',
+        'data:text/html,x',
+        '//example.com',
+        'not a url',
+        '',
+        '   ',
+        'https://[',
+      ]) {
+        expect(
+          schema.safeParse({ method: 'goto', params: { url } }).success,
+          `should reject ${JSON.stringify(url)}`,
+        ).to.equal(false);
+      }
+    });
+
+    it('reports the expected schemes without echoing the rejected URL', () => {
+      const result = schema.safeParse({
+        method: 'goto',
+        params: { url: 'file:///etc/passwd' },
+      });
+      expect(result.success).to.equal(false);
+      if (!result.success) {
+        // The extensible command union nests typed-command validation errors.
+        expect(result.error.message).to.include(
+          'url must be an http:// or https:// URL',
+        );
+        expect(result.error.message).not.to.include('file:///etc/passwd');
+      }
+    });
+
+    it('preserves explicit about:blank and omitted new-tab URLs', () => {
+      expect(
+        schema.parse({ method: 'createTab', params: { url: 'about:blank' } }),
+      ).to.deep.equal({ method: 'createTab', params: { url: 'about:blank' } });
+      expect(schema.parse({ method: 'createTab', params: {} })).to.deep.equal({
+        method: 'createTab',
+        params: {},
+      });
+      expect(schema.parse({ method: 'createTab' })).to.deep.equal({
+        method: 'createTab',
+        params: {},
+      });
+    });
+
+    it('rejects unsupported URLs in background tabs', () => {
+      for (const url of [
+        'file:///etc/passwd',
+        'chrome://settings',
+        'javascript:alert(1)',
+        'about:blank#fragment',
+        ' about:blank ',
+      ]) {
+        expect(
+          schema.safeParse({
+            method: 'createTab',
+            params: { url, activate: false },
+          }).success,
+          `should reject ${JSON.stringify(url)}`,
+        ).to.equal(false);
+      }
+    });
+
+    it('trims navigation URLs without changing credentials, ports, or paths', () => {
+      const url = '  https://user:pw@example.com:8443/a/b?c=1#d  ';
+      expect(schema.parse({ method: 'goto', params: { url } })).to.deep.equal({
+        method: 'goto',
+        params: { url: 'https://user:pw@example.com:8443/a/b?c=1#d' },
+      });
+    });
+
+    it('returns a validation failure rather than throwing for an unparseable URL', () => {
+      expect(
+        schema.safeParse({ method: 'goto', params: { url: 'ht!tp://[' } })
+          .success,
+      ).to.equal(false);
+    });
+
+    it('leaves private-address policy to the runtime', () => {
+      // This schema validates URL schemes, not destination addresses.
+      const url = 'http://169.254.169.254/';
+      expect(schema.parse({ method: 'goto', params: { url } })).to.deep.equal({
+        method: 'goto',
+        params: { url },
+      });
+    });
+  });
+}
 
 describe('ProxyOptionsSchema', () => {
   describe('proxyCountry', () => {
