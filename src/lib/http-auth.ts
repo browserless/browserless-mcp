@@ -1,23 +1,11 @@
-import type { Context } from 'hono';
 import type { IncomingMessage } from 'node:http';
+import type { Context } from 'hono';
 import { resolveApiKey } from './account-resolver.js';
-import type { McpConfig } from '../@types/types.js';
-import {
-  sanitizeUserAgent,
-  type AuthMethod,
-  type McpTransport,
-} from './attribution.js';
+import type { BrowserlessSession, McpConfig } from '../@types/types.js';
+import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
+import { sanitizeUserAgent } from './attribution.js';
 
-export interface ResolvedBrowserlessAuth {
-  token: string;
-  apiUrl: string;
-  attachSessionId?: string;
-  source?: string;
-  accountId?: string;
-  authMethod: AuthMethod;
-  transport: McpTransport;
-  userAgent?: string;
-}
+export type ResolvedBrowserlessAuth = BrowserlessSession;
 
 export interface AuthInput {
   authHeader?: string;
@@ -64,15 +52,19 @@ export const resolveBrowserlessAuth = async (
   input: AuthInput,
   config: Pick<
     McpConfig,
-    'browserlessApiUrl' | 'supabaseUrl' | 'supabaseServiceRoleKey'
+    | 'browserlessApiUrl'
+    | 'allowedApiUrlHosts'
+    | 'supabaseUrl'
+    | 'supabaseServiceRoleKey'
   >,
 ): Promise<ResolvedBrowserlessAuth> => {
   const transport = input.requestPath?.split('?')[0].startsWith('/sse')
     ? 'sse'
     : 'streamable-http';
   const userAgent = sanitizeUserAgent(input.userAgentHeader).user_agent;
-  const apiUrl =
-    input.apiUrlHeader ?? input.browserlessUrlQuery ?? config.browserlessApiUrl;
+  const override = input.apiUrlHeader ?? input.browserlessUrlQuery;
+  if (override !== undefined) assertAllowedApiUrl(override, config);
+  const apiUrl = override ?? config.browserlessApiUrl;
 
   // A pre-created session id to attach to, threaded by the autologin runner.
   // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
@@ -131,6 +123,13 @@ export const resolveBrowserlessAuth = async (
   );
 };
 
+export const resolveBrowserlessRequestAuth = (
+  request: IncomingMessage,
+  config: McpConfig,
+): Promise<ResolvedBrowserlessAuth> => {
+  return resolveBrowserlessAuth(authInputFromRequest(request), config);
+};
+
 export const guardRouteAuth = async (
   c: Context,
   config: Parameters<typeof resolveBrowserlessAuth>[1],
@@ -145,7 +144,10 @@ export const guardRouteAuth = async (
       },
       config,
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof InvalidApiUrlError) {
+      return c.json({ ok: false, error: 'Invalid x-browserless-api-url' }, 400);
+    }
     return c.json({ ok: false, error: 'Unauthorized' }, 401);
   }
 };
