@@ -13,6 +13,7 @@ const BASELINE_PATTERNS = [
   'https://chatgpt.com/connector/oauth/*',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'cursor://anysphere.cursor-mcp/oauth/callback',
+  'https://www.cursor.com/agents/mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',
   'https://api.beta.devin.ai/mcp/oauth/callback',
   'https://api.itsdev.in/mcp/oauth/callback',
