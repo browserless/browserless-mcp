@@ -17,6 +17,7 @@ const EXACT_CALLBACKS = [
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'cursor://anysphere.cursor-mcp/oauth/callback',
+  'https://www.cursor.com/agents/mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',
   'https://api.beta.devin.ai/mcp/oauth/callback',
   'https://api.itsdev.in/mcp/oauth/callback',
@@ -32,6 +33,7 @@ const WILDCARD_CALLBACKS = [
 ];
 
 const LOOKALIKE_CALLBACKS = [
+  'https://wwwxcursor.com/agents/mcp/oauth/callback',
   'https://apixdevin.ai/mcp/oauth/callback',
   'https://api.betaxdevin.ai/mcp/oauth/callback',
   'https://wwwxmake.com/oauth/cb/mcp',

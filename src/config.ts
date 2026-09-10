@@ -15,6 +15,7 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'https://chatgpt.com/connector/oauth/*', // ChatGPT / OpenAI Apps SDK connector (current per-connector callback id)
   'https://chatgpt.com/connector_platform_oauth_redirect', // ChatGPT MCP connector (legacy, still honored for already-published apps)
   'cursor://anysphere.cursor-mcp/oauth/callback', // Cursor (private-use URI scheme registered by the desktop app)
+  'https://www.cursor.com/agents/mcp/oauth/callback', // Cursor MCP OAuth callback (hosted web callback the current Cursor client actually DCRs with)
   'https://api.devin.ai/mcp/oauth/callback', // Devin prod
   'https://api.beta.devin.ai/mcp/oauth/callback', // Devin beta
   'https://api.itsdev.in/mcp/oauth/callback', // Devin dev
