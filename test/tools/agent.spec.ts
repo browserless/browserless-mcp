@@ -1237,8 +1237,18 @@ describe('browserless_agent _prompt capture', () => {
       expect(fire.lastCall.args[2]).not.to.have.property('live_url_id');
       expect(srv.hits()).to.equal(1);
 
+      // Exactly the idle TTL still reuses the same session.
+      clock.setSystemTime(916_000);
+      await execute(
+        { method: 'getCookies', sessionId: params.sessionId },
+        context,
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: true,
+        session_age_ms: 915_000,
+      });
       // Strictly greater than the idle TTL, measured from the previous call.
-      clock.setSystemTime(916_001);
+      clock.setSystemTime(1_816_001);
       await execute(
         { method: 'getCookies', sessionId: params.sessionId },
         context,
@@ -1271,7 +1281,115 @@ describe('browserless_agent _prompt capture', () => {
       success: false,
       error_category: 'user_error',
       analytics_version: 2,
+      session_reused: false,
+      session_age_ms: 0,
     });
+  });
+
+  it('reports one new acquisition and one reuse for concurrent calls', async () => {
+    sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      await Promise.all(
+        [1, 2].map(() =>
+          execute(
+            { method: 'getCookies', sessionId: 'concurrent-analytics' },
+            { ...mockContext, sessionId: 'concurrent-analytics' },
+          ),
+        ),
+      );
+      expect(srv.hits()).to.equal(1);
+      expect(
+        fire
+          .getCalls()
+          .map((c) => c.args[2].session_reused)
+          .sort(),
+      ).to.deep.equal([false, true]);
+      expect(
+        fire.getCalls().map((c) => c.args[2].session_age_ms),
+      ).to.deep.equal([0, 0]);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('includes session defaults when validation rejects before acquisition', async () => {
+    const { execute, fire } = registerWithAnalytics({
+      ...mockConfig,
+      complianceMode: true,
+    });
+    try {
+      await execute({ commands: [{ method: 'notACommand' }] }, mockContext);
+      expect.fail('expected validation error');
+    } catch (error) {
+      expect((error as Error).message).to.include(
+        'not available on this endpoint',
+      );
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).to.include({
+      success: false,
+      session_reused: false,
+      session_age_ms: 0,
+    });
+  });
+
+  it('retains a minted ID on a later batch error and reports close reuse', async () => {
+    const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const srv = await makeRespondingServer((method) =>
+      method === 'liveURL'
+        ? { liveURLId: 'batch-handoff', liveURL: 'https://example.com/live' }
+        : new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'missing element',
+          }),
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      const context = { ...mockContext, sessionId: 'batch-telemetry' };
+      try {
+        await execute(
+          {
+            sessionId: 'batch-session',
+            commands: [
+              { method: 'liveURL' },
+              { method: 'click', params: { selector: '#missing' } },
+            ],
+          },
+          context,
+        );
+        expect.fail('expected command error');
+      } catch (error) {
+        expect((error as Error).message).to.include('missing element');
+      }
+      expect(fire.firstCall.args[2]).to.include({
+        success: false,
+        live_url_id: 'batch-handoff',
+        session_reused: false,
+        session_age_ms: 0,
+      });
+      clock.setSystemTime(3500);
+      await execute({ method: 'close', sessionId: 'batch-session' }, context);
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: true,
+        session_age_ms: 2500,
+      });
+      expect(fire.lastCall.args[2]).not.to.have.property('live_url_id');
+      await execute({ method: 'close', sessionId: 'batch-session' }, context);
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: false,
+        session_age_ms: 0,
+      });
+    } finally {
+      await srv.close();
+    }
   });
 
   it('does NOT inject _prompt on the compliant surface', () => {

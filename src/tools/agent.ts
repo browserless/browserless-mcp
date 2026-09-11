@@ -599,6 +599,7 @@ export function registerAgentTools(
 
   defineTool<AgentToolParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
+    analyticsDefaults: { session_reused: false, session_age_ms: 0 },
     description:
       (compliant
         ? COMPLIANT_AGENT_SYSTEM_PROMPT
@@ -925,7 +926,13 @@ export function registerAgentTools(
           }
           if (cmd.method === 'reportSkillOutcome') {
             try {
-              await send(agentSession, cmd.method, cmd.params);
+              await send(
+                agentSession,
+                cmd.method,
+                cmd.params,
+                undefined,
+                onSession,
+              );
             } catch {
               // noop
             }
@@ -954,7 +961,13 @@ export function registerAgentTools(
 
           let resp;
           try {
-            resp = await send(agentSession, cmd.method, outboundParams);
+            resp = await send(
+              agentSession,
+              cmd.method,
+              outboundParams,
+              undefined,
+              onSession,
+            );
           } catch (sendErr: unknown) {
             destroySession(
               mcpSessionId,
@@ -1157,7 +1170,13 @@ export function registerAgentTools(
         let autoDownloads: DownloadEntry[] = [];
         if (!closedDuringBatch && last.method !== 'getDownloads') {
           try {
-            const dl = await send(agentSession, 'getDownloads', {});
+            const dl = await send(
+              agentSession,
+              'getDownloads',
+              {},
+              undefined,
+              onSession,
+            );
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];

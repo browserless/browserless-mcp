@@ -870,6 +870,7 @@ export const send = async (
   method: string,
   params: Record<string, unknown> = {},
   timeoutMs?: number,
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
     if (!session.reconnecting) {
@@ -897,6 +898,7 @@ export const send = async (
     if (session.ws !== ws) {
       session.ws = ws;
       session.msgId = 0;
+      createdAt.set(session, Date.now());
 
       const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
       if (key) {
@@ -908,6 +910,7 @@ export const send = async (
         });
       }
     }
+    onSession?.(false, 0);
   }
 
   session.msgId++;
