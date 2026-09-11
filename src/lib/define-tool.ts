@@ -11,6 +11,7 @@ import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import { setAmplitudeToolContext } from './amplitude-analytics.js';
 import { categorizeThrown, categoryFromStatus } from './error-classifier.js';
+import { failureDetails, failureFields } from './failure-details.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -187,11 +188,22 @@ export function defineTool<P, R>(
       let fired = false;
       // Held so a `format` that throws still reports the run's `ok`/`status_code`.
       let resultProps: Record<string, unknown> | undefined;
+      let validating = true;
 
       const enrich = (props: Record<string, unknown>) => {
         const success = normalizeSuccess(props);
+        const cleanProps = { ...props };
+        if (success) {
+          for (const field of failureFields) delete cleanProps[field];
+        } else {
+          for (const [field, value] of Object.entries(
+            failureDetails(undefined),
+          )) {
+            if (cleanProps[field] === undefined) cleanProps[field] = value;
+          }
+        }
         return {
-          ...props,
+          ...cleanProps,
           success,
           duration_ms: Date.now() - startedAt,
           analytics_version: ANALYTICS_VERSION,
@@ -237,6 +249,7 @@ export function defineTool<P, R>(
           apiUrl = s.apiUrl;
         }
         def.validateUrl?.(params);
+        validating = false;
 
         await reportProgress({ progress: 0, total: 100 });
 
@@ -284,6 +297,12 @@ export function defineTool<P, R>(
 
         if (!fired) {
           emit({
+            ...failureDetails(
+              err,
+              validating
+                ? { category: 'INVALID_PARAMS', source: 'validation' }
+                : {},
+            ),
             ...resultProps,
             success: false,
             error_category:

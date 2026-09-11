@@ -248,6 +248,40 @@ Then point your MCP client at `http://localhost:8080/mcp` using the same header/
 | `AMPLITUDE_API_KEY`          | No       | —                                        | Amplitude project API key. Sends MCP usage analytics — SDK lifecycle events plus our own tool/skill events                                                 |
 | `MCP_COMPLIANCE_MODE`        | No       | unset (full surface)                     | Serve the reduced, directory-compliant surface. Fails closed: any set value except `false`/`0`/`no`/`off` enables it                                       |
 
+### Failure diagnostics
+
+`MCP Tool Request` retains `analytics_version=2`, the existing coarse
+`error_category`, `status_code`, timing and tool-specific properties. These
+additive diagnostic fields are failure-only; a successful retry has none of them.
+
+| Property               | Meaning                                                                                                                                                                                                                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `error_reason`         | `selector_miss`, `invalid_params`, `unknown_method`, `script_error`, `unauthorized`, `forbidden`, `not_found`, `server_error`, `session_lost`, `navigation_failed`, `timeout`, or `unknown`. Agent errors retain their existing detailed classification; local URL/batch validation is `invalid_params`. |
+| `error_source`         | `validation`, `script`, `target_website`, `api`, `transport`, or `unknown`. This identifies the observed failure boundary, not blame. A 403 alone does not identify its source.                                                                                                                          |
+| `failed_command_index` | Zero-based index in the invocation's command batch, not the session-wide command counter. Omitted when setup/validation fails before a command starts.                                                                                                                                                   |
+| `failed_method`        | The failed command's recognized typed method name. Unrecognized free-form method names are omitted to avoid emitting arbitrary input; the index still identifies the command.                                                                                                                            |
+| `error_code`           | Allowlisted structured codes: the uppercase reason names above, `SELECTOR_NOT_FOUND`, `BROWSER_CRASHED`, `ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `ETIMEDOUT`. Opaque/unrecognized codes are omitted, not copied into messages.                                                           |
+| `error_status_code`    | An integer HTTP status (100–599) carried by structured error metadata. Never extracted from error prose.                                                                                                                                                                                                 |
+| `error_status_origin`  | `api` for an observed API response/upgrade, `target_website` for a failed navigation result, otherwise `unknown`. Omitted when no structured status is available.                                                                                                                                        |
+| `error_message`        | A synthesized summary capped at 500 characters. Raw error messages, response bodies, HTML, scripts, selectors, credentials, cookies, authorization headers and URLs are never copied into this field.                                                                                                    |
+
+`status_code` keeps its original tool-specific meaning; the new status fields
+do not replace it or turn successful target-page HTTP responses into failures.
+HTTP failures retain API response status even when thrown. Codes are retained
+when already available in structured errors or the JSON body read by the existing
+4xx error handler; diagnostics do not read additional bodies on 5xx failures.
+
+An unsuccessful search without structured evidence reports `error_reason=unknown`
+and `error_message="Unclassified search failure."`. Its legacy `user_error`
+category remains for chart compatibility, not as evidence of caller fault.
+
+Example breakdowns: filter `success=false` and group by `tool → error_reason`;
+for agent calls, group by `failed_method → error_reason`; for HTTP failures,
+group by `error_status_origin → error_status_code`. Missing fields in older
+events mean unavailable instrumentation, not an `unknown` failure. There is no
+historical backfill. Verify representative received events after deployment
+before treating these properties as available in production.
+
 ## MCP Resources
 
 | Resource URI             | Description                     |

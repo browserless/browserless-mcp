@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerSearchTool } from '../../src/tools/search.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -61,6 +62,71 @@ describe('browserless_search tool', () => {
   it('registers the tool on the server', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     expect(() => registerSearchTool(server, mockConfig)).to.not.throw();
+  });
+
+  it('reports generic search failure as unclassified without changing its coarse category', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({
+          success: false,
+          totalResults: 0,
+          data: {},
+          error: 'private query cookie=secret ' + 'x'.repeat(600),
+        }),
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const spy = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerSearchTool(server, mockConfig, analytics);
+    try {
+      await spy.firstCall.args[0].execute({ query: 'test' }, mockContext);
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    const props = fire.firstCall.args[2];
+    expect(props).to.include({
+      success: false,
+      error_reason: 'unknown',
+      error_source: 'unknown',
+      error_message: 'Unclassified search failure.',
+      error_category: 'user_error',
+    });
+    expect(JSON.stringify(props)).not.to.match(/secret|private|xxx/);
+  });
+
+  it('preserves safe structured search diagnostics without inventing status provenance', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({
+          success: false,
+          totalResults: 0,
+          data: {},
+          error: { code: 'FORBIDDEN', status: 403, message: 'private' },
+        }),
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const spy = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerSearchTool(server, mockConfig, analytics);
+    try {
+      await spy.firstCall.args[0].execute({ query: 'test' }, mockContext);
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).to.include({
+      error_reason: 'forbidden',
+      error_source: 'unknown',
+      error_code: 'FORBIDDEN',
+      error_status_code: 403,
+      error_status_origin: 'unknown',
+    });
+    expect(fire.firstCall.args[2].error_message).not.to.include('Unclassified');
   });
 
   it('returns web search results', async () => {
