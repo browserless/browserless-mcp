@@ -788,6 +788,10 @@ export function registerAgentTools(
       const proxyCmd = commands.find((c) => c.method === 'proxy');
       if (proxyCmd) {
         lastCategory = 'INVALID_PARAMS';
+        lastFailure = failureDetails(undefined, {
+          category: lastCategory,
+          source: 'validation',
+        });
         sendAnalytics(false);
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +

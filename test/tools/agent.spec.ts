@@ -1438,8 +1438,11 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).to.include({
       success: false,
       error_category: 'user_error',
+      error_reason: 'invalid_params',
+      error_source: 'validation',
       analytics_version: 2,
     });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
   });
 
   it('does NOT inject _prompt on the compliant surface', () => {
