@@ -679,12 +679,12 @@ export function registerAgentTools(
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
-      // specific messages). Single-command calls stay loose, as before — the
-      // browser backend validates their params.
-      if (params.commands && params.commands.length > 0) {
+      // specific messages). Legacy single-command calls stay loose; outcome
+      // reports need local validation because delivery is best-effort.
+      if (params.commands?.length || params.method === 'reportOutcome') {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
-          .safeParse(params.commands);
+          .safeParse(params.commands?.length ? params.commands : commands);
         if (!commandContract.success) {
           throw new UserError(
             commandContract.error.issues

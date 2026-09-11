@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
@@ -1239,6 +1239,58 @@ describe('browserless_agent _prompt capture', () => {
 
 describe('browserless_agent reportOutcome', () => {
   afterEach(() => sinon.restore());
+
+  it('rejects malformed top-level verdicts before forwarding', async () => {
+    const calls: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      calls.push(method);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const params of [
+        {},
+        { success: 'yes' },
+        { success: false, reason: 'unlisted' },
+      ]) {
+        try {
+          await execute({ method: 'reportOutcome', params }, mockContext);
+          expect.fail('expected invalid verdict to be rejected');
+        } catch (err) {
+          expect(err).to.be.instanceOf(UserError);
+        }
+      }
+      expect(calls).to.deep.equal([]);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('forwards a valid false top-level verdict', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const srv = await makeRespondingServer((method, params) => {
+      calls.push({ method, params });
+      return { recorded: true };
+    });
+    try {
+      await getAgentExecute(srv.url)(
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'captcha' },
+        },
+        mockContext,
+      );
+      expect(calls).to.deep.equal([
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'captcha' },
+        },
+      ]);
+    } finally {
+      await srv.close();
+    }
+  });
 
   for (const complianceMode of [false, true]) {
     it(`forwards the verdict without replacing the page result (compliant=${complianceMode})`, async () => {
