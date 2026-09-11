@@ -1202,6 +1202,57 @@ describe('browserless_agent _prompt capture', () => {
     expect(props).to.not.have.property('error_category');
   });
 
+  it('joins a live URL result and distinguishes reused from idle-evicted sessions', async () => {
+    const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const srv = await makeRespondingServer((method) =>
+      method === 'liveURL'
+        ? {
+            liveURLId: 'handoff-123',
+            liveURL: 'https://example.com/live?i=handoff-123',
+          }
+        : {},
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      const context = { ...mockContext, sessionId: 'handoff-telemetry' };
+      const params = { method: 'liveURL', sessionId: 'handoff-session' };
+      await execute(params, context);
+      expect(fire.lastCall.args[2]).to.include({
+        live_url_id: 'handoff-123',
+        session_reused: false,
+        session_age_ms: 0,
+      });
+      clock.setSystemTime(16_000);
+      await execute(
+        { method: 'getCookies', sessionId: params.sessionId },
+        context,
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: true,
+        session_age_ms: 15_000,
+      });
+      expect(fire.lastCall.args[2]).not.to.have.property('live_url_id');
+      expect(srv.hits()).to.equal(1);
+
+      // Strictly greater than the idle TTL, measured from the previous call.
+      clock.setSystemTime(916_001);
+      await execute(
+        { method: 'getCookies', sessionId: params.sessionId },
+        context,
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: false,
+        session_age_ms: 0,
+      });
+      expect(srv.hits()).to.equal(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('fires exactly one event carrying the classified category on failure', async () => {
     const { execute, fire } = registerWithAnalytics(mockConfig);
 

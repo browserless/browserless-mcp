@@ -748,11 +748,21 @@ export function registerAgentTools(
       }
 
       let lastCategory: ErrorCategory | undefined;
+      let liveUrlId: string | undefined;
+      let sessionReused = false;
+      let sessionAgeMs = 0;
+      const onSession = (reused: boolean, ageMs: number) => {
+        sessionReused = reused;
+        sessionAgeMs = ageMs;
+      };
 
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
+          ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
+          session_reused: sessionReused,
+          session_age_ms: sessionAgeMs,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           api_url: apiUrl,
@@ -799,6 +809,7 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
+          onSession,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -827,6 +838,7 @@ export function registerAgentTools(
             os,
             humanlike,
             record,
+            onSession,
           );
         } catch (connErr: unknown) {
           sendAnalytics(false, connErr);
@@ -843,6 +855,8 @@ export function registerAgentTools(
       }
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
+        onSession(false, 0);
+        liveUrlId = undefined;
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
@@ -861,6 +875,7 @@ export function registerAgentTools(
             os,
             humanlike,
             record,
+            onSession,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -1079,6 +1094,12 @@ export function registerAgentTools(
             );
           }
 
+          if (cmd.method === 'liveURL') {
+            const result = resp.result as { liveURLId?: unknown } | undefined;
+            if (typeof result?.liveURLId === 'string') {
+              liveUrlId = result.liveURLId;
+            }
+          }
           results.push({ method: cmd.method, result: resp.result });
         }
 
