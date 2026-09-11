@@ -107,6 +107,7 @@ describe('defineTool analytics', () => {
     const { execute, props } = register({
       analyticsProps: () => ({
         success: true,
+        error_category: 'timeout',
         error_reason: 'timeout',
         error_source: 'transport',
         error_code: 'ETIMEDOUT',

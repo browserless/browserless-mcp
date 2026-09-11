@@ -195,6 +195,7 @@ export function defineTool<P, R>(
         const cleanProps = { ...props };
         if (success) {
           for (const field of failureFields) delete cleanProps[field];
+          delete cleanProps.error_category;
         } else {
           for (const [field, value] of Object.entries(
             failureDetails(undefined),

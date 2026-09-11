@@ -2,6 +2,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { failureDetails } from '../lib/failure-details.js';
 import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type {
@@ -321,6 +322,7 @@ export function registerCrawlTool(
             ...analyticsBase,
             success: false,
             error_category: 'timeout',
+            ...failureDetails(undefined, { category: 'TIMEOUT' }),
             crawl_id: crawlId,
             timeout: true,
           });
