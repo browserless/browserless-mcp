@@ -15,6 +15,41 @@ for (const [name, schema] of [
   ['AgentCommandSchema', AgentCommandSchema],
   ['CompliantAgentCommandSchema', CompliantAgentCommandSchema],
 ] as const) {
+  describe(`${name} reportOutcome`, () => {
+    it('accepts boolean verdicts and each fixed reason', () => {
+      for (const success of [true, false]) {
+        for (const reason of [
+          undefined,
+          'completed',
+          'blocked_by_site',
+          'captcha',
+          'login_required',
+          'timeout',
+          'other',
+        ]) {
+          const command = {
+            method: 'reportOutcome',
+            params: { success, ...(reason ? { reason } : {}) },
+          };
+          expect(schema.parse(command)).to.deep.equal(command);
+        }
+      }
+    });
+
+    it('rejects malformed verdicts rather than using generic passthrough', () => {
+      for (const params of [
+        {},
+        { success: 'yes' },
+        { success: 1 },
+        { success: true, reason: 'https://example.com?token=secret' },
+      ]) {
+        expect(
+          schema.safeParse({ method: 'reportOutcome', params }).success,
+        ).to.equal(false);
+      }
+    });
+  });
+
   describe(`${name} navigation URLs`, () => {
     it('preserves HTTP and HTTPS URLs for navigation and new tabs', () => {
       for (const method of ['goto', 'createTab'] as const) {
