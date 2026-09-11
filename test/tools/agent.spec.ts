@@ -1399,6 +1399,48 @@ describe('browserless_agent _prompt capture', () => {
     });
     expect((added.parameters as any).shape).to.not.have.property('_prompt');
   });
+
+  it('retains a minted ID when a later fatal error retries unsuccessfully', async () => {
+    let liveCalls = 0;
+    const srv = await makeRespondingServer((method) => {
+      if (method === 'liveURL' && liveCalls++ === 0) {
+        return { liveURLId: 'before-retry' };
+      }
+      return new AgentErrorFrame({
+        code: 'BROWSER_CRASHED',
+        message: 'browser crashed',
+      });
+    });
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          {
+            sessionId: 'retry-handoff',
+            commands: [
+              { method: 'liveURL' },
+              { method: 'click', params: { selector: '#next' } },
+            ],
+          },
+          { ...mockContext, sessionId: 'retry-handoff' },
+        );
+        expect.fail('expected retry failure');
+      } catch (error) {
+        expect((error as Error).message).to.include('browser crashed');
+      }
+      expect(srv.hits()).to.equal(2);
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        success: false,
+        live_url_id: 'before-retry',
+      });
+    } finally {
+      await srv.close();
+    }
+  });
 });
 
 describe('browserless_agent session handle on errors', () => {

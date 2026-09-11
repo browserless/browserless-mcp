@@ -857,7 +857,6 @@ export function registerAgentTools(
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
         onSession(false, 0);
-        liveUrlId = undefined;
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
