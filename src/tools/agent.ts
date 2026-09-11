@@ -884,7 +884,11 @@ export function registerAgentTools(
         }
 
         // Execute all commands sequentially
-        const results: Array<{ method: string; result?: unknown }> = [];
+        const results: Array<{
+          method: string;
+          params: Record<string, unknown>;
+          result?: unknown;
+        }> = [];
         let closedDuringBatch = false;
         // Cross-origin baseline: prefer the URL from the previous snapshot,
         // else the first URL seen this batch — so [goto A, goto B, snapshot]
@@ -904,7 +908,7 @@ export function registerAgentTools(
               integrationId,
               allowedDomains,
             );
-            results.push({ method: 'close', result: { closed: true } });
+            results.push({ ...cmd, result: { closed: true } });
             closedDuringBatch = true;
             break;
           }
@@ -1082,14 +1086,14 @@ export function registerAgentTools(
             );
           }
 
-          results.push({ method: cmd.method, result: resp.result });
+          results.push({ ...cmd, result: resp.result });
         }
 
         // If the batch ended with close, format the result around the
         // command before close (close itself has no useful payload).
         const reportable = closedDuringBatch ? results.slice(0, -1) : results;
-        // Nothing user-facing ran (batch was only close and/or an internal
-        // reportSkillOutcome) — the deref below would throw, so short-circuit.
+        // Nothing user-facing ran (only close and/or outcome reports), so
+        // there is no page result to format.
         if (reportable.length === 0) {
           return [
             {
@@ -1100,7 +1104,7 @@ export function registerAgentTools(
         }
         const last = reportable[reportable.length - 1];
         const lastResult = last.result as Record<string, unknown>;
-        const lastCmd = commands[reportable.length - 1];
+        const lastCmd = last;
 
         const closedSuffix = closedDuringBatch
           ? '\n\nBrowser session closed.'
