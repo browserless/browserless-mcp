@@ -655,6 +655,24 @@ const GetDownloadsCommandSchema = z.object({
   params: z.object({}).optional().default({}),
 });
 
+const ReportOutcomeCommandSchema = z.object({
+  method: z.literal('reportOutcome'),
+  params: z.object({
+    success: z.boolean().describe('Whether the agent completed the task.'),
+    reason: z
+      .enum([
+        'completed',
+        'blocked_by_site',
+        'captcha',
+        'login_required',
+        'timeout',
+        'other',
+      ])
+      .optional()
+      .describe('Optional category for how the task ended.'),
+  }),
+});
+
 const CloseCommandSchema = z.object({
   method: z.literal('close'),
   params: z.object({}).optional().default({}),
@@ -711,6 +729,7 @@ const specificCommandSchemas = [
   GetDownloadsCommandSchema,
   StartRecordingCommandSchema,
   StopRecordingCommandSchema,
+  ReportOutcomeCommandSchema,
   CloseCommandSchema,
 ] as const;
 
@@ -993,6 +1012,7 @@ const compliantCommandSchemas = [
   // so its capture gate never arms and there is nothing to clear.
   // No uploadFile/getDownloads: upload impersonates a human write (vendor-TOS),
   // download is the paired file-I/O — a compliant web agent reads, doesn't move files.
+  ReportOutcomeCommandSchema,
   CloseCommandSchema,
 ] as const;
 

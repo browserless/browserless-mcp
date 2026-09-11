@@ -255,6 +255,7 @@ describe('compliance mode — compliant tool surface', () => {
         'waitForResponse',
         'liveURL',
         'screenshot',
+        'reportOutcome',
         'close',
       ];
       expect([...COMPLIANT_AGENT_METHODS]).to.have.members(EXPECTED_METHODS);

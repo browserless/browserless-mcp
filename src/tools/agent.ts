@@ -908,7 +908,10 @@ export function registerAgentTools(
             closedDuringBatch = true;
             break;
           }
-          if (cmd.method === 'reportSkillOutcome') {
+          if (
+            cmd.method === 'reportSkillOutcome' ||
+            cmd.method === 'reportOutcome'
+          ) {
             try {
               await send(agentSession, cmd.method, cmd.params);
             } catch {

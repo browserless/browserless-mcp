@@ -1232,6 +1232,58 @@ describe('browserless_agent _prompt capture', () => {
   });
 });
 
+describe('browserless_agent reportOutcome', () => {
+  afterEach(() => sinon.restore());
+
+  for (const complianceMode of [false, true]) {
+    it(`forwards the verdict without replacing the page result (compliant=${complianceMode})`, async () => {
+      const calls: Array<{ method: string; params: unknown }> = [];
+      const srv = await makeRespondingServer((method, params) => {
+        calls.push({ method, params });
+        return method === 'reportOutcome'
+          ? { recorded: true }
+          : { status: 200, marker: 'page-result' };
+      });
+      try {
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerAgentTools(server, {
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+          complianceMode,
+        });
+        const tool = spy
+          .getCalls()
+          .find((c) => c.args[0].name === 'browserless_agent')!.args[0];
+        const execute = tool.execute as (
+          args: unknown,
+          ctx: unknown,
+        ) => Promise<{ content: Content[] }>;
+        const verdict = { success: false, reason: 'captcha' };
+        const result = await execute(
+          {
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+              { method: 'reportOutcome', params: verdict },
+              { method: 'close' },
+            ],
+          },
+          { ...mockContext, sessionId: `outcome-${complianceMode}` },
+        );
+        expect(calls).to.deep.equal([
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { method: 'reportOutcome', params: verdict },
+        ]);
+        expect(JSON.stringify(result.content))
+          .to.include('page-result')
+          .and.not.include('recorded');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+});
+
 describe('browserless_agent session handle on errors', () => {
   afterEach(() => sinon.restore());
 
