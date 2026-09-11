@@ -78,6 +78,88 @@ describe('defineTool analytics', () => {
   beforeEach(() => mockContext.reportProgress.resetHistory());
   afterEach(() => sinon.restore());
 
+  it('preserves structured thrown status without guessing its origin or leaking text', async () => {
+    const { execute, props } = register({
+      run: async () => {
+        throw Object.assign(
+          new Error('<html>password=secret ' + 'x'.repeat(600)),
+          {
+            status: 403,
+            code: 'FORBIDDEN',
+          },
+        );
+      },
+    });
+    await rejects(execute({}, mockContext as never));
+    expect(props()).to.include({
+      error_reason: 'forbidden',
+      error_source: 'unknown',
+      error_code: 'FORBIDDEN',
+      error_status_code: 403,
+      error_status_origin: 'unknown',
+    });
+    expect(props()).not.to.have.property('status_code');
+    expect(props().error_message).to.be.a('string').with.length.at.most(500);
+    expect(JSON.stringify(props())).not.to.match(/secret|<html>|xxx/);
+  });
+
+  it('omits stale diagnostic properties on success', async () => {
+    const { execute, props } = register({
+      analyticsProps: () => ({
+        success: true,
+        error_category: 'timeout',
+        error_reason: 'timeout',
+        error_source: 'transport',
+        error_code: 'ETIMEDOUT',
+        error_message: 'private',
+        failed_method: 'goto',
+        failed_command_index: 1,
+        error_status_code: 503,
+        error_status_origin: 'api',
+      }),
+    });
+    await execute({}, mockContext as never);
+    expect(
+      Object.keys(props()).filter(
+        (k) => k.startsWith('error_') || k.startsWith('failed_'),
+      ),
+    ).to.deep.equal([]);
+  });
+
+  it('retains API status on a thrown HTTP response without emitting its body', async () => {
+    sinon.stub(globalThis, 'fetch').resolves(
+      new Response('{"code":"UNAUTHORIZED","message":"Bearer private"}', {
+        status: 401,
+      }),
+    );
+    const { execute, props } = register({
+      run: async ({ client }) => client.search({ query: 'test' }),
+    });
+    await rejects(execute({}, mockContext as never));
+    expect(props()).to.include({
+      error_reason: 'unauthorized',
+      error_source: 'api',
+      error_status_code: 401,
+      error_status_origin: 'api',
+      error_code: 'UNAUTHORIZED',
+    });
+    expect(JSON.stringify(props())).not.to.include('private');
+  });
+
+  it('does not change coarse classification when retaining a new upstream code', async () => {
+    sinon
+      .stub(globalThis, 'fetch')
+      .resolves(new Response('{"code":"BROWSER_CRASHED"}', { status: 403 }));
+    const { execute, props } = register({
+      run: async ({ client }) => client.search({ query: 'test' }),
+    });
+    await rejects(execute({}, mockContext as never));
+    expect(props()).to.include({
+      error_code: 'BROWSER_CRASHED',
+      error_category: 'user_error',
+    });
+  });
+
   it('emits session attribution without leaking authentication credentials', async () => {
     const { execute, fire, skill, props } = register({
       run: async ({ analytics, token, mcpSource }) => {
@@ -220,6 +302,11 @@ describe('defineTool analytics', () => {
     await rejects(execute({ url: 'ftp://x' }, mockContext as never));
     expect(fire.calledOnce).to.be.true;
     expect(props().error_category).to.equal('user_error');
+    expect(props()).to.include({
+      error_reason: 'invalid_params',
+      error_source: 'validation',
+    });
+    expect(props()).not.to.have.property('failed_command_index');
   });
 
   it('classifies network failures', async () => {

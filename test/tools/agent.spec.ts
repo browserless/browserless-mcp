@@ -1153,6 +1153,225 @@ describe('browserless_agent _prompt capture', () => {
     return { added, execute: added.execute, fire };
   };
 
+  it('attributes failure to the second command and excludes diagnostic input text', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'click'
+        ? new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'selector #private password=secret ' + 'x'.repeat(700),
+          })
+        : { url: 'https://example.com', status: 200 },
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          {
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+              { method: 'click', params: { selector: '#private' } },
+            ],
+          },
+          { ...mockContext, sessionId: 'diagnostic-batch' },
+        );
+      } catch {
+        /* assert event below */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      const props = fire.firstCall.args[2];
+      expect(props).to.include({
+        error_reason: 'selector_miss',
+        error_code: 'SELECTOR_NOT_FOUND',
+        failed_method: 'click',
+        failed_command_index: 1,
+        error_category: 'user_error',
+      });
+      expect(JSON.stringify(props)).not.to.match(/#private|secret|xxx/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('retains setup HTTP status without a command index', async () => {
+    const srv = await makeRejectingServer(403, '<html>private</html>');
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'diagnostic-connect' },
+        );
+      } catch {
+        /* assert event below */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'forbidden',
+        error_source: 'api',
+        error_status_code: 403,
+        error_status_origin: 'api',
+      });
+      expect(fire.firstCall.args[2]).not.to.have.property('failed_method');
+      expect(fire.firstCall.args[2]).not.to.have.property(
+        'failed_command_index',
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('reports invalid batches before commands start', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+    try {
+      await execute(
+        { commands: [{ method: 'click', params: {} }] },
+        { ...mockContext, sessionId: 'diagnostic-invalid-batch' },
+      );
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).to.include({
+      error_reason: 'invalid_params',
+      error_source: 'validation',
+    });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('does not label a failed connection without an HTTP response as an API response', async () => {
+    const srv = await makeRejectingServer(403, 'unused');
+    await srv.close();
+    const { execute, fire } = registerWithAnalytics({
+      ...mockConfig,
+      browserlessApiUrl: srv.url,
+    });
+    try {
+      await execute(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, sessionId: 'diagnostic-refused' },
+      );
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2].error_source).not.to.equal('api');
+    expect(fire.firstCall.args[2]).not.to.have.property('error_status_code');
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('keeps a target navigation status separate from API response status', async () => {
+    const srv = await makeRespondingServer(() => ({
+      url: 'chrome-error://chromewebdata/',
+      status: 503,
+    }));
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'diagnostic-target' },
+        );
+      } catch {
+        /* assert event */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'navigation_failed',
+        error_source: 'target_website',
+        error_status_code: 503,
+        error_status_origin: 'target_website',
+      });
+      expect(fire.firstCall.args[2]).not.to.have.property('status_code');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const [code, method, message, reason] of [
+    ['INVALID_PARAMS', 'click', 'bad parameters', 'invalid_params'],
+    ['UNKNOWN_METHOD', 'notAMethod', 'unknown', 'unknown_method'],
+    ['BROWSER_CRASHED', 'snapshot', 'crashed', 'session_lost'],
+    ['', 'evaluate', 'private script threw', 'script_error'],
+    ['', 'goto', 'net::ERR_NAME_NOT_RESOLVED', 'navigation_failed'],
+    ['', 'waitForSelector', 'Timed out', 'timeout'],
+    ['', 'goto', 'HTTP 401', 'unauthorized'],
+    ['', 'goto', 'HTTP 403', 'forbidden'],
+    ['', 'goto', 'HTTP 404', 'not_found'],
+    ['', 'goto', 'HTTP 503', 'server_error'],
+    ['opaque-private-code', 'snapshot', 'unrecognized', 'unknown'],
+  ]) {
+    it(`preserves ${reason} as a detailed agent reason`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code: code || undefined, message }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method, params: {} },
+            { ...mockContext, sessionId: `diagnostic-${reason}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({
+          error_reason: reason,
+          failed_command_index: 0,
+        });
+        // Numbers in prose cannot establish HTTP status provenance.
+        expect(fire.firstCall.args[2]).not.to.have.property(
+          'error_status_code',
+        );
+        if (reason === 'unknown')
+          expect(fire.firstCall.args[2]).not.to.have.property('error_code');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('clears failure metadata when a fatal command succeeds on retry', async () => {
+    let calls = 0;
+    const srv = await makeRespondingServer(() =>
+      ++calls === 1
+        ? new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' })
+        : { url: 'https://example.com', status: 200 },
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      await execute(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, sessionId: 'diagnostic-retry' },
+      );
+      expect(srv.hits()).to.equal(2);
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2].success).to.equal(true);
+      expect(
+        Object.keys(fire.firstCall.args[2]).filter(
+          (k) => k.startsWith('error_') || k.startsWith('failed_'),
+        ),
+      ).to.deep.equal([]);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('injects _prompt into the schema and logs it redacted', async () => {
     const { added, execute, fire } = registerWithAnalytics(mockConfig);
     expect((added.parameters as any).shape).to.have.property('_prompt');
@@ -1219,8 +1438,11 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).to.include({
       success: false,
       error_category: 'user_error',
+      error_reason: 'invalid_params',
+      error_source: 'validation',
       analytics_version: 2,
     });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
   });
 
   it('does NOT inject _prompt on the compliant surface', () => {

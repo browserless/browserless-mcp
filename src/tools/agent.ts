@@ -17,6 +17,7 @@ import {
   closeSession,
   destroySession,
   isRetryableUpgradeError,
+  UpgradeError,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -32,6 +33,7 @@ import {
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { failureDetails } from '../lib/failure-details.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
   markFired,
@@ -686,13 +688,16 @@ export function registerAgentTools(
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands);
         if (!commandContract.success) {
-          throw new UserError(
-            commandContract.error.issues
-              .map(
-                (i) =>
-                  (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
-              )
-              .join('; '),
+          throw Object.assign(
+            new UserError(
+              commandContract.error.issues
+                .map(
+                  (i) =>
+                    (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
+                )
+                .join('; '),
+            ),
+            { code: 'INVALID_PARAMS' },
           );
         }
         // Forward the parsed batch, not the raw one: the per-command schemas
@@ -748,6 +753,7 @@ export function registerAgentTools(
       }
 
       let lastCategory: ErrorCategory | undefined;
+      let lastFailure: Record<string, unknown> | undefined;
 
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
@@ -760,6 +766,7 @@ export function registerAgentTools(
           ...(success
             ? {}
             : {
+                ...(lastFailure ?? failureDetails(err)),
                 error_category: lastCategory
                   ? toAnalyticsCategory(lastCategory)
                   : categorizeThrown(err),
@@ -781,6 +788,10 @@ export function registerAgentTools(
       const proxyCmd = commands.find((c) => c.method === 'proxy');
       if (proxyCmd) {
         lastCategory = 'INVALID_PARAMS';
+        lastFailure = failureDetails(undefined, {
+          category: lastCategory,
+          source: 'validation',
+        });
         sendAnalytics(false);
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
@@ -829,6 +840,9 @@ export function registerAgentTools(
             record,
           );
         } catch (connErr: unknown) {
+          lastFailure = failureDetails(connErr, {
+            source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+          });
           sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
@@ -843,6 +857,8 @@ export function registerAgentTools(
       }
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
+        lastFailure = undefined;
+        lastCategory = undefined;
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
@@ -867,6 +883,9 @@ export function registerAgentTools(
           // with the same (bad token / wrong profile / unsupported params)
           // will just produce the same response and waste time.
           if (isRetry || !isRetryableUpgradeError(connErr)) {
+            lastFailure = failureDetails(connErr, {
+              source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+            });
             throw new UserError(formatConnectError(connErr));
           }
           destroySession(
@@ -891,7 +910,26 @@ export function registerAgentTools(
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         let promptSent = false;
-        for (const cmd of commands) {
+        for (const [commandIndex, cmd] of commands.entries()) {
+          const commandFailure = (err: unknown, category: ErrorCategory) => ({
+            ...failureDetails(err, {
+              category,
+              source:
+                category === 'SCRIPT_ERROR'
+                  ? 'script'
+                  : category === 'NAVIGATION_FAILED'
+                    ? 'target_website'
+                    : category === 'SESSION_LOST'
+                      ? 'transport'
+                      : 'unknown',
+            }),
+            failed_command_index: commandIndex,
+            ...(AgentCommandSchema.options[0].options.some(
+              (schema) => schema.shape.method.safeParse(cmd.method).success,
+            )
+              ? { failed_method: cmd.method }
+              : {}),
+          });
           if (cmd.method === 'close') {
             closeSession(
               mcpSessionId,
@@ -965,6 +1003,7 @@ export function registerAgentTools(
               cmd,
             });
             lastCategory = classified.category;
+            lastFailure = commandFailure(sendErr, classified.category);
             throw new UserError(
               formatErrorMessage({
                 category: classified.category,
@@ -997,6 +1036,7 @@ export function registerAgentTools(
 
             const classified = classifyAgentError({ err, cmd });
             lastCategory = classified.category;
+            lastFailure = commandFailure(err, classified.category);
 
             const prefix =
               commands.length > 1
@@ -1047,6 +1087,7 @@ export function registerAgentTools(
           const navFailure = classifyNavigationResult(cmd.method, resp.result);
           if (navFailure) {
             lastCategory = navFailure.category;
+            lastFailure = commandFailure(resp.result, navFailure.category);
             throw new UserError(
               [
                 formatErrorMessage({
