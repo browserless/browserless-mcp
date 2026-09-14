@@ -20,14 +20,12 @@ describe('skill telemetry contract', () => {
     http_status: 200,
   };
 
-  it('rejects incompatible results, unbounded identities, and sensitive domain values', () => {
+  it('rejects incompatible results and unbounded identities, while redacting unsafe domains without losing completions', () => {
     expect(retrievalSchema.safeParse(completion).success).to.equal(true);
     for (const change of [
       { result: 'hit' },
       { skill_count: -1 },
       { request_id: 'secret request' },
-      { domain: 'https://shop.example/path?token=secret' },
-      { domain: 'a'.repeat(254) },
       { duration_ms: Infinity },
       { duration_ms: -1 },
       { attempt: 101 },
@@ -39,6 +37,16 @@ describe('skill telemetry contract', () => {
         retrievalSchema.safeParse({ ...completion, ...change }).success,
         JSON.stringify(change),
       ).to.equal(false);
+    for (const domain of [
+      'shop_example',
+      'a'.repeat(254),
+      'https://shop.example/?token=secret',
+    ]) {
+      expect(retrievalSchema.parse({ ...completion, domain })).to.deep.equal({
+        ...completion,
+        domain: 'invalid',
+      });
+    }
     const parsed = retrievalSchema.parse({
       ...completion,
       token: 'secret',
@@ -131,6 +139,25 @@ describe('skill telemetry contract', () => {
       expect(fetcher.callCount).to.equal(16);
       resolve(new Response('{}'));
       await Promise.all(exports);
+    } finally {
+      fetcher.restore();
+      if (previous === undefined)
+        delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = previous;
+    }
+  });
+
+  it('releases an unread exporter response body before releasing its in-flight slot', async () => {
+    const previous = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT =
+      'http://127.0.0.1:4318/v1/logs';
+    const cancel = sinon.stub().resolves();
+    const fetcher = sinon
+      .stub(globalThis, 'fetch')
+      .resolves({ body: { cancel } } as unknown as Response);
+    try {
+      await logSkillEvent('skill.retrieval.failed', {});
+      expect(cancel.callCount).to.equal(1);
     } finally {
       fetcher.restore();
       if (previous === undefined)

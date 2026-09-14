@@ -5,7 +5,8 @@ const common = {
     .string()
     .min(1)
     .max(253)
-    .regex(/^[a-z0-9.\-:[\]]+$/),
+    .regex(/^[a-z0-9.\-:[\]]+$/)
+    .catch('invalid'),
   request_id: z.uuid(),
   run_id: z.uuid().optional(),
   attempt: z.number().int().min(1).max(100),
@@ -68,7 +69,7 @@ export const logSkillEvent = async (
             : { stringValue: value },
       }),
     );
-    await fetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       signal: AbortSignal.timeout(1000),
@@ -101,6 +102,7 @@ export const logSkillEvent = async (
         ],
       }),
     });
+    await response.body?.cancel();
   } catch {
     // An exporter cannot report its own failure through itself. No retries.
   } finally {

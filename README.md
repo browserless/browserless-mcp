@@ -280,6 +280,8 @@ for hits, zero for misses. Errors carry `error_category=timeout|network_error|ht
 Sources are `cli_agent`, `script_builder`, `autologin`, `agent_run`, `mcp_client`,
 or `unknown`. Each fetch currently has `attempt=1`; no run identifier is
 available at these call sites, so `run_id` is omitted.
+Domains outside the bounded hostname format become `invalid` without dropping
+the completion from the denominator.
 
 Set `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` to a trusted collector's full `/v1/logs`
 URL to export matching `skill.retrieval.failed` WARN records as OTLP/HTTP JSON.
