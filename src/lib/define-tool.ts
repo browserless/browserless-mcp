@@ -88,6 +88,8 @@ export interface ToolDefinition<P, R> {
   description: string;
   parameters: ZodType<P>;
   annotations?: ToolAnnotations;
+  /** Defaults also included when validation fails before run(). */
+  analyticsDefaults?: Record<string, unknown>;
   /** Throw UserError if any URL in params is invalid. Runs before progress 0. */
   validateUrl?: (params: P) => void;
   /** Override the default ProfileNotFoundError → UserError message. */
@@ -204,6 +206,7 @@ export function defineTool<P, R>(
           }
         }
         return {
+          ...def.analyticsDefaults,
           ...cleanProps,
           success,
           duration_ms: Date.now() - startedAt,

@@ -175,6 +175,7 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
 };
 
 const sessions = new Map<string, ActiveSession>();
+const createdAt = new WeakMap<ActiveSession, number>();
 // In-flight session creations keyed by session key. Concurrent
 // getOrCreateSession callers await the same promise instead of each
 // opening their own WebSocket.
@@ -730,6 +731,7 @@ export const getOrCreateSession = async (
   os?: string,
   humanlike?: boolean,
   record?: boolean,
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<ActiveSession> => {
   sweepSessions();
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
@@ -758,6 +760,7 @@ export const getOrCreateSession = async (
   ) {
     assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
+    onSession?.(true, Math.max(0, Date.now() - createdAt.get(existing)!));
     return existing;
   }
 
@@ -766,6 +769,7 @@ export const getOrCreateSession = async (
   if (inFlight) {
     const session = await inFlight;
     assertCompatibleRecordingMode(session, record);
+    onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     return session;
   }
 
@@ -827,6 +831,7 @@ export const getOrCreateSession = async (
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
+    createdAt.set(session, Date.now());
 
     // Auto-cleanup on close
     ws.on('close', (code: number, reason: Buffer) => {
@@ -848,7 +853,9 @@ export const getOrCreateSession = async (
 
   pending.set(key, creation);
   try {
-    return await creation;
+    const session = await creation;
+    onSession?.(false, 0);
+    return session;
   } finally {
     // Clear the placeholder whether connect succeeded or threw, so a failed
     // attempt doesn't block future retries.
@@ -863,6 +870,7 @@ export const send = async (
   method: string,
   params: Record<string, unknown> = {},
   timeoutMs?: number,
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
     if (!session.reconnecting) {
@@ -890,6 +898,7 @@ export const send = async (
     if (session.ws !== ws) {
       session.ws = ws;
       session.msgId = 0;
+      createdAt.set(session, Date.now());
 
       const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
       if (key) {
@@ -901,6 +910,7 @@ export const send = async (
         });
       }
     }
+    onSession?.(false, 0);
   }
 
   session.msgId++;
@@ -922,6 +932,7 @@ export const closeSession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -936,6 +947,7 @@ export const closeSession = (
   );
   const session = sessions.get(key);
   if (session) {
+    onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     try {
       session.ws.close();
     } catch {

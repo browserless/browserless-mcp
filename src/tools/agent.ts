@@ -601,6 +601,7 @@ export function registerAgentTools(
 
   defineTool<AgentToolParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
+    analyticsDefaults: { session_reused: false, session_age_ms: 0 },
     description:
       (compliant
         ? COMPLIANT_AGENT_SYSTEM_PROMPT
@@ -753,12 +754,22 @@ export function registerAgentTools(
       }
 
       let lastCategory: ErrorCategory | undefined;
+      let liveUrlId: string | undefined;
+      let sessionReused = false;
+      let sessionAgeMs = 0;
+      const onSession = (reused: boolean, ageMs: number) => {
+        sessionReused = reused;
+        sessionAgeMs = ageMs;
+      };
       let lastFailure: Record<string, unknown> | undefined;
 
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
+          ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
+          session_reused: sessionReused,
+          session_age_ms: sessionAgeMs,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           api_url: apiUrl,
@@ -810,6 +821,7 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
+          onSession,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -838,6 +850,7 @@ export function registerAgentTools(
             os,
             humanlike,
             record,
+            onSession,
           );
         } catch (connErr: unknown) {
           lastFailure = failureDetails(connErr, {
@@ -857,6 +870,7 @@ export function registerAgentTools(
       }
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
+        onSession(false, 0);
         lastFailure = undefined;
         lastCategory = undefined;
         let agentSession;
@@ -877,6 +891,7 @@ export function registerAgentTools(
             os,
             humanlike,
             record,
+            onSession,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -955,7 +970,13 @@ export function registerAgentTools(
             cmd.method === 'reportOutcome'
           ) {
             try {
-              await send(agentSession, cmd.method, cmd.params);
+              await send(
+                agentSession,
+                cmd.method,
+                cmd.params,
+                undefined,
+                onSession,
+              );
             } catch {
               // noop
             }
@@ -984,7 +1005,13 @@ export function registerAgentTools(
 
           let resp;
           try {
-            resp = await send(agentSession, cmd.method, outboundParams);
+            resp = await send(
+              agentSession,
+              cmd.method,
+              outboundParams,
+              undefined,
+              onSession,
+            );
           } catch (sendErr: unknown) {
             destroySession(
               mcpSessionId,
@@ -1127,6 +1154,12 @@ export function registerAgentTools(
             );
           }
 
+          if (cmd.method === 'liveURL') {
+            const result = resp.result as { liveURLId?: unknown } | undefined;
+            if (typeof result?.liveURLId === 'string') {
+              liveUrlId = result.liveURLId;
+            }
+          }
           results.push({ ...cmd, result: resp.result });
         }
 
@@ -1184,7 +1217,13 @@ export function registerAgentTools(
         let autoDownloads: DownloadEntry[] = [];
         if (!closedDuringBatch && last.method !== 'getDownloads') {
           try {
-            const dl = await send(agentSession, 'getDownloads', {});
+            const dl = await send(
+              agentSession,
+              'getDownloads',
+              {},
+              undefined,
+              onSession,
+            );
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];

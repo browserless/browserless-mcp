@@ -11,13 +11,39 @@ import {
   sessionHandle,
   dropMcpSession,
   UpgradeError,
+  send,
 } from '../../src/lib/agent-client.js';
 import type { ProxyOptions } from '../../src/@types/types.js';
 import {
   makeAcceptingServer,
   makeRejectingServer,
   makeStallingServer,
+  makeRespondingServer,
 } from '../helpers/upgrade-server.js';
+
+describe('agent-client reconnection telemetry', () => {
+  afterEach(() => sinon.restore());
+
+  it('reports a fresh connection when send reconnects an acquired session', async () => {
+    const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const server = await makeRespondingServer(() => ({}));
+    try {
+      const session = await getOrCreateSession(
+        'reconnect-telemetry',
+        server.url,
+        'tok',
+      );
+      session.ws.terminate();
+      clock.setSystemTime(9000);
+      const acquired = sinon.spy();
+      await send(session, 'getCookies', {}, undefined, acquired);
+      expect(acquired.calledOnceWithExactly(false, 0)).to.equal(true);
+      expect(server.hits()).to.equal(2);
+    } finally {
+      await server.close();
+    }
+  });
+});
 
 describe('agent-client buildAgentWsUrl', () => {
   // A base carrying a query used to concatenate into path `/` — the raw CDP
