@@ -103,6 +103,32 @@ describe('defineTool analytics', () => {
     expect(JSON.stringify(props())).not.to.match(/secret|<html>|xxx/);
   });
 
+  for (const [status, category] of [
+    [400, 'user_error'],
+    [402, 'user_error'],
+    [408, 'timeout'],
+    [429, 'user_error'],
+    [500, 'api_error'],
+    [504, 'timeout'],
+  ] as const) {
+    it(`categorizes HTTP ${status} from structured failure status`, async () => {
+      sinon
+        .stub(globalThis, 'fetch')
+        .resolves(new Response('Failure', { status }));
+      const { execute, props, fire } = register({
+        run: async ({ client }) => client.search({ query: 'test' }),
+      });
+      await rejects(execute({}, mockContext as never));
+      expect(fire.callCount).to.equal(1);
+      expect(props()).to.include({
+        success: false,
+        error_category: category,
+        error_status_code: status,
+        error_status_origin: 'api',
+      });
+    });
+  }
+
   it('omits stale diagnostic properties on success', async () => {
     const { execute, props } = register({
       analyticsProps: () => ({

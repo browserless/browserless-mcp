@@ -216,6 +216,7 @@ export function defineTool<P, R>(
             : {
                 error_category:
                   categoryFromStatus(props.status_code) ??
+                  categoryFromStatus(props.error_status_code) ??
                   props.error_category ??
                   'unknown',
               }),
