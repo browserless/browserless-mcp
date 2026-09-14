@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
@@ -22,8 +22,11 @@ import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  clearSession,
+  downloadOwner,
   downloadUri,
   FILE_TRANSFER_MAX_BYTES,
+  getDownload,
   storeDownload,
 } from '../../src/lib/download-store.js';
 import {
@@ -48,6 +51,7 @@ const seedSiteSkill = (host: string, task: string, body: string) =>
     `https://${host}`,
     'https://api.example.com',
     'test-token',
+    { browserlessApiUrl: 'https://api.example.com' },
     (async () =>
       ({
         ok: true,
@@ -373,9 +377,11 @@ describe('formatScreenshotToDisk', () => {
 describe('recording downloads', () => {
   it('stores base64 WebM bytes and formats only its handle', async () => {
     const base64 = Buffer.from('webm').toString('base64');
-    const result = (await persistRecording({ value: base64 }, 'session')) as {
-      download: Parameters<typeof formatRecordingToDisk>[0];
-    };
+    const result = (await persistRecording(
+      { value: base64 },
+      'test-token',
+      'session',
+    )) as { download: Parameters<typeof formatRecordingToDisk>[0] };
     const content = formatRecordingToDisk(result, '', '', {
       transport: 'stdio',
     });
@@ -390,9 +396,9 @@ describe('recording downloads', () => {
       .stub(Buffer, 'from')
       .throws(new Error('must reject before decoding'));
     try {
-      expect(await persistRecording({ value }, undefined)).to.deep.include({
-        recording: false,
-      });
+      expect(
+        await persistRecording({ value }, undefined, undefined),
+      ).to.deep.include({ recording: false });
       expect(decode.called).to.equal(false);
     } finally {
       decode.restore();
@@ -427,7 +433,7 @@ describe('normalizeUploadCommand', () => {
       method: 'uploadFile',
       params: { selector: 'input', files: [{ path }] },
     };
-    await normalizeUploadCommand(cmd, 'stdio');
+    await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
 
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.path).to.be.undefined;
@@ -448,6 +454,7 @@ describe('normalizeUploadCommand', () => {
         cmd,
         'httpStream',
         'https://mcp.example.com',
+        'test-token',
       );
     } catch (e) {
       threw = true;
@@ -466,20 +473,22 @@ describe('normalizeUploadCommand', () => {
       method: 'uploadFile',
       params: { selector: 'input', files: [{ content: 'YWJj', name: 'a' }] },
     };
-    await normalizeUploadCommand(cmd, 'httpStream');
+    await normalizeUploadCommand(cmd, 'httpStream', undefined, 'test-token');
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.content).to.equal('YWJj');
 
     const other = { method: 'click', params: { selector: 'a' } };
-    await normalizeUploadCommand(other, 'stdio');
+    await normalizeUploadCommand(other, 'stdio', undefined, 'test-token');
     expect(other.params.selector).to.equal('a');
   });
 
   it('resolves a download handle to base64 content (any transport)', async () => {
+    const token = 'owner-token';
     const record = await storeDownload(
       'grabbed.bin',
       'application/octet-stream',
       Buffer.from('Hello World!'),
+      downloadOwner(token),
     );
     const cmd = {
       method: 'uploadFile',
@@ -488,13 +497,37 @@ describe('normalizeUploadCommand', () => {
         files: [{ handle: downloadUri(record.id) }],
       },
     };
-    await normalizeUploadCommand(cmd, 'httpStream');
+    await normalizeUploadCommand(cmd, 'httpStream', undefined, token);
     const file = (cmd.params.files as Record<string, unknown>[])[0];
     expect(file.handle).to.be.undefined;
     expect(file.name).to.equal('grabbed.bin');
     expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
       'Hello World!',
     );
+  });
+
+  it('rejects a download handle owned by another token', async () => {
+    const record = await storeDownload(
+      'private.bin',
+      'application/octet-stream',
+      Buffer.from('private'),
+      downloadOwner('owner-token'),
+    );
+    const cmd = {
+      method: 'uploadFile',
+      params: { files: [{ handle: downloadUri(record.id) }] },
+    };
+
+    let threw = false;
+    try {
+      await normalizeUploadCommand(cmd, 'httpStream', undefined, 'other-token');
+    } catch (error) {
+      threw = true;
+      expect((error as Error).message).to.match(/Unknown upload handle/);
+    }
+    expect(threw).to.be.true;
+    expect((cmd.params.files[0] as Record<string, unknown>).content).to.be
+      .undefined;
   });
 
   it('throws on an unknown upload handle', async () => {
@@ -504,7 +537,7 @@ describe('normalizeUploadCommand', () => {
     };
     let threw = false;
     try {
-      await normalizeUploadCommand(cmd, 'stdio');
+      await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
     } catch (e) {
       threw = true;
       expect((e as Error).message).to.match(/Unknown upload handle/);
@@ -531,9 +564,30 @@ describe('formatDownloads (httpStream)', () => {
     expect(text).to.match(
       /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
     );
+    const urlId = text.match(/\/download\/([0-9a-f]{32})\?token=/)?.[1];
+    const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
+    expect(urlId).to.equal(handleId);
     expect(text).to.include('single use');
     // The base64 must never appear in the returned content.
     expect(JSON.stringify(content)).to.not.include('YWJj');
+  });
+
+  it('URL-encodes tokens in the download recipe', async () => {
+    const token = 'token+with&reserved#characters';
+    const content = await formatDownloads(
+      [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
+      '',
+      '',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example.com',
+        token,
+      },
+    );
+    const text = (content[0] as Extract<Content, { type: 'text' }>).text;
+    const url = text.match(/curl -s "([^"]+)"/)?.[1];
+    expect(url).to.exist;
+    expect(new URL(url!).searchParams.get('token')).to.equal(token);
   });
 
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {
@@ -929,6 +983,35 @@ const getAgentExecute = (
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
 
+describe('browserless_agent recording ownership', () => {
+  afterEach(() => sinon.restore());
+
+  it('stores a recording under the authenticated token owner', async () => {
+    const sessionId = 'recording-owner-session';
+    const srv = await makeRespondingServer((method) =>
+      method === 'stopRecording'
+        ? { value: Buffer.from('webm').toString('base64') }
+        : {},
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      const result = (await execute(
+        { method: 'stopRecording' },
+        { ...mockContext, sessionId },
+      )) as { content: Content[] };
+      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+        .text;
+      const path = text.split('- ')[1].split(' (')[0];
+
+      expect(getDownload(path, downloadOwner('test-token'))).to.exist;
+      expect(getDownload(path, downloadOwner('other-token'))).to.be.undefined;
+    } finally {
+      clearSession(sessionId);
+      await srv.close();
+    }
+  });
+});
+
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());
 
@@ -1081,35 +1164,40 @@ describe('browserless_agent retry-guard (runCommands)', () => {
     }
   });
 
-  it('returns the saved-download handle when a screenshot { toDisk } batch ends with close', async () => {
-    // 1x1 PNG so getScreenshotPayload sees a real base64 payload.
-    const png =
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-    const srv = await makeRespondingServer((method) =>
-      method === 'screenshot' ? { base64: png } : { closed: true },
-    );
-    try {
-      const execute = getAgentExecute(srv.url);
-      const result = (await execute(
-        {
-          commands: [
-            { method: 'screenshot', params: { toDisk: true } },
-            { method: 'close' },
-          ],
-        },
-        ctx('todisk-then-close'),
-      )) as { content: Content[] };
-      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
-        .text;
-      // toDisk branch fired: a reusable path, not the inline image/JSON the
-      // close-as-lastCmd bug produced.
-      expect(text).to.include('Screenshot saved to disk');
-      expect(text).to.include('reuse as uploadFile');
-      expect(result.content.some((c) => c.type === 'image')).to.equal(false);
-    } finally {
-      await srv.close();
-    }
-  });
+  for (const reportFirst of [false, true]) {
+    it(`returns the saved-download handle when a screenshot { toDisk } batch ends with close (reportFirst=${reportFirst})`, async () => {
+      // 1x1 PNG so getScreenshotPayload sees a real base64 payload.
+      const png =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const srv = await makeRespondingServer((method) =>
+        method === 'screenshot' ? { base64: png } : { closed: true },
+      );
+      try {
+        const execute = getAgentExecute(srv.url);
+        const result = (await execute(
+          {
+            commands: [
+              ...(reportFirst
+                ? [{ method: 'reportOutcome', params: { success: true } }]
+                : []),
+              { method: 'screenshot', params: { toDisk: true } },
+              { method: 'close' },
+            ],
+          },
+          ctx(`todisk-then-close-${reportFirst}`),
+        )) as { content: Content[] };
+        const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+          .text;
+        // toDisk branch fired: a reusable path, not the inline image/JSON the
+        // close-as-lastCmd bug produced.
+        expect(text).to.include('Screenshot saved to disk');
+        expect(text).to.include('reuse as uploadFile');
+        expect(result.content.some((c) => c.type === 'image')).to.equal(false);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 
   it('DOES retry once on a retryable upgrade failure (503)', async () => {
     const srv = await makeRejectingServer(503, 'Service Unavailable');
@@ -1194,6 +1282,225 @@ describe('browserless_agent _prompt capture', () => {
     return { added, execute: added.execute, fire };
   };
 
+  it('attributes failure to the second command and excludes diagnostic input text', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'click'
+        ? new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'selector #private password=secret ' + 'x'.repeat(700),
+          })
+        : { url: 'https://example.com', status: 200 },
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          {
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+              { method: 'click', params: { selector: '#private' } },
+            ],
+          },
+          { ...mockContext, sessionId: 'diagnostic-batch' },
+        );
+      } catch {
+        /* assert event below */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      const props = fire.firstCall.args[2];
+      expect(props).to.include({
+        error_reason: 'selector_miss',
+        error_code: 'SELECTOR_NOT_FOUND',
+        failed_method: 'click',
+        failed_command_index: 1,
+        error_category: 'user_error',
+      });
+      expect(JSON.stringify(props)).not.to.match(/#private|secret|xxx/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('retains setup HTTP status without a command index', async () => {
+    const srv = await makeRejectingServer(403, '<html>private</html>');
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'diagnostic-connect' },
+        );
+      } catch {
+        /* assert event below */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'forbidden',
+        error_source: 'api',
+        error_status_code: 403,
+        error_status_origin: 'api',
+      });
+      expect(fire.firstCall.args[2]).not.to.have.property('failed_method');
+      expect(fire.firstCall.args[2]).not.to.have.property(
+        'failed_command_index',
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('reports invalid batches before commands start', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+    try {
+      await execute(
+        { commands: [{ method: 'click', params: {} }] },
+        { ...mockContext, sessionId: 'diagnostic-invalid-batch' },
+      );
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).to.include({
+      error_reason: 'invalid_params',
+      error_source: 'validation',
+    });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('does not label a failed connection without an HTTP response as an API response', async () => {
+    const srv = await makeRejectingServer(403, 'unused');
+    await srv.close();
+    const { execute, fire } = registerWithAnalytics({
+      ...mockConfig,
+      browserlessApiUrl: srv.url,
+    });
+    try {
+      await execute(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, sessionId: 'diagnostic-refused' },
+      );
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2].error_source).not.to.equal('api');
+    expect(fire.firstCall.args[2]).not.to.have.property('error_status_code');
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('keeps a target navigation status separate from API response status', async () => {
+    const srv = await makeRespondingServer(() => ({
+      url: 'chrome-error://chromewebdata/',
+      status: 503,
+    }));
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'diagnostic-target' },
+        );
+      } catch {
+        /* assert event */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'navigation_failed',
+        error_source: 'target_website',
+        error_status_code: 503,
+        error_status_origin: 'target_website',
+      });
+      expect(fire.firstCall.args[2]).not.to.have.property('status_code');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const [code, method, message, reason] of [
+    ['INVALID_PARAMS', 'click', 'bad parameters', 'invalid_params'],
+    ['UNKNOWN_METHOD', 'notAMethod', 'unknown', 'unknown_method'],
+    ['BROWSER_CRASHED', 'snapshot', 'crashed', 'session_lost'],
+    ['', 'evaluate', 'private script threw', 'script_error'],
+    ['', 'goto', 'net::ERR_NAME_NOT_RESOLVED', 'navigation_failed'],
+    ['', 'waitForSelector', 'Timed out', 'timeout'],
+    ['', 'goto', 'HTTP 401', 'unauthorized'],
+    ['', 'goto', 'HTTP 403', 'forbidden'],
+    ['', 'goto', 'HTTP 404', 'not_found'],
+    ['', 'goto', 'HTTP 503', 'server_error'],
+    ['opaque-private-code', 'snapshot', 'unrecognized', 'unknown'],
+  ]) {
+    it(`preserves ${reason} as a detailed agent reason`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code: code || undefined, message }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method, params: {} },
+            { ...mockContext, sessionId: `diagnostic-${reason}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({
+          error_reason: reason,
+          failed_command_index: 0,
+        });
+        // Numbers in prose cannot establish HTTP status provenance.
+        expect(fire.firstCall.args[2]).not.to.have.property(
+          'error_status_code',
+        );
+        if (reason === 'unknown')
+          expect(fire.firstCall.args[2]).not.to.have.property('error_code');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('clears failure metadata when a fatal command succeeds on retry', async () => {
+    let calls = 0;
+    const srv = await makeRespondingServer(() =>
+      ++calls === 1
+        ? new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' })
+        : { url: 'https://example.com', status: 200 },
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      await execute(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, sessionId: 'diagnostic-retry' },
+      );
+      expect(srv.hits()).to.equal(2);
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2].success).to.equal(true);
+      expect(
+        Object.keys(fire.firstCall.args[2]).filter(
+          (k) => k.startsWith('error_') || k.startsWith('failed_'),
+        ),
+      ).to.deep.equal([]);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('injects _prompt into the schema and logs it redacted', async () => {
     const { added, execute, fire } = registerWithAnalytics(mockConfig);
     expect((added.parameters as any).shape).to.have.property('_prompt');
@@ -1257,6 +1564,67 @@ describe('browserless_agent _prompt capture', () => {
     });
   });
 
+  it('joins a live URL result and distinguishes reused from idle-evicted sessions', async () => {
+    const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const srv = await makeRespondingServer((method) =>
+      method === 'liveURL'
+        ? {
+            liveURLId: 'handoff-123',
+            liveURL: 'https://example.com/live?i=handoff-123',
+          }
+        : {},
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      const context = { ...mockContext, sessionId: 'handoff-telemetry' };
+      const params = { method: 'liveURL', sessionId: 'handoff-session' };
+      await execute(params, context);
+      expect(fire.lastCall.args[2]).to.include({
+        live_url_id: 'handoff-123',
+        session_reused: false,
+        session_age_ms: 0,
+      });
+      clock.setSystemTime(16_000);
+      await execute(
+        { method: 'getCookies', sessionId: params.sessionId },
+        context,
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: true,
+        session_age_ms: 15_000,
+      });
+      expect(fire.lastCall.args[2]).not.to.have.property('live_url_id');
+      expect(srv.hits()).to.equal(1);
+
+      // Exactly the idle TTL still reuses the same session.
+      clock.setSystemTime(916_000);
+      await execute(
+        { method: 'getCookies', sessionId: params.sessionId },
+        context,
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: true,
+        session_age_ms: 915_000,
+      });
+      // Strictly greater than the idle TTL, measured from the previous call.
+      clock.setSystemTime(1_816_001);
+      await execute(
+        { method: 'getCookies', sessionId: params.sessionId },
+        context,
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: false,
+        session_age_ms: 0,
+      });
+      expect(srv.hits()).to.equal(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('fires exactly one event carrying the classified category on failure', async () => {
     const { execute, fire } = registerWithAnalytics(mockConfig);
 
@@ -1274,8 +1642,119 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).to.include({
       success: false,
       error_category: 'user_error',
+      error_reason: 'invalid_params',
+      error_source: 'validation',
       analytics_version: 2,
+      session_reused: false,
+      session_age_ms: 0,
     });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('reports one new acquisition and one reuse for concurrent calls', async () => {
+    sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      await Promise.all(
+        [1, 2].map(() =>
+          execute(
+            { method: 'getCookies', sessionId: 'concurrent-analytics' },
+            { ...mockContext, sessionId: 'concurrent-analytics' },
+          ),
+        ),
+      );
+      expect(srv.hits()).to.equal(1);
+      expect(
+        fire
+          .getCalls()
+          .map((c) => c.args[2].session_reused)
+          .sort(),
+      ).to.deep.equal([false, true]);
+      expect(
+        fire.getCalls().map((c) => c.args[2].session_age_ms),
+      ).to.deep.equal([0, 0]);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('includes session defaults when validation rejects before acquisition', async () => {
+    const { execute, fire } = registerWithAnalytics({
+      ...mockConfig,
+      complianceMode: true,
+    });
+    try {
+      await execute({ commands: [{ method: 'notACommand' }] }, mockContext);
+      expect.fail('expected validation error');
+    } catch (error) {
+      expect((error as Error).message).to.include(
+        'not available on this endpoint',
+      );
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).to.include({
+      success: false,
+      session_reused: false,
+      session_age_ms: 0,
+    });
+  });
+
+  it('retains a minted ID on a later batch error and reports close reuse', async () => {
+    const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
+    const srv = await makeRespondingServer((method) =>
+      method === 'liveURL'
+        ? { liveURLId: 'batch-handoff', liveURL: 'https://example.com/live' }
+        : new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'missing element',
+          }),
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      const context = { ...mockContext, sessionId: 'batch-telemetry' };
+      try {
+        await execute(
+          {
+            sessionId: 'batch-session',
+            commands: [
+              { method: 'liveURL' },
+              { method: 'click', params: { selector: '#missing' } },
+            ],
+          },
+          context,
+        );
+        expect.fail('expected command error');
+      } catch (error) {
+        expect((error as Error).message).to.include('missing element');
+      }
+      expect(fire.firstCall.args[2]).to.include({
+        success: false,
+        live_url_id: 'batch-handoff',
+        session_reused: false,
+        session_age_ms: 0,
+      });
+      clock.setSystemTime(3500);
+      await execute({ method: 'close', sessionId: 'batch-session' }, context);
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: true,
+        session_age_ms: 2500,
+      });
+      expect(fire.lastCall.args[2]).not.to.have.property('live_url_id');
+      await execute({ method: 'close', sessionId: 'batch-session' }, context);
+      expect(fire.lastCall.args[2]).to.include({
+        session_reused: false,
+        session_age_ms: 0,
+      });
+    } finally {
+      await srv.close();
+    }
   });
 
   it('does NOT inject _prompt on the compliant surface', () => {
@@ -1285,6 +1764,152 @@ describe('browserless_agent _prompt capture', () => {
     });
     expect((added.parameters as any).shape).to.not.have.property('_prompt');
   });
+
+  it('retains a minted ID when a later fatal error retries unsuccessfully', async () => {
+    let liveCalls = 0;
+    const srv = await makeRespondingServer((method) => {
+      if (method === 'liveURL' && liveCalls++ === 0) {
+        return { liveURLId: 'before-retry' };
+      }
+      return new AgentErrorFrame({
+        code: 'BROWSER_CRASHED',
+        message: 'browser crashed',
+      });
+    });
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          {
+            sessionId: 'retry-handoff',
+            commands: [
+              { method: 'liveURL' },
+              { method: 'click', params: { selector: '#next' } },
+            ],
+          },
+          { ...mockContext, sessionId: 'retry-handoff' },
+        );
+        expect.fail('expected retry failure');
+      } catch (error) {
+        expect((error as Error).message).to.include('browser crashed');
+      }
+      expect(srv.hits()).to.equal(2);
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        success: false,
+        live_url_id: 'before-retry',
+      });
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+describe('browserless_agent reportOutcome', () => {
+  afterEach(() => sinon.restore());
+
+  it('rejects malformed top-level verdicts before forwarding', async () => {
+    const calls: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      calls.push(method);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const params of [
+        {},
+        { success: 'yes' },
+        { success: false, reason: 'unlisted' },
+      ]) {
+        try {
+          await execute({ method: 'reportOutcome', params }, mockContext);
+          expect.fail('expected invalid verdict to be rejected');
+        } catch (err) {
+          expect(err).to.be.instanceOf(UserError);
+        }
+      }
+      expect(calls).to.deep.equal([]);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('forwards a valid false top-level verdict', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const srv = await makeRespondingServer((method, params) => {
+      calls.push({ method, params });
+      return { recorded: true };
+    });
+    try {
+      await getAgentExecute(srv.url)(
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'captcha' },
+        },
+        mockContext,
+      );
+      expect(calls).to.deep.equal([
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'captcha' },
+        },
+      ]);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const complianceMode of [false, true]) {
+    it(`forwards the verdict without replacing the page result (compliant=${complianceMode})`, async () => {
+      const calls: Array<{ method: string; params: unknown }> = [];
+      const srv = await makeRespondingServer((method, params) => {
+        calls.push({ method, params });
+        return method === 'reportOutcome'
+          ? { recorded: true }
+          : { status: 200, marker: 'page-result' };
+      });
+      try {
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerAgentTools(server, {
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+          complianceMode,
+        });
+        const tool = spy
+          .getCalls()
+          .find((c) => c.args[0].name === 'browserless_agent')!.args[0];
+        const execute = tool.execute as (
+          args: unknown,
+          ctx: unknown,
+        ) => Promise<{ content: Content[] }>;
+        const verdict = { success: false, reason: 'captcha' };
+        const result = await execute(
+          {
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+              { method: 'reportOutcome', params: verdict },
+              { method: 'close' },
+            ],
+          },
+          { ...mockContext, sessionId: `outcome-${complianceMode}` },
+        );
+        expect(calls).to.deep.equal([
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { method: 'reportOutcome', params: verdict },
+        ]);
+        expect(JSON.stringify(result.content))
+          .to.include('page-result')
+          .and.not.include('recorded');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 });
 
 describe('browserless_agent session handle on errors', () => {

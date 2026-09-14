@@ -75,7 +75,179 @@ const rejects = async (promise: Promise<unknown>): Promise<Error> => {
 };
 
 describe('defineTool analytics', () => {
+  beforeEach(() => mockContext.reportProgress.resetHistory());
   afterEach(() => sinon.restore());
+
+  it('preserves structured thrown status without guessing its origin or leaking text', async () => {
+    const { execute, props } = register({
+      run: async () => {
+        throw Object.assign(
+          new Error('<html>password=secret ' + 'x'.repeat(600)),
+          {
+            status: 403,
+            code: 'FORBIDDEN',
+          },
+        );
+      },
+    });
+    await rejects(execute({}, mockContext as never));
+    expect(props()).to.include({
+      error_reason: 'forbidden',
+      error_source: 'unknown',
+      error_code: 'FORBIDDEN',
+      error_status_code: 403,
+      error_status_origin: 'unknown',
+    });
+    expect(props()).not.to.have.property('status_code');
+    expect(props().error_message).to.be.a('string').with.length.at.most(500);
+    expect(JSON.stringify(props())).not.to.match(/secret|<html>|xxx/);
+  });
+
+  it('omits stale diagnostic properties on success', async () => {
+    const { execute, props } = register({
+      analyticsProps: () => ({
+        success: true,
+        error_category: 'timeout',
+        error_reason: 'timeout',
+        error_source: 'transport',
+        error_code: 'ETIMEDOUT',
+        error_message: 'private',
+        failed_method: 'goto',
+        failed_command_index: 1,
+        error_status_code: 503,
+        error_status_origin: 'api',
+      }),
+    });
+    await execute({}, mockContext as never);
+    expect(
+      Object.keys(props()).filter(
+        (k) => k.startsWith('error_') || k.startsWith('failed_'),
+      ),
+    ).to.deep.equal([]);
+  });
+
+  it('retains API status on a thrown HTTP response without emitting its body', async () => {
+    sinon.stub(globalThis, 'fetch').resolves(
+      new Response('{"code":"UNAUTHORIZED","message":"Bearer private"}', {
+        status: 401,
+      }),
+    );
+    const { execute, props } = register({
+      run: async ({ client }) => client.search({ query: 'test' }),
+    });
+    await rejects(execute({}, mockContext as never));
+    expect(props()).to.include({
+      error_reason: 'unauthorized',
+      error_source: 'api',
+      error_status_code: 401,
+      error_status_origin: 'api',
+      error_code: 'UNAUTHORIZED',
+    });
+    expect(JSON.stringify(props())).not.to.include('private');
+  });
+
+  it('does not change coarse classification when retaining a new upstream code', async () => {
+    sinon
+      .stub(globalThis, 'fetch')
+      .resolves(new Response('{"code":"BROWSER_CRASHED"}', { status: 403 }));
+    const { execute, props } = register({
+      run: async ({ client }) => client.search({ query: 'test' }),
+    });
+    await rejects(execute({}, mockContext as never));
+    expect(props()).to.include({
+      error_code: 'BROWSER_CRASHED',
+      error_category: 'user_error',
+    });
+  });
+
+  it('emits session attribution without leaking authentication credentials', async () => {
+    const { execute, fire, skill, props } = register({
+      run: async ({ analytics, token, mcpSource }) => {
+        analytics?.fireSkill(token, { skill_id: 'forms', ...mcpSource });
+        return {};
+      },
+    });
+    const token = 'private-session-token-value';
+    await execute({}, {
+      ...mockContext,
+      session: {
+        token,
+        apiUrl: mockConfig.browserlessApiUrl,
+        authMethod: 'api_key_header',
+        transport: 'sse',
+        userAgent: 'python-httpx/0.28',
+      },
+      client: { version: { name: 'mcp', version: '0.1.0' } },
+    } as never);
+    const attribution = {
+      source: 'mcp_client',
+      client_name: 'mcp',
+      client_version: '0.1.0',
+      auth_method: 'api_key_header',
+      transport: 'sse',
+      user_agent: 'python-httpx/0.28',
+      user_agent_family: 'python-httpx',
+      client_family: 'sdk_default',
+      usage_mode: 'deployed',
+    };
+    expect(fire.calledOnce).to.be.true;
+    expect(props()).to.include({
+      ...attribution,
+      success: true,
+      analytics_version: 2,
+    });
+    expect(props().duration_ms).to.be.a('number');
+    expect(skill.firstCall.args[1]).to.include(attribution);
+    expect(Object.values(props())).not.to.include(token);
+    expect(
+      Object.values(props()).some(
+        (value) => typeof value === 'string' && value.startsWith('eyJ'),
+      ),
+    ).to.be.false;
+    expect(props()).not.to.have.property('authorization');
+  });
+
+  it('rejects a disallowed session apiUrl before running the tool', async () => {
+    const run = sinon.stub().resolves({});
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    const { execute, fire, props } = register({ run });
+
+    const err = await rejects(
+      execute({}, {
+        ...mockContext,
+        session: { token: 'token', apiUrl: 'http://127.0.0.1:9999' },
+      } as never),
+    );
+
+    expect(err).to.be.instanceOf(UserError);
+    expect(run.called).to.be.false;
+    expect(fetchStub.called).to.be.false;
+    expect(mockContext.reportProgress.called).to.be.false;
+    expect(fire.calledOnce).to.be.true;
+    expect(props()).to.include({
+      success: false,
+      error_category: 'user_error',
+      analytics_version: 2,
+      api_url: mockConfig.browserlessApiUrl,
+    });
+  });
+
+  it('passes an allowed session apiUrl to the tool', async () => {
+    const run = sinon.stub().resolves({});
+    const { execute } = register({ run });
+
+    await execute({}, {
+      ...mockContext,
+      session: {
+        token: 'token',
+        apiUrl: 'https://production-lon.browserless.io',
+      },
+    } as never);
+
+    expect(run.firstCall.args[0].apiUrl).to.equal(
+      'https://production-lon.browserless.io',
+    );
+  });
 
   it('fires exactly one enriched event on success', async () => {
     const { execute, fire, props } = register({
@@ -130,6 +302,11 @@ describe('defineTool analytics', () => {
     await rejects(execute({ url: 'ftp://x' }, mockContext as never));
     expect(fire.calledOnce).to.be.true;
     expect(props().error_category).to.equal('user_error');
+    expect(props()).to.include({
+      error_reason: 'invalid_params',
+      error_source: 'validation',
+    });
+    expect(props()).not.to.have.property('failed_command_index');
   });
 
   it('classifies network failures', async () => {

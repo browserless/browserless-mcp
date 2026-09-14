@@ -13,6 +13,7 @@ const BASELINE_PATTERNS = [
   'https://chatgpt.com/connector/oauth/*',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'cursor://anysphere.cursor-mcp/oauth/callback',
+  'https://www.cursor.com/agents/mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',
   'https://api.beta.devin.ai/mcp/oauth/callback',
   'https://api.itsdev.in/mcp/oauth/callback',
@@ -68,6 +69,26 @@ describe('config.oauthAllowedRedirectUriPatterns', () => {
     const patterns = getConfig().oauthAllowedRedirectUriPatterns;
     expect(patterns).to.have.members(BASELINE_PATTERNS);
     expect(patterns).to.have.lengthOf(BASELINE_PATTERNS.length);
+  });
+});
+
+describe('config.allowedApiUrlHosts', () => {
+  const key = 'MCP_ALLOWED_API_URL_HOSTS';
+  const original = process.env[key];
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  });
+
+  it('parses comma-separated hosts and defaults to none', () => {
+    delete process.env[key];
+    expect(getConfig().allowedApiUrlHosts).to.deep.equal([]);
+    process.env[key] = ' extra.example.com, other.example.net ';
+    expect(getConfig().allowedApiUrlHosts).to.deep.equal([
+      'extra.example.com',
+      'other.example.net',
+    ]);
   });
 });
 

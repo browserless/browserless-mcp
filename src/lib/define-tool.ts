@@ -11,11 +11,13 @@ import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import { setAmplitudeToolContext } from './amplitude-analytics.js';
 import { categorizeThrown, categoryFromStatus } from './error-classifier.js';
+import { failureDetails, failureFields } from './failure-details.js';
 import type {
   ApiClient,
   BrowserlessSession,
   McpConfig,
 } from '../@types/types.js';
+import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 
 /**
  * Minimal log surface tools use. Tools only call the level methods with a
@@ -86,6 +88,8 @@ export interface ToolDefinition<P, R> {
   description: string;
   parameters: ZodType<P>;
   annotations?: ToolAnnotations;
+  /** Defaults also included when validation fails before run(). */
+  analyticsDefaults?: Record<string, unknown>;
   /** Throw UserError if any URL in params is invalid. Runs before progress 0. */
   validateUrl?: (params: P) => void;
   /** Override the default ProfileNotFoundError → UserError message. */
@@ -164,7 +168,11 @@ export function defineTool<P, R>(
       // for the unconstrained generic. Tools see the typed session via this helper
       // and never cast token/apiUrl themselves.
       const s = session as BrowserlessSession | undefined;
-      const mcpSource = resolveMcpSource(s?.source, mcpClient?.version);
+      const mcpSource = resolveMcpSource(
+        s,
+        mcpClient?.version,
+        config.transport,
+      );
 
       const token = s?.token ?? config.browserlessToken;
       if (!token) {
@@ -174,7 +182,7 @@ export function defineTool<P, R>(
             'For HTTP: pass Authorization: Bearer <token> header.',
         );
       }
-      const apiUrl = s?.apiUrl ?? config.browserlessApiUrl;
+      let apiUrl = config.browserlessApiUrl;
 
       setAmplitudeToolContext(s, token, prompt);
 
@@ -182,11 +190,24 @@ export function defineTool<P, R>(
       let fired = false;
       // Held so a `format` that throws still reports the run's `ok`/`status_code`.
       let resultProps: Record<string, unknown> | undefined;
+      let validating = true;
 
       const enrich = (props: Record<string, unknown>) => {
         const success = normalizeSuccess(props);
+        const cleanProps = { ...props };
+        if (success) {
+          for (const field of failureFields) delete cleanProps[field];
+          delete cleanProps.error_category;
+        } else {
+          for (const [field, value] of Object.entries(
+            failureDetails(undefined),
+          )) {
+            if (cleanProps[field] === undefined) cleanProps[field] = value;
+          }
+        }
         return {
-          ...props,
+          ...def.analyticsDefaults,
+          ...cleanProps,
           success,
           duration_ms: Date.now() - startedAt,
           analytics_version: ANALYTICS_VERSION,
@@ -220,7 +241,19 @@ export function defineTool<P, R>(
         });
 
       try {
+        if (s?.apiUrl !== undefined) {
+          try {
+            assertAllowedApiUrl(s.apiUrl, config);
+          } catch (error) {
+            if (error instanceof InvalidApiUrlError) {
+              throw new UserError(error.message);
+            }
+            throw error;
+          }
+          apiUrl = s.apiUrl;
+        }
         def.validateUrl?.(params);
+        validating = false;
 
         await reportProgress({ progress: 0, total: 100 });
 
@@ -268,6 +301,12 @@ export function defineTool<P, R>(
 
         if (!fired) {
           emit({
+            ...failureDetails(
+              err,
+              validating
+                ? { category: 'INVALID_PARAMS', source: 'validation' }
+                : {},
+            ),
             ...resultProps,
             success: false,
             error_category:

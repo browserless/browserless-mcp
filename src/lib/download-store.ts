@@ -1,6 +1,13 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { hashToken } from './utils.js';
+
+export type DownloadOwner = string;
+
+export const downloadOwner = (token: string): DownloadOwner =>
+  `t:${hashToken(token)}`;
 
 // A captured download (or staged upload) persisted to the server's filesystem;
 // bytes stay on disk (never in context). Dropped on TTL, session end, or fetch.
@@ -10,6 +17,7 @@ export interface StoredDownload {
   filename: string;
   mimeType: string;
   size: number;
+  owner: DownloadOwner;
   sessionId?: string;
 }
 
@@ -25,7 +33,6 @@ const TTL_MS = 15 * 60 * 1000;
 export const FILE_TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
 
 const store = new Map<string, StoreEntry>();
-let counter = 0;
 
 // Where captured files land on the MCP server. Defaults to a temp dir; override
 // with BROWSERLESS_DOWNLOAD_DIR (e.g. a stable folder in local/stdio setups).
@@ -60,12 +67,12 @@ export const storeDownload = async (
   filename: string,
   mimeType: string,
   data: Buffer,
+  owner: DownloadOwner,
   sessionId?: string,
 ): Promise<StoredDownload> => {
   const dir = downloadsDir();
   await mkdir(dir, { recursive: true });
-  counter += 1;
-  const id = `${Date.now().toString(36)}-${counter}`;
+  const id = randomBytes(16).toString('hex');
   const safe = basename(filename) || 'download';
   // Prefix with the id so files that share a name don't collide.
   const path = join(dir, `${id}-${safe}`);
@@ -83,6 +90,7 @@ export const storeDownload = async (
     filename: safe,
     mimeType,
     size: data.byteLength,
+    owner,
     sessionId,
     timer,
   };
@@ -92,18 +100,24 @@ export const storeDownload = async (
 
 // Resolve a handle (id, URI, or stored path) WITHOUT removing it. Used by
 // uploadFile, which may reference the same file more than once.
-export const getDownload = (handle: string): StoredDownload | undefined => {
+export const getDownload = (
+  handle: string,
+  owner: DownloadOwner,
+): StoredDownload | undefined => {
   const entry =
     store.get(idFromHandle(handle)) ??
-    [...store.values()].find((r) => r.path === handle);
-  return entry && toRecord(entry);
+    [...store.values()].find((r) => r.owner === owner && r.path === handle);
+  return entry?.owner === owner ? toRecord(entry) : undefined;
 };
 
 // Resolve a handle and remove it (single-use): entry, TTL timer, and bytes.
 // Backs `GET /download/:id` so a download can only be fetched once.
-export const consumeDownload = (handle: string): StoredDownload | undefined => {
+export const consumeDownload = (
+  handle: string,
+  owner: DownloadOwner,
+): StoredDownload | undefined => {
   const entry = store.get(idFromHandle(handle));
-  if (!entry) return undefined;
+  if (!entry || entry.owner !== owner) return undefined;
   if (entry.timer) clearTimeout(entry.timer);
   store.delete(entry.id);
   return toRecord(entry);

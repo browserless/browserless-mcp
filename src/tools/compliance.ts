@@ -5,7 +5,9 @@ import { detectSkills } from '../skills/index.js';
 // Anthropic directories accept but the full one they reject: the isCompliant
 // gate, COMPLIANT_SKILLS allowlist + visibleSkills filter, compliant descriptions.
 export {
+  CompliantAgentCommandSchema,
   CompliantAgentParamsSchema,
+  CompliantAgentToolParamsSchema,
   COMPLIANT_AGENT_METHODS,
 } from './schemas.js';
 

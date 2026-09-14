@@ -1,4 +1,9 @@
 import { expect } from 'chai';
+import {
+  AgentCommandSchema,
+  AgentToolParamsSchema,
+  CompliantAgentCommandSchema,
+} from '../../src/tools/schemas.js';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
 import {
@@ -6,6 +11,152 @@ import {
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
+
+for (const [name, schema] of [
+  ['AgentCommandSchema', AgentCommandSchema],
+  ['CompliantAgentCommandSchema', CompliantAgentCommandSchema],
+] as const) {
+  describe(`${name} reportOutcome`, () => {
+    it('accepts boolean verdicts and each fixed reason', () => {
+      for (const success of [true, false]) {
+        for (const reason of [
+          undefined,
+          'completed',
+          'blocked_by_site',
+          'captcha',
+          'login_required',
+          'timeout',
+          'other',
+        ]) {
+          const command = {
+            method: 'reportOutcome',
+            params: { success, ...(reason ? { reason } : {}) },
+          };
+          expect(schema.parse(command)).to.deep.equal(command);
+        }
+      }
+    });
+
+    it('rejects malformed verdicts rather than using generic passthrough', () => {
+      for (const params of [
+        {},
+        { success: 'yes' },
+        { success: 1 },
+        { success: true, reason: 'https://example.com?token=secret' },
+      ]) {
+        expect(
+          schema.safeParse({ method: 'reportOutcome', params }).success,
+        ).to.equal(false);
+      }
+    });
+  });
+
+  describe(`${name} navigation URLs`, () => {
+    it('preserves HTTP and HTTPS URLs for navigation and new tabs', () => {
+      for (const method of ['goto', 'createTab'] as const) {
+        for (const url of ['http://example.com', 'https://example.com']) {
+          expect(schema.parse({ method, params: { url } })).to.deep.equal({
+            method,
+            params: { url },
+          });
+        }
+      }
+    });
+
+    it('rejects unsupported schemes and malformed goto URLs', () => {
+      for (const url of [
+        'file:///etc/passwd',
+        'chrome://settings',
+        'javascript:alert(1)',
+        'ftp://host/',
+        'ws://host/',
+        'about:blank',
+        'data:text/html,x',
+        '//example.com',
+        'not a url',
+        '',
+        '   ',
+        'https://[',
+      ]) {
+        expect(
+          schema.safeParse({ method: 'goto', params: { url } }).success,
+          `should reject ${JSON.stringify(url)}`,
+        ).to.equal(false);
+      }
+    });
+
+    it('reports the expected schemes without echoing the rejected URL', () => {
+      const result = schema.safeParse({
+        method: 'goto',
+        params: { url: 'file:///etc/passwd' },
+      });
+      expect(result.success).to.equal(false);
+      if (!result.success) {
+        // The extensible command union nests typed-command validation errors.
+        expect(result.error.message).to.include(
+          'url must be an http:// or https:// URL',
+        );
+        expect(result.error.message).not.to.include('file:///etc/passwd');
+      }
+    });
+
+    it('preserves explicit about:blank and omitted new-tab URLs', () => {
+      expect(
+        schema.parse({ method: 'createTab', params: { url: 'about:blank' } }),
+      ).to.deep.equal({ method: 'createTab', params: { url: 'about:blank' } });
+      expect(schema.parse({ method: 'createTab', params: {} })).to.deep.equal({
+        method: 'createTab',
+        params: {},
+      });
+      expect(schema.parse({ method: 'createTab' })).to.deep.equal({
+        method: 'createTab',
+        params: {},
+      });
+    });
+
+    it('rejects unsupported URLs in background tabs', () => {
+      for (const url of [
+        'file:///etc/passwd',
+        'chrome://settings',
+        'javascript:alert(1)',
+        'about:blank#fragment',
+        ' about:blank ',
+      ]) {
+        expect(
+          schema.safeParse({
+            method: 'createTab',
+            params: { url, activate: false },
+          }).success,
+          `should reject ${JSON.stringify(url)}`,
+        ).to.equal(false);
+      }
+    });
+
+    it('trims navigation URLs without changing credentials, ports, or paths', () => {
+      const url = '  https://user:pw@example.com:8443/a/b?c=1#d  ';
+      expect(schema.parse({ method: 'goto', params: { url } })).to.deep.equal({
+        method: 'goto',
+        params: { url: 'https://user:pw@example.com:8443/a/b?c=1#d' },
+      });
+    });
+
+    it('returns a validation failure rather than throwing for an unparseable URL', () => {
+      expect(
+        schema.safeParse({ method: 'goto', params: { url: 'ht!tp://[' } })
+          .success,
+      ).to.equal(false);
+    });
+
+    it('leaves private-address policy to the runtime', () => {
+      // This schema validates URL schemes, not destination addresses.
+      const url = 'http://169.254.169.254/';
+      expect(schema.parse({ method: 'goto', params: { url } })).to.deep.equal({
+        method: 'goto',
+        params: { url },
+      });
+    });
+  });
+}
 
 describe('ProxyOptionsSchema', () => {
   describe('proxyCountry', () => {
@@ -524,6 +675,70 @@ describe('loadSecret command', () => {
       ],
     });
     expect(result.success).to.equal(false);
+  });
+});
+
+describe('clearSecrets command', () => {
+  it('accepts clearSecrets with params omitted or empty', () => {
+    for (const command of [
+      { method: 'clearSecrets' },
+      { method: 'clearSecrets', params: {} },
+    ]) {
+      expect(
+        AgentParamsSchema.safeParse({ commands: [command] }).success,
+        JSON.stringify(command),
+      ).to.equal(true);
+    }
+  });
+
+  it('rejects unexpected clearSecrets params through the typed command arm', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [
+        { method: 'clearSecrets', params: { unexpected: 'not-allowed' } },
+      ],
+    });
+    expect(result.success).to.equal(false);
+  });
+
+  it('describes when clearSecrets is needed in the published command schema', () => {
+    const schema = JSON.stringify(AgentCommandSchema.toJSONSchema());
+    expect(schema).to.include('clearSecrets');
+    expect(schema).to.include('single-page apps');
+    expect(schema).to.include('replay remains masked');
+  });
+});
+
+describe('browserless_agent tool schema (OpenAI hosted-MCP import)', () => {
+  // The tool advertises AgentToolParamsSchema, whose `commands` is a flat shape
+  // rather than the rich per-command discriminated union. That union renders to
+  // a JSON Schema too deep/large for OpenAI's hosted-MCP tool import, which
+  // rejects the whole tools/list with 424 and takes down every hosted-agent
+  // flow. run() re-validates against AgentParamsSchema, so the full per-command
+  // contract is still enforced — these tests pin both halves of that split.
+  const strictParamCase = {
+    commands: [
+      { method: 'clearSecrets', params: { unexpected: 'not-allowed' } },
+    ],
+  };
+
+  it('advertises a flat commands schema (no inlined per-command union)', () => {
+    expect(
+      AgentToolParamsSchema.safeParse(strictParamCase).success,
+      'tool schema must stay flat so OpenAI can import the tool list',
+    ).to.equal(true);
+    expect(
+      AgentParamsSchema.safeParse(strictParamCase).success,
+      'the full contract stays strict (enforced in run())',
+    ).to.equal(false);
+  });
+
+  it('still enforces top-level invariants (profile vs createProfile)', () => {
+    expect(
+      AgentToolParamsSchema.safeParse({
+        profile: 'github',
+        createProfile: { name: 'github' },
+      }).success,
+    ).to.equal(false);
   });
 });
 

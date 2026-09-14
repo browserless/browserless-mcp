@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.29.0](https://github.com/browserless/browserless-mcp/compare/v1.28.1...v1.29.0) (2026-09-10)
+
+
+### Features
+
+* add MCP client usage attribution ([#307](https://github.com/browserless/browserless-mcp/issues/307)) ([3cde2c3](https://github.com/browserless/browserless-mcp/commit/3cde2c3ddf57edb5f5812037d095560a2ab7fd10))
+
+
+### Bug Fixes
+
+* allow Cursor's hosted MCP OAuth redirect URI ([#309](https://github.com/browserless/browserless-mcp/issues/309)) ([3959ac3](https://github.com/browserless/browserless-mcp/commit/3959ac38ba4f82331052bb989d67a1b971d184e3))
+* validate agent navigation URL schemes ([#306](https://github.com/browserless/browserless-mcp/issues/306)) ([04fdf93](https://github.com/browserless/browserless-mcp/commit/04fdf934ad7d65444f4d1ff6de429a0790b1f8dc))
+* validate client API URL overrides ([#292](https://github.com/browserless/browserless-mcp/issues/292)) ([81e6fe3](https://github.com/browserless/browserless-mcp/commit/81e6fe396c400c1ae7c9cc52764372014c1290f8))
+
+## [1.28.1](https://github.com/browserless/browserless-mcp/compare/v1.28.0...v1.28.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* restore OpenAI hosted-MCP import by pinning mcp-proxy to 6.5.1 ([#298](https://github.com/browserless/browserless-mcp/issues/298)) ([b83cc4c](https://github.com/browserless/browserless-mcp/commit/b83cc4c2688358b2008267d73c35d2957a53698f))
+
+## [1.28.0](https://github.com/browserless/browserless-mcp/compare/v1.27.0...v1.28.0) (2026-09-07)
+
+
+### Features
+
+* expose Smart Scrape content shaping ([#285](https://github.com/browserless/browserless-mcp/issues/285)) ([a78861a](https://github.com/browserless/browserless-mcp/commit/a78861a128eec62c9fa213896259649e70791f75))
+
+
+### Bug Fixes
+
+* isolate stored downloads by token ([#291](https://github.com/browserless/browserless-mcp/issues/291)) ([4421589](https://github.com/browserless/browserless-mcp/commit/4421589eebd21cf17d64fa43ac591baca2dbbe05))
+* keep the browserless_agent tool schema importable by OpenAI hosted MCP ([#297](https://github.com/browserless/browserless-mcp/issues/297)) ([7cd7260](https://github.com/browserless/browserless-mcp/commit/7cd7260764cd8d50a8395bafbc5b927f48ff963c))
+
+## [1.27.0](https://github.com/browserless/browserless-mcp/compare/v1.26.0...v1.27.0) (2026-09-04)
+
+
+### Features
+
+* **AUTO-367:** expose clearSecrets to browser agents ([#290](https://github.com/browserless/browserless-mcp/issues/290)) ([d70500c](https://github.com/browserless/browserless-mcp/commit/d70500c5478f6c6ef9ba967845133f1c02fd9420))
+
 ## [1.26.0](https://github.com/browserless/browserless-mcp/compare/v1.25.0...v1.26.0) (2026-09-03)
 
 

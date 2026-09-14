@@ -17,6 +17,7 @@ const EXACT_CALLBACKS = [
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'cursor://anysphere.cursor-mcp/oauth/callback',
+  'https://www.cursor.com/agents/mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',
   'https://api.beta.devin.ai/mcp/oauth/callback',
   'https://api.itsdev.in/mcp/oauth/callback',
@@ -32,6 +33,7 @@ const WILDCARD_CALLBACKS = [
 ];
 
 const LOOKALIKE_CALLBACKS = [
+  'https://wwwxcursor.com/agents/mcp/oauth/callback',
   'https://apixdevin.ai/mcp/oauth/callback',
   'https://api.betaxdevin.ai/mcp/oauth/callback',
   'https://wwwxmake.com/oauth/cb/mcp',
@@ -467,9 +469,14 @@ describe('Browserless OAuth redirect URI validation', () => {
   it('revalidates a vulnerable pre-existing registration at authorize time', async () => {
     const redis = new RedisMock() as unknown as Redis;
     const storage = new RedisTokenStorage(redis);
+    // Seed a client whose redirect URI the *current* hardened rules forbid, to
+    // prove authorize() re-validates persisted records. Base fastmcp now escapes
+    // the dot in its own allowlist glob, so it rejects this apix/api lookalike at
+    // registerClient — model the pre-hardening (or looser-path) persistence by
+    // configuring the seeding proxy to permit exactly this URI.
     const vulnerable = new OAuthProxy({
       ...buildConfig({
-        allowedRedirectUriPatterns: ['https://api.devin.ai/mcp/oauth/callback'],
+        allowedRedirectUriPatterns: ['https://apixdevin.ai/mcp/oauth/callback'],
       }),
       encryptionKey: false,
       tokenStorage: storage,

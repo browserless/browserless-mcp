@@ -226,8 +226,22 @@ export class PersonaConflictError extends Error {
 // stacks more lingering sessions against the same limit, so stop instead.
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
+class SessionReuseError extends Error {}
+
+const assertCompatibleRecordingMode = (
+  session: ActiveSession,
+  record: boolean | undefined,
+): void => {
+  if (record !== undefined && record !== (session.record ?? false)) {
+    throw new SessionReuseError(
+      'Browser recording mode cannot be changed on an open session. Omit record to reuse it, or close the session before changing the record option.',
+    );
+  }
+};
+
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof PersonaConflictError) return false;
+  if (err instanceof SessionReuseError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -238,6 +252,7 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
 };
 
 const sessions = new Map<string, ActiveSession>();
+const createdAt = new WeakMap<ActiveSession, number>();
 // In-flight session creations keyed by session key. Concurrent
 // getOrCreateSession callers await the same promise instead of each
 // opening their own WebSocket.
@@ -831,6 +846,7 @@ export const getOrCreateSession = async (
   humanlike?: boolean,
   record?: boolean,
   persona?: PersonaOptions,
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<ActiveSession> => {
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
@@ -958,7 +974,9 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
+    assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
+    onSession?.(true, Math.max(0, Date.now() - createdAt.get(existing)!));
     return existing;
   }
 
@@ -974,11 +992,6 @@ export const getOrCreateSession = async (
         'Proxy options are fixed when a browser session opens. Close the session before changing them.',
       );
     }
-    if (record !== undefined && Boolean(session.record) !== record) {
-      throw new PersonaConflictError(
-        'Recording mode is fixed when a browser session opens. Close the session before changing it.',
-      );
-    }
     if (
       requestedPersona &&
       hasPersona(requestedPersona) &&
@@ -986,6 +999,12 @@ export const getOrCreateSession = async (
     ) {
       throw new PersonaConflictError();
     }
+    if (record !== undefined && Boolean(session.record) !== record) {
+      throw new PersonaConflictError(
+        'Recording mode is fixed when a browser session opens. Close the session before changing it.',
+      );
+    }
+    onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     return session;
   }
 
@@ -1054,6 +1073,7 @@ export const getOrCreateSession = async (
       skillState: createSkillState(),
       lastUsedAt: Date.now(),
     };
+    createdAt.set(session, Date.now());
 
     if (hasPersona(effectivePersona)) {
       retainedPersonas.delete(key);
@@ -1092,7 +1112,9 @@ export const getOrCreateSession = async (
 
   pending.set(key, creation);
   try {
-    return await creation;
+    const session = await creation;
+    onSession?.(false, 0);
+    return session;
   } finally {
     // Clear the placeholder whether connect succeeded or threw, so a failed
     // attempt doesn't block future retries.
@@ -1107,6 +1129,7 @@ export const send = async (
   method: string,
   params: Record<string, unknown> = {},
   timeoutMs?: number,
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
   if (session.ws.readyState !== WebSocket.OPEN) {
     if (!session.reconnecting) {
@@ -1135,6 +1158,7 @@ export const send = async (
     if (session.ws !== ws) {
       session.ws = ws;
       session.msgId = 0;
+      createdAt.set(session, Date.now());
 
       const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
       if (key) {
@@ -1146,6 +1170,7 @@ export const send = async (
         });
       }
     }
+    onSession?.(false, 0);
   }
 
   session.msgId++;
@@ -1167,6 +1192,7 @@ export const closeSession = (
   echoedSessionId?: string,
   integrationId?: string,
   allowedDomains?: string[],
+  onSession?: (reused: boolean, ageMs: number) => void,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -1181,6 +1207,7 @@ export const closeSession = (
   );
   const session = sessions.get(key);
   if (session) {
+    onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     try {
       session.ws.close();
     } catch {

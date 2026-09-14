@@ -80,6 +80,10 @@ Triggered by `autocomplete="one-time-code"`, numeric input with `maxlength` ∈ 
 - TOTP rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
 - Second MFA prompt after the first cleared → `UNEXPECTED_STATE`.
 
+## After a `loadSecret` login — re-enable captures
+
+Filled a field with `loadSecret` (1Password `op://` ref)? The session's capture gate is now armed: `screenshot`, PDF, `liveURL`, and page-content reads (`evaluate`/`html`/`text`/`querySelector`/`cookies`) all fail with `CaptureBlockedError` until cleared. A full-page navigation clears it automatically — a single-page app that logs in without navigating does **not**. Once the credential is off screen (success verified above), send `{ method: "clearSecrets" }` before the first capture. Secret values stay masked in the session replay regardless. Plaintext `type` logins don't arm the gate — this step applies only when `loadSecret` filled a field.
+
 ## Final response
 
 `close`, then emit **exactly one** fenced JSON block — nothing before or after, no prose. Fields: `success`, `reason_code`, `final_url`, `evidence`, `steps_taken` (JSON-RPC call count; batched call = 1). On failure: `success: false`, `final_url` = current URL.

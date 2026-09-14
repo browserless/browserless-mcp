@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
 import { isCompliant, COMPLIANT_SEARCH_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { failureDetails } from '../lib/failure-details.js';
 import type {
   McpConfig,
   SearchParams,
@@ -145,13 +146,26 @@ export function registerSearchTool(
       );
       return response;
     },
-    analyticsProps: (params, result) => ({
-      query: params.query,
-      limit: params.limit ?? 10,
-      sources: (params.sources ?? ['web']).join(','),
-      success: result.success,
-      total_results: result.totalResults,
-    }),
+    analyticsProps: (params, result) => {
+      const details = failureDetails(
+        typeof result.error === 'object' ? result.error : result,
+      );
+      return {
+        query: params.query,
+        limit: params.limit ?? 10,
+        sources: (params.sources ?? ['web']).join(','),
+        success: result.success,
+        total_results: result.totalResults,
+        ...(result.success
+          ? {}
+          : {
+              ...details,
+              ...(details.error_reason === 'unknown'
+                ? { error_message: 'Unclassified search failure.' }
+                : {}),
+            }),
+      };
+    },
     format: (response, params) => {
       if (!response.success) {
         throw new UserError(

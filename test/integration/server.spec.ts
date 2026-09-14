@@ -2,14 +2,20 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { createServer } from 'node:net';
 import { FastMCP } from 'fastmcp';
+import { z } from 'zod';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
+import { defineTool } from '../../src/lib/define-tool.js';
+import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
 import { registerStatusResource } from '../../src/resources/status.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
+import { registerUploadRoute } from '../../src/resources/upload-route.js';
 import { registerScrapeUrlPrompt } from '../../src/prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../../src/prompts/extract-content.js';
-import type { McpConfig } from '../../src/@types/types.js';
+import type { BrowserlessSession, McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -38,6 +44,63 @@ describe('MCP Server Integration', () => {
     sinon.restore();
   });
 
+  it('emits attribution for a real streamable-HTTP session', async () => {
+    const port = await freePort();
+    const authenticatedServer = new FastMCP<BrowserlessSession>({
+      name: 'attribution-test',
+      version: '0.1.0',
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    defineTool(authenticatedServer, mockConfig, analytics, {
+      name: 'test_tool',
+      description: 'Local attribution test',
+      parameters: z.object({}),
+      run: async () => 'ok',
+      format: () => [{ type: 'text', text: 'ok' }],
+    });
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    try {
+      await authenticatedServer.start({
+        transportType: 'httpStream',
+        httpStream: { port },
+      });
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://localhost:${port}/mcp`),
+          {
+            requestInit: {
+              headers: {
+                Authorization: `Bearer ${'a'.repeat(24)}`,
+                'User-Agent': 'Attribution-Probe/2.3',
+              },
+            },
+          },
+        ),
+      );
+      expect(
+        await client.callTool({ name: 'test_tool', arguments: {} }),
+      ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+      expect(fire.calledOnce).to.be.true;
+      expect(fire.firstCall.args[2]).to.include({
+        source: 'mcp_client',
+        client_name: 'test-client',
+        client_version: '0.0.0',
+        auth_method: 'api_key_header',
+        transport: 'streamable-http',
+        user_agent: 'Attribution-Probe/2.3',
+        user_agent_family: 'attribution-probe',
+        client_family: 'other',
+        usage_mode: 'unknown',
+      });
+    } finally {
+      await client.close();
+      await authenticatedServer.stop();
+    }
+  });
+
   it('creates a fully configured server with all components', () => {
     server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
 
@@ -49,6 +112,50 @@ describe('MCP Server Integration', () => {
 
     // If we get here without errors, the server is properly configured
     expect(server).to.exist;
+  });
+
+  it('rejects unsafe API URL overrides on file routes', async () => {
+    server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
+    registerUploadRoute(server, mockConfig);
+    registerDownloadRoute(server, mockConfig);
+    const app = server.getApp();
+
+    for (const [method, path] of [
+      ['POST', '/upload'],
+      ['GET', '/download/missing'],
+    ] as const) {
+      const response = await app.request(`http://example.test${path}`, {
+        method,
+        headers: {
+          authorization: 'Bearer token',
+          'x-browserless-api-url': 'http://127.0.0.1:9999',
+        },
+      });
+      expect(response.status).to.equal(400);
+      expect(await response.json()).to.deep.equal({
+        ok: false,
+        error: 'Invalid x-browserless-api-url',
+      });
+    }
+  });
+
+  it('rejects unauthenticated file transfer routes', async () => {
+    server = new FastMCP({ name: 'browserless-mcp', version: '0.1.0' });
+    registerUploadRoute(server, mockConfig);
+    registerDownloadRoute(server, mockConfig);
+
+    const upload = new FormData();
+    upload.set('file', new File(['data'], 'fixture.txt'));
+    expect(
+      (
+        await server
+          .getApp()
+          .request('/upload', { method: 'POST', body: upload })
+      ).status,
+    ).to.equal(401);
+    expect(
+      (await server.getApp().request('/download/anything')).status,
+    ).to.equal(401);
   });
 
   it('starts and stops cleanly in httpStream mode', async () => {
@@ -82,6 +189,88 @@ describe('MCP Server Integration', () => {
       await client.connect(transport);
       const caps = client.getServerCapabilities();
       expect(caps?.tools).to.deep.include({ listChanged: true });
+    } finally {
+      await client.close().catch(() => {});
+      await server.stop();
+    }
+  });
+
+  it('rejects disallowed httpStream overrides during authentication', async () => {
+    const port = await freePort();
+    server = new FastMCP<BrowserlessSession>({
+      name: 'browserless-mcp',
+      version: '0.1.0',
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    await server.start({ transportType: 'httpStream', httpStream: { port } });
+
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://localhost:${port}/mcp`),
+      {
+        requestInit: {
+          headers: {
+            authorization: 'Bearer token',
+            'x-browserless-api-url': 'http://127.0.0.1:9999',
+          },
+        },
+      },
+    );
+    try {
+      let error: unknown;
+      try {
+        await client.connect(transport);
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).to.be.instanceOf(Error);
+    } finally {
+      await client.close().catch(() => {});
+      await server.stop();
+    }
+  });
+
+  it('retains an allowed httpStream override in the authenticated session', async () => {
+    const port = await freePort();
+    server = new FastMCP<BrowserlessSession>({
+      name: 'browserless-mcp',
+      version: '0.1.0',
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    server.addTool({
+      name: 'session_api_url',
+      description: 'Returns the authenticated API URL for testing.',
+      parameters: z.object({}),
+      execute: async (_args, context) => context.session?.apiUrl ?? '',
+    });
+    await server.start({ transportType: 'httpStream', httpStream: { port } });
+
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://localhost:${port}/mcp`),
+      {
+        requestInit: {
+          headers: {
+            authorization: 'Bearer token',
+            'x-browserless-api-url': 'https://production-lon.browserless.io',
+          },
+        },
+      },
+    );
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: 'session_api_url',
+        arguments: {},
+      });
+      expect(result.content).to.deep.equal([
+        {
+          type: 'text',
+          text: 'https://production-lon.browserless.io',
+        },
+      ]);
     } finally {
       await client.close().catch(() => {});
       await server.stop();

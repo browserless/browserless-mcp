@@ -32,6 +32,7 @@ import type {
   PersonaOptionsSchema,
   ProxyOptionsSchema,
 } from '../lib/agent-client.js';
+import type { AuthMethod, McpTransport } from '../lib/attribution.js';
 
 /* ------------------------------------------------------------------ */
 /*  Session & auth                                                     */
@@ -51,6 +52,12 @@ export interface BrowserlessSession extends Record<string, unknown> {
   accountId?: string;
   /** Origin tag from the `x-browserless-mcp-source` header; see resolveMcpSource. */
   source?: string;
+  /** How the HTTP session's token was obtained. */
+  authMethod?: AuthMethod;
+  /** HTTP endpoint the session was created on. */
+  transport?: McpTransport;
+  /** Sanitized user-agent header (at most 200 characters). */
+  userAgent?: string;
 }
 
 export interface SupabaseJwtPayload {
@@ -68,6 +75,7 @@ export interface SupabaseJwtPayload {
 export interface McpConfig {
   browserlessToken?: string;
   browserlessApiUrl: string;
+  allowedApiUrlHosts?: string[];
   // Account API host — a DIFFERENT host from `browserlessApiUrl` (a browser
   // runtime). Never derive one from the other, nor let per-session URLs override.
   apiServerUrl?: string;
@@ -228,6 +236,7 @@ export interface ActiveSession {
   // Human-like cursor/pacing (forwarded as ?humanlike). Re-sent on reconnect.
   readonly humanlike?: boolean;
   // Recording capability for replacement browsers after an unexpected drop.
+  // Fixed at browser creation; omitted follow-ups inherit the existing mode.
   readonly record?: boolean;
   // Handle the caller echoes back as `sessionId`. Feeds the session-cache key,
   // and is re-keyed in place when an orphaned browser is adopted.
@@ -521,6 +530,11 @@ export interface SmartScrapeRequest {
   formats?: ScrapeFormat[];
   timeout?: number;
   profile?: string;
+  onlyMainContent?: boolean;
+  includeTags?: string[];
+  excludeTags?: string[];
+  headers?: Record<string, string>;
+  waitFor?: number;
 }
 
 export type SmartScrapeResult = SmartScraperResponse & { cacheHit: boolean };

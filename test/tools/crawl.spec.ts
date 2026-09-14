@@ -64,6 +64,48 @@ describe('browserless_crawl tool', () => {
     expect(() => registerCrawlTool(server, mockConfig)).to.not.throw();
   });
 
+  it('reports a polling timeout once with a detailed timeout reason', async () => {
+    const clock = sinon.useFakeTimers({ toFake: ['Date'] });
+    fetchStub
+      .onCall(0)
+      .resolves(Response.json({ success: true, id: 'crawl-timeout' }));
+    fetchStub.onCall(1).callsFake(async () => {
+      clock.tick(1001);
+      return Response.json({
+        status: 'in-progress',
+        total: 1,
+        completed: 0,
+        failed: 0,
+        data: [],
+      });
+    });
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerCrawlTool(server, mockConfig, analytics);
+    try {
+      await addTool.firstCall.args[0].execute(
+        { url: 'https://example.com', maxWaitTime: 1000 },
+        mockContext,
+      );
+      expect.fail('expected timeout');
+    } catch (error) {
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).to.include('exceeded max wait time');
+    }
+    expect(fire.callCount).to.equal(1);
+    expect(fire.firstCall.args[2]).to.include({
+      success: false,
+      error_category: 'timeout',
+      error_reason: 'timeout',
+      error_source: 'unknown',
+      error_message: 'Request failed: timeout.',
+      timeout: true,
+    });
+    expect(fire.firstCall.args[2]).to.not.have.property('failed_command_index');
+  });
+
   it('starts a crawl and waits for completion', async () => {
     // First call: POST /crawl to start
     fetchStub.onCall(0).resolves(

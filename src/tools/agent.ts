@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import {
+  downloadOwner,
   downloadUri,
   getDownload,
   storeDownload,
@@ -17,6 +18,7 @@ import {
   destroySession,
   isRetryableUpgradeError,
   PERSONA_FIELDS,
+  UpgradeError,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -33,6 +35,7 @@ import {
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { failureDetails } from '../lib/failure-details.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
   markFired,
@@ -46,14 +49,15 @@ import {
   siteRecipeNotice,
   hydrateRemoteSkills,
 } from '../skills/sites.js';
-import { AgentParamsSchema } from './schemas.js';
+import { AgentCommandSchema, AgentToolParamsSchema } from './schemas.js';
 import {
   isCompliant,
   detectVisibleSkills,
   COMPLIANT_SKILLS,
   COMPLIANT_SKILL_TOOL_DESCRIPTION,
   COMPLIANT_AGENT_METHODS,
-  CompliantAgentParamsSchema,
+  CompliantAgentCommandSchema,
+  CompliantAgentToolParamsSchema,
 } from './compliance.js';
 import {
   AGENT_SYSTEM_PROMPT,
@@ -202,7 +206,8 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
 export const normalizeUploadCommand = async (
   cmd: { method: string; params: Record<string, unknown> },
   transport: McpConfig['transport'],
-  mcpBaseUrl?: string,
+  mcpBaseUrl: string | undefined,
+  token: string,
 ): Promise<void> => {
   if (cmd.method !== 'uploadFile') return;
   const files = cmd.params.files;
@@ -216,7 +221,7 @@ export const normalizeUploadCommand = async (
     let defaultName: string;
 
     if (typeof f.handle === 'string' && f.handle) {
-      const record = getDownload(f.handle);
+      const record = getDownload(f.handle, downloadOwner(token));
       if (!record) {
         throw new UserError(
           `Unknown upload handle "${f.handle}". Pass a handle returned by ` +
@@ -278,6 +283,7 @@ const describeFailedDownload = (d: DownloadEntry): string => {
 // tagged to the MCP session for cleanup. Returns null for failed/empty entries.
 const persistDownload = async (
   d: DownloadEntry,
+  token: string | undefined,
   sessionId?: string,
 ): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
   if (d.error || !d.data || !d.filename) return null;
@@ -285,6 +291,7 @@ const persistDownload = async (
     d.filename,
     d.mimeType ?? 'application/octet-stream',
     Buffer.from(d.data, 'base64'),
+    downloadOwner(token ?? ''),
     sessionId,
   );
 };
@@ -310,7 +317,11 @@ const describeReadyDownload = (
     );
   }
   const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
-  const tokenQ = `?token=${opts.token ?? '<YOUR_BROWSERLESS_TOKEN>'}`;
+  const tokenQ = `?token=${
+    opts.token === undefined
+      ? '<YOUR_BROWSERLESS_TOKEN>'
+      : encodeURIComponent(opts.token)
+  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
@@ -331,7 +342,7 @@ export const formatDownloads = async (
       lines.push(`- ${describeInProgressDownload(d)}`);
       continue;
     }
-    const record = await persistDownload(d, opts.sessionId);
+    const record = await persistDownload(d, opts.token, opts.sessionId);
     lines.push(
       `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
     );
@@ -365,6 +376,7 @@ export const formatScreenshotToDisk = async (
     `screenshot.${ext}`,
     mimeType,
     Buffer.from(base64, 'base64'),
+    downloadOwner(opts.token ?? ''),
     opts.sessionId,
   );
 
@@ -383,6 +395,7 @@ export const formatScreenshotToDisk = async (
 /** Persist stopRecording's WebM outside model context and return a handle. */
 export const persistRecording = async (
   result: unknown,
+  token: string | undefined,
   sessionId: string | undefined,
 ): Promise<unknown> => {
   const value = (result as { value?: string } | null)?.value;
@@ -414,6 +427,7 @@ export const persistRecording = async (
       'recording.webm',
       'video/webm',
       buf,
+      downloadOwner(token ?? ''),
       sessionId,
     ),
   };
@@ -559,7 +573,7 @@ export function registerAgentTools(
       const siteHost =
         params.site ?? (id.includes('/') ? id.split('/')[0] : '');
       if (!compliant && siteHost) {
-        await hydrateRemoteSkills(`https://${siteHost}`, apiUrl, token);
+        await hydrateRemoteSkills(`https://${siteHost}`, apiUrl, token, config);
       }
       const body = compliant
         ? renderSkill(id as SkillId, true)
@@ -589,17 +603,23 @@ export function registerAgentTools(
 
   defineTool<AgentToolParams, Content[]>(server, config, analytics, {
     name: 'browserless_agent',
+    analyticsDefaults: { session_reused: false, session_age_ms: 0 },
     description:
       (compliant
         ? COMPLIANT_AGENT_SYSTEM_PROMPT
         : AGENT_SYSTEM_PROMPT +
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
       sessionContinuityNote(config.transport),
+    // The tool advertises the slim, OpenAI-importable schemas — the rich
+    // per-command union renders to a JSON Schema too deep/large for OpenAI's
+    // hosted-MCP tool import, which rejects the whole tools/list with 424. run()
+    // re-validates any command batch against the rich per-command contract
+    // below, and the compliant surface adds its method/key guards.
     // Cast: Zod's generic is invariant, so the ternary needs it. AgentToolParams
-    // supertypes both schemas; FastMCP's runtime schema + compliance spec are the real guards.
+    // supertypes both schemas; run()'s re-validation + compliance spec are the real guards.
     parameters: (compliant
-      ? CompliantAgentParamsSchema
-      : AgentParamsSchema) as z.ZodType<AgentToolParams>,
+      ? CompliantAgentToolParamsSchema
+      : AgentToolParamsSchema) as z.ZodType<AgentToolParams>,
     annotations: {
       title: 'Browserless Agent',
       readOnlyHint: false,
@@ -617,7 +637,7 @@ export function registerAgentTools(
       sessionId: mcpSessionId,
       attachSessionId,
     }) => {
-      const commands: Array<{
+      let commands: Array<{
         method: string;
         params: Record<string, unknown>;
       }> =
@@ -667,6 +687,41 @@ export function registerAgentTools(
             'Credential integrations are not available on this endpoint.',
           );
         }
+      }
+
+      // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
+      // import accepts it; re-validate a provided batch against the full
+      // per-command contract here (the method/key guards above own their
+      // specific messages). Legacy single-command calls stay loose; outcome
+      // reports need local validation because delivery is best-effort.
+      if (params.commands?.length || params.method === 'reportOutcome') {
+        const commandContract = z
+          .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
+          .safeParse(params.commands?.length ? params.commands : commands);
+        if (!commandContract.success) {
+          throw Object.assign(
+            new UserError(
+              commandContract.error.issues
+                .map(
+                  (i) =>
+                    (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
+                )
+                .join('; '),
+            ),
+            { code: 'INVALID_PARAMS' },
+          );
+        }
+        // Forward the parsed batch, not the raw one: the per-command schemas
+        // apply typed defaults and strip unknown keys (the flat boundary schema
+        // does neither), matching the behaviour when the rich schema validated
+        // at the boundary.
+        commands = commandContract.data.map((c) => {
+          const parsed = c as {
+            method: string;
+            params?: Record<string, unknown>;
+          };
+          return { method: parsed.method, params: parsed.params ?? {} };
+        });
       }
 
       const proxy = params.proxy;
@@ -745,11 +800,22 @@ export function registerAgentTools(
       }
 
       let lastCategory: ErrorCategory | undefined;
+      let liveUrlId: string | undefined;
+      let sessionReused = false;
+      let sessionAgeMs = 0;
+      const onSession = (reused: boolean, ageMs: number) => {
+        sessionReused = reused;
+        sessionAgeMs = ageMs;
+      };
+      let lastFailure: Record<string, unknown> | undefined;
 
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
           ...(prompt ? { _prompt: prompt } : {}),
+          ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
+          session_reused: sessionReused,
+          session_age_ms: sessionAgeMs,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           api_url: apiUrl,
@@ -757,6 +823,7 @@ export function registerAgentTools(
           ...(success
             ? {}
             : {
+                ...(lastFailure ?? failureDetails(err)),
                 error_category: lastCategory
                   ? toAnalyticsCategory(lastCategory)
                   : categorizeThrown(err),
@@ -780,6 +847,10 @@ export function registerAgentTools(
       const proxyCmd = commands.find((c) => c.method === 'proxy');
       if (proxyCmd) {
         lastCategory = 'INVALID_PARAMS';
+        lastFailure = failureDetails(undefined, {
+          category: lastCategory,
+          source: 'validation',
+        });
         sendAnalytics(false);
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
@@ -798,6 +869,7 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
+          onSession,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -827,8 +899,12 @@ export function registerAgentTools(
             humanlike,
             record,
             persona,
+            onSession,
           );
         } catch (connErr: unknown) {
+          lastFailure = failureDetails(connErr, {
+            source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+          });
           sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
@@ -846,6 +922,9 @@ export function registerAgentTools(
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
       ): Promise<Content[]> => {
+        onSession(false, 0);
+        lastFailure = undefined;
+        lastCategory = undefined;
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
@@ -865,12 +944,16 @@ export function registerAgentTools(
             humanlike,
             record,
             retryPersona,
+            onSession,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
           // with the same (bad token / wrong profile / unsupported params)
           // will just produce the same response and waste time.
           if (isRetry || !isRetryableUpgradeError(connErr)) {
+            lastFailure = failureDetails(connErr, {
+              source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+            });
             throw new UserError(formatConnectError(connErr));
           }
           destroySession(
@@ -888,14 +971,37 @@ export function registerAgentTools(
         }
 
         // Execute all commands sequentially
-        const results: Array<{ method: string; result?: unknown }> = [];
+        const results: Array<{
+          method: string;
+          params: Record<string, unknown>;
+          result?: unknown;
+        }> = [];
         let closedDuringBatch = false;
         // Cross-origin baseline: prefer the URL from the previous snapshot,
         // else the first URL seen this batch — so [goto A, goto B, snapshot]
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         let promptSent = false;
-        for (const cmd of commands) {
+        for (const [commandIndex, cmd] of commands.entries()) {
+          const commandFailure = (err: unknown, category: ErrorCategory) => ({
+            ...failureDetails(err, {
+              category,
+              source:
+                category === 'SCRIPT_ERROR'
+                  ? 'script'
+                  : category === 'NAVIGATION_FAILED'
+                    ? 'target_website'
+                    : category === 'SESSION_LOST'
+                      ? 'transport'
+                      : 'unknown',
+            }),
+            failed_command_index: commandIndex,
+            ...(AgentCommandSchema.options[0].options.some(
+              (schema) => schema.shape.method.safeParse(cmd.method).success,
+            )
+              ? { failed_method: cmd.method }
+              : {}),
+          });
           if (cmd.method === 'close') {
             closeSession(
               mcpSessionId,
@@ -908,13 +1014,22 @@ export function registerAgentTools(
               integrationId,
               allowedDomains,
             );
-            results.push({ method: 'close', result: { closed: true } });
+            results.push({ ...cmd, result: { closed: true } });
             closedDuringBatch = true;
             break;
           }
-          if (cmd.method === 'reportSkillOutcome') {
+          if (
+            cmd.method === 'reportSkillOutcome' ||
+            cmd.method === 'reportOutcome'
+          ) {
             try {
-              await send(agentSession, cmd.method, cmd.params);
+              await send(
+                agentSession,
+                cmd.method,
+                cmd.params,
+                undefined,
+                onSession,
+              );
             } catch {
               // noop
             }
@@ -943,7 +1058,13 @@ export function registerAgentTools(
 
           let resp;
           try {
-            resp = await send(agentSession, cmd.method, outboundParams);
+            resp = await send(
+              agentSession,
+              cmd.method,
+              outboundParams,
+              undefined,
+              onSession,
+            );
           } catch (sendErr: unknown) {
             destroySession(
               mcpSessionId,
@@ -969,6 +1090,7 @@ export function registerAgentTools(
               cmd,
             });
             lastCategory = classified.category;
+            lastFailure = commandFailure(sendErr, classified.category);
             throw new UserError(
               formatErrorMessage({
                 category: classified.category,
@@ -1001,6 +1123,7 @@ export function registerAgentTools(
 
             const classified = classifyAgentError({ err, cmd });
             lastCategory = classified.category;
+            lastFailure = commandFailure(err, classified.category);
 
             const prefix =
               commands.length > 1
@@ -1051,6 +1174,7 @@ export function registerAgentTools(
           const navFailure = classifyNavigationResult(cmd.method, resp.result);
           if (navFailure) {
             lastCategory = navFailure.category;
+            lastFailure = commandFailure(resp.result, navFailure.category);
             throw new UserError(
               [
                 formatErrorMessage({
@@ -1076,17 +1200,27 @@ export function registerAgentTools(
           }
 
           if (cmd.method === 'stopRecording') {
-            resp.result = await persistRecording(resp.result, mcpSessionId);
+            resp.result = await persistRecording(
+              resp.result,
+              token,
+              mcpSessionId,
+            );
           }
 
-          results.push({ method: cmd.method, result: resp.result });
+          if (cmd.method === 'liveURL') {
+            const result = resp.result as { liveURLId?: unknown } | undefined;
+            if (typeof result?.liveURLId === 'string') {
+              liveUrlId = result.liveURLId;
+            }
+          }
+          results.push({ ...cmd, result: resp.result });
         }
 
         // If the batch ended with close, format the result around the
         // command before close (close itself has no useful payload).
         const reportable = closedDuringBatch ? results.slice(0, -1) : results;
-        // Nothing user-facing ran (batch was only close and/or an internal
-        // reportSkillOutcome) — the deref below would throw, so short-circuit.
+        // Nothing user-facing ran (only close and/or outcome reports), so
+        // there is no page result to format.
         if (reportable.length === 0) {
           return [
             {
@@ -1097,7 +1231,7 @@ export function registerAgentTools(
         }
         const last = reportable[reportable.length - 1];
         const lastResult = last.result as Record<string, unknown>;
-        const lastCmd = commands[reportable.length - 1];
+        const lastCmd = last;
 
         const closedSuffix = closedDuringBatch
           ? '\n\nBrowser session closed.'
@@ -1136,7 +1270,13 @@ export function registerAgentTools(
         let autoDownloads: DownloadEntry[] = [];
         if (!closedDuringBatch && last.method !== 'getDownloads') {
           try {
-            const dl = await send(agentSession, 'getDownloads', {});
+            const dl = await send(
+              agentSession,
+              'getDownloads',
+              {},
+              undefined,
+              onSession,
+            );
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];
@@ -1153,7 +1293,7 @@ export function registerAgentTools(
           (lastResult as { url?: string } | undefined)?.url ??
           crossOriginBaseline;
         if (!compliant) {
-          await hydrateRemoteSkills(currentUrl, apiUrl, token);
+          await hydrateRemoteSkills(currentUrl, apiUrl, token, config);
         }
         const { skills: renderedSkills, siteNotice } = buildSurfaceExtras(
           compliant,
@@ -1353,6 +1493,7 @@ export function registerAgentTools(
             cmd,
             config.transport,
             config.mcpBaseUrl,
+            token,
           );
         }
         const result = await runCommands(false);

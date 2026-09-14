@@ -42,7 +42,10 @@ The exact command (with id + token + URL) is in the `getDownloads` response. Alt
   "params": {
     "selector": "input[type=file]",
     "files": [
-      { "handle": "browserless-download://abc-1", "name": "report.pdf" }
+      {
+        "handle": "browserless-download://0123456789abcdef0123456789abcdef",
+        "name": "report.pdf"
+      }
     ]
   }
 }
@@ -60,7 +63,7 @@ The server can't read your filesystem, so stage the file once over HTTP (bytes g
 
 ```bash
 curl -s -F file=@"/path/to/file.png" "<MCP_BASE_URL>/upload?token=<YOUR_BROWSERLESS_TOKEN>"
-# → { "ok": true, "handle": "browserless-download://abc-1", "filename": "file.png", ... }
+# → { "ok": true, "handle": "browserless-download://0123456789abcdef0123456789abcdef", "filename": "file.png", ... }
 ```
 
 The `/upload` route requires your Browserless token (`?token=` or `Authorization: Bearer`). The `uploadFile` path-rejection error gives you the exact command with the token filled in.
@@ -70,7 +73,9 @@ The `/upload` route requires your Browserless token (`?token=` or `Authorization
   "method": "uploadFile",
   "params": {
     "selector": "input[type=file]",
-    "files": [{ "handle": "browserless-download://abc-1" }]
+    "files": [
+      { "handle": "browserless-download://0123456789abcdef0123456789abcdef" }
+    ]
   }
 }
 ```

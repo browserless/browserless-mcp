@@ -1,4 +1,14 @@
 import { createHash } from 'node:crypto';
+import type { BrowserlessSession } from '../@types/types.js';
+import {
+  sanitizeUserAgent,
+  classifyClientFamily,
+  deriveUsageMode,
+  type AuthMethod,
+  type McpTransport,
+  type ClientFamily,
+  type UsageMode,
+} from './attribution.js';
 
 /**
  * 64-bit truncation of SHA-256 — wide enough to make accidental collisions
@@ -25,6 +35,12 @@ export interface McpSourceProps {
   source: string;
   client_name?: string;
   client_version?: string;
+  auth_method: AuthMethod;
+  transport: McpTransport;
+  user_agent?: string;
+  user_agent_family: string;
+  client_family: ClientFamily;
+  usage_mode: UsageMode;
 }
 
 /**
@@ -32,13 +48,37 @@ export interface McpSourceProps {
  * external clients fall back to (spoofable) MCP clientInfo.name → `mcp_client`.
  */
 export function resolveMcpSource(
-  headerSource: string | undefined,
+  session:
+    | Pick<
+        BrowserlessSession,
+        'source' | 'authMethod' | 'transport' | 'userAgent'
+      >
+    | undefined,
   clientInfo: { name?: string; version?: string } | undefined,
+  configTransport: 'stdio' | 'httpStream',
 ): McpSourceProps {
+  const source =
+    session?.source || (clientInfo?.name ? 'mcp_client' : 'unknown');
+  const transport =
+    session?.transport ??
+    (configTransport === 'stdio' ? 'stdio' : 'streamable-http');
+  const client_family = classifyClientFamily(source, clientInfo?.name);
   return {
-    source: headerSource || (clientInfo?.name ? 'mcp_client' : 'unknown'),
+    source,
     client_name: clientInfo?.name,
     client_version: clientInfo?.version,
+    auth_method: session?.authMethod ?? 'env_token',
+    transport,
+    ...sanitizeUserAgent(session?.userAgent),
+    client_family,
+    usage_mode: deriveUsageMode({
+      source,
+      clientName: clientInfo?.name,
+      clientFamily: client_family,
+      authMethod: session?.authMethod,
+      transport,
+      userAgent: session?.userAgent,
+    }),
   };
 }
 
