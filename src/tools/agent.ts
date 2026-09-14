@@ -17,6 +17,7 @@ import {
   closeSession,
   destroySession,
   isRetryableUpgradeError,
+  UpgradeError,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -32,6 +33,7 @@ import {
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { failureDetails } from '../lib/failure-details.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
   markFired,
@@ -680,20 +682,23 @@ export function registerAgentTools(
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
-      // specific messages). Single-command calls stay loose, as before — the
-      // browser backend validates their params.
-      if (params.commands && params.commands.length > 0) {
+      // specific messages). Legacy single-command calls stay loose; outcome
+      // reports need local validation because delivery is best-effort.
+      if (params.commands?.length || params.method === 'reportOutcome') {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
-          .safeParse(params.commands);
+          .safeParse(params.commands?.length ? params.commands : commands);
         if (!commandContract.success) {
-          throw new UserError(
-            commandContract.error.issues
-              .map(
-                (i) =>
-                  (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
-              )
-              .join('; '),
+          throw Object.assign(
+            new UserError(
+              commandContract.error.issues
+                .map(
+                  (i) =>
+                    (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
+                )
+                .join('; '),
+            ),
+            { code: 'INVALID_PARAMS' },
           );
         }
         // Forward the parsed batch, not the raw one: the per-command schemas
@@ -756,6 +761,7 @@ export function registerAgentTools(
         sessionReused = reused;
         sessionAgeMs = ageMs;
       };
+      let lastFailure: Record<string, unknown> | undefined;
 
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
@@ -771,6 +777,7 @@ export function registerAgentTools(
           ...(success
             ? {}
             : {
+                ...(lastFailure ?? failureDetails(err)),
                 error_category: lastCategory
                   ? toAnalyticsCategory(lastCategory)
                   : categorizeThrown(err),
@@ -792,6 +799,10 @@ export function registerAgentTools(
       const proxyCmd = commands.find((c) => c.method === 'proxy');
       if (proxyCmd) {
         lastCategory = 'INVALID_PARAMS';
+        lastFailure = failureDetails(undefined, {
+          category: lastCategory,
+          source: 'validation',
+        });
         sendAnalytics(false);
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
@@ -842,6 +853,9 @@ export function registerAgentTools(
             onSession,
           );
         } catch (connErr: unknown) {
+          lastFailure = failureDetails(connErr, {
+            source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+          });
           sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
@@ -857,6 +871,8 @@ export function registerAgentTools(
 
       const runCommands = async (isRetry: boolean): Promise<Content[]> => {
         onSession(false, 0);
+        lastFailure = undefined;
+        lastCategory = undefined;
         let agentSession;
         try {
           agentSession = await getOrCreateSession(
@@ -882,6 +898,9 @@ export function registerAgentTools(
           // with the same (bad token / wrong profile / unsupported params)
           // will just produce the same response and waste time.
           if (isRetry || !isRetryableUpgradeError(connErr)) {
+            lastFailure = failureDetails(connErr, {
+              source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+            });
             throw new UserError(formatConnectError(connErr));
           }
           destroySession(
@@ -899,14 +918,37 @@ export function registerAgentTools(
         }
 
         // Execute all commands sequentially
-        const results: Array<{ method: string; result?: unknown }> = [];
+        const results: Array<{
+          method: string;
+          params: Record<string, unknown>;
+          result?: unknown;
+        }> = [];
         let closedDuringBatch = false;
         // Cross-origin baseline: prefer the URL from the previous snapshot,
         // else the first URL seen this batch — so [goto A, goto B, snapshot]
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         let promptSent = false;
-        for (const cmd of commands) {
+        for (const [commandIndex, cmd] of commands.entries()) {
+          const commandFailure = (err: unknown, category: ErrorCategory) => ({
+            ...failureDetails(err, {
+              category,
+              source:
+                category === 'SCRIPT_ERROR'
+                  ? 'script'
+                  : category === 'NAVIGATION_FAILED'
+                    ? 'target_website'
+                    : category === 'SESSION_LOST'
+                      ? 'transport'
+                      : 'unknown',
+            }),
+            failed_command_index: commandIndex,
+            ...(AgentCommandSchema.options[0].options.some(
+              (schema) => schema.shape.method.safeParse(cmd.method).success,
+            )
+              ? { failed_method: cmd.method }
+              : {}),
+          });
           if (cmd.method === 'close') {
             closeSession(
               mcpSessionId,
@@ -919,11 +961,14 @@ export function registerAgentTools(
               integrationId,
               allowedDomains,
             );
-            results.push({ method: 'close', result: { closed: true } });
+            results.push({ ...cmd, result: { closed: true } });
             closedDuringBatch = true;
             break;
           }
-          if (cmd.method === 'reportSkillOutcome') {
+          if (
+            cmd.method === 'reportSkillOutcome' ||
+            cmd.method === 'reportOutcome'
+          ) {
             try {
               await send(
                 agentSession,
@@ -992,6 +1037,7 @@ export function registerAgentTools(
               cmd,
             });
             lastCategory = classified.category;
+            lastFailure = commandFailure(sendErr, classified.category);
             throw new UserError(
               formatErrorMessage({
                 category: classified.category,
@@ -1024,6 +1070,7 @@ export function registerAgentTools(
 
             const classified = classifyAgentError({ err, cmd });
             lastCategory = classified.category;
+            lastFailure = commandFailure(err, classified.category);
 
             const prefix =
               commands.length > 1
@@ -1074,6 +1121,7 @@ export function registerAgentTools(
           const navFailure = classifyNavigationResult(cmd.method, resp.result);
           if (navFailure) {
             lastCategory = navFailure.category;
+            lastFailure = commandFailure(resp.result, navFailure.category);
             throw new UserError(
               [
                 formatErrorMessage({
@@ -1112,14 +1160,14 @@ export function registerAgentTools(
               liveUrlId = result.liveURLId;
             }
           }
-          results.push({ method: cmd.method, result: resp.result });
+          results.push({ ...cmd, result: resp.result });
         }
 
         // If the batch ended with close, format the result around the
         // command before close (close itself has no useful payload).
         const reportable = closedDuringBatch ? results.slice(0, -1) : results;
-        // Nothing user-facing ran (batch was only close and/or an internal
-        // reportSkillOutcome) — the deref below would throw, so short-circuit.
+        // Nothing user-facing ran (only close and/or outcome reports), so
+        // there is no page result to format.
         if (reportable.length === 0) {
           return [
             {
@@ -1130,7 +1178,7 @@ export function registerAgentTools(
         }
         const last = reportable[reportable.length - 1];
         const lastResult = last.result as Record<string, unknown>;
-        const lastCmd = commands[reportable.length - 1];
+        const lastCmd = last;
 
         const closedSuffix = closedDuringBatch
           ? '\n\nBrowser session closed.'

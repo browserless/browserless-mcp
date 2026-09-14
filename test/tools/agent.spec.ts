@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { FastMCP } from 'fastmcp';
+import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
@@ -1087,35 +1087,40 @@ describe('browserless_agent retry-guard (runCommands)', () => {
     }
   });
 
-  it('returns the saved-download handle when a screenshot { toDisk } batch ends with close', async () => {
-    // 1x1 PNG so getScreenshotPayload sees a real base64 payload.
-    const png =
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-    const srv = await makeRespondingServer((method) =>
-      method === 'screenshot' ? { base64: png } : { closed: true },
-    );
-    try {
-      const execute = getAgentExecute(srv.url);
-      const result = (await execute(
-        {
-          commands: [
-            { method: 'screenshot', params: { toDisk: true } },
-            { method: 'close' },
-          ],
-        },
-        ctx('todisk-then-close'),
-      )) as { content: Content[] };
-      const text = (result.content[0] as Extract<Content, { type: 'text' }>)
-        .text;
-      // toDisk branch fired: a reusable path, not the inline image/JSON the
-      // close-as-lastCmd bug produced.
-      expect(text).to.include('Screenshot saved to disk');
-      expect(text).to.include('reuse as uploadFile');
-      expect(result.content.some((c) => c.type === 'image')).to.equal(false);
-    } finally {
-      await srv.close();
-    }
-  });
+  for (const reportFirst of [false, true]) {
+    it(`returns the saved-download handle when a screenshot { toDisk } batch ends with close (reportFirst=${reportFirst})`, async () => {
+      // 1x1 PNG so getScreenshotPayload sees a real base64 payload.
+      const png =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const srv = await makeRespondingServer((method) =>
+        method === 'screenshot' ? { base64: png } : { closed: true },
+      );
+      try {
+        const execute = getAgentExecute(srv.url);
+        const result = (await execute(
+          {
+            commands: [
+              ...(reportFirst
+                ? [{ method: 'reportOutcome', params: { success: true } }]
+                : []),
+              { method: 'screenshot', params: { toDisk: true } },
+              { method: 'close' },
+            ],
+          },
+          ctx(`todisk-then-close-${reportFirst}`),
+        )) as { content: Content[] };
+        const text = (result.content[0] as Extract<Content, { type: 'text' }>)
+          .text;
+        // toDisk branch fired: a reusable path, not the inline image/JSON the
+        // close-as-lastCmd bug produced.
+        expect(text).to.include('Screenshot saved to disk');
+        expect(text).to.include('reuse as uploadFile');
+        expect(result.content.some((c) => c.type === 'image')).to.equal(false);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 
   it('DOES retry once on a retryable upgrade failure (503)', async () => {
     const srv = await makeRejectingServer(503, 'Service Unavailable');
@@ -1152,6 +1157,225 @@ describe('browserless_agent _prompt capture', () => {
       .find((c) => c.args[0].name === 'browserless_agent')!.args[0] as any;
     return { added, execute: added.execute, fire };
   };
+
+  it('attributes failure to the second command and excludes diagnostic input text', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'click'
+        ? new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'selector #private password=secret ' + 'x'.repeat(700),
+          })
+        : { url: 'https://example.com', status: 200 },
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          {
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+              { method: 'click', params: { selector: '#private' } },
+            ],
+          },
+          { ...mockContext, sessionId: 'diagnostic-batch' },
+        );
+      } catch {
+        /* assert event below */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      const props = fire.firstCall.args[2];
+      expect(props).to.include({
+        error_reason: 'selector_miss',
+        error_code: 'SELECTOR_NOT_FOUND',
+        failed_method: 'click',
+        failed_command_index: 1,
+        error_category: 'user_error',
+      });
+      expect(JSON.stringify(props)).not.to.match(/#private|secret|xxx/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('retains setup HTTP status without a command index', async () => {
+    const srv = await makeRejectingServer(403, '<html>private</html>');
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'diagnostic-connect' },
+        );
+      } catch {
+        /* assert event below */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'forbidden',
+        error_source: 'api',
+        error_status_code: 403,
+        error_status_origin: 'api',
+      });
+      expect(fire.firstCall.args[2]).not.to.have.property('failed_method');
+      expect(fire.firstCall.args[2]).not.to.have.property(
+        'failed_command_index',
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('reports invalid batches before commands start', async () => {
+    const { execute, fire } = registerWithAnalytics(mockConfig);
+    try {
+      await execute(
+        { commands: [{ method: 'click', params: {} }] },
+        { ...mockContext, sessionId: 'diagnostic-invalid-batch' },
+      );
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).to.include({
+      error_reason: 'invalid_params',
+      error_source: 'validation',
+    });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('does not label a failed connection without an HTTP response as an API response', async () => {
+    const srv = await makeRejectingServer(403, 'unused');
+    await srv.close();
+    const { execute, fire } = registerWithAnalytics({
+      ...mockConfig,
+      browserlessApiUrl: srv.url,
+    });
+    try {
+      await execute(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, sessionId: 'diagnostic-refused' },
+      );
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2].error_source).not.to.equal('api');
+    expect(fire.firstCall.args[2]).not.to.have.property('error_status_code');
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
+  });
+
+  it('keeps a target navigation status separate from API response status', async () => {
+    const srv = await makeRespondingServer(() => ({
+      url: 'chrome-error://chromewebdata/',
+      status: 503,
+    }));
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      try {
+        await execute(
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { ...mockContext, sessionId: 'diagnostic-target' },
+        );
+      } catch {
+        /* assert event */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'navigation_failed',
+        error_source: 'target_website',
+        error_status_code: 503,
+        error_status_origin: 'target_website',
+      });
+      expect(fire.firstCall.args[2]).not.to.have.property('status_code');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const [code, method, message, reason] of [
+    ['INVALID_PARAMS', 'click', 'bad parameters', 'invalid_params'],
+    ['UNKNOWN_METHOD', 'notAMethod', 'unknown', 'unknown_method'],
+    ['BROWSER_CRASHED', 'snapshot', 'crashed', 'session_lost'],
+    ['', 'evaluate', 'private script threw', 'script_error'],
+    ['', 'goto', 'net::ERR_NAME_NOT_RESOLVED', 'navigation_failed'],
+    ['', 'waitForSelector', 'Timed out', 'timeout'],
+    ['', 'goto', 'HTTP 401', 'unauthorized'],
+    ['', 'goto', 'HTTP 403', 'forbidden'],
+    ['', 'goto', 'HTTP 404', 'not_found'],
+    ['', 'goto', 'HTTP 503', 'server_error'],
+    ['opaque-private-code', 'snapshot', 'unrecognized', 'unknown'],
+  ]) {
+    it(`preserves ${reason} as a detailed agent reason`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code: code || undefined, message }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method, params: {} },
+            { ...mockContext, sessionId: `diagnostic-${reason}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({
+          error_reason: reason,
+          failed_command_index: 0,
+        });
+        // Numbers in prose cannot establish HTTP status provenance.
+        expect(fire.firstCall.args[2]).not.to.have.property(
+          'error_status_code',
+        );
+        if (reason === 'unknown')
+          expect(fire.firstCall.args[2]).not.to.have.property('error_code');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('clears failure metadata when a fatal command succeeds on retry', async () => {
+    let calls = 0;
+    const srv = await makeRespondingServer(() =>
+      ++calls === 1
+        ? new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' })
+        : { url: 'https://example.com', status: 200 },
+    );
+    try {
+      const { execute, fire } = registerWithAnalytics({
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+      });
+      await execute(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, sessionId: 'diagnostic-retry' },
+      );
+      expect(srv.hits()).to.equal(2);
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2].success).to.equal(true);
+      expect(
+        Object.keys(fire.firstCall.args[2]).filter(
+          (k) => k.startsWith('error_') || k.startsWith('failed_'),
+        ),
+      ).to.deep.equal([]);
+    } finally {
+      await srv.close();
+    }
+  });
 
   it('injects _prompt into the schema and logs it redacted', async () => {
     const { added, execute, fire } = registerWithAnalytics(mockConfig);
@@ -1280,10 +1504,13 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).to.include({
       success: false,
       error_category: 'user_error',
+      error_reason: 'invalid_params',
+      error_source: 'validation',
       analytics_version: 2,
       session_reused: false,
       session_age_ms: 0,
     });
+    expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
   });
 
   it('reports one new acquisition and one reuse for concurrent calls', async () => {
@@ -1441,6 +1668,110 @@ describe('browserless_agent _prompt capture', () => {
       await srv.close();
     }
   });
+});
+
+describe('browserless_agent reportOutcome', () => {
+  afterEach(() => sinon.restore());
+
+  it('rejects malformed top-level verdicts before forwarding', async () => {
+    const calls: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      calls.push(method);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const params of [
+        {},
+        { success: 'yes' },
+        { success: false, reason: 'unlisted' },
+      ]) {
+        try {
+          await execute({ method: 'reportOutcome', params }, mockContext);
+          expect.fail('expected invalid verdict to be rejected');
+        } catch (err) {
+          expect(err).to.be.instanceOf(UserError);
+        }
+      }
+      expect(calls).to.deep.equal([]);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('forwards a valid false top-level verdict', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const srv = await makeRespondingServer((method, params) => {
+      calls.push({ method, params });
+      return { recorded: true };
+    });
+    try {
+      await getAgentExecute(srv.url)(
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'captcha' },
+        },
+        mockContext,
+      );
+      expect(calls).to.deep.equal([
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'captcha' },
+        },
+      ]);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const complianceMode of [false, true]) {
+    it(`forwards the verdict without replacing the page result (compliant=${complianceMode})`, async () => {
+      const calls: Array<{ method: string; params: unknown }> = [];
+      const srv = await makeRespondingServer((method, params) => {
+        calls.push({ method, params });
+        return method === 'reportOutcome'
+          ? { recorded: true }
+          : { status: 200, marker: 'page-result' };
+      });
+      try {
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerAgentTools(server, {
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+          complianceMode,
+        });
+        const tool = spy
+          .getCalls()
+          .find((c) => c.args[0].name === 'browserless_agent')!.args[0];
+        const execute = tool.execute as (
+          args: unknown,
+          ctx: unknown,
+        ) => Promise<{ content: Content[] }>;
+        const verdict = { success: false, reason: 'captcha' };
+        const result = await execute(
+          {
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+              { method: 'reportOutcome', params: verdict },
+              { method: 'close' },
+            ],
+          },
+          { ...mockContext, sessionId: `outcome-${complianceMode}` },
+        );
+        expect(calls).to.deep.equal([
+          { method: 'goto', params: { url: 'https://example.com' } },
+          { method: 'reportOutcome', params: verdict },
+        ]);
+        expect(JSON.stringify(result.content))
+          .to.include('page-result')
+          .and.not.include('recorded');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 });
 
 describe('browserless_agent session handle on errors', () => {

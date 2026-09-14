@@ -113,7 +113,16 @@ async function defaultHandleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const errorBody = await res.text().catch(() => res.statusText);
     const message = errorBody.trim() || res.statusText;
-    throw new Error(`Server error ${res.status}: ${message}`);
+    let code: unknown;
+    try {
+      const body = JSON.parse(errorBody);
+      code = body?.code ?? body?.error?.code;
+    } catch {
+      /* Non-JSON errors retain their existing message. */
+    }
+    throw Object.assign(new Error(`Server error ${res.status}: ${message}`), {
+      apiCode: code,
+    });
   }
   return (await res.json()) as T;
 }
@@ -146,8 +155,15 @@ function apiFetch<T>(
       );
       try {
         const res = await fetch(url, { ...init, signal: controller.signal });
-        await throwIfProfileMissing(res, opts.profile);
-        return await handle(res);
+        try {
+          await throwIfProfileMissing(res, opts.profile);
+          return await handle(res);
+        } catch (error) {
+          if (error instanceof Error && !res.ok) {
+            Object.assign(error, { apiStatus: res.status });
+          }
+          throw error;
+        }
       } finally {
         clearTimeout(timeoutId);
       }
