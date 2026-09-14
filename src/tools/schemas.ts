@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { ProxyOptionsSchema } from '../lib/agent-client.js';
+import {
+  PERSONA_FIELDS,
+  PersonaOptionsSchema,
+  ProxyOptionsSchema,
+} from '../lib/agent-client.js';
 
 // NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
 // fromCharCode so the literal control character never appears in source.
@@ -836,12 +840,21 @@ const AgentToolCommandSchema = z.object({
   params: flatCommandParams,
 });
 
-// Top-level invariants, shared by the full validation schema and the slim tool
-// schema so both enforce them identically.
 const refineProfileExclusive = (v: {
   profile?: unknown;
   createProfile?: unknown;
 }): boolean => !(v.profile && v.createProfile);
+const refineRecordCreateProfile = (v: {
+  record?: unknown;
+  createProfile?: unknown;
+}): boolean => !(v.record && v.createProfile);
+const refineCreateProfilePersona = (
+  v: Record<string, unknown> & { createProfile?: unknown },
+): boolean =>
+  !v.createProfile ||
+  !PERSONA_FIELDS.some(
+    (field) => field !== 'emulationOs' && v[field] !== undefined,
+  );
 const refineStopRecordingLast = (v: {
   commands?: ReadonlyArray<{ method?: string }>;
 }): boolean => {
@@ -854,6 +867,69 @@ const refineStopRecordingLast = (v: {
   );
 };
 
+const addPersonaIssues = (
+  v: Record<string, unknown> & {
+    os?: string;
+    emulationOs?: string;
+    emulatedDevice?: unknown;
+    deviceSlot?: unknown;
+    screen?: unknown;
+    deviceScaleFactor?: unknown;
+  },
+  ctx: z.RefinementCtx,
+): void => {
+  if (v.os && v.emulationOs && v.os !== v.emulationOs) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['emulationOs'],
+      message: '`os` and `emulationOs` must match when both are provided.',
+    });
+  }
+  const hasDesktopOs = ['windows', 'macos', 'linux'].includes(
+    v.emulationOs ?? v.os ?? '',
+  );
+  if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['emulatedDevice'],
+      message: 'emulatedDevice requires emulationOs="android".',
+    });
+  }
+  if (v.deviceSlot !== undefined && !hasDesktopOs) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['deviceSlot'],
+      message:
+        'deviceSlot requires a desktop emulationOs (windows, macos, or linux).',
+    });
+  }
+  if (v.screen !== undefined && !hasDesktopOs) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['screen'],
+      message:
+        'screen requires a desktop emulationOs (windows, macos, or linux).',
+    });
+  }
+  if (v.deviceScaleFactor !== undefined) {
+    if (!hasDesktopOs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['deviceScaleFactor'],
+        message:
+          'deviceScaleFactor requires a desktop emulationOs (windows, macos, or linux).',
+      });
+    }
+    if (v.screen === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['deviceScaleFactor'],
+        message: 'deviceScaleFactor requires screen.',
+      });
+    }
+  }
+};
+
 // Apply both top-level agent invariants to a params object so the rich
 // validation schema and its slim tool projection can never drift.
 const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
@@ -863,11 +939,33 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
         '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
         'one) cannot both be set',
     })
+    .refine(refineRecordCreateProfile, {
+      message:
+        'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+      path: ['record'],
+    })
+    .refine(refineCreateProfilePersona, {
+      message:
+        'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
+    })
     .refine(refineStopRecordingLast, {
       message:
         '`stopRecording` must be the final command, except before `close`',
       path: ['commands'],
-    });
+    })
+    .superRefine((value, ctx) =>
+      addPersonaIssues(
+        value as Record<string, unknown> & {
+          os?: string;
+          emulationOs?: string;
+          emulatedDevice?: unknown;
+          deviceSlot?: unknown;
+          screen?: unknown;
+          deviceScaleFactor?: unknown;
+        },
+        ctx,
+      ),
+    );
 
 const agentParamsObject = z.object({
   method: z
@@ -888,9 +986,10 @@ const agentParamsObject = z.object({
     .optional()
     .describe(COMMANDS_DESCRIPTION),
   proxy: ProxyOptionsSchema.optional().describe(
-    'Residential / external proxy config. Read once at session creation. ' +
+    'Residential, datacenter, or external proxy config. Read once at session creation. ' +
       'Changing requires close() + a new session call.',
   ),
+  ...PersonaOptionsSchema.shape,
   record: z
     .boolean()
     .optional()

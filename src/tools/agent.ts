@@ -17,12 +17,14 @@ import {
   closeSession,
   destroySession,
   isRetryableUpgradeError,
+  PERSONA_FIELDS,
   UpgradeError,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
   ErrorCategory,
   McpConfig,
+  PersonaOptions,
   SkillId,
   SnapshotResult,
 } from '../@types/types.js';
@@ -645,6 +647,9 @@ export function registerAgentTools(
               params: c.params ?? {},
             }))
           : [{ method: params.method ?? '', params: params.params ?? {} }];
+      const personaRequested =
+        params.os !== undefined ||
+        PERSONA_FIELDS.some((field) => params[field] !== undefined);
 
       // Defense-in-depth: even if the schema were mis-built, compliant never
       // forwards a non-allowlisted method, auth-profile, or proxy arg to the backend.
@@ -667,6 +672,11 @@ export function registerAgentTools(
         if (params.proxy !== undefined) {
           throw new UserError(
             'Proxy configuration is not available on this endpoint.',
+          );
+        }
+        if (personaRequested) {
+          throw new UserError(
+            'Persona configuration is not available on this endpoint.',
           );
         }
         if (
@@ -726,8 +736,12 @@ export function registerAgentTools(
       // bot tell). Forwarded as ?emulationOs; see agent-client buildAgentWsUrl.
       const os =
         typeof (params as { os?: unknown }).os === 'string'
-          ? (params as { os: string }).os
-          : 'windows';
+          ? (params as { os: PersonaOptions['emulationOs'] }).os
+          : undefined;
+      const emulationOs =
+        params.emulationOs ??
+        os ??
+        (params.sessionId || attachSessionId ? undefined : 'windows');
       // Human-like cursor movement + pacing. Improves the passive score of
       // invisible anti-bot challenges (e.g. Revolut's post-passcode hCaptcha),
       // which weight real mouse/interaction signals; a machine-timed agent with
@@ -737,11 +751,43 @@ export function registerAgentTools(
         typeof (params as { humanlike?: unknown }).humanlike === 'boolean'
           ? (params as { humanlike: boolean }).humanlike
           : true;
+      const persona = {
+        emulationOs: params.emulationOs ?? os,
+        emulatedDevice: params.emulatedDevice,
+        screen: params.screen,
+        deviceScaleFactor: params.deviceScaleFactor,
+        deviceSlot: params.deviceSlot,
+      };
       // createProfile attaches by session id, which omits integrationId — binding
       // here would be silently dropped, so reject rather than mislead.
       if (createProfile && integrationId) {
         throw new UserError(
           'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
+        );
+      }
+      if (record && createProfile) {
+        throw new UserError(
+          'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+        );
+      }
+      if (record && attachSessionId) {
+        throw new UserError(
+          'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
+        );
+      }
+      if (
+        createProfile &&
+        PERSONA_FIELDS.some(
+          (field) => field !== 'emulationOs' && params[field] !== undefined,
+        )
+      ) {
+        throw new UserError(
+          'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
+        );
+      }
+      if (attachSessionId && personaRequested) {
+        throw new UserError(
+          'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
         );
       }
       const echoedSessionId = params.sessionId;
@@ -786,6 +832,8 @@ export function registerAgentTools(
           proxy_country: proxy?.proxyCountry ?? null,
           proxy_sticky: !!proxy?.proxySticky,
           proxy_external: !!proxy?.externalProxyServer,
+          emulation_os: emulationOs,
+          persona_requested: personaRequested,
           profile_used: !!profile,
           create_profile: !!createProfile,
           integration_used: !!integrationId,
@@ -805,8 +853,8 @@ export function registerAgentTools(
         });
         sendAnalytics(false);
         throw new UserError(
-          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level tool argument (proxy, proxyCountry, proxyState, proxyCity, proxySticky, proxyLocaleMatch, proxyPreset, externalProxyServer) and is read once at session creation. ' +
-            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy options set at the top level (alongside `method`/`commands`), e.g. { "proxy": "residential", "proxyCountry": "us", "commands": [ ... ] }.',
+          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
+            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy object alongside `method`/`commands`, e.g. { "proxy": { "proxy": "residential", "proxyCountry": "us" }, "commands": [ ... ] }.',
         );
       }
 
@@ -847,9 +895,10 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
-            os,
+            emulationOs,
             humanlike,
             record,
+            persona,
             onSession,
           );
         } catch (connErr: unknown) {
@@ -869,7 +918,10 @@ export function registerAgentTools(
         ];
       }
 
-      const runCommands = async (isRetry: boolean): Promise<Content[]> => {
+      const runCommands = async (
+        isRetry: boolean,
+        retryPersona: PersonaOptions = persona,
+      ): Promise<Content[]> => {
         onSession(false, 0);
         lastFailure = undefined;
         lastCategory = undefined;
@@ -888,9 +940,10 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
-            os,
+            emulationOs,
             humanlike,
             record,
+            retryPersona,
             onSession,
           );
         } catch (connErr: unknown) {
@@ -914,7 +967,7 @@ export function registerAgentTools(
             integrationId,
             allowedDomains,
           );
-          return runCommands(true);
+          return runCommands(true, retryPersona);
         }
 
         // Execute all commands sequentially
@@ -1030,7 +1083,7 @@ export function registerAgentTools(
               log.warn(
                 `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
               );
-              return runCommands(true);
+              return runCommands(true, agentSession.persona ?? retryPersona);
             }
             const classified = classifyAgentError({
               err: { message: errMessage },
@@ -1064,7 +1117,7 @@ export function registerAgentTools(
                 allowedDomains,
               );
               if (!isRetry) {
-                return runCommands(true);
+                return runCommands(true, agentSession.persona ?? retryPersona);
               }
             }
 
