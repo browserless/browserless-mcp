@@ -264,6 +264,55 @@ Then point your MCP client at `http://localhost:8080/mcp` using the same header/
 | `AMPLITUDE_API_KEY`          | No       | —                                        | Amplitude project API key. Sends MCP usage analytics — SDK lifecycle events plus our own tool/skill events                                                 |
 | `MCP_COMPLIANCE_MODE`        | No       | unset (full surface)                     | Serve the reduced, directory-compliant surface. Fails closed: any set value except `false`/`0`/`no`/`off` enables it                                       |
 
+### Skill retrieval diagnostics
+
+`Skill Retrieval Completed` emits once per actual remote skill fetch through
+the existing analytics queue (when `ANALYTICS_ENABLED`, `SQS_QUEUE_URL`, and
+`SQS_REGION` are configured). It is not duplicated through the SDK's
+`AMPLITUDE_API_KEY` transport. Cache hits and concurrent callers sharing a fetch
+do not emit another completion. Failed retrievals remain retryable on the next
+call; this instrumentation adds no retries.
+
+Fields are `result=hit|miss|error`, normalized `domain`, UUID `request_id`,
+`source`, `attempt`, integer `duration_ms`, `stage=fetch|decode|validate`, and
+available `http_status`. `skill_count` appears only on valid responses: positive
+for hits, zero for misses. Errors carry `error_category=timeout|network_error|http_error|invalid_json|invalid_shape`.
+Sources are `cli_agent`, `script_builder`, `autologin`, `agent_run`, `mcp_client`,
+or `unknown`. Each fetch currently has `attempt=1`; no run identifier is
+available at these call sites, so `run_id` is omitted.
+
+Set `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` to a trusted collector's full `/v1/logs`
+URL to export matching `skill.retrieval.failed` WARN records as OTLP/HTTP JSON.
+The default is disabled. Exports have a one-second deadline, at most 16 in-flight
+requests, and no retry. Caught queue/skill analytics errors produce
+`skill.telemetry.delivery_failed` with `originating_event` and the fixed
+diagnostic category `delivery_error`, at most once per minute per process.
+Exporter failures are swallowed without recursively reporting themselves.
+No new log contains tokens, prompts, full URLs, response bodies, or recipe text.
+The queue retains its existing authentication field, separately from log fields.
+
+Example failure attributes:
+
+```json
+{
+  "event.name": "skill.retrieval.failed",
+  "result": "error",
+  "domain": "shop.example",
+  "request_id": "416e0409-25e2-4399-a3fa-6939f43a75e0",
+  "source": "mcp_client",
+  "attempt": 1,
+  "stage": "fetch",
+  "error_category": "http_error",
+  "http_status": 429,
+  "duration_ms": 17
+}
+```
+
+Retrieval error rate is error completions / all completions. Hit rate is hit
+completions / valid completions. Do not add the separate server `Skill Lookup`
+events to either denominator. Tests use local/mock sinks; a configured exporter
+or console message is not proof of remote receipt.
+
 ### Failure diagnostics
 
 `MCP Tool Request` retains `analytics_version=2`, the existing coarse

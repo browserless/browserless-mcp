@@ -10,6 +10,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastMCP } from 'fastmcp';
 import type { BrowserlessSession } from '../@types/types.js';
+import { skillDeliveryFailed } from './skill-telemetry.js';
 
 export type AmplitudeFactory = (
   apiKey: string,
@@ -162,7 +163,14 @@ export const trackAmplitudeEvent = (
       activeAnalytics.trackServerEvent(ctx, eventName, props);
     }
   } catch (error) {
-    console.error('[browserless-mcp] Amplitude custom event failed:', error);
+    if (
+      eventName === 'Skill Retrieval Completed' ||
+      eventName === 'MCP Skill'
+    ) {
+      skillDeliveryFailed(eventName);
+    } else {
+      console.error('[browserless-mcp] Amplitude custom event failed:', error);
+    }
   }
 };
 

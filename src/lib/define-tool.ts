@@ -55,7 +55,7 @@ const PROMPT_FIELD = z
 /** Narrower than `AnalyticsHelper` so the per-invocation wrapper is assignable. */
 export type ToolAnalytics = Pick<
   AnalyticsHelper,
-  'fireToolRequest' | 'fireSkill'
+  'fireToolRequest' | 'fireSkill' | 'fireSkillRetrieval'
 >;
 
 export interface ToolRunContext<P> {
@@ -230,6 +230,8 @@ export function defineTool<P, R>(
           analytics?.fireToolRequest(t, tool, enrich(props));
         },
         fireSkill: (t, props) => analytics?.fireSkill(t, props),
+        fireSkillRetrieval: (t, event, source) =>
+          analytics?.fireSkillRetrieval(t, event, source),
       };
 
       const emit = (props: Record<string, unknown>) =>

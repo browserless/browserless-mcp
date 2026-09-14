@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { McpConfig } from '../@types/types.js';
 import { assertAllowedApiUrl } from '../lib/api-url-guard.js';
 
@@ -93,6 +94,26 @@ interface RemoteSkill {
   skill_md?: string;
 }
 
+export type SkillRetrieval = {
+  domain: string;
+  request_id: string;
+  attempt: number;
+  duration_ms: number;
+  http_status?: number;
+  stage: 'fetch' | 'decode' | 'validate';
+} & (
+  | { result: 'hit' | 'miss'; skill_count: number }
+  | {
+      result: 'error';
+      error_category:
+        | 'timeout'
+        | 'network_error'
+        | 'http_error'
+        | 'invalid_json'
+        | 'invalid_shape';
+    }
+);
+
 const mergeRemoteSkills = (key: string, remote: RemoteSkill[]): void => {
   // Drop the previous cache
   for (const prev of manifest.get(key) ?? [])
@@ -121,6 +142,7 @@ const fetchAndMerge = async (
   apiUrl: string,
   token: string,
   fetchImpl: typeof fetch,
+  completed?: (event: SkillRetrieval) => void,
 ): Promise<boolean> => {
   const endpoint = `${apiUrl.replace(/\/+$/, '')}/skills?domain=${encodeURIComponent(
     host,
@@ -128,18 +150,81 @@ const fetchAndMerge = async (
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REMOTE_SKILL_TIMEOUT_MS);
+  const started = performance.now();
+  const request_id = randomUUID();
+  let stage: SkillRetrieval['stage'] = 'fetch';
+  let http_status: number | undefined;
+  let outcome:
+    | Pick<
+        Extract<SkillRetrieval, { result: 'error' }>,
+        'result' | 'error_category'
+      >
+    | Pick<
+        Extract<SkillRetrieval, { skill_count: number }>,
+        'result' | 'skill_count'
+      > = { result: 'error', error_category: 'network_error' };
   try {
-    const res = await fetchImpl(endpoint, { signal: controller.signal });
-    if (!res.ok) return false;
-    const skills = (await res.json()) as RemoteSkill[];
+    const res = await fetchImpl(endpoint, {
+      signal: controller.signal,
+      headers: { 'x-request-id': request_id },
+    });
+    http_status = res.status;
+    if (!res.ok) {
+      outcome = { result: 'error', error_category: 'http_error' };
+      return false;
+    }
+    stage = 'decode';
+    const skills: unknown = await res.json();
+    stage = 'validate';
+    if (
+      !Array.isArray(skills) ||
+      !skills.every(
+        (skill) =>
+          skill !== null &&
+          typeof skill === 'object' &&
+          typeof skill.task === 'string' &&
+          skill.task.length > 0 &&
+          typeof skill.skill_md === 'string' &&
+          skill.skill_md.length > 0 &&
+          (skill.title === undefined || typeof skill.title === 'string'),
+      )
+    ) {
+      outcome = { result: 'error', error_category: 'invalid_shape' };
+      return false;
+    }
     // Merge even an empty array: a refetch must clear recipes deleted upstream.
-    if (Array.isArray(skills)) mergeRemoteSkills(key, skills);
+    mergeRemoteSkills(key, skills);
+    outcome = {
+      result: skills.length > 0 ? 'hit' : 'miss',
+      skill_count: skills.length,
+    };
     return true;
-  } catch {
+  } catch (error) {
     // network error / timeout / bad JSON — transient, let the next goto retry
+    outcome = {
+      result: 'error',
+      error_category: controller.signal.aborted
+        ? 'timeout'
+        : stage === 'decode' && error instanceof SyntaxError
+          ? 'invalid_json'
+          : 'network_error',
+    };
     return false;
   } finally {
     clearTimeout(timeout);
+    try {
+      completed?.({
+        ...outcome,
+        domain: key,
+        request_id,
+        attempt: 1,
+        duration_ms: Math.max(0, Math.round(performance.now() - started)),
+        stage,
+        ...(http_status === undefined ? {} : { http_status }),
+      });
+    } catch {
+      // Telemetry must never change the cache or the caller's operation.
+    }
   }
 };
 
@@ -149,6 +234,7 @@ export const hydrateRemoteSkills = (
   token: string | undefined,
   config: Pick<McpConfig, 'browserlessApiUrl' | 'allowedApiUrlHosts'>,
   fetchImpl: typeof fetch = fetch,
+  completed?: (event: SkillRetrieval) => void,
 ): Promise<void> => {
   if (!url || !apiUrl || !token) return Promise.resolve();
 
@@ -169,12 +255,16 @@ export const hydrateRemoteSkills = (
   const entry = hydrations.get(key);
   if (entry && Date.now() < entry.expiresAt) return entry.promise;
 
-  const promise = fetchAndMerge(key, host, apiUrl, token, fetchImpl).then(
-    (ok) => {
-      if (!ok && hydrations.get(key)?.promise === promise)
-        hydrations.delete(key);
-    },
-  );
+  const promise = fetchAndMerge(
+    key,
+    host,
+    apiUrl,
+    token,
+    fetchImpl,
+    completed,
+  ).then((ok) => {
+    if (!ok && hydrations.get(key)?.promise === promise) hydrations.delete(key);
+  });
   hydrations.set(key, { promise, expiresAt: Date.now() + ttlMs });
   return promise;
 };
