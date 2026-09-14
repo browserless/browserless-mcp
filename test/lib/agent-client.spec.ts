@@ -10,6 +10,7 @@ import {
   proxyFingerprint,
   sessionHandle,
   dropMcpSession,
+  send,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
 import type { ProxyOptions } from '../../src/@types/types.js';
@@ -17,6 +18,7 @@ import {
   makeAcceptingServer,
   makeRejectingServer,
   makeStallingServer,
+  makeRespondingServer,
 } from '../helpers/upgrade-server.js';
 
 describe('agent-client buildAgentWsUrl', () => {
@@ -1621,6 +1623,64 @@ describe('agent-client createProfile with os and humanlike', () => {
   afterEach(() => {
     sinon.restore();
   });
+
+  for (const recovery of ['reconnect', 'recreate'] as const) {
+    it(`preserves profile OS on ${recovery} after socket loss`, async () => {
+      const server = await makeRespondingServer(() => ({ ok: true }));
+      fetchStub = sinon.stub(globalThis, 'fetch').callsFake(
+        async () =>
+          new Response(
+            JSON.stringify({ id: `profile-${fetchStub.callCount}` }),
+            {
+              status: 200,
+            },
+          ),
+      );
+      const open = (os?: string) =>
+        getOrCreateSession(
+          `profile-${recovery}`,
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          { name: 'recovery-profile' },
+          undefined,
+          false,
+          undefined,
+          `profile-${recovery}-handle`,
+          undefined,
+          undefined,
+          os,
+        );
+
+      try {
+        const first = await open('macos');
+        const closed = new Promise<void>((resolve) =>
+          first.ws.once('close', () => resolve()),
+        );
+        first.ws.terminate();
+        await closed;
+
+        const session = recovery === 'reconnect' ? first : await open();
+        const response = await send(session, 'getCookies');
+        expect(response.result).to.deep.equal({ ok: true });
+        expect(fetchStub.callCount).to.equal(recovery === 'reconnect' ? 1 : 2);
+        for (const call of fetchStub.getCalls()) {
+          expect(
+            new URL(call.args[0]).searchParams.get('emulationOs'),
+          ).to.equal('macos');
+        }
+        const attach = new URL(server.upgradeUrls()[1]!, server.url);
+        expect(attach.searchParams.get('sessionId')).to.equal(
+          recovery === 'reconnect' ? 'profile-1' : 'profile-2',
+        );
+        expect(attach.searchParams.has('emulationOs')).to.equal(false);
+        expect(session.persona?.emulationOs).to.equal('macos');
+      } finally {
+        await server.close();
+      }
+    });
+  }
 
   it('forwards OS to profile creation and humanlike to the Agent attach', async () => {
     const server = await makeAcceptingServer();

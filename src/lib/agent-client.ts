@@ -1010,7 +1010,12 @@ export const getOrCreateSession = async (
       creationSessionId = attachSessionId;
     } else if (createProfile) {
       creationSessionId = (
-        await postCreateProfile(apiUrl, token, createProfile, effectiveOs)
+        await postCreateProfile(
+          apiUrl,
+          token,
+          createProfile,
+          effectivePersona?.emulationOs,
+        )
       ).id;
     }
     const ws = await connect(
@@ -1117,7 +1122,7 @@ export const send = async (
         session.source,
         session.integrationId,
         session.allowedDomains,
-        session.os,
+        session.creationSessionId ? undefined : session.os,
         session.humanlike,
         session.record,
         session.creationSessionId ? undefined : session.persona,
