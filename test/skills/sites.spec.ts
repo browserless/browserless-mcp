@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 import {
   listSiteSkillsForHost,
   loadSiteSkill,
@@ -110,6 +111,151 @@ describe('site skills', function () {
   });
 
   describe('hydrateRemoteSkills (enterprise GET /skills)', function () {
+    it('classifies a broken response stream as network failure, not malformed JSON', async function () {
+      const events: Record<string, unknown>[] = [];
+      const fetcher: typeof fetch = async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw new TypeError('terminated secret stream');
+          },
+        }) as unknown as Response;
+      await hydrateRemoteSkills(
+        'https://shop.example',
+        'https://api.test',
+        'tok',
+        apiUrlConfig,
+        fetcher,
+        (event) => events.push(event),
+      );
+      expect(events).to.have.length(1);
+      expect(events[0]).to.include({
+        result: 'error',
+        stage: 'decode',
+        error_category: 'network_error',
+        http_status: 200,
+      });
+      expect(JSON.stringify(events)).not.to.include('secret');
+    });
+
+    it('completes each transport attempt, not cache reads, with classified outcomes', async function () {
+      const events: Record<string, unknown>[] = [];
+      const outcomes: [unknown, string, string | undefined][] = [
+        [
+          [{ task: 'search', title: 'Search', skill_md: SKILL_BODY }],
+          'hit',
+          undefined,
+        ],
+        [[], 'miss', undefined],
+        [{ skills: [] }, 'error', 'invalid_shape'],
+        [[null], 'error', 'invalid_shape'],
+        [[{ task: 'search', skill_md: 17 }], 'error', 'invalid_shape'],
+      ];
+      for (const [body, result, category] of outcomes) {
+        __resetRemoteSkillsForTesting();
+        const fetcher = sinon.spy(fakeFetch(body));
+        const retrieve = () =>
+          hydrateRemoteSkills(
+            'https://www.shop.example/path?password=secret',
+            'https://api.test',
+            'secret-token',
+            apiUrlConfig,
+            fetcher,
+            (event: Record<string, unknown>) => events.push(event),
+          );
+        await retrieve();
+        await retrieve();
+        expect(fetcher.callCount).to.equal(result === 'error' ? 2 : 1);
+        const recent = events.splice(0);
+        expect(recent).to.have.length(fetcher.callCount);
+        for (const event of recent) {
+          expect(event).to.include({
+            result,
+            domain: 'shop.example',
+            attempt: 1,
+          });
+          expect(event.error_category).to.equal(category);
+          expect(event.duration_ms).to.be.at.least(0);
+          expect(event.request_id).to.match(/^[0-9a-f-]{36}$/);
+          if (result === 'error')
+            expect(event).not.to.have.property('skill_count');
+          else expect(event.skill_count).to.equal(result === 'hit' ? 1 : 0);
+          expect(JSON.stringify(event)).not.to.match(
+            /secret|password|skill_md|path/,
+          );
+        }
+      }
+    });
+
+    it('distinguishes HTTP, JSON, network and timeout failures without additional retries', async function () {
+      const cases: [typeof fetch, string, number | undefined][] = [
+        ...[401, 403, 429, 500].map(
+          (status) =>
+            [
+              async () => new Response('secret body', { status }),
+              'http_error',
+              status,
+            ] as [typeof fetch, string, number],
+        ),
+        [async () => new Response('not JSON'), 'invalid_json', 200],
+        [
+          async () => {
+            throw new Error('https://private/?token=secret');
+          },
+          'network_error',
+          undefined,
+        ],
+        [
+          async (_input, init) =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(new Error('aborted')),
+              );
+            }),
+          'timeout',
+          undefined,
+        ],
+      ];
+      for (const [transport, category, status] of cases) {
+        __resetRemoteSkillsForTesting();
+        const fetcher = sinon.spy(transport);
+        const events: Record<string, unknown>[] = [];
+        const pending = hydrateRemoteSkills(
+          'https://shop.example',
+          'https://api.test',
+          'secret-token',
+          apiUrlConfig,
+          fetcher,
+          (event: Record<string, unknown>) => events.push(event),
+        );
+        await pending;
+        expect(fetcher.callCount).to.equal(1);
+        expect(events).to.have.length(1);
+        expect(events[0]).to.include({
+          result: 'error',
+          error_category: category,
+        });
+        expect(events[0].http_status).to.equal(status);
+        expect(events[0]).not.to.have.property('skill_count');
+        expect(JSON.stringify(events)).not.to.match(/private|secret|token/);
+      }
+    });
+
+    it('keeps a valid result when completion telemetry throws', async function () {
+      await hydrateRemoteSkills(
+        'https://shop.example',
+        'https://api.test',
+        'tok',
+        apiUrlConfig,
+        fakeFetch([{ task: 'search', skill_md: SKILL_BODY }]),
+        () => {
+          throw new Error('telemetry unavailable');
+        },
+      );
+      expect(loadSiteSkill('shop.example/search')).to.include('# Shop Search');
+    });
+
     it('merges remote skills into the manifest for a new host', async function () {
       expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
       await seedShop();

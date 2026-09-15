@@ -295,6 +295,41 @@ describe('Amplitude MCP analytics', () => {
       });
     });
 
+    it('sends retrieval completions only through the authenticated queue, never twice through the SDK', async () => {
+      const mock = new MockAmplitudeMCPAnalytics({
+        serverName: 'browserless-mcp',
+        serverVersion: '1.0.0',
+      });
+      const tracked = sinon.spy(mock, 'trackToolEvent');
+      initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+      const helper = new AnalyticsHelper(true);
+      const queued = sinon.stub(helper, 'send').resolves(true);
+      runWithContext(toolCtx(), () =>
+        helper.fireSkillRetrieval(
+          'queue-auth-token',
+          {
+            result: 'miss',
+            skill_count: 0,
+            domain: 'shop.example',
+            request_id: '416e0409-25e2-4399-a3fa-6939f43a75e0',
+            attempt: 1,
+            duration_ms: 17,
+            stage: 'validate',
+          },
+          'mcp_client',
+        ),
+      );
+      await new Promise(setImmediate);
+      expect(queued.callCount).to.equal(1);
+      expect(queued.firstCall.args[0]).to.equal('Skill Retrieval Completed');
+      expect(queued.firstCall.args[2]).to.include({
+        token: 'queue-auth-token',
+        source: 'mcp_client',
+        skill_count: 0,
+      });
+      expect(tracked.callCount).to.equal(0);
+    });
+
     it('emits nothing when Amplitude is disabled or outside a tool frame', () => {
       const mock = new MockAmplitudeMCPAnalytics({
         serverName: 'browserless-mcp',
@@ -313,6 +348,47 @@ describe('Amplitude MCP analytics', () => {
       initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
       helper.fireToolRequest('plain-token', 'browserless_scrape', {});
       expect(trackToolEvent.notCalled).to.equal(true);
+    });
+
+    it('isolates and safely diagnoses a caught skill SDK delivery failure', async () => {
+      const sandbox = sinon.createSandbox();
+      sandbox.useFakeTimers({ now: Date.now() + 300_000, toFake: ['Date'] });
+      const oldEndpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+      process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT =
+        'http://127.0.0.1:4318/v1/logs';
+      try {
+        const mock = new MockAmplitudeMCPAnalytics({
+          serverName: 'browserless-mcp',
+          serverVersion: '1.0.0',
+        });
+        sandbox
+          .stub(mock, 'trackToolEvent')
+          .throws(new Error('secret provider response'));
+        const rawLog = sandbox.stub(console, 'error');
+        const exported = sandbox
+          .stub(globalThis, 'fetch')
+          .resolves(new Response('{}'));
+        initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+        runWithContext(toolCtx(), () =>
+          new AnalyticsHelper(false).fireSkill('secret-token', {
+            skill: 'search',
+          }),
+        );
+        await new Promise(setImmediate);
+        expect(exported.callCount).to.equal(1);
+        expect(String(exported.firstCall.args[1]?.body)).to.include(
+          'skill.telemetry.delivery_failed',
+        );
+        expect(String(exported.firstCall.args[1]?.body)).not.to.include(
+          'secret',
+        );
+        expect(rawLog.callCount).to.equal(0);
+      } finally {
+        sandbox.restore();
+        if (oldEndpoint === undefined)
+          delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+        else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = oldEndpoint;
+      }
     });
   });
 });

@@ -983,6 +983,64 @@ const getAgentExecute = (
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
 
+describe('skill retrieval telemetry wiring', () => {
+  afterEach(() => {
+    sinon.restore();
+    __resetRemoteSkillsForTesting();
+  });
+
+  it('reports both explicit and automatic remote lookups without changing tool events', async () => {
+    __resetRemoteSkillsForTesting();
+    const originalFetch = globalThis.fetch;
+    sinon
+      .stub(globalThis, 'fetch')
+      .callsFake(async (input, init) =>
+        String(input).includes('/skills?')
+          ? new Response('[]')
+          : originalFetch(input, init),
+      );
+    const remote = await makeRespondingServer(() => ({
+      url: 'https://automatic.example',
+      elements: [],
+    }));
+    try {
+      const analytics = new AnalyticsHelper(false);
+      const retrieval = sinon.spy(analytics, 'fireSkillRetrieval');
+      const toolEvent = sinon.stub(analytics, 'fireToolRequest');
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const add = sinon.spy(server, 'addTool');
+      registerAgentTools(
+        server,
+        { ...mockConfig, browserlessApiUrl: remote.url },
+        analytics,
+      );
+      const skill = add
+        .getCalls()
+        .find((c) => c.args[0].name === 'browserless_skill')!.args[0];
+      await skill.execute({ site: 'explicit.example' }, mockContext as never);
+      const agent = getAgentExecute(remote.url, 'stdio', analytics);
+      await agent(
+        { method: 'snapshot' },
+        { ...mockContext, sessionId: 'retrieval-wiring' },
+      );
+      expect(retrieval.callCount).to.equal(2);
+      expect(retrieval.firstCall.args[1]).to.include({
+        domain: 'explicit.example',
+        result: 'miss',
+        skill_count: 0,
+      });
+      expect(retrieval.secondCall.args[1]).to.include({
+        domain: 'automatic.example',
+        result: 'miss',
+        skill_count: 0,
+      });
+      expect(toolEvent.callCount).to.equal(2);
+    } finally {
+      await remote.close();
+    }
+  });
+});
+
 describe('browserless_agent recording ownership', () => {
   afterEach(() => sinon.restore());
 

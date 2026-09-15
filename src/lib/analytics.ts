@@ -7,6 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { djb2 } from './utils.js';
 import { trackAmplitudeEvent } from './amplitude-analytics.js';
 import type { AnalyticsEvent } from '../@types/types.js';
+import type { SkillRetrieval } from '../skills/sites.js';
+import {
+  retrievalSchema,
+  skillSource,
+  logSkillEvent,
+  skillDeliveryFailed,
+} from './skill-telemetry.js';
 
 function sanitize(props: Record<string, unknown>): Record<string, unknown> {
   const out = { ...props };
@@ -96,12 +103,18 @@ export class AnalyticsHelper {
         const data = await this.sqsClient.send(command);
 
         if (data.Failed?.length) {
-          if (retries === 0) return false;
+          if (retries === 0) {
+            skillDeliveryFailed(eventName);
+            return false;
+          }
         } else {
           return true;
         }
       } catch {
-        if (retries === 0) return false;
+        if (retries === 0) {
+          skillDeliveryFailed(eventName);
+          return false;
+        }
       }
     }
 
@@ -136,5 +149,23 @@ export class AnalyticsHelper {
     const props = sanitize(properties);
     trackAmplitudeEvent('MCP Skill', props);
     this.send('MCP Skill', djb2(token), { token, ...props }).catch(() => {});
+  }
+
+  public fireSkillRetrieval(
+    token: string,
+    event: SkillRetrieval,
+    source: string,
+  ): void {
+    const parsed = retrievalSchema.safeParse(event);
+    if (!parsed.success) return;
+    const props = { ...parsed.data, source: skillSource(source) };
+    const eventName = 'Skill Retrieval Completed';
+    if (props.result === 'error')
+      void logSkillEvent('skill.retrieval.failed', props);
+    // One writer: the authenticated queue already publishes to Amplitude.
+    // Dual-publishing through the SDK would duplicate the completion count.
+    this.send(eventName, djb2(token), { ...props, token }).catch(() =>
+      skillDeliveryFailed(eventName),
+    );
   }
 }
