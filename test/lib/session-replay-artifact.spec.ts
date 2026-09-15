@@ -72,7 +72,41 @@ describe('buildReplayHtml', () => {
     const context = createContext({});
     runInContext(scripts[0][1], context);
     expect(context.rrwebPlayer.default).to.be.a('function');
-    expect(scripts[1][1]).to.include('rrwebPlayer.default');
+
+    // The bundle is real; a constructor spy isolates the generated bootstrap's
+    // wiring from browser rendering (covered by the Chromium smoke test).
+    const Player = sinon.spy();
+    context.rrwebPlayer.default = Player;
+    const elements = Object.fromEntries(
+      [...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [
+        id,
+        {
+          hidden: true,
+          textContent:
+            id === 'replay-data' ? JSON.stringify(artifact(twoEvents)) : '',
+          style: {},
+          classList: { toggle() {} },
+          setAttribute() {},
+          addEventListener() {},
+        },
+      ]),
+    );
+    context.document = { getElementById: (id: string) => elements[id] };
+    context.window = { innerWidth: 1280, innerHeight: 720 };
+    context.setInterval = () => {};
+    runInContext(scripts[1][1], context);
+    expect(Player.calledOnce).to.equal(true);
+    expect(Player.firstCall.args[0]).to.deep.equal({
+      target: elements.player,
+      props: {
+        events: twoEvents,
+        autoPlay: true,
+        showController: false,
+        width: 1192,
+        height: 530,
+      },
+    });
+    expect(elements.fallback.hidden).to.equal(true);
     expect(html).to.include('.rr-player');
   });
 
