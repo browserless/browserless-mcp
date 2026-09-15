@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.30.0](https://github.com/browserless/browserless-mcp/compare/v1.29.0...v1.30.0) (2026-09-15)
+
+
+### Features
+
+* add Agent persona and datacenter proxy options ([#293](https://github.com/browserless/browserless-mcp/issues/293)) ([9c5053e](https://github.com/browserless/browserless-mcp/commit/9c5053e3cc0e0b4f168048def760ad20e4d4a8f3))
+* add safe granular tool failure diagnostics ([#312](https://github.com/browserless/browserless-mcp/issues/312)) ([628de74](https://github.com/browserless/browserless-mcp/commit/628de746b72e68360ed2c9b557e115464b7024c6))
+* classify remote skill retrieval telemetry ([#315](https://github.com/browserless/browserless-mcp/issues/315)) ([5d71278](https://github.com/browserless/browserless-mcp/commit/5d712780cb18da468d9ff8314e5ff5eadab346e6))
+* record live URL and session reuse telemetry ([#311](https://github.com/browserless/browserless-mcp/issues/311)) ([7a2d761](https://github.com/browserless/browserless-mcp/commit/7a2d7614995f08661b4cc6ea5f796186dc94ed93))
+* support task outcome reports in browser agent ([#310](https://github.com/browserless/browserless-mcp/issues/310)) ([c127d77](https://github.com/browserless/browserless-mcp/commit/c127d77579f154c3e24375ba0a6895df522fa3b1))
+
 ## [1.29.0](https://github.com/browserless/browserless-mcp/compare/v1.28.1...v1.29.0) (2026-09-10)
 
 
