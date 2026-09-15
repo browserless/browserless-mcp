@@ -141,8 +141,13 @@ export const buildReplayHtml = (replay: ReplayArtifact): string => {
     requireFrom.resolve('rrweb-player/dist/style.css'),
     'utf8',
   );
+  // Only the CSS subpath is exported. Resolve the standalone browser bundle
+  // relative to it; the package root is a module with external dependencies.
   cachedPlayerJs ??= readFileSync(
-    requireFrom.resolve('rrweb-player/dist/index.js'),
+    join(
+      requireFrom.resolve('rrweb-player/dist/style.css'),
+      '../../umd/rrweb-player.min.js',
+    ),
     'utf8',
   );
 

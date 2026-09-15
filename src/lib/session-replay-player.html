@@ -323,7 +323,7 @@
           setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
         });
 
-        var Ctor = typeof rrwebPlayer !== "undefined" ? rrwebPlayer : window.rrwebPlayer;
+        var Ctor = typeof rrwebPlayer !== "undefined" ? rrwebPlayer.default : undefined;
         if (!Ctor || events.length < 2) { fallback.hidden = false; paint(0); return; }
 
         var player;
