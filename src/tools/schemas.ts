@@ -939,6 +939,16 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
         '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
         'one) cannot both be set',
     })
+    .refine(
+      ({ method, params, commands }) =>
+        (Array.isArray(commands) && commands.length > 0) ||
+        method !== 'clearSecrets' ||
+        ClearSecretsCommandSchema.safeParse({ method, params }).success,
+      {
+        message: '`clearSecrets` does not accept parameters',
+        path: ['params'],
+      },
+    )
     .refine(refineRecordCreateProfile, {
       message:
         'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
@@ -968,6 +978,14 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
     );
 
 const agentParamsObject = z.object({
+  requiredCapabilities: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      'Capabilities the planned flow requires (for example "vision", "os-spoofing", ' +
+        '"datacenter-proxy", or "secret-capture"). Browserless checks the selected ' +
+        'route and plan before opening a browser and names an available route on failure.',
+    ),
   method: z
     .string()
     .optional()
@@ -1136,6 +1154,7 @@ const COMPLIANT_COMMANDS_DESCRIPTION =
 // Shared top-level fields for both compliant schemas (rich + slim projection)
 // so they can't drift; `.strict()` on each rejects any prohibited/removed key.
 const compliantParamsObject = z.object({
+  requiredCapabilities: agentParamsObject.shape.requiredCapabilities,
   rationale: z
     .string()
     .optional()

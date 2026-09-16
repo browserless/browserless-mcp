@@ -12,6 +12,7 @@ import {
   type StoredDownload,
 } from '../lib/download-store.js';
 import {
+  buildAgentWsUrl,
   getOrCreateSession,
   send,
   closeSession,
@@ -19,6 +20,7 @@ import {
   isRetryableUpgradeError,
   PERSONA_FIELDS,
   UpgradeError,
+  preflightAgentCapabilities,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -88,6 +90,51 @@ export {
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
+const SECRET_SAFE_METHODS = new Set([
+  'click',
+  'type',
+  'select',
+  'checkbox',
+  'hover',
+  'scroll',
+  'waitForSelector',
+  'waitForTimeout',
+  'uploadFile',
+  'saveProfile',
+  'reportSkillOutcome',
+  'close',
+]);
+const TOP_FRAME_NAVIGATION_METHODS = new Set([
+  'goto',
+  'back',
+  'forward',
+  'reload',
+]);
+
+export const validateSecretCaptureOrdering = (
+  commands: ReadonlyArray<{
+    method: string;
+    params?: Record<string, unknown>;
+  }>,
+  initiallyVisible = false,
+): void => {
+  let secretVisible = initiallyVisible;
+  for (const command of commands) {
+    if (command.method === 'loadSecret') {
+      secretVisible = true;
+    } else if (
+      command.method === 'clearSecrets' ||
+      TOP_FRAME_NAVIGATION_METHODS.has(command.method)
+    ) {
+      secretVisible = false;
+    } else if (secretVisible && !SECRET_SAFE_METHODS.has(command.method)) {
+      throw new Error(
+        `${command.method} cannot run after loadSecret while a credential may be on-screen. ` +
+          `Move the capture before loadSecret, or run clearSecrets or a top-frame navigation first.`,
+      );
+    }
+  }
+};
 
 const appendSkills = (
   base: string,
@@ -883,6 +930,43 @@ export function registerAgentTools(
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
       }
 
+      try {
+        validateSecretCaptureOrdering(commands);
+      } catch (err) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false, err);
+        throw new UserError(
+          err instanceof Error
+            ? err.message
+            : 'Secret capture preflight failed.',
+        );
+      }
+
+      try {
+        await preflightAgentCapabilities(
+          buildAgentWsUrl(
+            apiUrl,
+            token,
+            proxy,
+            profile,
+            attachSessionId,
+            compliant,
+            integrationId,
+            allowedDomains,
+            emulationOs,
+            humanlike,
+            record,
+            persona,
+          ),
+          params.requiredCapabilities ?? [],
+        );
+      } catch (err) {
+        sendAnalytics(false, err);
+        throw new UserError(
+          err instanceof Error ? err.message : 'Capability preflight failed.',
+        );
+      }
+
       // Open-only call: no real command (e.g. `createProfile`/`profile`/`proxy`
       // set with no method/commands). Dispatching the empty-method default would
       // make the agent route reject it as `Missing required id/method`, so just
@@ -1010,6 +1094,17 @@ export function registerAgentTools(
               ? { failed_method: cmd.method }
               : {}),
           });
+          try {
+            validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
+          } catch (err) {
+            lastCategory = 'INVALID_PARAMS';
+            throw new UserError(
+              err instanceof Error
+                ? err.message
+                : 'Secret capture preflight failed.',
+            );
+          }
+
           if (cmd.method === 'close') {
             closeSession(
               mcpSessionId,
@@ -1196,6 +1291,18 @@ export function registerAgentTools(
                 .filter(Boolean)
                 .join('\n\n'),
             );
+          }
+
+          if (cmd.method === 'loadSecret') {
+            agentSession.secretVisible = true;
+          } else if (
+            cmd.method === 'clearSecrets' ||
+            (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method) &&
+              resp.result !== null &&
+              typeof resp.result === 'object' &&
+              (resp.result as { rejected?: unknown }).rejected !== true)
+          ) {
+            agentSession.secretVisible = false;
           }
 
           // Capture the first URL we observe in the batch as a fallback

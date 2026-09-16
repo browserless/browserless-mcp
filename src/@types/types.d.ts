@@ -244,6 +244,7 @@ export interface ActiveSession {
   readonly compliant: boolean;
   reconnecting?: Promise<WebSocket>;
   skillState: SkillFireState;
+  secretVisible: boolean;
   lastUsedAt: number;
   lastUrl?: string;
   lastElements?: Map<string, SnapshotElement>;

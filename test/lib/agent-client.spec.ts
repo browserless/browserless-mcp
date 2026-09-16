@@ -8,6 +8,7 @@ import {
   isRetryableUpgradeError,
   PersonaConflictError,
   ProfileNotFoundError,
+  preflightAgentCapabilities,
   proxyFingerprint,
   sessionHandle,
   dropMcpSession,
@@ -47,6 +48,15 @@ describe('agent-client reconnection telemetry', () => {
 });
 
 describe('agent-client buildAgentWsUrl', () => {
+  it('rejects a residential preset with a datacenter proxy', () => {
+    expect(() =>
+      buildAgentWsUrl('https://host', 'tok', {
+        proxy: 'datacenter',
+        proxyPreset: 'px_amazon01',
+      }),
+    ).to.throw();
+  });
+
   // A base carrying a query used to concatenate into path `/` — the raw CDP
   // socket — so every agent method came back as -32601 "wasn't found".
   it('ignores a query string on the configured api url', () => {
@@ -473,6 +483,141 @@ describe('agent-client buildAgentWsUrl', () => {
     // A creation session owns its own proxy/profile from POST /profile.
     expect(url.searchParams.has('proxy')).to.equal(false);
     expect(url.searchParams.has('profile')).to.equal(false);
+  });
+});
+
+describe('agent-client capability preflight', () => {
+  const agentUrl = (proxy?: ProxyOptions, os?: string) =>
+    buildAgentWsUrl(
+      'https://production.example.com',
+      'tok',
+      proxy,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      os,
+    );
+
+  afterEach(() => sinon.restore());
+
+  it('does no discovery request for normal flows without requirements', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+
+    await preflightAgentCapabilities(agentUrl(), []);
+
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it('passes intended route parameters and accepts supported capabilities', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: { vision: { available: true } },
+        }),
+      ),
+    );
+
+    await preflightAgentCapabilities(
+      agentUrl({ proxy: 'datacenter' }, 'macos'),
+      ['vision'],
+    );
+
+    const url = new URL(fetchStub.firstCall.args[0] as string);
+    expect(url.pathname).to.equal('/chromium/agent/capabilities');
+    expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.searchParams.get('proxy')).to.equal('datacenter');
+    expect(url.searchParams.get('emulationOs')).to.equal('macos');
+  });
+
+  it('fails with the missing capability and the route where it is available', async () => {
+    sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: {
+            'os-spoofing': {
+              available: false,
+              availableAt: ['/stealth/bql'],
+            },
+          },
+        }),
+      ),
+    );
+
+    try {
+      await preflightAgentCapabilities(agentUrl(), ['os-spoofing']);
+      expect.fail('expected capability preflight to fail');
+    } catch (err) {
+      expect((err as Error).message).to.include('os-spoofing');
+      expect((err as Error).message).to.include('/chromium/agent');
+      expect((err as Error).message).to.include('/stealth/bql');
+    }
+  });
+
+  it('reports HTTP plan failures without reflecting the response body', async () => {
+    sinon
+      .stub(globalThis, 'fetch')
+      .resolves(new Response('internal upstream detail', { status: 403 }));
+
+    try {
+      await preflightAgentCapabilities(agentUrl(), ['vision']);
+      expect.fail('expected capability preflight to fail');
+    } catch (err) {
+      expect((err as Error).message).to.include('403');
+      expect((err as Error).message).to.include('plan');
+      expect((err as Error).message).to.not.include('internal upstream detail');
+    }
+  });
+
+  it('rejects an array-valued capability map', async () => {
+    sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: [],
+        }),
+      ),
+    );
+
+    try {
+      await preflightAgentCapabilities(agentUrl(), ['vision']);
+      expect.fail('expected capability preflight to fail');
+    } catch (err) {
+      expect((err as Error).message).to.include('unsupported manifest');
+    }
+  });
+
+  it('rejects invalid JSON and tolerates malformed route alternatives', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch');
+    const rejectsWith = async (expected: string) => {
+      try {
+        await preflightAgentCapabilities(agentUrl(), ['vision']);
+        expect.fail('expected capability preflight to fail');
+      } catch (err) {
+        expect((err as Error).message).to.include(expected);
+      }
+    };
+    fetchStub.onFirstCall().resolves(new Response('{'));
+    fetchStub.onSecondCall().resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: {
+            vision: { available: false, availableAt: '/stealth/bql' },
+          },
+        }),
+      ),
+    );
+
+    await rejectsWith('invalid JSON');
+    await rejectsWith('not advertised');
   });
 });
 

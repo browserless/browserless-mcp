@@ -226,22 +226,8 @@ export class PersonaConflictError extends Error {
 // stacks more lingering sessions against the same limit, so stop instead.
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
-class SessionReuseError extends Error {}
-
-const assertCompatibleRecordingMode = (
-  session: ActiveSession,
-  record: boolean | undefined,
-): void => {
-  if (record !== undefined && record !== (session.record ?? false)) {
-    throw new SessionReuseError(
-      'Browser recording mode cannot be changed on an open session. Omit record to reuse it, or close the session before changing the record option.',
-    );
-  }
-};
-
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof PersonaConflictError) return false;
-  if (err instanceof SessionReuseError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -442,6 +428,7 @@ export const buildAgentWsUrl = (
   // guards already reject them, but hard-drop here too so no caller path can
   // put them on the wire (last line of defense before the upstream connect).
   if (!compliant) {
+    if (proxy) ProxyOptionsSchema.parse(proxy);
     if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
     if (proxy?.proxyCountry)
       url.searchParams.set('proxyCountry', proxy.proxyCountry);
@@ -485,6 +472,70 @@ export const buildAgentWsUrl = (
   // Recording is armed only when launching a new browser.
   if (record) url.searchParams.set('record', 'true');
   return url.toString();
+};
+
+interface AgentCapability {
+  available?: boolean;
+  availableAt?: string[];
+}
+
+interface AgentCapabilityManifest {
+  version: number;
+  route: string;
+  capabilities: Record<string, AgentCapability>;
+}
+
+/** Validate declared plan requirements before opening a browser session. */
+export const preflightAgentCapabilities = async (
+  agentUrl: string,
+  required: string[],
+): Promise<void> => {
+  if (required.length === 0) return;
+
+  const url = new URL(agentUrl);
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.pathname += '/capabilities';
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(
+      `Capability discovery failed on /chromium/agent (${res.status}). Verify the token, plan, and route parameters.`,
+    );
+  }
+
+  let manifest: AgentCapabilityManifest;
+  try {
+    manifest = (await res.json()) as AgentCapabilityManifest;
+  } catch {
+    throw new Error('Capability discovery returned invalid JSON.');
+  }
+  if (
+    manifest?.version !== 1 ||
+    typeof manifest.route !== 'string' ||
+    !manifest.capabilities ||
+    typeof manifest.capabilities !== 'object' ||
+    Array.isArray(manifest.capabilities)
+  ) {
+    throw new Error('Capability discovery returned an unsupported manifest.');
+  }
+
+  const missing = required.filter(
+    (name) => manifest.capabilities[name]?.available !== true,
+  );
+  if (missing.length === 0) return;
+
+  const details = missing.map((name) => {
+    const availableAt = manifest.capabilities[name]?.availableAt;
+    return Array.isArray(availableAt) &&
+      availableAt.length > 0 &&
+      availableAt.every((route) => typeof route === 'string')
+      ? `${name} (available on ${availableAt.join(', ')})`
+      : `${name} (not advertised by this endpoint)`;
+  });
+  throw new Error(
+    `Invalid parameters: required capabilities are unavailable on ${manifest.route}: ${details.join('; ')}.`,
+  );
 };
 
 // HTTP-status failures arrive on `unexpected-response` (typed as
@@ -974,7 +1025,6 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
-    assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(existing)!));
     return existing;
@@ -1071,6 +1121,7 @@ export const getOrCreateSession = async (
       persona: effectivePersona,
       record,
       skillState: createSkillState(),
+      secretVisible: false,
       lastUsedAt: Date.now(),
     };
     createdAt.set(session, Date.now());

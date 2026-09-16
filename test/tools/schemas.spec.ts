@@ -357,6 +357,18 @@ describe('AgentParamsSchema.proxy', () => {
     });
     expect(parsed.proxy).to.be.undefined;
   });
+
+  it('accepts explicit plan capability requirements', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'snapshot',
+      requiredCapabilities: ['vision', 'os-spoofing'],
+    });
+
+    expect(parsed.requiredCapabilities).to.deep.equal([
+      'vision',
+      'os-spoofing',
+    ]);
+  });
 });
 
 describe('AgentParamsSchema persona', () => {
@@ -686,7 +698,11 @@ describe('clearSecrets command', () => {
     ]) {
       expect(
         AgentParamsSchema.safeParse({ commands: [command] }).success,
-        JSON.stringify(command),
+        `batch: ${JSON.stringify(command)}`,
+      ).to.equal(true);
+      expect(
+        AgentParamsSchema.safeParse(command).success,
+        `single: ${JSON.stringify(command)}`,
       ).to.equal(true);
     }
   });
@@ -698,6 +714,19 @@ describe('clearSecrets command', () => {
       ],
     });
     expect(result.success).to.equal(false);
+  });
+
+  it('rejects unexpected clearSecrets params in single-command form', () => {
+    for (const schema of [AgentParamsSchema, AgentToolParamsSchema]) {
+      for (const commands of [undefined, []]) {
+        const result = schema.safeParse({
+          method: 'clearSecrets',
+          params: { unexpected: 'not-allowed' },
+          commands,
+        });
+        expect(result.success).to.equal(false);
+      }
+    }
   });
 
   it('describes when clearSecrets is needed in the published command schema', () => {
