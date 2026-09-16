@@ -47,7 +47,7 @@ describe('resolveBrowserlessAuth', () => {
       new Response(
         JSON.stringify({
           id: 'user',
-          app_metadata: { accountId: 'attribution-account' },
+          app_metadata: { accountId: 'attribution-account', role: 'owner' },
         }),
       ),
     );

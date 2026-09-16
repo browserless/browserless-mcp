@@ -1467,6 +1467,9 @@ describe('agent-client bare-call isolation', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
+        undefined,
+        undefined,
         'user-a',
       );
       const theirs = await getOrCreateSession(
@@ -1480,6 +1483,9 @@ describe('agent-client bare-call isolation', () => {
         false,
         undefined,
         mine.handle,
+        undefined,
+        undefined,
+        undefined,
         undefined,
         undefined,
         undefined,

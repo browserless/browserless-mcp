@@ -89,7 +89,6 @@ export interface McpConfig {
   apiServerUrl?: string;
   // Origin serving session-replay artifacts; replay paths are checked against it.
   replayCdnUrl?: string;
-  browserlessAccountApiUrl?: string;
   transport: 'stdio' | 'httpStream';
   port: number;
   requestTimeout: number;
