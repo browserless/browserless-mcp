@@ -14,6 +14,8 @@ import { registerAccountTool } from './account.js';
 import { registerUsageTool } from './usage.js';
 import { registerSessionsTool } from './sessions.js';
 import { registerLogsTool } from './logs.js';
+import { registerStripeLinkConnectTool } from './link-connect.js';
+import { registerStripeLinkCheckoutTool } from './link-checkout.js';
 import { isCompliant } from './compliance.js';
 import { registerApiDocsResource } from '../resources/api-docs.js';
 import { registerStatusResource } from '../resources/status.js';
@@ -93,6 +95,14 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerProfilesTool(server, config, analytics),
+    },
+    {
+      surface: 'full',
+      register: () => registerStripeLinkConnectTool(server, config, analytics),
+    },
+    {
+      surface: 'full',
+      register: () => registerStripeLinkCheckoutTool(server, config, analytics),
     },
     {
       surface: 'full',
