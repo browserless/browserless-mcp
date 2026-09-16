@@ -1134,6 +1134,9 @@ describe('browserless_agent integration binding guard', () => {
           profile: 'login-profile',
           integrationId: 'op_int_a',
           allowedDomains: ['example.com'],
+          emulationOs: 'macos',
+          screen: '1920x1080',
+          record: true,
         },
         { ...mockContext, sessionId: 'capability-guard' },
       );
@@ -1147,6 +1150,9 @@ describe('browserless_agent integration binding guard', () => {
     expect(url.searchParams.get('profile')).to.equal('login-profile');
     expect(url.searchParams.get('integrationId')).to.equal('op_int_a');
     expect(url.searchParams.get('allowedDomains')).to.equal('["example.com"]');
+    expect(url.searchParams.get('emulationOs')).to.equal('macos');
+    expect(url.searchParams.get('screen')).to.equal('1920x1080');
+    expect(url.searchParams.get('record')).to.equal('true');
   });
 
   it('allows closing a session when capability discovery is unavailable', async () => {

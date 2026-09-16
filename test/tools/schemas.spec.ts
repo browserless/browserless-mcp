@@ -717,11 +717,13 @@ describe('clearSecrets command', () => {
   });
 
   it('rejects unexpected clearSecrets params in single-command form', () => {
-    const result = AgentParamsSchema.safeParse({
-      method: 'clearSecrets',
-      params: { unexpected: 'not-allowed' },
-    });
-    expect(result.success).to.equal(false);
+    for (const schema of [AgentParamsSchema, AgentToolParamsSchema]) {
+      const result = schema.safeParse({
+        method: 'clearSecrets',
+        params: { unexpected: 'not-allowed' },
+      });
+      expect(result.success).to.equal(false);
+    }
   });
 
   it('describes when clearSecrets is needed in the published command schema', () => {
