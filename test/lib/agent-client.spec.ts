@@ -1780,6 +1780,13 @@ describe('agent-client integration binding key', () => {
     expect(key('op_int_a', ['https://a.com'])).to.not.equal(key('op_int_a'));
   });
 
+  it('separates domain scopes containing delimiter characters', () => {
+    expect(key('op_int_a', ['a,b', 'c'])).to.not.equal(
+      key('op_int_a', ['a', 'b,c']),
+    );
+    expect(key('op_int_a|b')).to.not.equal(key('op_int_a', ['b']));
+  });
+
   it('treats domain order as the same scope', () => {
     expect(key('op_int_a', ['https://a.com', 'https://b.com'])).to.equal(
       key('op_int_a', ['https://b.com', 'https://a.com']),

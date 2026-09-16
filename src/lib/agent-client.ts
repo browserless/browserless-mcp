@@ -447,10 +447,7 @@ export const getSessionKey = (
     ? KEY_SEP +
       'int#' +
       hashToken(
-        integrationId +
-          (allowedDomains?.length
-            ? '|' + [...allowedDomains].sort().join(',')
-            : ''),
+        JSON.stringify([integrationId, [...(allowedDomains ?? [])].sort()]),
       )
     : '') +
   (userId ? KEY_SEP + 'user#' + hashToken(userId) : '');

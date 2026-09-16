@@ -165,7 +165,7 @@ describe('Stripe Link tools', () => {
         data: {
           connectStripeLink: {
             status: 'not_connected',
-            authorizationUrl: 'https://connect.stripe.com/setup/abc',
+            authorizationUrl: ' https://CONNECT.stripe.com:443/setup/abc ',
             instruction: 'Connect the wallet.',
             secret: 'must-not-leak',
           },
@@ -177,6 +177,9 @@ describe('Stripe Link tools', () => {
     const result = await execute({ action: 'connect' }, ownerContext);
     const text = textOf(result);
     expect(text).to.include('authorization_url');
+    expect(JSON.parse(text).authorization_url).to.equal(
+      'https://connect.stripe.com/setup/abc',
+    );
     expect(text).to.not.include('must-not-leak');
   });
 

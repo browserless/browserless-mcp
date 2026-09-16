@@ -126,7 +126,9 @@ describe('browserless_agent reserved methods', () => {
   it('rejects Stripe Link checkout at runtime if schema validation is bypassed', async () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const addToolSpy = sinon.spy(server, 'addTool');
-    registerAgentTools(server, mockConfig);
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerAgentTools(server, mockConfig, analytics);
     const execute = addToolSpy
       .getCalls()
       .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
@@ -150,6 +152,14 @@ describe('browserless_agent reserved methods', () => {
       expect((error as Error).message).to.match(
         /reserved.*browserless_link_checkout/i,
       );
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        success: false,
+        error_category: 'user_error',
+        error_reason: 'invalid_params',
+        error_source: 'validation',
+      });
+      fire.resetHistory();
     }
   });
 });

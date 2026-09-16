@@ -700,19 +700,23 @@ export function registerAgentTools(
         }
       }
 
+      // Reject the reserved method before batch validation, using the same
+      // invalid-parameter diagnostics for direct and batched calls.
+      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
+        throw Object.assign(
+          new UserError(
+            'stripeLinkCheckout is reserved for browserless_link_checkout.',
+          ),
+          { code: 'INVALID_PARAMS' },
+        );
+      }
+
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
       // specific messages). Legacy single-command calls stay loose; outcome
       // reports need local validation because delivery is best-effort.
       if (params.commands?.length || params.method === 'reportOutcome') {
-        // A reserved internal method owns its own tool; surface that before the
-        // generic per-command contract masks it with a less helpful message.
-        if (params.commands?.some((c) => c.method === 'stripeLinkCheckout')) {
-          throw new UserError(
-            'stripeLinkCheckout is reserved for browserless_link_checkout.',
-          );
-        }
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands?.length ? params.commands : commands);
@@ -886,14 +890,6 @@ export function registerAgentTools(
         throw new UserError(
           'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
             'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy object alongside `method`/`commands`, e.g. { "proxy": { "proxy": "residential", "proxyCountry": "us" }, "commands": [ ... ] }.',
-        );
-      }
-
-      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
-        lastCategory = 'INVALID_PARAMS';
-        sendAnalytics(false);
-        throw new UserError(
-          'stripeLinkCheckout is reserved for browserless_link_checkout.',
         );
       }
 

@@ -252,7 +252,7 @@ const stripeOwnedHttpsUrl = (
   ) {
     throw new Error(`Browserless returned an untrusted ${field}`);
   }
-  return raw;
+  return url.toString();
 };
 
 const responseObject = (value: unknown): Record<string, unknown> => {
