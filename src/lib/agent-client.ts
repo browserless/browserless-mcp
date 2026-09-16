@@ -226,22 +226,8 @@ export class PersonaConflictError extends Error {
 // stacks more lingering sessions against the same limit, so stop instead.
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
-class SessionReuseError extends Error {}
-
-const assertCompatibleRecordingMode = (
-  session: ActiveSession,
-  record: boolean | undefined,
-): void => {
-  if (record !== undefined && record !== (session.record ?? false)) {
-    throw new SessionReuseError(
-      'Browser recording mode cannot be changed on an open session. Omit record to reuse it, or close the session before changing the record option.',
-    );
-  }
-};
-
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof PersonaConflictError) return false;
-  if (err instanceof SessionReuseError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -442,6 +428,7 @@ export const buildAgentWsUrl = (
   // guards already reject them, but hard-drop here too so no caller path can
   // put them on the wire (last line of defense before the upstream connect).
   if (!compliant) {
+    if (proxy) ProxyOptionsSchema.parse(proxy);
     if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
     if (proxy?.proxyCountry)
       url.searchParams.set('proxyCountry', proxy.proxyCountry);
@@ -1038,7 +1025,6 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
-    assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(existing)!));
     return existing;

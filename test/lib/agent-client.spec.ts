@@ -48,6 +48,15 @@ describe('agent-client reconnection telemetry', () => {
 });
 
 describe('agent-client buildAgentWsUrl', () => {
+  it('rejects a residential preset with a datacenter proxy', () => {
+    expect(() =>
+      buildAgentWsUrl('https://host', 'tok', {
+        proxy: 'datacenter',
+        proxyPreset: 'px_amazon01',
+      }),
+    ).to.throw();
+  });
+
   // A base carrying a query used to concatenate into path `/` — the raw CDP
   // socket — so every agent method came back as -32601 "wasn't found".
   it('ignores a query string on the configured api url', () => {

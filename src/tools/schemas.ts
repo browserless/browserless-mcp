@@ -941,7 +941,7 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
     })
     .refine(
       ({ method, params, commands }) =>
-        commands !== undefined ||
+        (Array.isArray(commands) && commands.length > 0) ||
         method !== 'clearSecrets' ||
         ClearSecretsCommandSchema.safeParse({ method, params }).success,
       {
