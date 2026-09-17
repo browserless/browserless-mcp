@@ -659,6 +659,39 @@ const GetDownloadsCommandSchema = z.object({
   params: z.object({}).optional().default({}),
 });
 
+const ReportSkillOutcomeCommandSchema = z.object({
+  method: z.literal('reportSkillOutcome'),
+  params: z
+    .looseObject({
+      domain: z.string().min(1).describe('Host of the loaded recipe.'),
+      task: z.string().min(1).describe('Task slug of the loaded recipe.'),
+      success: z
+        .boolean()
+        .describe('Agent-reported result, not independent validation.'),
+      failure_reason: z
+        .enum([
+          'authentication_required',
+          'site_changed',
+          'blocked',
+          'timeout',
+          'missing_data',
+          'incorrect_result',
+          'unknown',
+        ])
+        .optional()
+        .describe(
+          'Failure category; omit on success. Failed legacy reports default to unknown.',
+        ),
+    })
+    .refine(
+      (params) => !params.success || params.failure_reason === undefined,
+      {
+        message: 'Successful skill outcomes must omit failure_reason',
+        path: ['failure_reason'],
+      },
+    ),
+});
+
 const ReportOutcomeCommandSchema = z.object({
   method: z.literal('reportOutcome'),
   params: z.object({
@@ -733,6 +766,7 @@ const specificCommandSchemas = [
   GetDownloadsCommandSchema,
   StartRecordingCommandSchema,
   StopRecordingCommandSchema,
+  ReportSkillOutcomeCommandSchema,
   ReportOutcomeCommandSchema,
   CloseCommandSchema,
 ] as const;

@@ -749,7 +749,11 @@ export function registerAgentTools(
       // per-command contract here (the method/key guards above own their
       // specific messages). Legacy single-command calls stay loose; outcome
       // reports need local validation because delivery is best-effort.
-      if (params.commands?.length || params.method === 'reportOutcome') {
+      if (
+        params.commands?.length ||
+        params.method === 'reportOutcome' ||
+        params.method === 'reportSkillOutcome'
+      ) {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands?.length ? params.commands : commands);
@@ -1126,10 +1130,14 @@ export function registerAgentTools(
             cmd.method === 'reportOutcome'
           ) {
             try {
+              // Provenance is assigned by the server, never by the agent.
+              const params = { ...cmd.params };
+              if (cmd.method === 'reportSkillOutcome')
+                delete params.outcome_source;
               await send(
                 agentSession,
                 cmd.method,
-                cmd.params,
+                params,
                 undefined,
                 onSession,
               );
