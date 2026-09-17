@@ -1430,6 +1430,34 @@ describe('browserless_agent retry-guard (runCommands)', () => {
 
   afterEach(() => sinon.restore());
 
+  it('rejects an incomplete single saveSecret before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ ok: true }));
+    try {
+      const execute = getAgentExecute(srv.url);
+      let failure: unknown;
+      try {
+        await execute(
+          {
+            method: 'saveSecret',
+            params: {
+              vault: 'Automation',
+              title: 'Login',
+              username: 'test@example.com',
+            },
+          },
+          ctx('single-save-validation'),
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(UserError);
+      expect((failure as { code?: string }).code).to.equal('INVALID_PARAMS');
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const failingMethod of ['saveSecret', 'click']) {
     it(`does not replay a vault write after ${failingMethod} fails`, async () => {
       let saves = 0;

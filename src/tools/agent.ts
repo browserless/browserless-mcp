@@ -758,12 +758,13 @@ export function registerAgentTools(
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
-      // specific messages). Legacy single-command calls stay loose; outcome
-      // reports need local validation because delivery is best-effort.
+      // specific messages). Legacy single-command calls stay loose except for
+      // best-effort outcome reports and credential writes.
       if (
         params.commands?.length ||
         params.method === 'reportOutcome' ||
-        params.method === 'reportSkillOutcome'
+        params.method === 'reportSkillOutcome' ||
+        params.method === 'saveSecret'
       ) {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
