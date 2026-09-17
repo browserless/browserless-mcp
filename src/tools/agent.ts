@@ -749,7 +749,11 @@ export function registerAgentTools(
       // per-command contract here (the method/key guards above own their
       // specific messages). Legacy single-command calls stay loose; outcome
       // reports need local validation because delivery is best-effort.
-      if (params.commands?.length || params.method === 'reportOutcome') {
+      if (
+        params.commands?.length ||
+        params.method === 'reportOutcome' ||
+        params.method === 'reportSkillOutcome'
+      ) {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands?.length ? params.commands : commands);

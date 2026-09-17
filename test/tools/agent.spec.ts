@@ -2196,6 +2196,46 @@ describe('browserless_agent reportOutcome', () => {
 describe('browserless_agent skill outcome forwarding', () => {
   afterEach(() => sinon.restore());
 
+  it('validates top-level skill reports before opening a browser', async () => {
+    const calls: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      calls.push(method);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const changes of [
+        { failure_reason: 'unlisted' },
+        { failure_reason: null },
+        { success: true, failure_reason: 'timeout' },
+        { success: 'false' },
+        { domain: '' },
+      ]) {
+        try {
+          await execute(
+            {
+              method: 'reportSkillOutcome',
+              params: {
+                domain: 'example.com',
+                task: 'search',
+                success: false,
+                ...changes,
+              },
+            },
+            mockContext,
+          );
+          expect.fail('expected invalid skill report to be rejected');
+        } catch (error) {
+          expect(error).to.be.instanceOf(UserError);
+        }
+      }
+      expect(calls).to.deep.equal([]);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('forwards bounded failure evidence, strips client provenance, and preserves the page result', async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     const srv = await makeRespondingServer((method, params) => {
