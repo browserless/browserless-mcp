@@ -1258,6 +1258,54 @@ describe('browserless_agent integration binding guard', () => {
     }
   });
 
+  it('does not recommend capture recovery after a secret-backed selector miss', async () => {
+    const captureBlocked =
+      'CaptureBlocked: screenshots and page-content reads are disabled after a secret has been filled in this session.';
+    const srv = await makeRespondingServer((method) =>
+      method === 'click'
+        ? new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'No element found for selector: < #missing',
+            suggestion: captureBlocked,
+          })
+        : {},
+    );
+    const execute = getAgentExecute(srv.url);
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { ...mockContext, sessionId: 'secret-selector-1' },
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+
+      try {
+        await execute(
+          {
+            method: 'click',
+            params: { selector: '< #missing' },
+            sessionId: handle,
+          },
+          { ...mockContext, sessionId: 'secret-selector-2' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        const message = (err as Error).message;
+        expect(message).to.include(`Recovery: ${captureBlocked}`);
+        expect(message).to.not.include('Re-snapshot');
+        expect(message).to.not.include('--- SKILL: vision-fallback');
+      }
+    } finally {
+      if (handle) {
+        await execute(
+          { method: 'close', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-selector-2' },
+        );
+      }
+      await srv.close();
+    }
+  });
+
   it('keeps capture blocked when top-frame navigation does not occur', async () => {
     const srv = await makeRespondingServer((method) =>
       method === 'back' ? null : {},
