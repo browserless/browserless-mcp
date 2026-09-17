@@ -1126,10 +1126,14 @@ export function registerAgentTools(
             cmd.method === 'reportOutcome'
           ) {
             try {
+              // Provenance is assigned by the server, never by the agent.
+              const params = { ...cmd.params };
+              if (cmd.method === 'reportSkillOutcome')
+                delete params.outcome_source;
               await send(
                 agentSession,
                 cmd.method,
-                cmd.params,
+                params,
                 undefined,
                 onSession,
               );

@@ -12,6 +12,69 @@ import {
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
 
+describe('reportSkillOutcome schema', () => {
+  it('preserves legacy reports, each bounded reason and attribution metadata', () => {
+    for (const failure_reason of [
+      undefined,
+      'authentication_required',
+      'site_changed',
+      'blocked',
+      'timeout',
+      'missing_data',
+      'incorrect_result',
+      'unknown',
+    ]) {
+      const command = {
+        method: 'reportSkillOutcome',
+        params: {
+          domain: 'example.com',
+          task: 'search',
+          success: false,
+          ...(failure_reason ? { failure_reason } : {}),
+          run_id: 'a'.repeat(64),
+          skill_use_id: 'b'.repeat(64),
+          loaded_version: 3,
+        },
+      };
+      expect(AgentCommandSchema.parse(command)).to.deep.equal(command);
+    }
+    expect(
+      AgentCommandSchema.safeParse({
+        method: 'reportSkillOutcome',
+        params: { domain: 'example.com', task: 'search', success: true },
+      }).success,
+    ).to.equal(true);
+  });
+
+  it('rejects malformed reports without falling through to generic commands', () => {
+    for (const changes of [
+      { failure_reason: null },
+      { failure_reason: 1 },
+      { failure_reason: {} },
+      { failure_reason: 'https://private.example/?token=secret' },
+      { success: true, failure_reason: 'timeout' },
+      { success: 'false' },
+      { domain: 1 },
+      { task: {} },
+      { domain: '' },
+      { task: '' },
+    ]) {
+      expect(
+        AgentCommandSchema.safeParse({
+          method: 'reportSkillOutcome',
+          params: {
+            domain: 'example.com',
+            task: 'search',
+            success: false,
+            ...changes,
+          },
+        }).success,
+        JSON.stringify(changes),
+      ).to.equal(false);
+    }
+  });
+});
+
 for (const [name, schema] of [
   ['AgentCommandSchema', AgentCommandSchema],
   ['CompliantAgentCommandSchema', CompliantAgentCommandSchema],

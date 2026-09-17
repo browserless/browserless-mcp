@@ -5,6 +5,24 @@ import {
   COMPLIANT_AGENT_SYSTEM_PROMPT,
 } from '../../src/skills/system-prompt.js';
 
+it('describes bounded recipe failure reasons and agent-reported provenance', () => {
+  for (const reason of [
+    'authentication_required',
+    'site_changed',
+    'blocked',
+    'timeout',
+    'missing_data',
+    'incorrect_result',
+    'unknown',
+  ]) {
+    expect(AGENT_SYSTEM_PROMPT).to.include(reason);
+  }
+  expect(AGENT_SYSTEM_PROMPT).to.include('failure_reason');
+  expect(AGENT_SYSTEM_PROMPT).to.include('agent-reported');
+  expect(AGENT_SYSTEM_PROMPT).to.include('not independent validation');
+  expect(AGENT_SYSTEM_PROMPT).to.include('omit');
+});
+
 describe('agent system prompt contextual snapshot guidance', () => {
   for (const [name, prompt] of [
     ['full', AGENT_SYSTEM_PROMPT],

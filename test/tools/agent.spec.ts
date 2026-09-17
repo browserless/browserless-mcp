@@ -2193,6 +2193,53 @@ describe('browserless_agent reportOutcome', () => {
   }
 });
 
+describe('browserless_agent skill outcome forwarding', () => {
+  afterEach(() => sinon.restore());
+
+  it('forwards bounded failure evidence, strips client provenance, and preserves the page result', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const srv = await makeRespondingServer((method, params) => {
+      calls.push({ method, params });
+      return method === 'reportSkillOutcome'
+        ? { recorded: true }
+        : { status: 200, marker: 'page-result' };
+    });
+    try {
+      const execute = getAgentExecute(srv.url, 'httpStream');
+      const verdict = {
+        domain: 'example.com',
+        task: 'search',
+        success: false,
+        failure_reason: 'missing_data',
+        run_id: 'a'.repeat(64),
+        loaded_version: 2,
+      };
+      const result = await execute(
+        {
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+            {
+              method: 'reportSkillOutcome',
+              params: { ...verdict, outcome_source: 'independently_validated' },
+            },
+            { method: 'close' },
+          ],
+        },
+        { ...mockContext, sessionId: 'skill-outcome-forwarding' },
+      );
+      expect(calls).to.deep.equal([
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { method: 'reportSkillOutcome', params: verdict },
+      ]);
+      expect(JSON.stringify(result))
+        .to.include('page-result')
+        .and.not.include('recorded');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('browserless_agent session handle on errors', () => {
   afterEach(() => sinon.restore());
 
