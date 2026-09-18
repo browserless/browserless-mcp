@@ -90,6 +90,7 @@ export {
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
+const CAPTURE_BLOCKED_SUGGESTION = /^CaptureBlocked:/;
 const SECRET_SAFE_METHODS = new Set([
   'click',
   'type',
@@ -1241,8 +1242,16 @@ export function registerAgentTools(
                 ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
                 : `${cmd.method} failed: `;
 
+            const captureBlockedSuggestion =
+              agentSession.secretVisible &&
+              err.suggestion &&
+              CAPTURE_BLOCKED_SUGGESTION.test(err.suggestion)
+                ? err.suggestion
+                : undefined;
+            const secretCaptureBlocked = !!captureBlockedSuggestion;
             let suggestion: string | undefined;
             if (
+              !secretCaptureBlocked &&
               err.code === 'SELECTOR_NOT_FOUND' &&
               cmd.method !== 'waitForSelector' &&
               typeof cmd.params.selector === 'string' &&
@@ -1259,17 +1268,20 @@ export function registerAgentTools(
               prefix,
               message: err.message,
               suggestion,
-              recovery: classified.recovery,
-              snapshotText: err.snapshot
-                ? formatSnapshot(err.snapshot)
-                : undefined,
+              recovery: captureBlockedSuggestion ?? classified.recovery,
+              snapshotText:
+                !secretCaptureBlocked && err.snapshot
+                  ? formatSnapshot(err.snapshot)
+                  : undefined,
             });
 
-            const triggered = detectVisibleSkills(
-              { snapshot: err.snapshot, error: err, cmd, apiUrl },
-              agentSession.skillState,
-              compliant,
-            );
+            const triggered = secretCaptureBlocked
+              ? []
+              : detectVisibleSkills(
+                  { snapshot: err.snapshot, error: err, cmd, apiUrl },
+                  agentSession.skillState,
+                  compliant,
+                );
             markFired(agentSession.skillState, triggered);
 
             throw new UserError(
