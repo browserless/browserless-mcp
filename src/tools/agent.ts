@@ -21,6 +21,7 @@ import {
   PERSONA_FIELDS,
   UpgradeError,
   preflightAgentCapabilities,
+  type ActiveSession,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -1015,6 +1016,7 @@ export function registerAgentTools(
         ];
       }
 
+      let lastSession: ActiveSession | undefined;
       const runCommands = async (
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
@@ -1066,6 +1068,7 @@ export function registerAgentTools(
           );
           return runCommands(true, retryPersona);
         }
+        lastSession = agentSession;
 
         // Execute all commands sequentially
         const results: Array<{
@@ -1640,6 +1643,24 @@ export function registerAgentTools(
           );
         }
         const result = await runCommands(false);
+        if (
+          params.keepSessionAlive === false &&
+          lastSession &&
+          !createProfile &&
+          !attachSessionId
+        ) {
+          closeSession(
+            mcpSessionId,
+            token,
+            proxy,
+            profile,
+            createProfile,
+            attachSessionId,
+            lastSession.handle,
+            integrationId,
+            allowedDomains,
+          );
+        }
         sendAnalytics(true);
         return result;
       } catch (err) {

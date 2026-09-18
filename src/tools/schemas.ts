@@ -1113,6 +1113,17 @@ const agentParamsObject = z.object({
         'when batching commands.',
     ),
   sessionId: sessionIdField,
+  keepSessionAlive: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      'Keep the browser pooled for reuse when you echo the returned session id ' +
+        '(default true). Set false for a one-shot call: close the browser after ' +
+        'the command batch and download drain, freeing its concurrency slot. ' +
+        'Ignored for profile creation and attached sessions, whose lifetimes ' +
+        'are managed separately.',
+    ),
 });
 
 export const AgentParamsSchema = withAgentInvariants(agentParamsObject);
@@ -1196,6 +1207,7 @@ const compliantParamsObject = z.object({
       'Short user-facing reason for this call (<=50 chars, present-continuous).',
     ),
   sessionId: sessionIdField,
+  keepSessionAlive: agentParamsObject.shape.keepSessionAlive,
 });
 
 // No profile/createProfile: zero auth-profile capability. profile hydrates a

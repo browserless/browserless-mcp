@@ -19,6 +19,12 @@ import {
   validateSecretCaptureOrdering,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
+import {
+  AgentParamsSchema,
+  AgentToolParamsSchema,
+  CompliantAgentParamsSchema,
+  CompliantAgentToolParamsSchema,
+} from '../../src/tools/schemas.js';
 import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1018,6 +1024,148 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent one-shot sessions', () => {
+  afterEach(() => sinon.restore());
+
+  for (const [name, schema] of Object.entries({
+    AgentParamsSchema,
+    AgentToolParamsSchema,
+    CompliantAgentParamsSchema,
+    CompliantAgentToolParamsSchema,
+  })) {
+    it(`validates keepSessionAlive on ${name}`, () => {
+      const params = { commands: [{ method: 'text', params: {} }] };
+      for (const [input, expected] of [
+        [undefined, true],
+        [true, true],
+        [false, false],
+      ]) {
+        expect(
+          schema.parse({ ...params, keepSessionAlive: input }),
+        ).to.have.property('keepSessionAlive', expected);
+      }
+      expect(
+        schema.safeParse({ ...params, keepSessionAlive: 'no' }).success,
+      ).to.equal(false);
+      if (
+        schema === CompliantAgentParamsSchema ||
+        schema === CompliantAgentToolParamsSchema
+      ) {
+        expect(
+          schema.safeParse({
+            ...params,
+            keepSessionAlive: false,
+            unknown: true,
+          }).success,
+        ).to.equal(false);
+      }
+    });
+  }
+
+  for (const sessionId of [undefined, 'echoed-one-shot']) {
+    it(`closes the ${sessionId ? 'echoed' : 'bare'} session after draining downloads and preserves the result`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return method === 'text'
+          ? { text: 'finished result' }
+          : { downloads: [] };
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        const result = await execute(
+          {
+            commands: [{ method: 'text', params: {} }],
+            sessionId,
+            keepSessionAlive: false,
+          },
+          mockContext,
+        );
+        const serialized = JSON.stringify(result);
+        expect(serialized).to.include('finished result');
+        expect(methods).to.deep.equal(['text', 'getDownloads']);
+        const handle = serialized.match(/sessionId: (\S+) /)![1];
+        await execute({ method: 'text', sessionId: handle }, mockContext);
+        expect(
+          srv.hits(),
+          'closed handle must not reuse a pooled socket',
+        ).to.equal(2);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const extra of [
+    {},
+    { keepSessionAlive: true },
+    { keepSessionAlive: false, createProfile: { name: 'one-shot-profile' } },
+  ]) {
+    it(`retains a reusable session for ${JSON.stringify(extra)}`, async () => {
+      if ('createProfile' in extra) {
+        sinon
+          .stub(globalThis, 'fetch')
+          .resolves(new Response(JSON.stringify({ id: 'created-profile' })));
+      }
+      const srv = await makeRespondingServer(() => ({}));
+      try {
+        const execute = getAgentExecute(srv.url);
+        const args = {
+          method: 'text',
+          sessionId: 'retained-one-shot',
+          ...extra,
+        };
+        await execute(args, mockContext);
+        await execute(args, mockContext);
+        expect(srv.hits()).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('retains attached sessions despite the one-shot flag', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      const context = {
+        ...mockContext,
+        session: { attachSessionId: 'attached-one-shot' },
+      };
+      const args = { method: 'text', keepSessionAlive: false };
+      await execute(args, context);
+      await execute(args, context);
+      expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('closes only the caller token scope, even when another account echoes the same handle', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      const accountB = {
+        ...mockContext,
+        session: { token: 'other-account-token' },
+      };
+      const args = { method: 'text', sessionId: 'shared-handle' };
+      await execute(args, accountB);
+      await execute({ ...args, keepSessionAlive: false }, mockContext);
+      expect(srv.hits()).to.equal(2);
+      await execute(args, accountB);
+      expect(
+        srv.hits(),
+        'account B must still reuse its original socket',
+      ).to.equal(2);
+      await execute(args, mockContext);
+      expect(srv.hits(), 'account A must open a new socket').to.equal(3);
+    } finally {
+      await srv.close();
+    }
+  });
+});
 
 describe('skill retrieval telemetry wiring', () => {
   afterEach(() => {
