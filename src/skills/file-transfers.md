@@ -24,7 +24,7 @@ Just trigger the download in the agent — navigate to the file URL, or click a 
 - You decide whether to save each file. (`getDownloads` still exists for an explicit poll, but it's rarely needed.)
 - A **screenshot** can be captured straight to disk with `screenshot { toDisk: true }` instead of returned inline — it then behaves exactly like a download here (same handle/path/URL, same reuse). See the **screenshots** skill.
 
-**Local (stdio) mode:** the file is already on the local disk (`BROWSERLESS_DOWNLOAD_DIR`, default a temp dir). The response lists the saved **path** — use/move it, or hand it straight back to `uploadFile { path }`. Nothing more to fetch.
+**Local (stdio) mode:** the file is already on the local disk (`BROWSERLESS_DOWNLOAD_DIR`, default a temp dir). The response lists the saved **path** — hand it straight back to `uploadFile { path }` while it remains in that directory. Local upload paths (including symlink targets) must stay inside the download directory or an additional directory explicitly allowed by the local operator through `BROWSERLESS_UPLOAD_DIRS` (colon-separated on macOS/Linux, semicolon-separated on Windows). Nothing more to fetch. Do not bypass a rejected path by reading its bytes into the conversation or moving the file yourself.
 
 **Remote (HTTP) mode:** the server can't write to your disk, so each file comes with a **single-use** GET URL. Fetch it with `curl` to save locally — works **once**:
 
@@ -54,7 +54,7 @@ The exact command (with id + token + URL) is in the `getDownloads` response. Alt
 Each file is resolved in this order — pick the first you have:
 
 - **`handle`** — a handle from a previous `getDownloads`, or from staging a local file (below). The server reads the stored file. Works in **both** transports. This is how you re-upload a file you just downloaded — zero bytes through the conversation.
-- **`path`** — a local filesystem path. **stdio only** (HTTP can't read your filesystem). The server reads and encodes it.
+- **`path`** — a local filesystem path inside the download directory or an operator-configured `BROWSERLESS_UPLOAD_DIRS` directory. **stdio only** (HTTP can't read your filesystem). Symlinks must resolve inside an allowed directory. The server reads and encodes it.
 - **`content`** — base64 bytes. Last resort; avoid for large files.
 
 ### Uploading a NEW local file in HTTP mode

@@ -3,6 +3,11 @@ import type { Content } from 'fastmcp';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
+import { getConfig } from '../config.js';
+import {
+  assertAllowedUploadPath,
+  InvalidUploadPathError,
+} from '../lib/upload-path-guard.js';
 import {
   downloadOwner,
   downloadUri,
@@ -292,7 +297,19 @@ export const normalizeUploadCommand = async (
             'then: uploadFile { files: [{ handle: "<handle from the response>" }] }',
         );
       }
-      const path = f.path;
+      const { uploadDirs } = getConfig();
+      let path: string;
+      try {
+        path = assertAllowedUploadPath(f.path, uploadDirs);
+      } catch (error) {
+        if (!(error instanceof InvalidUploadPathError)) throw error;
+        throw new UserError(
+          `Upload path "${f.path}" is not allowed or could not be resolved. ` +
+            `Allowed upload directories: ${uploadDirs.join(', ')}. ` +
+            'Ask the local operator to configure BROWSERLESS_UPLOAD_DIRS, or use ' +
+            'the HTTP /upload staging flow and pass the returned handle.',
+        );
+      }
       buf = await readFile(path).catch((e: unknown) => {
         throw new UserError(
           `Failed to read upload file "${path}": ` +

@@ -620,8 +620,10 @@ const UploadFileCommandSchema = z.object({
               .string()
               .optional()
               .describe(
-                'Local filesystem path to read and upload. stdio (local) mode ' +
-                  'only — the MCP server reads and base64-encodes it. In HTTP ' +
+                'Local filesystem path inside an allowed upload directory. stdio (local) mode ' +
+                  'only — defaults to the download directory; the local operator can ' +
+                  'opt in to additional directories with BROWSERLESS_UPLOAD_DIRS. ' +
+                  'Symlinks must resolve inside an allowed directory. In HTTP ' +
                   'mode use `handle` or `content` instead.',
               ),
             name: z

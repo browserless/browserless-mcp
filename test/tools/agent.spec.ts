@@ -25,7 +25,14 @@ import {
   CompliantAgentParamsSchema,
   CompliantAgentToolParamsSchema,
 } from '../../src/tools/schemas.js';
-import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile as fsReadFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -466,24 +473,125 @@ describe('fileTransferModeNote', () => {
 });
 
 describe('normalizeUploadCommand', () => {
-  it('reads a local path into base64 content (stdio)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mcp-upload-'));
-    const path = join(dir, 'hello.txt');
-    await writeFile(path, 'Hello World!');
+  let dir: string;
+  let allowed: string;
+  let originalDownloadDir: string | undefined;
+  let originalUploadDirs: string | undefined;
 
-    const cmd = {
-      method: 'uploadFile',
-      params: { selector: 'input', files: [{ path }] },
-    };
-    await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
-
-    const file = (cmd.params.files as Record<string, unknown>[])[0];
-    expect(file.path).to.be.undefined;
-    expect(file.name).to.equal('hello.txt');
-    expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
-      'Hello World!',
-    );
+  beforeEach(async () => {
+    originalDownloadDir = process.env.BROWSERLESS_DOWNLOAD_DIR;
+    originalUploadDirs = process.env.BROWSERLESS_UPLOAD_DIRS;
+    dir = await mkdtemp(join(tmpdir(), 'mcp-upload-'));
+    allowed = join(dir, 'allowed');
+    await mkdir(allowed);
+    process.env.BROWSERLESS_DOWNLOAD_DIR = allowed;
+    delete process.env.BROWSERLESS_UPLOAD_DIRS;
   });
+
+  afterEach(async () => {
+    if (originalDownloadDir === undefined)
+      delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+    else process.env.BROWSERLESS_DOWNLOAD_DIR = originalDownloadDir;
+    if (originalUploadDirs === undefined)
+      delete process.env.BROWSERLESS_UPLOAD_DIRS;
+    else process.env.BROWSERLESS_UPLOAD_DIRS = originalUploadDirs;
+    sinon.restore();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  for (const kind of [
+    'absolute',
+    'traversal',
+    'symlink',
+    'sibling',
+    'missing',
+  ]) {
+    it(`rejects a ${kind} path without exposing bytes (stdio)`, async () => {
+      const outside = join(dir, 'private.txt');
+      await writeFile(outside, 'private-fixture-bytes');
+      await mkdir(join(dir, 'allowed-evil'));
+      await writeFile(
+        join(dir, 'allowed-evil', 'file.txt'),
+        'private-fixture-bytes',
+      );
+      await symlink(outside, join(allowed, 'link'));
+      const path = {
+        absolute: outside,
+        traversal: `${allowed}/../private.txt`,
+        symlink: join(allowed, 'link'),
+        sibling: join(dir, 'allowed-evil', 'file.txt'),
+        missing: join(allowed, 'missing'),
+      }[kind]!;
+      const file: Record<string, unknown> = { path };
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'stdio',
+        undefined,
+        'test-token',
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include(allowed)
+        .and.include('/upload');
+      expect((error as Error).message).not.to.include('private-fixture-bytes');
+      expect(file).not.to.have.property('content');
+      expect(file.path).to.equal(path);
+    });
+  }
+
+  it('retains the size cap for an allowed local file', async () => {
+    const path = join(allowed, 'large.bin');
+    await writeFile(path, Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1));
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.include('50MB limit');
+    expect(file).not.to.have.property('content');
+  });
+
+  for (const source of ['download directory', 'explicit directory']) {
+    it(`reads a local path in the ${source} into base64 content (stdio)`, async () => {
+      const root =
+        source === 'download directory' ? allowed : join(dir, 'extra');
+      if (source === 'explicit directory') {
+        await mkdir(root);
+        process.env.BROWSERLESS_UPLOAD_DIRS = root;
+      }
+      const path = join(root, 'hello.txt');
+      await writeFile(path, 'Hello World!');
+      const stdout = sinon.spy(process.stdout, 'write');
+      const stderr = sinon.spy(process.stderr, 'write');
+
+      const cmd = {
+        method: 'uploadFile',
+        params: { selector: 'input', files: [{ path }] },
+      };
+      await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
+
+      const file = (cmd.params.files as Record<string, unknown>[])[0];
+      expect(file.path).to.be.undefined;
+      expect(file.name).to.equal('hello.txt');
+      expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
+        'Hello World!',
+      );
+      for (const output of [stdout, stderr]) {
+        expect(output.args.flat().map(String).join('')).not.to.include(
+          'SGVsbG8gV29ybGQh',
+        );
+      }
+    });
+  }
 
   it('rejects a local path in httpStream mode with a staging recipe', async () => {
     const cmd = {
@@ -532,6 +640,8 @@ describe('normalizeUploadCommand', () => {
       Buffer.from('Hello World!'),
       downloadOwner(token),
     );
+    // A stored handle remains valid even outside the current path allowlist.
+    process.env.BROWSERLESS_DOWNLOAD_DIR = join(dir, 'elsewhere');
     const cmd = {
       method: 'uploadFile',
       params: {
