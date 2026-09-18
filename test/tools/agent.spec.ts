@@ -131,24 +131,37 @@ describe('agent secret-capture preflight', () => {
 });
 
 describe('formatAgentCommandLog', () => {
-  it('redacts saveSecret passwords while preserving non-secret parameters', () => {
+  it('redacts saveSecret passwords and website values without mutating the command', () => {
+    const website =
+      'https://url-user:url-password@example.com/reset?token=private-token#private-fragment';
+    const params = {
+      vault: 'Automation',
+      title: 'Example login',
+      username: 'user@example.com',
+      password: 'synthetic-password',
+      website,
+    };
     const message = formatAgentCommandLog({
       method: 'saveSecret',
-      params: {
-        vault: 'Automation',
-        title: 'Example login',
-        username: 'user@example.com',
-        password: 'synthetic-password',
-        website: 'https://example.com',
-      },
+      params,
     });
 
     expect(message).to.include('agent: saveSecret');
     expect(message).to.include('Automation');
     expect(message).to.include('user@example.com');
-    expect(message).to.include('https://example.com');
+    expect(message).to.include('"website":"[REDACTED]"');
     expect(message).to.include('"password":"[REDACTED]"');
     expect(message).to.not.include('synthetic-password');
+    for (const secret of [
+      'url-user',
+      'url-password',
+      'private-token',
+      'private-fragment',
+    ]) {
+      expect(message).to.not.include(secret);
+    }
+    expect(params.website).to.equal(website);
+    expect(params.password).to.equal('synthetic-password');
   });
 
   it('leaves non-saveSecret command parameters unchanged', () => {

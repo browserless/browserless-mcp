@@ -245,7 +245,7 @@ export const formatAgentCommandLog = (cmd: {
 }): string => {
   const params =
     cmd.method === 'saveSecret'
-      ? { ...cmd.params, password: '[REDACTED]' }
+      ? { ...cmd.params, password: '[REDACTED]', website: '[REDACTED]' }
       : cmd.params;
   return `agent: ${cmd.method} ${JSON.stringify(params)}`;
 };
