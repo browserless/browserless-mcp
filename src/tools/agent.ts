@@ -21,6 +21,7 @@ import {
   PERSONA_FIELDS,
   UpgradeError,
   preflightAgentCapabilities,
+  type ActiveSession,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -1015,6 +1016,7 @@ export function registerAgentTools(
         ];
       }
 
+      let lastSession: ActiveSession | undefined;
       const runCommands = async (
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
@@ -1066,6 +1068,7 @@ export function registerAgentTools(
           );
           return runCommands(true, retryPersona);
         }
+        lastSession = agentSession;
 
         // Execute all commands sequentially
         const results: Array<{
@@ -1401,7 +1404,7 @@ export function registerAgentTools(
         }
 
         // Auto-surface files Chrome captured this batch so the model needn't call
-        // getDownloads. Skipped on explicit drain/close; a failed poll is ignored.
+        // getDownloads. One-shot calls must not close over an unsuccessful drain.
         let autoDownloads: DownloadEntry[] = [];
         if (!closedDuringBatch && last.method !== 'getDownloads') {
           try {
@@ -1412,11 +1415,24 @@ export function registerAgentTools(
               undefined,
               onSession,
             );
+            if (dl.error) throw new Error('Download poll failed');
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];
           } catch {
-            // ignore — downloads will surface on a later call
+            if (
+              params.keepSessionAlive === false &&
+              !createProfile &&
+              !attachSessionId
+            ) {
+              throw new UserError(
+                'Commands completed, but download collection failed. ' +
+                  'The session was not closed. Retry getDownloads with this sessionId; ' +
+                  'do not repeat the completed commands.\n\n' +
+                  sessionLine(agentSession),
+              );
+            }
+            // Reusable sessions can surface downloads on a later call.
           }
         }
 
@@ -1640,6 +1656,24 @@ export function registerAgentTools(
           );
         }
         const result = await runCommands(false);
+        if (
+          params.keepSessionAlive === false &&
+          lastSession &&
+          !createProfile &&
+          !attachSessionId
+        ) {
+          closeSession(
+            mcpSessionId,
+            token,
+            proxy,
+            profile,
+            createProfile,
+            attachSessionId,
+            lastSession.handle,
+            integrationId,
+            allowedDomains,
+          );
+        }
         sendAnalytics(true);
         return result;
       } catch (err) {

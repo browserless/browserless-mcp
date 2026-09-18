@@ -704,6 +704,7 @@ describe('compliance mode — compliant tool surface', () => {
       // continuity handle, not a capability.
       browserless_agent: [
         'commands',
+        'keepSessionAlive',
         'rationale',
         'requiredCapabilities',
         'sessionId',
