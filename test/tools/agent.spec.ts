@@ -1125,6 +1125,48 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
+  for (const keepSessionAlive of [false, true]) {
+    it(`preserves recovery after a failed download drain with keepSessionAlive=${keepSessionAlive}`, async () => {
+      let failDrain = true;
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads' && failDrain
+          ? new AgentErrorFrame({ message: 'download poll failed' })
+          : { downloads: [] },
+      );
+      try {
+        const execute = getAgentExecute(srv.url);
+        const args = {
+          method: 'text',
+          sessionId: 'failed-drain',
+          keepSessionAlive,
+        };
+        let error: unknown;
+        try {
+          await execute(args, mockContext);
+        } catch (err) {
+          error = err;
+        }
+        if (keepSessionAlive) {
+          expect(error).to.equal(undefined);
+        } else {
+          expect(String(error)).to.include('download collection failed');
+          expect(String(error)).to.include('sessionId: failed-drain');
+        }
+        failDrain = false;
+        await execute(
+          { method: 'getDownloads', sessionId: 'failed-drain' },
+          mockContext,
+        );
+        expect(
+          srv.hits(),
+          'failed drain must leave the same browser available',
+        ).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
   it('retains attached sessions despite the one-shot flag', async () => {
     const srv = await makeRespondingServer(() => ({}));
     try {
