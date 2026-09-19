@@ -4,6 +4,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
+  formatAgentCommandLog,
   formatConnectError,
   formatDownloads,
   formatErrorMessage,
@@ -132,6 +133,50 @@ describe('agent secret-capture preflight', () => {
         validateSecretCaptureOrdering([{ method: 'loadSecret' }, { method }]),
       ).to.throw(`${method} cannot run after loadSecret`);
     }
+  });
+});
+
+describe('formatAgentCommandLog', () => {
+  it('redacts saveSecret passwords and website values without mutating the command', () => {
+    const website =
+      'https://url-user:url-password@example.com/reset?token=private-token#private-fragment';
+    const params = {
+      vault: 'Automation',
+      title: 'Example login',
+      username: 'user@example.com',
+      password: 'synthetic-password',
+      website,
+    };
+    const message = formatAgentCommandLog({
+      method: 'saveSecret',
+      params,
+    });
+
+    expect(message).to.include('agent: saveSecret');
+    expect(message).to.include('Automation');
+    expect(message).to.include('user@example.com');
+    expect(message).to.include('"website":"[REDACTED]"');
+    expect(message).to.include('"password":"[REDACTED]"');
+    expect(message).to.not.include('synthetic-password');
+    for (const secret of [
+      'url-user',
+      'url-password',
+      'private-token',
+      'private-fragment',
+    ]) {
+      expect(message).to.not.include(secret);
+    }
+    expect(params.website).to.equal(website);
+    expect(params.password).to.equal('synthetic-password');
+  });
+
+  it('leaves non-saveSecret command parameters unchanged', () => {
+    expect(
+      formatAgentCommandLog({
+        method: 'goto',
+        params: { url: 'https://example.com' },
+      }),
+    ).to.equal('agent: goto {"url":"https://example.com"}');
   });
 });
 
@@ -1635,6 +1680,76 @@ describe('browserless_agent retry-guard (runCommands)', () => {
   const ctx = (sessionId: string) => ({ ...mockContext, sessionId });
 
   afterEach(() => sinon.restore());
+
+  it('rejects an incomplete single saveSecret before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ ok: true }));
+    try {
+      const execute = getAgentExecute(srv.url);
+      let failure: unknown;
+      try {
+        await execute(
+          {
+            method: 'saveSecret',
+            params: {
+              vault: 'Automation',
+              title: 'Login',
+              username: 'test@example.com',
+            },
+          },
+          ctx('single-save-validation'),
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(UserError);
+      expect((failure as { code?: string }).code).to.equal('INVALID_PARAMS');
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const failingMethod of ['saveSecret', 'click']) {
+    it(`does not replay a vault write after ${failingMethod} fails`, async () => {
+      let saves = 0;
+      const srv = await makeRespondingServer((method) => {
+        if (method === 'saveSecret') saves++;
+        return method === failingMethod
+          ? new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' })
+          : { ok: true, ref: 'op://vault/item/password' };
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        let failure: unknown;
+        try {
+          await execute(
+            {
+              commands: [
+                {
+                  method: 'saveSecret',
+                  params: {
+                    vault: 'Automation',
+                    title: 'Login',
+                    username: 'test@example.com',
+                    password: 'synthetic-password',
+                  },
+                },
+                { method: 'click', params: { selector: '#next' } },
+              ],
+            },
+            ctx(`save-no-retry-${failingMethod}`),
+          );
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).to.be.instanceOf(UserError);
+        expect(saves).to.equal(1);
+        expect(srv.hits()).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 
   it('does NOT retry a non-retryable upgrade failure (401)', async () => {
     const srv = await makeRejectingServer(
