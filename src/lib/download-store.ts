@@ -36,7 +36,7 @@ const store = new Map<string, StoreEntry>();
 
 // Where captured files land on the MCP server. Defaults to a temp dir; override
 // with BROWSERLESS_DOWNLOAD_DIR (e.g. a stable folder in local/stdio setups).
-const downloadsDir = (): string =>
+export const downloadsDir = (): string =>
   process.env.BROWSERLESS_DOWNLOAD_DIR ||
   join(tmpdir(), 'browserless-mcp-downloads');
 

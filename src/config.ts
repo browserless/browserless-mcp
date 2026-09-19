@@ -1,5 +1,7 @@
 import { parseCsv } from './lib/utils.js';
 import type { McpConfig } from './@types/types.js';
+import { downloadsDir } from './lib/download-store.js';
+import { delimiter, resolve } from 'node:path';
 
 export const DEFAULT_API_URL = 'https://production-sfo.browserless.io';
 export const DEFAULT_API_SERVER_URL = 'https://api.browserless.io';
@@ -45,7 +47,7 @@ export function classifyComplianceInput(
   return 'unrecognized';
 }
 
-export function getConfig(): McpConfig {
+export function getConfig(): McpConfig & { uploadDirs: string[] } {
   return {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
@@ -54,6 +56,12 @@ export function getConfig(): McpConfig {
     replayCdnUrl:
       process.env.BROWSERLESS_REPLAY_CDN_URL ?? DEFAULT_REPLAY_CDN_URL,
     transport: (process.env.TRANSPORT as 'stdio' | 'httpStream') ?? 'stdio',
+    uploadDirs: [
+      downloadsDir(),
+      ...(process.env.BROWSERLESS_UPLOAD_DIRS ?? '')
+        .split(delimiter)
+        .filter(Boolean),
+    ].map((dir) => resolve(dir)),
     port: parseInt(process.env.PORT ?? '8080', 10),
     requestTimeout: parseInt(process.env.BROWSERLESS_TIMEOUT ?? '30000', 10),
     maxRetries: parseInt(process.env.BROWSERLESS_MAX_RETRIES ?? '3', 10),

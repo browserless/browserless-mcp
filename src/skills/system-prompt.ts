@@ -97,7 +97,7 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 ## Files (upload / download)
 **To download a file, DRIVE THE BROWSER — do not \`curl\`/\`wget\`/\`fetch\` the file yourself as a first move.** Many real downloads (login/cookie-gated, generated server-side on demand, or triggered by a click whose response headers force the download) have NO fetchable URL — a direct fetch silently gets the wrong bytes, an HTML error page, or 403. Click/goto in the agent and collect from the auto-surfaced ledger. The ONLY time a direct fetch is correct: the ledger hands you a URL to use — the single-use \`/download/<id>\` URL, or an over-cap \`sourceUrl\`. Reaching for \`curl\` first is a bug, not a shortcut.
 **NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.
-- **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it.
+- **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it only inside the download directory or a directory explicitly allowed by the local operator through \`BROWSERLESS_UPLOAD_DIRS\`. Symlink targets must also be inside an allowed directory. Ask the operator about rejected paths; do not bypass the restriction by reading or moving the file yourself.
 - **Upload a local file (HTTP)**: the server can't read your disk. Stage it once over HTTP, then use the handle:
   \`curl -s -F file=@"/path/to/file" "<MCP_BASE_URL>/upload?token=<TOKEN>"\` → returns \`{ "handle": "browserless-download://…" }\` → \`uploadFile { files: [{ handle }] }\`. (The path-rejection error gives you the exact command with your token + URL filled in.)
 - **Re-upload something from \`getDownloads\`**: pass its \`handle\` (works in both modes).
@@ -278,7 +278,7 @@ export const fileTransferModeNote = (
   transport === 'stdio'
     ? `\n\n## Runtime: LOCAL (stdio)\n` +
       `Before any file transfer, know your mode: this server runs over **stdio**, on the same machine as your files. ` +
-      `To UPLOAD a local file, pass its **\`path\`** straight to \`uploadFile\` (\`files: [{ path: "/abs/file" }]\`) — the server reads it. ` +
+      `To UPLOAD a local file, pass its **\`path\`** to \`uploadFile\` (\`files: [{ path }]\`). The path and any symlink target must be inside the download directory or a directory the local operator explicitly allowed through \`BROWSERLESS_UPLOAD_DIRS\`. Ask the operator about rejected paths; do not read or move the file to bypass the restriction. ` +
       `**Do NOT base64 the file or read its bytes into the conversation.** ` +
       `DOWNLOADS are saved to local disk; the agent response gives you the path.`
     : `\n\n## Runtime: REMOTE (HTTP)\n` +
