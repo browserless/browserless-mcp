@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "browserless": {
+      "type": "http",
+      "url": "https://mcp.browserless.io/mcp"
+    }
+  }
+}

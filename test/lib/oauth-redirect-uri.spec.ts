@@ -16,6 +16,8 @@ import { RedisTokenStorage } from '../../src/lib/redis-token-storage.js';
 const EXACT_CALLBACKS = [
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
+  'https://grok.com/connectors/oauth/callback',
+  'https://grok.com/connectors/oauth/callback/',
   'cursor://anysphere.cursor-mcp/oauth/callback',
   'https://www.cursor.com/agents/mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',

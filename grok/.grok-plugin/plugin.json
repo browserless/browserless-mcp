@@ -1,0 +1,14 @@
+{
+  "name": "browserless",
+  "version": "1.0.0",
+  "description": "Browser automation for Grok: scrape, search, map and crawl sites, drive a real browser, solve captchas, use residential proxies and saved logins, run Lighthouse audits, export files, and inspect session replays.",
+  "author": {
+    "name": "Browserless",
+    "url": "https://browserless.io"
+  },
+  "homepage": "https://browserless.io",
+  "repository": "https://github.com/browserless/browserless-mcp",
+  "license": "SSPL-1.0",
+  "keywords": ["browserless", "browserql", "bql", "browserless agent"],
+  "logo": "assets/logo.svg"
+}
