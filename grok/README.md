@@ -7,13 +7,35 @@ inspect session replays.
 
 ## Installation
 
-In Grok Build, open `/plugin`, search for **Browserless**, and install it.
+Install directly from the official Browserless repository:
 
-On first connection, Grok can open Browserless sign-in in your browser. You can
-also authenticate with a Browserless API token. Never paste credentials into
-chat.
+```bash
+grok plugin install browserless/browserless-mcp#grok --trust
+```
 
-## Authentication and network access
+Only install plugins from sources you trust. Start a new Grok session after
+installation.
+
+## Authentication
+
+By default, Grok opens Browserless sign-in in your browser on first connection.
+
+To use a Browserless API token instead, set it outside the plugin and never
+paste it into chat or commit it:
+
+```bash
+export BROWSERLESS_TOKEN='your-token'
+```
+
+Then add this user-level configuration to `~/.grok/config.toml`:
+
+```toml
+[mcp_servers.browserless]
+url = "https://mcp.browserless.io/mcp"
+headers = { Authorization = "Bearer ${BROWSERLESS_TOKEN}" }
+```
+
+## Network access
 
 The plugin connects to these Browserless endpoints:
 
