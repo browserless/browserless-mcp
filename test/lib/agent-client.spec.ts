@@ -3,6 +3,8 @@ import sinon from 'sinon';
 import {
   buildAgentWsUrl,
   closeSession,
+  createRepeatState,
+  detectRepetition,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -22,6 +24,40 @@ import {
   makeStallingServer,
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
+
+describe('agent-client repetition identity', () => {
+  it('ignores object key order but preserves values and array/command order', () => {
+    const state = createRepeatState();
+    const a = { method: 'evaluate', params: { args: [{ a: 1, b: 2 }, 3] } };
+    const b = { method: 'snapshot', params: {} };
+    expect(detectRepetition(state, [a, b]).count).to.equal(1);
+    expect(detectRepetition(state, [b, a]).count).to.equal(1);
+    expect(
+      detectRepetition(state, [
+        { method: 'evaluate', params: { args: [3, { b: 2, a: 1 }] } },
+        b,
+      ]).count,
+    ).to.equal(1);
+    expect(
+      detectRepetition(state, [
+        { method: 'evaluate', params: { args: [{ b: 9, a: 1 }, 3] } },
+        b,
+      ]).count,
+    ).to.equal(1);
+    expect(
+      detectRepetition(state, [
+        { method: 'evaluate', params: { args: [{ b: 2, a: 1 }, 3] } },
+        b,
+      ]).count,
+    ).to.equal(2);
+    const third = detectRepetition(state, [a, b]);
+    expect(third.count).to.equal(3);
+    expect(third.warning).to.include('3 times');
+    expect(
+      [...state.keys()].every((key) => /^[a-f0-9]{64}$/.test(key)),
+    ).to.equal(true);
+  });
+});
 
 describe('agent-client reconnection telemetry', () => {
   afterEach(() => sinon.restore());

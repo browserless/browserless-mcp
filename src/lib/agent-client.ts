@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
 import { z } from 'zod';
@@ -238,6 +238,36 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
 };
 
 const sessions = new Map<string, ActiveSession>();
+
+export const createRepeatState = (): Map<string, number> => new Map();
+
+/** Count normalized command batches without retaining their parameter values. */
+export const detectRepetition = (
+  state: Map<string, number>,
+  commands: Array<{ method: string; params: Record<string, unknown> }>,
+): { count: number; warning: string } => {
+  const key = createHash('sha256')
+    .update(
+      JSON.stringify(commands, (_key, value) =>
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
+            )
+          : value,
+      ),
+    )
+    .digest('hex');
+  const count = (state.get(key) ?? 0) + 1;
+  state.set(key, count);
+  return {
+    count,
+    warning:
+      count >= 3
+        ? `REPETITION WARNING: This command batch has been attempted ${count} times in this session. Re-read your plan and check progress before continuing.`
+        : '',
+  };
+};
+
 const createdAt = new WeakMap<ActiveSession, number>();
 // In-flight session creations keyed by session key. Concurrent
 // getOrCreateSession callers await the same promise instead of each
@@ -1121,6 +1151,7 @@ export const getOrCreateSession = async (
       persona: effectivePersona,
       record,
       skillState: createSkillState(),
+      repeatState: createRepeatState(),
       secretVisible: false,
       lastUsedAt: Date.now(),
     };

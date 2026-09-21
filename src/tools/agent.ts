@@ -22,6 +22,7 @@ import {
   send,
   closeSession,
   destroySession,
+  detectRepetition,
   isRetryableUpgradeError,
   PERSONA_FIELDS,
   UpgradeError,
@@ -70,6 +71,7 @@ import {
 import {
   AGENT_SYSTEM_PROMPT,
   COMPLIANT_AGENT_SYSTEM_PROMPT,
+  SELF_CHECK_DIRECTIVE,
   SKILL_TOOL_DESCRIPTION,
   fileTransferModeNote,
   sessionContinuityNote,
@@ -683,6 +685,7 @@ export function registerAgentTools(
         ? COMPLIANT_AGENT_SYSTEM_PROMPT
         : AGENT_SYSTEM_PROMPT +
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
+      SELF_CHECK_DIRECTIVE +
       sessionContinuityNote(config.transport),
     // The tool advertises the slim, OpenAI-importable schemas — the rich
     // per-command union renders to a JSON Schema too deep/large for OpenAI's
@@ -881,6 +884,8 @@ export function registerAgentTools(
       let liveUrlId: string | undefined;
       let sessionReused = false;
       let sessionAgeMs = 0;
+      let repeatCount = 0;
+      let repeatWarning = '';
       const onSession = (reused: boolean, ageMs: number) => {
         sessionReused = reused;
         sessionAgeMs = ageMs;
@@ -896,6 +901,7 @@ export function registerAgentTools(
           session_age_ms: sessionAgeMs,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
+          repeat_count: repeatCount,
           api_url: apiUrl,
           success,
           ...(success
@@ -1086,6 +1092,10 @@ export function registerAgentTools(
           return runCommands(true, retryPersona);
         }
         lastSession = agentSession;
+        const repetition = detectRepetition(agentSession.repeatState, commands);
+        repeatCount = repetition.count;
+        repeatWarning =
+          mcpSource.source === 'autologin' ? '' : repetition.warning;
 
         // Execute all commands sequentially
         const results: Array<{
@@ -1496,6 +1506,7 @@ export function registerAgentTools(
         const extraText = [
           renderedSkills,
           siteNotice,
+          repeatWarning,
           closedDuringBatch ? '' : sessionLine(agentSession),
         ]
           .filter(Boolean)
@@ -1695,6 +1706,9 @@ export function registerAgentTools(
         return result;
       } catch (err) {
         sendAnalytics(false, err);
+        if (repeatWarning && err instanceof UserError) {
+          err.message += `\n\n${repeatWarning}`;
+        }
         throw err;
       }
     },
