@@ -3,6 +3,8 @@ import sinon from 'sinon';
 import {
   buildAgentWsUrl,
   closeSession,
+  createRepeatState,
+  detectRepetition,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -22,6 +24,56 @@ import {
   makeStallingServer,
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
+
+describe('agent-client repetition identity', () => {
+  it('bounds history while retaining recently repeated batches', () => {
+    const state = createRepeatState();
+    const batch = (value: number) => [
+      { method: 'evaluate', params: { value } },
+    ];
+    for (let i = 0; i < 1024; i++) detectRepetition(state, batch(i));
+    expect(state.size).to.equal(1024);
+    expect(detectRepetition(state, batch(0)).count).to.equal(2);
+    detectRepetition(state, batch(1024));
+    expect(state.size).to.equal(1024);
+    expect(detectRepetition(state, batch(0)).warning).to.include('3 times');
+    expect(detectRepetition(state, batch(1)).count).to.equal(1);
+    for (let i = 1025; i < 4096; i++) detectRepetition(state, batch(i));
+    expect(state.size).to.equal(1024);
+  });
+
+  it('ignores object key order but preserves values and array/command order', () => {
+    const state = createRepeatState();
+    const a = { method: 'evaluate', params: { args: [{ a: 1, b: 2 }, 3] } };
+    const b = { method: 'snapshot', params: {} };
+    expect(detectRepetition(state, [a, b]).count).to.equal(1);
+    expect(detectRepetition(state, [b, a]).count).to.equal(1);
+    expect(
+      detectRepetition(state, [
+        { method: 'evaluate', params: { args: [3, { b: 2, a: 1 }] } },
+        b,
+      ]).count,
+    ).to.equal(1);
+    expect(
+      detectRepetition(state, [
+        { method: 'evaluate', params: { args: [{ b: 9, a: 1 }, 3] } },
+        b,
+      ]).count,
+    ).to.equal(1);
+    expect(
+      detectRepetition(state, [
+        { method: 'evaluate', params: { args: [{ b: 2, a: 1 }, 3] } },
+        b,
+      ]).count,
+    ).to.equal(2);
+    const third = detectRepetition(state, [a, b]);
+    expect(third.count).to.equal(3);
+    expect(third.warning).to.include('3 times');
+    expect(
+      [...state.keys()].every((key) => /^[a-f0-9]{64}$/.test(key)),
+    ).to.equal(true);
+  });
+});
 
 describe('agent-client reconnection telemetry', () => {
   afterEach(() => sinon.restore());

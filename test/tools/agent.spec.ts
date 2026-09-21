@@ -1135,6 +1135,117 @@ const getAgentExecute = (
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
 
+describe('browserless_agent repetition self-check', () => {
+  afterEach(() => sinon.restore());
+
+  for (const complianceMode of [false, true]) {
+    it(`advertises the conditional self-check in compliance mode ${complianceMode}`, () => {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const added = sinon.spy(server, 'addTool');
+      registerAgentTools(server, { ...mockConfig, complianceMode });
+      const description = added
+        .getCalls()
+        .find((c) => c.args[0].name === 'browserless_agent')!.args[0]
+        .description;
+      expect(description).to.include(
+        'When a tool response contains REPETITION WARNING',
+      );
+      expect(description).to.include('re-read your plan');
+      expect(description).to.include('stop and report');
+    });
+  }
+
+  for (const source of [
+    'agent_run',
+    'script_builder',
+    'mcp_client',
+    'cli_agent',
+    'autologin',
+  ]) {
+    it(`counts alternating normalized batches and gates warnings for ${source}`, async () => {
+      const srv = await makeRespondingServer(() => ({ elements: [] }));
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const execute = getAgentExecute(srv.url, 'stdio', analytics);
+      const ctx = {
+        ...mockContext,
+        sessionId: `repeat-${source}`,
+        session: { source },
+      };
+      let sessionId: string | undefined;
+      try {
+        for (let i = 1; i <= 4; i++) {
+          const result = (await execute(
+            {
+              sessionId,
+              rationale: `Attempt ${i}`,
+              commands: [
+                { method: 'snapshot', params: i % 2 ? {} : { ignored: true } },
+              ],
+            },
+            ctx,
+          )) as { content: Array<{ text?: string }> };
+          const text = result.content.map((c) => c.text ?? '').join('\n');
+          sessionId = /sessionId: (\S+)/.exec(text)?.[1];
+          expect(sessionId).to.match(/^s:/);
+          expect(text.includes('REPETITION WARNING')).to.equal(
+            i >= 3 && source !== 'autologin',
+          );
+          expect(fire.lastCall.args[2].repeat_count).to.equal(i);
+          if (i >= 3 && source !== 'autologin')
+            expect(text).to.include(`${i} times`);
+          await execute({ method: 'getTabs', sessionId }, ctx);
+        }
+        await execute(
+          { method: 'snapshot' },
+          { ...ctx, sessionId: `independent-${source}` },
+        );
+        expect(fire.lastCall.args[2].repeat_count).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('warns on repeated command failures without disclosing command parameters', async () => {
+    const srv = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'SELECTOR_NOT_FOUND',
+          message: 'Not found',
+        }),
+    );
+    const execute = getAgentExecute(srv.url);
+    let sessionId: string | undefined;
+    try {
+      for (let i = 1; i <= 3; i++) {
+        let message = '';
+        try {
+          await execute(
+            {
+              sessionId,
+              commands: [
+                { method: 'click', params: { selector: '< private-ref' } },
+              ],
+            },
+            { ...mockContext, sessionId: 'repeat-failure' },
+          );
+          expect.fail('expected command failure');
+        } catch (err) {
+          message = (err as Error).message;
+        }
+        expect(message).to.include('Not found');
+        sessionId = /sessionId: (\S+)/.exec(message)?.[1];
+        expect(sessionId).to.match(/^s:/);
+        expect(message.includes('REPETITION WARNING')).to.equal(i === 3);
+        expect(message).not.to.include('private-ref');
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 

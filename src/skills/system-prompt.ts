@@ -1,3 +1,8 @@
+export const SELF_CHECK_DIRECTIVE = `
+
+## Repetition self-check
+When a tool response contains REPETITION WARNING, re-read your plan and compare your completed steps with the intended progress. Do not repeat the same batch blindly: choose a materially different approach within the task's constraints, or stop and report what is blocked and what you tried. Repetition is a signal to check progress, not proof of failure; continue a repeated action only when you can identify concrete progress or a task-required reason.`;
+
 export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in persistent agent session.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
