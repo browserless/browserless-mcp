@@ -26,6 +26,22 @@ import {
 } from '../helpers/upgrade-server.js';
 
 describe('agent-client repetition identity', () => {
+  it('bounds history while retaining recently repeated batches', () => {
+    const state = createRepeatState();
+    const batch = (value: number) => [
+      { method: 'evaluate', params: { value } },
+    ];
+    for (let i = 0; i < 1024; i++) detectRepetition(state, batch(i));
+    expect(state.size).to.equal(1024);
+    expect(detectRepetition(state, batch(0)).count).to.equal(2);
+    detectRepetition(state, batch(1024));
+    expect(state.size).to.equal(1024);
+    expect(detectRepetition(state, batch(0)).warning).to.include('3 times');
+    expect(detectRepetition(state, batch(1)).count).to.equal(1);
+    for (let i = 1025; i < 4096; i++) detectRepetition(state, batch(i));
+    expect(state.size).to.equal(1024);
+  });
+
   it('ignores object key order but preserves values and array/command order', () => {
     const state = createRepeatState();
     const a = { method: 'evaluate', params: { args: [{ a: 1, b: 2 }, 3] } };

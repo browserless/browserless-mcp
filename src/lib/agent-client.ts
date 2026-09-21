@@ -238,10 +238,11 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
 };
 
 const sessions = new Map<string, ActiveSession>();
+const MAX_REPEAT_BATCHES = 1024;
 
 export const createRepeatState = (): Map<string, number> => new Map();
 
-/** Count normalized command batches without retaining their parameter values. */
+/** Count normalized batches in bounded LRU history, retaining no parameter values. */
 export const detectRepetition = (
   state: Map<string, number>,
   commands: Array<{ method: string; params: Record<string, unknown> }>,
@@ -258,7 +259,11 @@ export const detectRepetition = (
     )
     .digest('hex');
   const count = (state.get(key) ?? 0) + 1;
+  state.delete(key);
   state.set(key, count);
+  if (state.size > MAX_REPEAT_BATCHES) {
+    state.delete(state.keys().next().value!);
+  }
   return {
     count,
     warning:
