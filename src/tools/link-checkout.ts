@@ -4,7 +4,6 @@ import { z } from 'zod';
 import type {
   McpConfig,
   StripeLinkCheckoutCartLine,
-  StripeLinkCheckoutRequest,
   StripeLinkCheckoutResponse,
 } from '../@types/types.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -156,24 +155,55 @@ const SelectorsSchema = z
     }
   });
 
+const MerchantSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200).describe('Merchant name'),
+    url: z.url().describe('Active merchant checkout URL'),
+  })
+  .strict();
+
+const AmountMinorSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(MAX_CHECKOUT_AMOUNT_MINOR)
+  .describe('Exact checkout total in integer USD minor units (cents)');
+
+const CartSchema = z.array(CartLineSchema).min(1).max(100);
+
+const OutcomeSchema = z.enum(['success', 'blocked', 'abandoned']);
+
+const TagsSchema = z
+  .array(
+    z.enum([
+      'stripe_checkout',
+      'captcha',
+      'anti_bot_script',
+      'cdn_block',
+      'waf_block',
+      'dns_block',
+      'rate_limited',
+      'login_required',
+      '3ds_challenge',
+      'page_inaccessible',
+      'timeout',
+      'site_error',
+      'payment_declined',
+      'other',
+    ]),
+  )
+  .max(10);
+
+const StepSchema = z.string().max(500);
+
 const CreateSchema = z
   .object({
     action: z.literal('create'),
     browser_session_handle: SessionHandleSchema,
-    merchant: z
-      .object({
-        name: z.string().trim().min(1).max(200).describe('Merchant name'),
-        url: z.url().describe('Active merchant checkout URL'),
-      })
-      .strict(),
-    amount_minor: z
-      .number()
-      .int()
-      .positive()
-      .max(MAX_CHECKOUT_AMOUNT_MINOR)
-      .describe('Exact checkout total in integer USD minor units (cents)'),
+    merchant: MerchantSchema,
+    amount_minor: AmountMinorSchema,
     currency: z.literal('usd'),
-    cart: z.array(CartLineSchema).min(1).max(100),
+    cart: CartSchema,
     selectors: SelectorsSchema,
   })
   .strict()
@@ -201,37 +231,55 @@ const ReportSchema = z
     action: z.literal('report'),
     browser_session_handle: SessionHandleSchema,
     checkout_id: CheckoutIdSchema,
-    outcome: z.enum(['success', 'blocked', 'abandoned']),
-    tags: z
-      .array(
-        z.enum([
-          'stripe_checkout',
-          'captcha',
-          'anti_bot_script',
-          'cdn_block',
-          'waf_block',
-          'dns_block',
-          'rate_limited',
-          'login_required',
-          '3ds_challenge',
-          'page_inaccessible',
-          'timeout',
-          'site_error',
-          'payment_declined',
-          'other',
-        ]),
-      )
-      .max(10)
-      .optional(),
-    step: z.string().max(500).optional(),
+    outcome: OutcomeSchema,
+    tags: TagsSchema.optional(),
+    step: StepSchema.optional(),
   })
   .strict();
 
-export const StripeLinkCheckoutParamsSchema = z.discriminatedUnion('action', [
+// Runtime validation + per-action type narrowing. NOT the advertised tool
+// schema: a discriminatedUnion serializes to a root-level JSON-Schema `oneOf`,
+// which OpenAI's hosted-MCP importer rejects with 424 (Failed Dependency) —
+// breaking every hosted-agent flow that imports the full surface. The tool
+// advertises the flat StripeLinkCheckoutParamsSchema below and re-parses
+// through this union in run() to recover the narrowed type.
+export const CheckoutInputSchema = z.discriminatedUnion('action', [
   CreateSchema,
   ContinueSchema,
   ReportSchema,
 ]);
+
+// Advertised tool schema: a flat object (no oneOf/anyOf) so OpenAI's
+// hosted-MCP importer accepts it. Field types are validated here; the
+// per-action required-field combinations are enforced at runtime by
+// CheckoutInputSchema (re-parsed in run()).
+export const StripeLinkCheckoutParamsSchema = z
+  .object({
+    action: z
+      .enum(['create', 'resume', 'cancel', 'report'])
+      .describe('Checkout step to run.'),
+    browser_session_handle: SessionHandleSchema,
+    merchant: MerchantSchema.optional().describe('Required for create.'),
+    amount_minor: AmountMinorSchema.optional().describe('Required for create.'),
+    currency: z.literal('usd').optional().describe('Required for create.'),
+    cart: CartSchema.optional().describe('Required for create.'),
+    selectors: SelectorsSchema.optional().describe('Required for create.'),
+    checkout_id: CheckoutIdSchema.optional().describe(
+      'Required for resume, cancel, and report.',
+    ),
+    outcome: OutcomeSchema.optional().describe('Required for report.'),
+    tags: TagsSchema.optional().describe('Optional for report.'),
+    step: StepSchema.optional().describe('Optional for report.'),
+  })
+  .strict()
+  .describe(
+    'Stripe Link checkout in the active browser session. Required fields ' +
+      'depend on `action`: create needs merchant, amount_minor, currency, ' +
+      'cart, selectors; resume and cancel need checkout_id; report needs ' +
+      'checkout_id and outcome.',
+  );
+
+type StripeLinkCheckoutParams = z.infer<typeof StripeLinkCheckoutParamsSchema>;
 
 const approvalUrl = (value: unknown): string | undefined => {
   if (value === undefined) return undefined;
@@ -357,7 +405,7 @@ export function registerStripeLinkCheckoutTool(
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
-  defineTool<StripeLinkCheckoutRequest, StripeLinkCheckoutResponse>(
+  defineTool<StripeLinkCheckoutParams, StripeLinkCheckoutResponse>(
     server,
     config,
     analytics,
@@ -376,9 +424,19 @@ export function registerStripeLinkCheckoutTool(
         openWorldHint: true,
       },
       validateUrl: (params) => {
-        if (params.action === 'create') validateHttpUrl(params.merchant.url);
+        if (params.action === 'create' && params.merchant) {
+          validateHttpUrl(params.merchant.url);
+        }
       },
-      run: async ({ params, token, apiUrl, log, userId }) => {
+      run: async ({ params: rawParams, token, apiUrl, log, userId }) => {
+        const parsed = CheckoutInputSchema.safeParse(rawParams);
+        if (!parsed.success) {
+          throw new UserError(
+            parsed.error.issues[0]?.message ??
+              'Invalid Stripe Link checkout request.',
+          );
+        }
+        const params = parsed.data;
         if (params.action === 'create') {
           const total = cartTotal(params.cart);
           if (!Number.isSafeInteger(total) || total !== params.amount_minor) {
@@ -530,7 +588,8 @@ export function registerStripeLinkCheckoutTool(
         status: result.status,
         amount_minor:
           params.action === 'create' ? params.amount_minor : undefined,
-        cart_lines: params.action === 'create' ? params.cart.length : undefined,
+        cart_lines:
+          params.action === 'create' ? params.cart?.length : undefined,
       }),
       format: (result) => [
         {

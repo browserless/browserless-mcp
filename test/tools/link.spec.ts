@@ -4,8 +4,8 @@ import { FastMCP } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerStripeLinkConnectTool } from '../../src/tools/link-connect.js';
 import {
+  CheckoutInputSchema,
   registerStripeLinkCheckoutTool,
-  StripeLinkCheckoutParamsSchema,
 } from '../../src/tools/link-checkout.js';
 import { registerAgentTools } from '../../src/tools/agent.js';
 import type { McpConfig } from '../../src/@types/types.js';
@@ -297,7 +297,7 @@ describe('Stripe Link tools', () => {
         cvc: 'input[name=cvc]',
       },
     };
-    expect(StripeLinkCheckoutParamsSchema.safeParse(input).success).to.be.false;
+    expect(CheckoutInputSchema.safeParse(input).success).to.be.false;
 
     const execute = captureExecute(registerStripeLinkCheckoutTool);
     try {
