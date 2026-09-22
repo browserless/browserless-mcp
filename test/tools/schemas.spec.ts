@@ -12,6 +12,69 @@ import {
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
 
+describe('reportSkillOutcome schema', () => {
+  it('preserves legacy reports, each bounded reason and attribution metadata', () => {
+    for (const failure_reason of [
+      undefined,
+      'authentication_required',
+      'site_changed',
+      'blocked',
+      'timeout',
+      'missing_data',
+      'incorrect_result',
+      'unknown',
+    ]) {
+      const command = {
+        method: 'reportSkillOutcome',
+        params: {
+          domain: 'example.com',
+          task: 'search',
+          success: false,
+          ...(failure_reason ? { failure_reason } : {}),
+          run_id: 'a'.repeat(64),
+          skill_use_id: 'b'.repeat(64),
+          loaded_version: 3,
+        },
+      };
+      expect(AgentCommandSchema.parse(command)).to.deep.equal(command);
+    }
+    expect(
+      AgentCommandSchema.safeParse({
+        method: 'reportSkillOutcome',
+        params: { domain: 'example.com', task: 'search', success: true },
+      }).success,
+    ).to.equal(true);
+  });
+
+  it('rejects malformed reports without falling through to generic commands', () => {
+    for (const changes of [
+      { failure_reason: null },
+      { failure_reason: 1 },
+      { failure_reason: {} },
+      { failure_reason: 'https://private.example/?token=secret' },
+      { success: true, failure_reason: 'timeout' },
+      { success: 'false' },
+      { domain: 1 },
+      { task: {} },
+      { domain: '' },
+      { task: '' },
+    ]) {
+      expect(
+        AgentCommandSchema.safeParse({
+          method: 'reportSkillOutcome',
+          params: {
+            domain: 'example.com',
+            task: 'search',
+            success: false,
+            ...changes,
+          },
+        }).success,
+        JSON.stringify(changes),
+      ).to.equal(false);
+    }
+  });
+});
+
 for (const [name, schema] of [
   ['AgentCommandSchema', AgentCommandSchema],
   ['CompliantAgentCommandSchema', CompliantAgentCommandSchema],
@@ -357,6 +420,18 @@ describe('AgentParamsSchema.proxy', () => {
     });
     expect(parsed.proxy).to.be.undefined;
   });
+
+  it('accepts explicit plan capability requirements', () => {
+    const parsed = AgentParamsSchema.parse({
+      method: 'snapshot',
+      requiredCapabilities: ['vision', 'os-spoofing'],
+    });
+
+    expect(parsed.requiredCapabilities).to.deep.equal([
+      'vision',
+      'os-spoofing',
+    ]);
+  });
 });
 
 describe('AgentParamsSchema persona', () => {
@@ -686,7 +761,11 @@ describe('clearSecrets command', () => {
     ]) {
       expect(
         AgentParamsSchema.safeParse({ commands: [command] }).success,
-        JSON.stringify(command),
+        `batch: ${JSON.stringify(command)}`,
+      ).to.equal(true);
+      expect(
+        AgentParamsSchema.safeParse(command).success,
+        `single: ${JSON.stringify(command)}`,
       ).to.equal(true);
     }
   });
@@ -698,6 +777,19 @@ describe('clearSecrets command', () => {
       ],
     });
     expect(result.success).to.equal(false);
+  });
+
+  it('rejects unexpected clearSecrets params in single-command form', () => {
+    for (const schema of [AgentParamsSchema, AgentToolParamsSchema]) {
+      for (const commands of [undefined, []]) {
+        const result = schema.safeParse({
+          method: 'clearSecrets',
+          params: { unexpected: 'not-allowed' },
+          commands,
+        });
+        expect(result.success).to.equal(false);
+      }
+    }
   });
 
   it('describes when clearSecrets is needed in the published command schema', () => {
@@ -739,6 +831,76 @@ describe('browserless_agent tool schema (OpenAI hosted-MCP import)', () => {
         createProfile: { name: 'github' },
       }).success,
     ).to.equal(false);
+  });
+});
+
+describe('saveSecret command', () => {
+  const requiredParams = {
+    vault: 'Automation',
+    title: 'Example login',
+    username: 'user@example.com',
+    password: 'synthetic-password',
+  };
+
+  it('accepts a saveSecret command with all fields', () => {
+    const parsed = AgentParamsSchema.parse({
+      commands: [
+        {
+          method: 'saveSecret',
+          params: {
+            ...requiredParams,
+            website: 'https://example.com',
+          },
+        },
+      ],
+    });
+    const cmd = parsed.commands?.[0];
+    expect(cmd?.method).to.equal('saveSecret');
+    expect((cmd?.params as { vault?: string })?.vault).to.equal('Automation');
+  });
+
+  it('accepts a saveSecret command without a website', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [{ method: 'saveSecret', params: requiredParams }],
+    });
+    expect(result.success).to.equal(true);
+  });
+
+  it('rejects missing required fields without falling back to the generic schema', () => {
+    for (const field of ['vault', 'title', 'username', 'password'] as const) {
+      const params: Partial<typeof requiredParams> = { ...requiredParams };
+      delete params[field];
+      const result = AgentParamsSchema.safeParse({
+        commands: [{ method: 'saveSecret', params }],
+      });
+      expect(result.success, `missing ${field}`).to.equal(false);
+    }
+  });
+
+  it('rejects empty required fields', () => {
+    for (const field of ['vault', 'title', 'username', 'password'] as const) {
+      const result = AgentParamsSchema.safeParse({
+        commands: [
+          {
+            method: 'saveSecret',
+            params: { ...requiredParams, [field]: '' },
+          },
+        ],
+      });
+      expect(result.success, `empty ${field}`).to.equal(false);
+    }
+  });
+
+  it('rejects a non-string website', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [
+        {
+          method: 'saveSecret',
+          params: { ...requiredParams, website: 42 },
+        },
+      ],
+    });
+    expect(result.success).to.equal(false);
   });
 });
 

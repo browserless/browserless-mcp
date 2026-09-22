@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import { tmpdir } from 'node:os';
+import { delimiter, join, resolve } from 'node:path';
 import {
   getConfig,
   classifyComplianceInput,
@@ -12,6 +14,8 @@ const BASELINE_PATTERNS = [
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector/oauth/*',
   'https://chatgpt.com/connector_platform_oauth_redirect',
+  'https://grok.com/connectors/oauth/callback',
+  'https://grok.com/connectors/oauth/callback/',
   'cursor://anysphere.cursor-mcp/oauth/callback',
   'https://www.cursor.com/agents/mcp/oauth/callback',
   'https://api.devin.ai/mcp/oauth/callback',
@@ -21,6 +25,51 @@ const BASELINE_PATTERNS = [
   'https://us1.make.celonis.com/oauth/cb/mcp',
   'https://eu1.make.celonis.com/oauth/cb/mcp',
 ];
+
+describe('config.uploadDirs', () => {
+  let originalDownload: string | undefined;
+  let originalUpload: string | undefined;
+
+  beforeEach(() => {
+    originalDownload = process.env.BROWSERLESS_DOWNLOAD_DIR;
+    originalUpload = process.env.BROWSERLESS_UPLOAD_DIRS;
+    delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+    delete process.env.BROWSERLESS_UPLOAD_DIRS;
+  });
+
+  afterEach(() => {
+    if (originalDownload === undefined)
+      delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+    else process.env.BROWSERLESS_DOWNLOAD_DIR = originalDownload;
+    if (originalUpload === undefined)
+      delete process.env.BROWSERLESS_UPLOAD_DIRS;
+    else process.env.BROWSERLESS_UPLOAD_DIRS = originalUpload;
+  });
+
+  it('defaults to only the download directory for unset or empty input', () => {
+    expect(getConfig().uploadDirs).to.deep.equal([
+      join(tmpdir(), 'browserless-mcp-downloads'),
+    ]);
+    for (const value of ['', delimiter + delimiter]) {
+      process.env.BROWSERLESS_UPLOAD_DIRS = value;
+      expect(getConfig().uploadDirs).to.deep.equal([
+        join(tmpdir(), 'browserless-mcp-downloads'),
+      ]);
+    }
+  });
+
+  it('keeps the configured download directory and resolves explicit extra roots', () => {
+    process.env.BROWSERLESS_DOWNLOAD_DIR = 'downloads';
+    process.env.BROWSERLESS_UPLOAD_DIRS = ['uploads', '', 'other'].join(
+      delimiter,
+    );
+    expect(getConfig().uploadDirs).to.deep.equal([
+      resolve('downloads'),
+      resolve('uploads'),
+      resolve('other'),
+    ]);
+  });
+});
 
 describe('config.oauthAllowedRedirectUriPatterns', () => {
   let original: string | undefined;

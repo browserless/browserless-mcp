@@ -4,6 +4,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
   buildCrossOriginNotice,
+  formatAgentCommandLog,
   formatConnectError,
   formatDownloads,
   formatErrorMessage,
@@ -14,12 +15,25 @@ import {
   normalizeUploadCommand,
   persistRecording,
   buildSkillEventProps,
-  AgentParamsSchema,
   registerAgentTools,
   sanitizeUpgradeBody,
+  validateSecretCaptureOrdering,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
-import { mkdtemp, readFile as fsReadFile, writeFile } from 'node:fs/promises';
+import {
+  AgentParamsSchema,
+  AgentToolParamsSchema,
+  CompliantAgentParamsSchema,
+  CompliantAgentToolParamsSchema,
+} from '../../src/tools/schemas.js';
+import {
+  mkdir,
+  mkdtemp,
+  readFile as fsReadFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -161,6 +175,85 @@ describe('browserless_agent reserved methods', () => {
       });
       fire.resetHistory();
     }
+  });
+});
+
+describe('agent secret-capture preflight', () => {
+  it('rejects a screenshot after loadSecret before any command runs', () => {
+    try {
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { method: 'screenshot', params: {} },
+      ]);
+      expect.fail('expected secret-capture preflight to fail');
+    } catch (err) {
+      expect((err as Error).message).to.include('screenshot');
+      expect((err as Error).message).to.include('clearSecrets');
+    }
+  });
+
+  it('allows capture after clearSecrets or navigation', () => {
+    for (const method of ['clearSecrets', 'goto']) {
+      expect(() =>
+        validateSecretCaptureOrdering([
+          { method: 'loadSecret', params: { ref: 'password' } },
+          { method, params: {} },
+          { method: 'screenshot', params: {} },
+        ]),
+      ).not.to.throw();
+    }
+  });
+
+  it('rejects unclassified readbacks after loadSecret', () => {
+    for (const method of ['getTabs', 'querySelectorAll', 'title', 'url']) {
+      expect(() =>
+        validateSecretCaptureOrdering([{ method: 'loadSecret' }, { method }]),
+      ).to.throw(`${method} cannot run after loadSecret`);
+    }
+  });
+});
+
+describe('formatAgentCommandLog', () => {
+  it('redacts saveSecret passwords and website values without mutating the command', () => {
+    const website =
+      'https://url-user:url-password@example.com/reset?token=private-token#private-fragment';
+    const params = {
+      vault: 'Automation',
+      title: 'Example login',
+      username: 'user@example.com',
+      password: 'synthetic-password',
+      website,
+    };
+    const message = formatAgentCommandLog({
+      method: 'saveSecret',
+      params,
+    });
+
+    expect(message).to.include('agent: saveSecret');
+    expect(message).to.include('Automation');
+    expect(message).to.include('user@example.com');
+    expect(message).to.include('"website":"[REDACTED]"');
+    expect(message).to.include('"password":"[REDACTED]"');
+    expect(message).to.not.include('synthetic-password');
+    for (const secret of [
+      'url-user',
+      'url-password',
+      'private-token',
+      'private-fragment',
+    ]) {
+      expect(message).to.not.include(secret);
+    }
+    expect(params.website).to.equal(website);
+    expect(params.password).to.equal('synthetic-password');
+  });
+
+  it('leaves non-saveSecret command parameters unchanged', () => {
+    expect(
+      formatAgentCommandLog({
+        method: 'goto',
+        params: { url: 'https://example.com' },
+      }),
+    ).to.equal('agent: goto {"url":"https://example.com"}');
   });
 });
 
@@ -495,24 +588,125 @@ describe('fileTransferModeNote', () => {
 });
 
 describe('normalizeUploadCommand', () => {
-  it('reads a local path into base64 content (stdio)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mcp-upload-'));
-    const path = join(dir, 'hello.txt');
-    await writeFile(path, 'Hello World!');
+  let dir: string;
+  let allowed: string;
+  let originalDownloadDir: string | undefined;
+  let originalUploadDirs: string | undefined;
 
-    const cmd = {
-      method: 'uploadFile',
-      params: { selector: 'input', files: [{ path }] },
-    };
-    await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
-
-    const file = (cmd.params.files as Record<string, unknown>[])[0];
-    expect(file.path).to.be.undefined;
-    expect(file.name).to.equal('hello.txt');
-    expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
-      'Hello World!',
-    );
+  beforeEach(async () => {
+    originalDownloadDir = process.env.BROWSERLESS_DOWNLOAD_DIR;
+    originalUploadDirs = process.env.BROWSERLESS_UPLOAD_DIRS;
+    dir = await mkdtemp(join(tmpdir(), 'mcp-upload-'));
+    allowed = join(dir, 'allowed');
+    await mkdir(allowed);
+    process.env.BROWSERLESS_DOWNLOAD_DIR = allowed;
+    delete process.env.BROWSERLESS_UPLOAD_DIRS;
   });
+
+  afterEach(async () => {
+    if (originalDownloadDir === undefined)
+      delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+    else process.env.BROWSERLESS_DOWNLOAD_DIR = originalDownloadDir;
+    if (originalUploadDirs === undefined)
+      delete process.env.BROWSERLESS_UPLOAD_DIRS;
+    else process.env.BROWSERLESS_UPLOAD_DIRS = originalUploadDirs;
+    sinon.restore();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  for (const kind of [
+    'absolute',
+    'traversal',
+    'symlink',
+    'sibling',
+    'missing',
+  ]) {
+    it(`rejects a ${kind} path without exposing bytes (stdio)`, async () => {
+      const outside = join(dir, 'private.txt');
+      await writeFile(outside, 'private-fixture-bytes');
+      await mkdir(join(dir, 'allowed-evil'));
+      await writeFile(
+        join(dir, 'allowed-evil', 'file.txt'),
+        'private-fixture-bytes',
+      );
+      await symlink(outside, join(allowed, 'link'));
+      const path = {
+        absolute: outside,
+        traversal: `${allowed}/../private.txt`,
+        symlink: join(allowed, 'link'),
+        sibling: join(dir, 'allowed-evil', 'file.txt'),
+        missing: join(allowed, 'missing'),
+      }[kind]!;
+      const file: Record<string, unknown> = { path };
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'stdio',
+        undefined,
+        'test-token',
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include(allowed)
+        .and.include('/upload');
+      expect((error as Error).message).not.to.include('private-fixture-bytes');
+      expect(file).not.to.have.property('content');
+      expect(file.path).to.equal(path);
+    });
+  }
+
+  it('retains the size cap for an allowed local file', async () => {
+    const path = join(allowed, 'large.bin');
+    await writeFile(path, Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1));
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.include('50MB limit');
+    expect(file).not.to.have.property('content');
+  });
+
+  for (const source of ['download directory', 'explicit directory']) {
+    it(`reads a local path in the ${source} into base64 content (stdio)`, async () => {
+      const root =
+        source === 'download directory' ? allowed : join(dir, 'extra');
+      if (source === 'explicit directory') {
+        await mkdir(root);
+        process.env.BROWSERLESS_UPLOAD_DIRS = root;
+      }
+      const path = join(root, 'hello.txt');
+      await writeFile(path, 'Hello World!');
+      const stdout = sinon.spy(process.stdout, 'write');
+      const stderr = sinon.spy(process.stderr, 'write');
+
+      const cmd = {
+        method: 'uploadFile',
+        params: { selector: 'input', files: [{ path }] },
+      };
+      await normalizeUploadCommand(cmd, 'stdio', undefined, 'test-token');
+
+      const file = (cmd.params.files as Record<string, unknown>[])[0];
+      expect(file.path).to.be.undefined;
+      expect(file.name).to.equal('hello.txt');
+      expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
+        'Hello World!',
+      );
+      for (const output of [stdout, stderr]) {
+        expect(output.args.flat().map(String).join('')).not.to.include(
+          'SGVsbG8gV29ybGQh',
+        );
+      }
+    });
+  }
 
   it('rejects a local path in httpStream mode with a staging recipe', async () => {
     const cmd = {
@@ -561,6 +755,8 @@ describe('normalizeUploadCommand', () => {
       Buffer.from('Hello World!'),
       downloadOwner(token),
     );
+    // A stored handle remains valid even outside the current path allowlist.
+    process.env.BROWSERLESS_DOWNLOAD_DIR = join(dir, 'elsewhere');
     const cmd = {
       method: 'uploadFile',
       params: {
@@ -1054,6 +1250,301 @@ const getAgentExecute = (
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
 
+describe('browserless_agent repetition self-check', () => {
+  afterEach(() => sinon.restore());
+
+  for (const complianceMode of [false, true]) {
+    it(`advertises the conditional self-check in compliance mode ${complianceMode}`, () => {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const added = sinon.spy(server, 'addTool');
+      registerAgentTools(server, { ...mockConfig, complianceMode });
+      const description = added
+        .getCalls()
+        .find((c) => c.args[0].name === 'browserless_agent')!.args[0]
+        .description;
+      expect(description).to.include(
+        'When a tool response contains REPETITION WARNING',
+      );
+      expect(description).to.include('re-read your plan');
+      expect(description).to.include('stop and report');
+    });
+  }
+
+  for (const source of [
+    'agent_run',
+    'script_builder',
+    'mcp_client',
+    'cli_agent',
+    'autologin',
+  ]) {
+    it(`counts alternating normalized batches and gates warnings for ${source}`, async () => {
+      const srv = await makeRespondingServer(() => ({ elements: [] }));
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const execute = getAgentExecute(srv.url, 'stdio', analytics);
+      const ctx = {
+        ...mockContext,
+        sessionId: `repeat-${source}`,
+        session: { source },
+      };
+      let sessionId: string | undefined;
+      try {
+        for (let i = 1; i <= 4; i++) {
+          const result = (await execute(
+            {
+              sessionId,
+              rationale: `Attempt ${i}`,
+              commands: [
+                { method: 'snapshot', params: i % 2 ? {} : { ignored: true } },
+              ],
+            },
+            ctx,
+          )) as { content: Array<{ text?: string }> };
+          const text = result.content.map((c) => c.text ?? '').join('\n');
+          sessionId = /sessionId: (\S+)/.exec(text)?.[1];
+          expect(sessionId).to.match(/^s:/);
+          expect(text.includes('REPETITION WARNING')).to.equal(
+            i >= 3 && source !== 'autologin',
+          );
+          expect(fire.lastCall.args[2].repeat_count).to.equal(i);
+          if (i >= 3 && source !== 'autologin')
+            expect(text).to.include(`${i} times`);
+          await execute({ method: 'getTabs', sessionId }, ctx);
+        }
+        await execute(
+          { method: 'snapshot' },
+          { ...ctx, sessionId: `independent-${source}` },
+        );
+        expect(fire.lastCall.args[2].repeat_count).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('warns on repeated command failures without disclosing command parameters', async () => {
+    const srv = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'SELECTOR_NOT_FOUND',
+          message: 'Not found',
+        }),
+    );
+    const execute = getAgentExecute(srv.url);
+    let sessionId: string | undefined;
+    try {
+      for (let i = 1; i <= 3; i++) {
+        let message = '';
+        try {
+          await execute(
+            {
+              sessionId,
+              commands: [
+                { method: 'click', params: { selector: '< private-ref' } },
+              ],
+            },
+            { ...mockContext, sessionId: 'repeat-failure' },
+          );
+          expect.fail('expected command failure');
+        } catch (err) {
+          message = (err as Error).message;
+        }
+        expect(message).to.include('Not found');
+        sessionId = /sessionId: (\S+)/.exec(message)?.[1];
+        expect(sessionId).to.match(/^s:/);
+        expect(message.includes('REPETITION WARNING')).to.equal(i === 3);
+        expect(message).not.to.include('private-ref');
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+describe('browserless_agent one-shot sessions', () => {
+  afterEach(() => sinon.restore());
+
+  for (const [name, schema] of Object.entries({
+    AgentParamsSchema,
+    AgentToolParamsSchema,
+    CompliantAgentParamsSchema,
+    CompliantAgentToolParamsSchema,
+  })) {
+    it(`validates keepSessionAlive on ${name}`, () => {
+      const params = { commands: [{ method: 'text', params: {} }] };
+      for (const [input, expected] of [
+        [undefined, true],
+        [true, true],
+        [false, false],
+      ]) {
+        expect(
+          schema.parse({ ...params, keepSessionAlive: input }),
+        ).to.have.property('keepSessionAlive', expected);
+      }
+      expect(
+        schema.safeParse({ ...params, keepSessionAlive: 'no' }).success,
+      ).to.equal(false);
+      if (
+        schema === CompliantAgentParamsSchema ||
+        schema === CompliantAgentToolParamsSchema
+      ) {
+        expect(
+          schema.safeParse({
+            ...params,
+            keepSessionAlive: false,
+            unknown: true,
+          }).success,
+        ).to.equal(false);
+      }
+    });
+  }
+
+  for (const sessionId of [undefined, 'echoed-one-shot']) {
+    it(`closes the ${sessionId ? 'echoed' : 'bare'} session after draining downloads and preserves the result`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return method === 'text'
+          ? { text: 'finished result' }
+          : { downloads: [] };
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        const result = await execute(
+          {
+            commands: [{ method: 'text', params: {} }],
+            sessionId,
+            keepSessionAlive: false,
+          },
+          mockContext,
+        );
+        const serialized = JSON.stringify(result);
+        expect(serialized).to.include('finished result');
+        expect(methods).to.deep.equal(['text', 'getDownloads']);
+        const handle = serialized.match(/sessionId: (\S+) /)![1];
+        await execute({ method: 'text', sessionId: handle }, mockContext);
+        expect(
+          srv.hits(),
+          'closed handle must not reuse a pooled socket',
+        ).to.equal(2);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const extra of [
+    {},
+    { keepSessionAlive: true },
+    { keepSessionAlive: false, createProfile: { name: 'one-shot-profile' } },
+  ]) {
+    it(`retains a reusable session for ${JSON.stringify(extra)}`, async () => {
+      if ('createProfile' in extra) {
+        sinon
+          .stub(globalThis, 'fetch')
+          .resolves(new Response(JSON.stringify({ id: 'created-profile' })));
+      }
+      const srv = await makeRespondingServer(() => ({}));
+      try {
+        const execute = getAgentExecute(srv.url);
+        const args = {
+          method: 'text',
+          sessionId: 'retained-one-shot',
+          ...extra,
+        };
+        await execute(args, mockContext);
+        await execute(args, mockContext);
+        expect(srv.hits()).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const keepSessionAlive of [false, true]) {
+    it(`preserves recovery after a failed download drain with keepSessionAlive=${keepSessionAlive}`, async () => {
+      let failDrain = true;
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads' && failDrain
+          ? new AgentErrorFrame({ message: 'download poll failed' })
+          : { downloads: [] },
+      );
+      try {
+        const execute = getAgentExecute(srv.url);
+        const args = {
+          method: 'text',
+          sessionId: 'failed-drain',
+          keepSessionAlive,
+        };
+        let error: unknown;
+        try {
+          await execute(args, mockContext);
+        } catch (err) {
+          error = err;
+        }
+        if (keepSessionAlive) {
+          expect(error).to.equal(undefined);
+        } else {
+          expect(String(error)).to.include('download collection failed');
+          expect(String(error)).to.include('sessionId: failed-drain');
+        }
+        failDrain = false;
+        await execute(
+          { method: 'getDownloads', sessionId: 'failed-drain' },
+          mockContext,
+        );
+        expect(
+          srv.hits(),
+          'failed drain must leave the same browser available',
+        ).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('retains attached sessions despite the one-shot flag', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      const context = {
+        ...mockContext,
+        session: { attachSessionId: 'attached-one-shot' },
+      };
+      const args = { method: 'text', keepSessionAlive: false };
+      await execute(args, context);
+      await execute(args, context);
+      expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('closes only the caller token scope, even when another account echoes the same handle', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      const accountB = {
+        ...mockContext,
+        session: { token: 'other-account-token' },
+      };
+      const args = { method: 'text', sessionId: 'shared-handle' };
+      await execute(args, accountB);
+      await execute({ ...args, keepSessionAlive: false }, mockContext);
+      expect(srv.hits()).to.equal(2);
+      await execute(args, accountB);
+      expect(
+        srv.hits(),
+        'account B must still reuse its original socket',
+      ).to.equal(2);
+      await execute(args, mockContext);
+      expect(srv.hits(), 'account A must open a new socket').to.equal(3);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('skill retrieval telemetry wiring', () => {
   afterEach(() => {
     sinon.restore();
@@ -1282,6 +1773,241 @@ describe('browserless_agent OAuth session ownership', () => {
 describe('browserless_agent integration binding guard', () => {
   afterEach(() => sinon.restore());
 
+  it('fails a missing declared capability before opening a WebSocket', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: {
+            vision: {
+              available: false,
+              availableAt: ['/stealth/bql'],
+            },
+          },
+        }),
+      ),
+    );
+    const execute = getAgentExecute('http://127.0.0.1:1');
+
+    try {
+      await execute(
+        {
+          method: 'snapshot',
+          requiredCapabilities: ['vision'],
+          profile: 'login-profile',
+          integrationId: 'op_int_a',
+          allowedDomains: ['example.com'],
+          emulationOs: 'macos',
+          screen: '1920x1080',
+          record: true,
+        },
+        { ...mockContext, sessionId: 'capability-guard' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.include('vision');
+      expect((err as Error).message).to.include('/stealth/bql');
+    }
+    expect(fetchStub.calledOnce).to.equal(true);
+    const url = new URL(fetchStub.firstCall.args[0] as string);
+    expect(url.searchParams.get('profile')).to.equal('login-profile');
+    expect(url.searchParams.get('integrationId')).to.equal('op_int_a');
+    expect(url.searchParams.get('allowedDomains')).to.equal('["example.com"]');
+    expect(url.searchParams.get('emulationOs')).to.equal('macos');
+    expect(url.searchParams.get('screen')).to.equal('1920x1080');
+    expect(url.searchParams.get('record')).to.equal('true');
+  });
+
+  it('allows closing a session when capability discovery is unavailable', async () => {
+    const fetchStub = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('down'));
+    const execute = getAgentExecute('http://127.0.0.1:1');
+
+    const result = (await execute(
+      {
+        method: 'close',
+        requiredCapabilities: ['vision'],
+      },
+      { ...mockContext, sessionId: 'capability-close' },
+    )) as { content: Content[] };
+
+    expect((result.content[0] as { text: string }).text).to.equal(
+      'Browser session closed.',
+    );
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it('rejects proxy commands before capability discovery', async () => {
+    const fetchStub = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('down'));
+    const execute = getAgentExecute('http://127.0.0.1:1');
+
+    try {
+      await execute(
+        {
+          commands: [{ method: 'proxy' }],
+          requiredCapabilities: ['vision'],
+        },
+        { ...mockContext, sessionId: 'invalid-proxy-command' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.include(
+        '"proxy" is not a BQL mutation',
+      );
+    }
+    expect(fetchStub.called).to.equal(false);
+  });
+
+  it('rejects an unsafe secret-capture batch before opening a WebSocket', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          {
+            commands: [
+              { method: 'loadSecret', params: { ref: 'password' } },
+              { method: 'screenshot' },
+            ],
+          },
+          { ...mockContext, sessionId: 'secret-capture-batch' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'screenshot cannot run after loadSecret',
+        );
+      }
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('rejects capture in a later call reusing a secret-bearing session', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    const execute = getAgentExecute(srv.url);
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { ...mockContext, sessionId: 'secret-cross-call-1' },
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+      expect(handle).to.match(/^s:/);
+
+      try {
+        await execute(
+          { method: 'screenshot', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-cross-call-2' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'screenshot cannot run after loadSecret',
+        );
+      }
+    } finally {
+      if (handle) {
+        await execute(
+          { method: 'close', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-cross-call-2' },
+        );
+      }
+      await srv.close();
+    }
+  });
+
+  it('does not recommend capture recovery after a secret-backed selector miss', async () => {
+    const captureBlocked =
+      'CaptureBlocked: screenshots and page-content reads are disabled after a secret has been filled in this session.';
+    const srv = await makeRespondingServer((method) =>
+      method === 'click'
+        ? new AgentErrorFrame({
+            code: 'SELECTOR_NOT_FOUND',
+            message: 'No element found for selector: < #missing',
+            suggestion: captureBlocked,
+          })
+        : {},
+    );
+    const execute = getAgentExecute(srv.url);
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { ...mockContext, sessionId: 'secret-selector-1' },
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+
+      try {
+        await execute(
+          {
+            method: 'click',
+            params: { selector: '< #missing' },
+            sessionId: handle,
+          },
+          { ...mockContext, sessionId: 'secret-selector-2' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        const message = (err as Error).message;
+        expect(message).to.include(`Recovery: ${captureBlocked}`);
+        expect(message).to.not.include('Re-snapshot');
+        expect(message).to.not.include('--- SKILL: vision-fallback');
+      }
+    } finally {
+      if (handle) {
+        await execute(
+          { method: 'close', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-selector-2' },
+        );
+      }
+      await srv.close();
+    }
+  });
+
+  it('keeps capture blocked when top-frame navigation does not occur', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'back' ? null : {},
+    );
+    const execute = getAgentExecute(srv.url);
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        { method: 'loadSecret', params: { ref: 'password' } },
+        { ...mockContext, sessionId: 'secret-no-navigation-1' },
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+
+      try {
+        await execute(
+          {
+            commands: [{ method: 'back' }, { method: 'screenshot' }],
+            sessionId: handle,
+          },
+          { ...mockContext, sessionId: 'secret-no-navigation-2' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        expect((err as Error).message).to.include(
+          'screenshot cannot run after loadSecret',
+        );
+      }
+    } finally {
+      if (handle) {
+        await execute(
+          { method: 'close', sessionId: handle },
+          { ...mockContext, sessionId: 'secret-no-navigation-2' },
+        );
+      }
+      await srv.close();
+    }
+  });
+
   it('rejects integrationId combined with createProfile before connecting', async () => {
     // Dummy URL: the guard throws before any WebSocket/connect is attempted.
     const execute = getAgentExecute('http://127.0.0.1:1');
@@ -1383,6 +2109,76 @@ describe('browserless_agent retry-guard (runCommands)', () => {
   const ctx = (sessionId: string) => ({ ...mockContext, sessionId });
 
   afterEach(() => sinon.restore());
+
+  it('rejects an incomplete single saveSecret before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ ok: true }));
+    try {
+      const execute = getAgentExecute(srv.url);
+      let failure: unknown;
+      try {
+        await execute(
+          {
+            method: 'saveSecret',
+            params: {
+              vault: 'Automation',
+              title: 'Login',
+              username: 'test@example.com',
+            },
+          },
+          ctx('single-save-validation'),
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(UserError);
+      expect((failure as { code?: string }).code).to.equal('INVALID_PARAMS');
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const failingMethod of ['saveSecret', 'click']) {
+    it(`does not replay a vault write after ${failingMethod} fails`, async () => {
+      let saves = 0;
+      const srv = await makeRespondingServer((method) => {
+        if (method === 'saveSecret') saves++;
+        return method === failingMethod
+          ? new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' })
+          : { ok: true, ref: 'op://vault/item/password' };
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        let failure: unknown;
+        try {
+          await execute(
+            {
+              commands: [
+                {
+                  method: 'saveSecret',
+                  params: {
+                    vault: 'Automation',
+                    title: 'Login',
+                    username: 'test@example.com',
+                    password: 'synthetic-password',
+                  },
+                },
+                { method: 'click', params: { selector: '#next' } },
+              ],
+            },
+            ctx(`save-no-retry-${failingMethod}`),
+          );
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).to.be.instanceOf(UserError);
+        expect(saves).to.equal(1);
+        expect(srv.hits()).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 
   it('does NOT retry a non-retryable upgrade failure (401)', async () => {
     const srv = await makeRejectingServer(
@@ -2177,6 +2973,93 @@ describe('browserless_agent reportOutcome', () => {
       }
     });
   }
+});
+
+describe('browserless_agent skill outcome forwarding', () => {
+  afterEach(() => sinon.restore());
+
+  it('validates top-level skill reports before opening a browser', async () => {
+    const calls: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      calls.push(method);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const changes of [
+        { failure_reason: 'unlisted' },
+        { failure_reason: null },
+        { success: true, failure_reason: 'timeout' },
+        { success: 'false' },
+        { domain: '' },
+      ]) {
+        try {
+          await execute(
+            {
+              method: 'reportSkillOutcome',
+              params: {
+                domain: 'example.com',
+                task: 'search',
+                success: false,
+                ...changes,
+              },
+            },
+            mockContext,
+          );
+          expect.fail('expected invalid skill report to be rejected');
+        } catch (error) {
+          expect(error).to.be.instanceOf(UserError);
+        }
+      }
+      expect(calls).to.deep.equal([]);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('forwards bounded failure evidence, strips client provenance, and preserves the page result', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const srv = await makeRespondingServer((method, params) => {
+      calls.push({ method, params });
+      return method === 'reportSkillOutcome'
+        ? { recorded: true }
+        : { status: 200, marker: 'page-result' };
+    });
+    try {
+      const execute = getAgentExecute(srv.url, 'httpStream');
+      const verdict = {
+        domain: 'example.com',
+        task: 'search',
+        success: false,
+        failure_reason: 'missing_data',
+        run_id: 'a'.repeat(64),
+        loaded_version: 2,
+      };
+      const result = await execute(
+        {
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+            {
+              method: 'reportSkillOutcome',
+              params: { ...verdict, outcome_source: 'independently_validated' },
+            },
+            { method: 'close' },
+          ],
+        },
+        { ...mockContext, sessionId: 'skill-outcome-forwarding' },
+      );
+      expect(calls).to.deep.equal([
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { method: 'reportSkillOutcome', params: verdict },
+      ]);
+      expect(JSON.stringify(result))
+        .to.include('page-result')
+        .and.not.include('recorded');
+    } finally {
+      await srv.close();
+    }
+  });
 });
 
 describe('browserless_agent session handle on errors', () => {

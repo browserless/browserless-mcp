@@ -185,6 +185,16 @@ describe('compliance mode — compliant tool surface', () => {
         .be.true;
     });
 
+    it('accepts capability requirements', () => {
+      const agent = captureTools(true).byName.get('browserless_agent')!;
+      expect(
+        agent.parameters.safeParse({
+          commands: [VALID_GOTO],
+          requiredCapabilities: ['vision'],
+        }).success,
+      ).to.be.true;
+    });
+
     it('rejects an empty or missing commands array', () => {
       const agent = captureTools(true).byName.get('browserless_agent')!;
       expect(
@@ -197,13 +207,14 @@ describe('compliance mode — compliant tool surface', () => {
       ).to.be.false;
     });
 
-    it('rejects the circumvention commands (solve/evaluate/loadSecret/clearSecrets)', () => {
+    it('rejects prohibited commands (solve/evaluate/loadSecret/clearSecrets/saveSecret)', () => {
       const agent = captureTools(true).byName.get('browserless_agent')!;
       for (const method of [
         'solve',
         'evaluate',
         'loadSecret',
         'clearSecrets',
+        'saveSecret',
       ]) {
         expect(
           agent.parameters.safeParse({ commands: [{ method, params: {} }] })
@@ -240,7 +251,7 @@ describe('compliance mode — compliant tool surface', () => {
       // Mirrors the top-level EXPECTED_KEYS guard for the command-method
       // dimension: navigation + read + interaction (click/type/select/etc. are
       // legitimate automation, not circumvention); the prohibited classes —
-      // solve/evaluate/loadSecret/clearSecrets and top-level proxy/profile — stay out.
+      // solve/evaluate/loadSecret/clearSecrets/saveSecret and proxy/profile stay out.
       const EXPECTED_METHODS = [
         'goto',
         'back',
@@ -703,7 +714,13 @@ describe('compliance mode — compliant tool surface', () => {
     const EXPECTED_KEYS: Record<string, string[]> = {
       // `sessionId` re-binds the caller to the browser it already had — a
       // continuity handle, not a capability.
-      browserless_agent: ['commands', 'rationale', 'sessionId'],
+      browserless_agent: [
+        'commands',
+        'keepSessionAlive',
+        'rationale',
+        'requiredCapabilities',
+        'sessionId',
+      ],
       browserless_export: [
         'bestAttempt',
         'gotoOptions',

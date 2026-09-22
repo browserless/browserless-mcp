@@ -1,6 +1,16 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { createServer } from 'node:net';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { getConfig } from '../../src/config.js';
+import {
+  consumeDownload,
+  downloadOwner,
+  storeDownload,
+} from '../../src/lib/download-store.js';
+import { normalizeUploadCommand } from '../../src/tools/agent.js';
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
@@ -42,6 +52,55 @@ describe('MCP Server Integration', () => {
 
   afterEach(async () => {
     sinon.restore();
+  });
+
+  it('starts with upload roots unset and permits re-upload from the default download directory', async () => {
+    const originalDownload = process.env.BROWSERLESS_DOWNLOAD_DIR;
+    const originalUpload = process.env.BROWSERLESS_UPLOAD_DIRS;
+    delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+    delete process.env.BROWSERLESS_UPLOAD_DIRS;
+    const owner = downloadOwner('local-fixture-token');
+    let record: Awaited<ReturnType<typeof storeDownload>> | undefined;
+    server = new FastMCP({ name: 'upload-config-test', version: '0.1.0' });
+    try {
+      const config = getConfig();
+      expect(config.uploadDirs).to.deep.equal([
+        join(tmpdir(), 'browserless-mcp-downloads'),
+      ]);
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port: await freePort() },
+      });
+      record = await storeDownload(
+        'fixture.txt',
+        'text/plain',
+        Buffer.from('default-root-fixture'),
+        owner,
+      );
+      expect(dirname(record.path)).to.equal(config.uploadDirs[0]);
+      const file: Record<string, unknown> = { path: record.path };
+      await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'stdio',
+        undefined,
+        'local-fixture-token',
+      );
+      expect(Buffer.from(file.content as string, 'base64').toString()).to.equal(
+        'default-root-fixture',
+      );
+    } finally {
+      if (originalDownload === undefined)
+        delete process.env.BROWSERLESS_DOWNLOAD_DIR;
+      else process.env.BROWSERLESS_DOWNLOAD_DIR = originalDownload;
+      if (originalUpload === undefined)
+        delete process.env.BROWSERLESS_UPLOAD_DIRS;
+      else process.env.BROWSERLESS_UPLOAD_DIRS = originalUpload;
+      if (record) {
+        consumeDownload(record.id, owner);
+        await rm(record.path, { force: true });
+      }
+      await server.stop();
+    }
   });
 
   it('emits attribution for a real streamable-HTTP session', async () => {

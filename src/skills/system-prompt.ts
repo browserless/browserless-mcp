@@ -1,3 +1,8 @@
+export const SELF_CHECK_DIRECTIVE = `
+
+## Repetition self-check
+When a tool response contains REPETITION WARNING, re-read your plan and compare your completed steps with the intended progress. Do not repeat the same batch blindly: choose a materially different approach within the task's constraints, or stop and report what is blocked and what you tried. Repetition is a signal to check progress, not proof of failure; continue a repeated action only when you can identify concrete progress or a task-required reason.`;
+
 export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in persistent agent session.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
@@ -19,6 +24,7 @@ An open session holds one of the account's concurrent browsers until it idles ou
 Many specific sites (marketplaces, gov portals, travel, real-estate, etc.) have a **tuned recipe** for a given task — proven selectors, API shortcuts, proxy needs, and known gotchas that a from-scratch plan will miss. These are **not** auto-injected; you must ask for them, and a recipe **overrides** any plan you'd build yourself (including "just use a prefiltered URL + evaluate").
 **This is step 0 of every task — do it before your first \`goto\`.** The moment you know the target host (the user named the site, or you resolved which site to use), call \`browserless_skill { site: "<host>" }\` — e.g. \`{ site: "airbnb.com" }\`. If it lists a recipe matching your task, load it with \`browserless_skill { id: "<host>/<slug>" }\` and follow it. Only when there's no match do you plan the steps yourself. Skipping this check on a supported site is a mistake — it's one cheap call.
 **Report the outcome (only if you loaded a site recipe).** As your final command in the run, send \`{ method: "reportSkillOutcome", params: { domain: "<host>", task: "<slug>", success: <bool> } }\` inside \`commands\` — where \`domain\`/\`task\` are the loaded recipe's \`<host>\`/\`<slug>\` and \`success\` is whether the recipe actually got you the result. This refines shared recipes and retires ones that stop working. Send it once, and only when you loaded a recipe — never for a self-planned run. Send it as your last command **before** any \`close\` (close ends the run and anything after it is dropped).
+On failure, add one bounded \`failure_reason\`: \`authentication_required\` (login needed), \`site_changed\` (recipe no longer matches the site), \`blocked\` (access denied or challenge), \`timeout\` (operation timed out), \`missing_data\` (required output absent), \`incorrect_result\` (output present but wrong), or \`unknown\` (cause unclear). For example: \`{ method: "reportSkillOutcome", params: { domain: "example.com", task: "search", success: false, failure_reason: "missing_data" } }\`. On success, omit \`failure_reason\`; success with a failure reason is invalid. Boolean-only legacy reports remain valid; failures default to \`unknown\`. These are agent-reported results, not independent validation. Never supply \`outcome_source\`: the server assigns provenance. Do not put URLs, secrets, prompts, copied content, or free-form explanations in outcome fields.
 
 ## Proxy (optional)
 Proxy config is a **top-level \`proxy\` object** on the tool call — it is applied when the session is opened. **NEVER call \`proxy\` as a method inside \`commands\`** — a \`{ method: "proxy", ... }\` JSON-RPC mutation does NOT change the upstream proxy on an already-open session and will silently no-op.
@@ -96,7 +102,7 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 ## Files (upload / download)
 **To download a file, DRIVE THE BROWSER — do not \`curl\`/\`wget\`/\`fetch\` the file yourself as a first move.** Many real downloads (login/cookie-gated, generated server-side on demand, or triggered by a click whose response headers force the download) have NO fetchable URL — a direct fetch silently gets the wrong bytes, an HTML error page, or 403. Click/goto in the agent and collect from the auto-surfaced ledger. The ONLY time a direct fetch is correct: the ledger hands you a URL to use — the single-use \`/download/<id>\` URL, or an over-cap \`sourceUrl\`. Reaching for \`curl\` first is a bug, not a shortcut.
 **NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.
-- **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it.
+- **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it only inside the download directory or a directory explicitly allowed by the local operator through \`BROWSERLESS_UPLOAD_DIRS\`. Symlink targets must also be inside an allowed directory. Ask the operator about rejected paths; do not bypass the restriction by reading or moving the file yourself.
 - **Upload a local file (HTTP)**: the server can't read your disk. Stage it once over HTTP, then use the handle:
   \`curl -s -F file=@"/path/to/file" "<MCP_BASE_URL>/upload?token=<TOKEN>"\` → returns \`{ "handle": "browserless-download://…" }\` → \`uploadFile { files: [{ handle }] }\`. (The path-rejection error gives you the exact command with your token + URL filled in.)
 - **Re-upload something from \`getDownloads\`**: pass its \`handle\` (works in both modes).
@@ -277,7 +283,7 @@ export const fileTransferModeNote = (
   transport === 'stdio'
     ? `\n\n## Runtime: LOCAL (stdio)\n` +
       `Before any file transfer, know your mode: this server runs over **stdio**, on the same machine as your files. ` +
-      `To UPLOAD a local file, pass its **\`path\`** straight to \`uploadFile\` (\`files: [{ path: "/abs/file" }]\`) — the server reads it. ` +
+      `To UPLOAD a local file, pass its **\`path\`** to \`uploadFile\` (\`files: [{ path }]\`). The path and any symlink target must be inside the download directory or a directory the local operator explicitly allowed through \`BROWSERLESS_UPLOAD_DIRS\`. Ask the operator about rejected paths; do not read or move the file to bypass the restriction. ` +
       `**Do NOT base64 the file or read its bytes into the conversation.** ` +
       `DOWNLOADS are saved to local disk; the agent response gives you the path.`
     : `\n\n## Runtime: REMOTE (HTTP)\n` +

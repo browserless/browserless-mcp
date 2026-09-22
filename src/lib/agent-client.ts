@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
 import { z } from 'zod';
@@ -262,22 +262,8 @@ export class PersonaConflictError extends Error {
 // stacks more lingering sessions against the same limit, so stop instead.
 const NON_RETRYABLE_UPGRADE_STATUSES = new Set([400, 401, 403, 404, 429]);
 
-class SessionReuseError extends Error {}
-
-const assertCompatibleRecordingMode = (
-  session: ActiveSession,
-  record: boolean | undefined,
-): void => {
-  if (record !== undefined && record !== (session.record ?? false)) {
-    throw new SessionReuseError(
-      'Browser recording mode cannot be changed on an open session. Omit record to reuse it, or close the session before changing the record option.',
-    );
-  }
-};
-
 export const isRetryableUpgradeError = (err: unknown): boolean => {
   if (err instanceof PersonaConflictError) return false;
-  if (err instanceof SessionReuseError) return false;
   if (err instanceof UpgradeError) {
     // A 2xx UpgradeError is a structurally-bad success response — retrying
     // can't fix the shape (and may duplicate side effects), so don't.
@@ -288,6 +274,41 @@ export const isRetryableUpgradeError = (err: unknown): boolean => {
 };
 
 const sessions = new Map<string, ActiveSession>();
+const MAX_REPEAT_BATCHES = 1024;
+
+export const createRepeatState = (): Map<string, number> => new Map();
+
+/** Count normalized batches in bounded LRU history, retaining no parameter values. */
+export const detectRepetition = (
+  state: Map<string, number>,
+  commands: Array<{ method: string; params: Record<string, unknown> }>,
+): { count: number; warning: string } => {
+  const key = createHash('sha256')
+    .update(
+      JSON.stringify(commands, (_key, value) =>
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
+            )
+          : value,
+      ),
+    )
+    .digest('hex');
+  const count = (state.get(key) ?? 0) + 1;
+  state.delete(key);
+  state.set(key, count);
+  if (state.size > MAX_REPEAT_BATCHES) {
+    state.delete(state.keys().next().value!);
+  }
+  return {
+    count,
+    warning:
+      count >= 3
+        ? `REPETITION WARNING: This command batch has been attempted ${count} times in this session. Re-read your plan and check progress before continuing.`
+        : '',
+  };
+};
+
 const createdAt = new WeakMap<ActiveSession, number>();
 // In-flight session creations keyed by session key. Concurrent
 // getOrCreateSession callers await the same promise instead of each
@@ -511,6 +532,7 @@ export const buildAgentWsUrl = (
   // guards already reject them, but hard-drop here too so no caller path can
   // put them on the wire (last line of defense before the upstream connect).
   if (!compliant) {
+    if (proxy) ProxyOptionsSchema.parse(proxy);
     if (proxy?.proxy) url.searchParams.set('proxy', proxy.proxy);
     if (proxy?.proxyCountry)
       url.searchParams.set('proxyCountry', proxy.proxyCountry);
@@ -554,6 +576,70 @@ export const buildAgentWsUrl = (
   // Recording is armed only when launching a new browser.
   if (record) url.searchParams.set('record', 'true');
   return url.toString();
+};
+
+interface AgentCapability {
+  available?: boolean;
+  availableAt?: string[];
+}
+
+interface AgentCapabilityManifest {
+  version: number;
+  route: string;
+  capabilities: Record<string, AgentCapability>;
+}
+
+/** Validate declared plan requirements before opening a browser session. */
+export const preflightAgentCapabilities = async (
+  agentUrl: string,
+  required: string[],
+): Promise<void> => {
+  if (required.length === 0) return;
+
+  const url = new URL(agentUrl);
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.pathname += '/capabilities';
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(
+      `Capability discovery failed on /chromium/agent (${res.status}). Verify the token, plan, and route parameters.`,
+    );
+  }
+
+  let manifest: AgentCapabilityManifest;
+  try {
+    manifest = (await res.json()) as AgentCapabilityManifest;
+  } catch {
+    throw new Error('Capability discovery returned invalid JSON.');
+  }
+  if (
+    manifest?.version !== 1 ||
+    typeof manifest.route !== 'string' ||
+    !manifest.capabilities ||
+    typeof manifest.capabilities !== 'object' ||
+    Array.isArray(manifest.capabilities)
+  ) {
+    throw new Error('Capability discovery returned an unsupported manifest.');
+  }
+
+  const missing = required.filter(
+    (name) => manifest.capabilities[name]?.available !== true,
+  );
+  if (missing.length === 0) return;
+
+  const details = missing.map((name) => {
+    const availableAt = manifest.capabilities[name]?.availableAt;
+    return Array.isArray(availableAt) &&
+      availableAt.length > 0 &&
+      availableAt.every((route) => typeof route === 'string')
+      ? `${name} (available on ${availableAt.join(', ')})`
+      : `${name} (not advertised by this endpoint)`;
+  });
+  throw new Error(
+    `Invalid parameters: required capabilities are unavailable on ${manifest.route}: ${details.join('; ')}.`,
+  );
 };
 
 // HTTP-status failures arrive on `unexpected-response` (typed as
@@ -1045,7 +1131,6 @@ export const getOrCreateSession = async (
     existing.ws.readyState === WebSocket.OPEN &&
     existing.source === source
   ) {
-    assertCompatibleRecordingMode(existing, record);
     existing.lastUsedAt = Date.now();
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(existing)!));
     return existing;
@@ -1143,6 +1228,8 @@ export const getOrCreateSession = async (
       persona: effectivePersona,
       record,
       skillState: createSkillState(),
+      repeatState: createRepeatState(),
+      secretVisible: false,
       lastUsedAt: Date.now(),
     };
     createdAt.set(session, Date.now());

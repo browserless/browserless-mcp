@@ -277,6 +277,25 @@ const ClearSecretsCommandSchema = z.object({
   params: z.object({}).strict().optional().default({}),
 });
 
+const SaveSecretCommandSchema = z.object({
+  method: z.literal('saveSecret'),
+  params: z.object({
+    vault: z.string().min(1).describe('Name of the connected vault to save to'),
+    title: z.string().min(1).describe('Title for the saved login item'),
+    username: z.string().min(1).describe('Username for the new login'),
+    password: z
+      .string()
+      .min(1)
+      .describe(
+        'Password for the new login; never repeat it in other commands',
+      ),
+    website: z
+      .string()
+      .optional()
+      .describe('Optional website associated with the saved login'),
+  }),
+});
+
 const SelectCommandSchema = z.object({
   method: z.literal('select'),
   params: z.object({
@@ -620,8 +639,10 @@ const UploadFileCommandSchema = z.object({
               .string()
               .optional()
               .describe(
-                'Local filesystem path to read and upload. stdio (local) mode ' +
-                  'only — the MCP server reads and base64-encodes it. In HTTP ' +
+                'Local filesystem path inside an allowed upload directory. stdio (local) mode ' +
+                  'only — defaults to the download directory; the local operator can ' +
+                  'opt in to additional directories with BROWSERLESS_UPLOAD_DIRS. ' +
+                  'Symlinks must resolve inside an allowed directory. In HTTP ' +
                   'mode use `handle` or `content` instead.',
               ),
             name: z
@@ -657,6 +678,39 @@ const UploadFileCommandSchema = z.object({
 const GetDownloadsCommandSchema = z.object({
   method: z.literal('getDownloads'),
   params: z.object({}).optional().default({}),
+});
+
+const ReportSkillOutcomeCommandSchema = z.object({
+  method: z.literal('reportSkillOutcome'),
+  params: z
+    .looseObject({
+      domain: z.string().min(1).describe('Host of the loaded recipe.'),
+      task: z.string().min(1).describe('Task slug of the loaded recipe.'),
+      success: z
+        .boolean()
+        .describe('Agent-reported result, not independent validation.'),
+      failure_reason: z
+        .enum([
+          'authentication_required',
+          'site_changed',
+          'blocked',
+          'timeout',
+          'missing_data',
+          'incorrect_result',
+          'unknown',
+        ])
+        .optional()
+        .describe(
+          'Failure category; omit on success. Failed legacy reports default to unknown.',
+        ),
+    })
+    .refine(
+      (params) => !params.success || params.failure_reason === undefined,
+      {
+        message: 'Successful skill outcomes must omit failure_reason',
+        path: ['failure_reason'],
+      },
+    ),
 });
 
 const ReportOutcomeCommandSchema = z.object({
@@ -714,6 +768,7 @@ const specificCommandSchemas = [
   TypeCommandSchema,
   LoadSecretCommandSchema,
   ClearSecretsCommandSchema,
+  SaveSecretCommandSchema,
   SelectCommandSchema,
   CheckboxCommandSchema,
   HoverCommandSchema,
@@ -733,6 +788,7 @@ const specificCommandSchemas = [
   GetDownloadsCommandSchema,
   StartRecordingCommandSchema,
   StopRecordingCommandSchema,
+  ReportSkillOutcomeCommandSchema,
   ReportOutcomeCommandSchema,
   CloseCommandSchema,
 ] as const;
@@ -941,6 +997,16 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
         '`profile` (hydrate an existing profile) and `createProfile` (author a new ' +
         'one) cannot both be set',
     })
+    .refine(
+      ({ method, params, commands }) =>
+        (Array.isArray(commands) && commands.length > 0) ||
+        method !== 'clearSecrets' ||
+        ClearSecretsCommandSchema.safeParse({ method, params }).success,
+      {
+        message: '`clearSecrets` does not accept parameters',
+        path: ['params'],
+      },
+    )
     .refine(refineRecordCreateProfile, {
       message:
         'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
@@ -970,6 +1036,14 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
     );
 
 const agentParamsObject = z.object({
+  requiredCapabilities: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      'Capabilities the planned flow requires (for example "vision", "os-spoofing", ' +
+        '"datacenter-proxy", or "secret-capture"). Browserless checks the selected ' +
+        'route and plan before opening a browser and names an available route on failure.',
+    ),
   method: z
     .string()
     .refine((method) => !RESERVED_AGENT_METHODS.has(method), {
@@ -1015,11 +1089,13 @@ const agentParamsObject = z.object({
     .optional()
     .describe(
       'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
-        'session so `loadSecret` can resolve `op://vault/item/field` references. Find ' +
+        'session so `loadSecret` can resolve credentials and `saveSecret` can persist ' +
+        'a new login. Find ' +
         'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
         'flow (like `profile`); a call that omits it runs with no vault bound and ' +
-        '`loadSecret` returns CredentialNotResolved. Pair with `allowedDomains` to ' +
-        'permit filling on the target sites.',
+        'credential commands return CredentialNotResolved. `saveSecret` requires a ' +
+        'write-enabled connection. Pair with `allowedDomains` to permit filling on ' +
+        'the target sites.',
     ),
   allowedDomains: z
     .array(nulSafeString('allowedDomains entry'))
@@ -1066,6 +1142,17 @@ const agentParamsObject = z.object({
         'when batching commands.',
     ),
   sessionId: sessionIdField,
+  keepSessionAlive: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      'Keep the browser pooled for reuse when you echo the returned session id ' +
+        '(default true). Set false for a one-shot call: close the browser after ' +
+        'the command batch and download drain, freeing its concurrency slot. ' +
+        'Ignored for profile creation and attached sessions, whose lifetimes ' +
+        'are managed separately.',
+    ),
 });
 
 export const AgentParamsSchema = withAgentInvariants(agentParamsObject);
@@ -1141,6 +1228,7 @@ const COMPLIANT_COMMANDS_DESCRIPTION =
 // Shared top-level fields for both compliant schemas (rich + slim projection)
 // so they can't drift; `.strict()` on each rejects any prohibited/removed key.
 const compliantParamsObject = z.object({
+  requiredCapabilities: agentParamsObject.shape.requiredCapabilities,
   rationale: z
     .string()
     .optional()
@@ -1148,6 +1236,7 @@ const compliantParamsObject = z.object({
       'Short user-facing reason for this call (<=50 chars, present-continuous).',
     ),
   sessionId: sessionIdField,
+  keepSessionAlive: agentParamsObject.shape.keepSessionAlive,
 });
 
 // No profile/createProfile: zero auth-profile capability. profile hydrates a

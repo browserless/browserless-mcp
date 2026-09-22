@@ -3,6 +3,11 @@ import type { Content } from 'fastmcp';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
+import { getConfig } from '../config.js';
+import {
+  assertAllowedUploadPath,
+  InvalidUploadPathError,
+} from '../lib/upload-path-guard.js';
 import {
   downloadOwner,
   downloadUri,
@@ -12,13 +17,17 @@ import {
   type StoredDownload,
 } from '../lib/download-store.js';
 import {
+  buildAgentWsUrl,
   getOrCreateSession,
   send,
   closeSession,
   destroySession,
+  detectRepetition,
   isRetryableUpgradeError,
   PERSONA_FIELDS,
   UpgradeError,
+  preflightAgentCapabilities,
+  type ActiveSession,
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
@@ -63,6 +72,7 @@ import {
 import {
   AGENT_SYSTEM_PROMPT,
   COMPLIANT_AGENT_SYSTEM_PROMPT,
+  SELF_CHECK_DIRECTIVE,
   SKILL_TOOL_DESCRIPTION,
   fileTransferModeNote,
   sessionContinuityNote,
@@ -89,6 +99,52 @@ export {
 
 const SNAPSHOT_METHOD = 'snapshot';
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
+const CAPTURE_BLOCKED_SUGGESTION = /^CaptureBlocked:/;
+const SECRET_SAFE_METHODS = new Set([
+  'click',
+  'type',
+  'select',
+  'checkbox',
+  'hover',
+  'scroll',
+  'waitForSelector',
+  'waitForTimeout',
+  'uploadFile',
+  'saveProfile',
+  'reportSkillOutcome',
+  'close',
+]);
+const TOP_FRAME_NAVIGATION_METHODS = new Set([
+  'goto',
+  'back',
+  'forward',
+  'reload',
+]);
+
+export const validateSecretCaptureOrdering = (
+  commands: ReadonlyArray<{
+    method: string;
+    params?: Record<string, unknown>;
+  }>,
+  initiallyVisible = false,
+): void => {
+  let secretVisible = initiallyVisible;
+  for (const command of commands) {
+    if (command.method === 'loadSecret') {
+      secretVisible = true;
+    } else if (
+      command.method === 'clearSecrets' ||
+      TOP_FRAME_NAVIGATION_METHODS.has(command.method)
+    ) {
+      secretVisible = false;
+    } else if (secretVisible && !SECRET_SAFE_METHODS.has(command.method)) {
+      throw new Error(
+        `${command.method} cannot run after loadSecret while a credential may be on-screen. ` +
+          `Move the capture before loadSecret, or run clearSecrets or a top-frame navigation first.`,
+      );
+    }
+  }
+};
 
 const appendSkills = (
   base: string,
@@ -193,6 +249,17 @@ const fmtBytes = (n?: number): string =>
       ? `${(n / 1_048_576).toFixed(1)}MB`
       : `${Math.round(n / 1024)}KB`;
 
+export const formatAgentCommandLog = (cmd: {
+  method: string;
+  params: Record<string, unknown>;
+}): string => {
+  const params =
+    cmd.method === 'saveSecret'
+      ? { ...cmd.params, password: '[REDACTED]', website: '[REDACTED]' }
+      : cmd.params;
+  return `agent: ${cmd.method} ${JSON.stringify(params)}`;
+};
+
 // Still-downloading entry: report progress so the caller knows to touch the
 // browser again to collect it (no bytes, nothing to save yet).
 const describeInProgressDownload = (d: DownloadEntry): string => {
@@ -244,7 +311,19 @@ export const normalizeUploadCommand = async (
             'then: uploadFile { files: [{ handle: "<handle from the response>" }] }',
         );
       }
-      const path = f.path;
+      const { uploadDirs } = getConfig();
+      let path: string;
+      try {
+        path = assertAllowedUploadPath(f.path, uploadDirs);
+      } catch (error) {
+        if (!(error instanceof InvalidUploadPathError)) throw error;
+        throw new UserError(
+          `Upload path "${f.path}" is not allowed or could not be resolved. ` +
+            `Allowed upload directories: ${uploadDirs.join(', ')}. ` +
+            'Ask the local operator to configure BROWSERLESS_UPLOAD_DIRS, or use ' +
+            'the HTTP /upload staging flow and pass the returned handle.',
+        );
+      }
       buf = await readFile(path).catch((e: unknown) => {
         throw new UserError(
           `Failed to read upload file "${path}": ` +
@@ -618,6 +697,7 @@ export function registerAgentTools(
         ? COMPLIANT_AGENT_SYSTEM_PROMPT
         : AGENT_SYSTEM_PROMPT +
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
+      SELF_CHECK_DIRECTIVE +
       sessionContinuityNote(config.transport),
     // The tool advertises the slim, OpenAI-importable schemas — the rich
     // per-command union renders to a JSON Schema too deep/large for OpenAI's
@@ -714,9 +794,14 @@ export function registerAgentTools(
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
-      // specific messages). Legacy single-command calls stay loose; outcome
-      // reports need local validation because delivery is best-effort.
-      if (params.commands?.length || params.method === 'reportOutcome') {
+      // specific messages). Legacy single-command calls stay loose except for
+      // best-effort outcome reports and credential writes.
+      if (
+        params.commands?.length ||
+        params.method === 'reportOutcome' ||
+        params.method === 'reportSkillOutcome' ||
+        params.method === 'saveSecret'
+      ) {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
           .safeParse(params.commands?.length ? params.commands : commands);
@@ -825,6 +910,8 @@ export function registerAgentTools(
       let liveUrlId: string | undefined;
       let sessionReused = false;
       let sessionAgeMs = 0;
+      let repeatCount = 0;
+      let repeatWarning = '';
       const onSession = (reused: boolean, ageMs: number) => {
         sessionReused = reused;
         sessionAgeMs = ageMs;
@@ -853,6 +940,7 @@ export function registerAgentTools(
           session_age_ms: sessionAgeMs,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
+          repeat_count: repeatCount,
           api_url: apiUrl,
           success,
           ...(success
@@ -911,6 +999,43 @@ export function registerAgentTools(
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
       }
 
+      try {
+        validateSecretCaptureOrdering(commands);
+      } catch (err) {
+        lastCategory = 'INVALID_PARAMS';
+        sendAnalytics(false, err);
+        throw new UserError(
+          err instanceof Error
+            ? err.message
+            : 'Secret capture preflight failed.',
+        );
+      }
+
+      try {
+        await preflightAgentCapabilities(
+          buildAgentWsUrl(
+            apiUrl,
+            token,
+            proxy,
+            profile,
+            attachSessionId,
+            compliant,
+            integrationId,
+            allowedDomains,
+            emulationOs,
+            humanlike,
+            record,
+            persona,
+          ),
+          params.requiredCapabilities ?? [],
+        );
+      } catch (err) {
+        sendAnalytics(false, err);
+        throw new UserError(
+          err instanceof Error ? err.message : 'Capability preflight failed.',
+        );
+      }
+
       // Open-only call: no real command (e.g. `createProfile`/`profile`/`proxy`
       // set with no method/commands). Dispatching the empty-method default would
       // make the agent route reject it as `Missing required id/method`, so just
@@ -955,6 +1080,7 @@ export function registerAgentTools(
         ];
       }
 
+      let lastSession: ActiveSession | undefined;
       const runCommands = async (
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
@@ -1008,6 +1134,11 @@ export function registerAgentTools(
           );
           return runCommands(true, retryPersona);
         }
+        lastSession = agentSession;
+        const repetition = detectRepetition(agentSession.repeatState, commands);
+        repeatCount = repetition.count;
+        repeatWarning =
+          mcpSource.source === 'autologin' ? '' : repetition.warning;
 
         // Execute all commands sequentially
         const results: Array<{
@@ -1021,6 +1152,7 @@ export function registerAgentTools(
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         let promptSent = false;
+        let saveSecretSent = false;
         for (const [commandIndex, cmd] of commands.entries()) {
           const commandFailure = (err: unknown, category: ErrorCategory) => ({
             ...failureDetails(err, {
@@ -1041,6 +1173,17 @@ export function registerAgentTools(
               ? { failed_method: cmd.method }
               : {}),
           });
+          try {
+            validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
+          } catch (err) {
+            lastCategory = 'INVALID_PARAMS';
+            throw new UserError(
+              err instanceof Error
+                ? err.message
+                : 'Secret capture preflight failed.',
+            );
+          }
+
           if (cmd.method === 'close') {
             closeSession(
               mcpSessionId,
@@ -1064,10 +1207,14 @@ export function registerAgentTools(
             cmd.method === 'reportOutcome'
           ) {
             try {
+              // Provenance is assigned by the server, never by the agent.
+              const params = { ...cmd.params };
+              if (cmd.method === 'reportSkillOutcome')
+                delete params.outcome_source;
               await send(
                 agentSession,
                 cmd.method,
-                cmd.params,
+                params,
                 undefined,
                 onSession,
               );
@@ -1077,7 +1224,7 @@ export function registerAgentTools(
             continue;
           }
 
-          log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
+          log.info(formatAgentCommandLog(cmd));
 
           agentSession.skillState.cmdIndex += 1;
 
@@ -1099,6 +1246,9 @@ export function registerAgentTools(
 
           let resp;
           try {
+            // A lost reply may follow a completed vault write. Never replay
+            // this batch after dispatching saveSecret, even if a later command fails.
+            if (cmd.method === 'saveSecret') saveSecretSent = true;
             resp = await send(
               agentSession,
               cmd.method,
@@ -1121,7 +1271,7 @@ export function registerAgentTools(
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
-            if (!isRetry) {
+            if (!isRetry && !saveSecretSent) {
               log.warn(
                 `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
               );
@@ -1159,7 +1309,7 @@ export function registerAgentTools(
                 allowedDomains,
                 userId,
               );
-              if (!isRetry) {
+              if (!isRetry && !saveSecretSent) {
                 return runCommands(true, agentSession.persona ?? retryPersona);
               }
             }
@@ -1173,8 +1323,16 @@ export function registerAgentTools(
                 ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
                 : `${cmd.method} failed: `;
 
+            const captureBlockedSuggestion =
+              agentSession.secretVisible &&
+              err.suggestion &&
+              CAPTURE_BLOCKED_SUGGESTION.test(err.suggestion)
+                ? err.suggestion
+                : undefined;
+            const secretCaptureBlocked = !!captureBlockedSuggestion;
             let suggestion: string | undefined;
             if (
+              !secretCaptureBlocked &&
               err.code === 'SELECTOR_NOT_FOUND' &&
               cmd.method !== 'waitForSelector' &&
               typeof cmd.params.selector === 'string' &&
@@ -1191,23 +1349,28 @@ export function registerAgentTools(
               prefix,
               message: err.message,
               suggestion,
-              recovery: classified.recovery,
-              snapshotText: err.snapshot
-                ? formatSnapshot(err.snapshot)
-                : undefined,
+              recovery: captureBlockedSuggestion ?? classified.recovery,
+              snapshotText:
+                !secretCaptureBlocked && err.snapshot
+                  ? formatSnapshot(err.snapshot)
+                  : undefined,
             });
 
-            const triggered = detectVisibleSkills(
-              {
-                snapshot: err.snapshot,
-                error: err,
-                cmd,
-                apiUrl,
-                authenticated: await hasConnectedStripeLinkWallet(err.snapshot),
-              },
-              agentSession.skillState,
-              compliant,
-            );
+            const triggered = secretCaptureBlocked
+              ? []
+              : detectVisibleSkills(
+                  {
+                    snapshot: err.snapshot,
+                    error: err,
+                    cmd,
+                    apiUrl,
+                    authenticated: await hasConnectedStripeLinkWallet(
+                      err.snapshot,
+                    ),
+                  },
+                  agentSession.skillState,
+                  compliant,
+                );
             markFired(agentSession.skillState, triggered);
 
             throw new UserError(
@@ -1237,6 +1400,18 @@ export function registerAgentTools(
                 .filter(Boolean)
                 .join('\n\n'),
             );
+          }
+
+          if (cmd.method === 'loadSecret') {
+            agentSession.secretVisible = true;
+          } else if (
+            cmd.method === 'clearSecrets' ||
+            (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method) &&
+              resp.result !== null &&
+              typeof resp.result === 'object' &&
+              (resp.result as { rejected?: unknown }).rejected !== true)
+          ) {
+            agentSession.secretVisible = false;
           }
 
           // Capture the first URL we observe in the batch as a fallback
@@ -1316,7 +1491,7 @@ export function registerAgentTools(
         }
 
         // Auto-surface files Chrome captured this batch so the model needn't call
-        // getDownloads. Skipped on explicit drain/close; a failed poll is ignored.
+        // getDownloads. One-shot calls must not close over an unsuccessful drain.
         let autoDownloads: DownloadEntry[] = [];
         if (!closedDuringBatch && last.method !== 'getDownloads') {
           try {
@@ -1327,11 +1502,24 @@ export function registerAgentTools(
               undefined,
               onSession,
             );
+            if (dl.error) throw new Error('Download poll failed');
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];
           } catch {
-            // ignore — downloads will surface on a later call
+            if (
+              params.keepSessionAlive === false &&
+              !createProfile &&
+              !attachSessionId
+            ) {
+              throw new UserError(
+                'Commands completed, but download collection failed. ' +
+                  'The session was not closed. Retry getDownloads with this sessionId; ' +
+                  'do not repeat the completed commands.\n\n' +
+                  sessionLine(agentSession),
+              );
+            }
+            // Reusable sessions can surface downloads on a later call.
           }
         }
 
@@ -1378,6 +1566,7 @@ export function registerAgentTools(
         const extraText = [
           renderedSkills,
           siteNotice,
+          repeatWarning,
           closedDuringBatch ? '' : sessionLine(agentSession),
         ]
           .filter(Boolean)
@@ -1555,10 +1744,31 @@ export function registerAgentTools(
           );
         }
         const result = await runCommands(false);
+        if (
+          params.keepSessionAlive === false &&
+          lastSession &&
+          !createProfile &&
+          !attachSessionId
+        ) {
+          closeSession(
+            mcpSessionId,
+            token,
+            proxy,
+            profile,
+            createProfile,
+            attachSessionId,
+            lastSession.handle,
+            integrationId,
+            allowedDomains,
+          );
+        }
         sendAnalytics(true);
         return result;
       } catch (err) {
         sendAnalytics(false, err);
+        if (repeatWarning && err instanceof UserError) {
+          err.message += `\n\n${repeatWarning}`;
+        }
         throw err;
       }
     },
