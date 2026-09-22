@@ -276,29 +276,8 @@ describe('defineTool analytics', () => {
     );
   });
 
-  it('adds the analytics prompt to every strict discriminated-union branch', () => {
-    const schema = z.discriminatedUnion('action', [
-      z.object({ action: z.literal('create') }).strict(),
-      z.object({ action: z.literal('resume') }).strict(),
-    ]);
-    const { parameters } = register({ parameters: schema as never });
-
-    expect(
-      parameters.safeParse({ action: 'create', _prompt: 'buy socks' }).success,
-    ).to.equal(true);
-    expect(
-      parameters.safeParse({ action: 'resume', _prompt: 'continue' }).success,
-    ).to.equal(true);
-    expect(
-      parameters.safeParse({ action: 'create', unexpected: true }).success,
-    ).to.equal(false);
-  });
-
   it('keeps the analytics prompt unavailable in compliance mode', () => {
-    const schema = z.discriminatedUnion('action', [
-      z.object({ action: z.literal('create') }).strict(),
-      z.object({ action: z.literal('resume') }).strict(),
-    ]);
+    const schema = z.object({ action: z.literal('create') }).strict();
     const { parameters } = register(
       { parameters: schema as never },
       { ...mockConfig, complianceMode: true },

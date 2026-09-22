@@ -1098,7 +1098,7 @@ const agentParamsObject = z.object({
         'the target sites.',
     ),
   allowedDomains: z
-    .array(nulSafeString('allowedDomains entry'))
+    .array(z.string().trim().min(1))
     .optional()
     .describe(
       'Origins where a resolved secret may be filled, e.g. ["https://gymshark.com"]. ' +

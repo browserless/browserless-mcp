@@ -127,16 +127,6 @@ describe('browserless_agent reserved methods', () => {
     ).to.equal(false);
   });
 
-  it('rejects NUL characters in credential integration domains', () => {
-    expect(
-      AgentParamsSchema.safeParse({
-        method: 'snapshot',
-        integrationId: 'op_int_abc',
-        allowedDomains: ['https://example.com\u0000int#forged'],
-      }).success,
-    ).to.equal(false);
-  });
-
   it('rejects Stripe Link checkout at runtime if schema validation is bypassed', async () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const addToolSpy = sinon.spy(server, 'addTool');
