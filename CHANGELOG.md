@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.31.0](https://github.com/browserless/browserless-mcp/compare/v1.30.0...v1.31.0) (2026-09-22)
+
+
+### Features
+
+* add Grok public with config and docs AUTO-340 ([#331](https://github.com/browserless/browserless-mcp/issues/331)) ([2e1aa00](https://github.com/browserless/browserless-mcp/commit/2e1aa00f803efe12d3ad28c3335f71dedb62285e))
+* add repetition self-check to browser agent ([#332](https://github.com/browserless/browserless-mcp/issues/332)) ([6dfe46a](https://github.com/browserless/browserless-mcp/commit/6dfe46a690fe07951a7a69abad9f981cb8d03c98))
+* add saveSecret agent command ([#326](https://github.com/browserless/browserless-mcp/issues/326)) ([4044466](https://github.com/browserless/browserless-mcp/commit/4044466aa11aefd8339601c2e8830ca7223a7e99))
+* preflight agent capabilities ([#289](https://github.com/browserless/browserless-mcp/issues/289)) ([0d50246](https://github.com/browserless/browserless-mcp/commit/0d50246d5c5c16340cc80a723d02454e9bb48332))
+* report bounded recipe failure reasons ([#327](https://github.com/browserless/browserless-mcp/issues/327)) ([eaa6be9](https://github.com/browserless/browserless-mcp/commit/eaa6be9cec0f0376210e083c41631b4031f96123))
+
+
+### Bug Fixes
+
+* close one-shot agent sessions after command batches ([#329](https://github.com/browserless/browserless-mcp/issues/329)) ([38f8dd9](https://github.com/browserless/browserless-mcp/commit/38f8dd94699714417b03f778f060cb97f5796bfb))
+* constrain local upload paths to configured directories ([#330](https://github.com/browserless/browserless-mcp/issues/330)) ([44e99c5](https://github.com/browserless/browserless-mcp/commit/44e99c5ccc56e500d3a49802da614c4473974ea0))
+* prevent post-secret selector recovery from recommending blocked captures [AUTO-441] ([#328](https://github.com/browserless/browserless-mcp/issues/328)) ([96f43f0](https://github.com/browserless/browserless-mcp/commit/96f43f0113d9a5659d68426394b3dc2db61bd3ba))
+
 ## [1.30.0](https://github.com/browserless/browserless-mcp/compare/v1.29.0...v1.30.0) (2026-09-15)
 
 
