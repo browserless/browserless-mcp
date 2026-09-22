@@ -45,10 +45,6 @@ export function registerSurface(
     },
     {
       surface: 'both',
-      register: () => registerSearchTool(server, config, analytics),
-    },
-    {
-      surface: 'both',
       register: () => registerPerformanceTool(server, config, analytics),
     },
     // Account-data reads (plan, usage, sessions, logs). Safe on both surfaces:
@@ -93,6 +89,12 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerProfilesTool(server, config, analytics),
+    },
+    // Full-only: web search relies on an external search engine whose web
+    // results are currently unreliable; keep it off the focused connector.
+    {
+      surface: 'full',
+      register: () => registerSearchTool(server, config, analytics),
     },
     {
       surface: 'full',

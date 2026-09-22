@@ -84,7 +84,7 @@ const VALID_GOTO = { method: 'goto', params: { url: 'https://example.com' } };
 describe('compliance mode — compliant tool surface', () => {
   afterEach(() => sinon.restore());
 
-  it('registers exactly the 9 compliant tools (no smartscraper/function/map/crawl)', () => {
+  it('registers exactly the 8 compliant tools (no search/smartscraper/function/map/crawl)', () => {
     const { names } = captureTools(true);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -92,7 +92,6 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_export',
       'browserless_logs',
       'browserless_performance',
-      'browserless_search',
       'browserless_sessions',
       'browserless_skill',
       'browserless_usage',
@@ -122,6 +121,11 @@ describe('compliance mode — compliant tool surface', () => {
   it('browserless_profiles is full-only (excluded from the compliant surface)', () => {
     expect(captureTools(true).byName.has('browserless_profiles')).to.be.false;
     expect(captureTools(false).byName.has('browserless_profiles')).to.be.true;
+  });
+
+  it('browserless_search is full-only (excluded from the compliant surface)', () => {
+    expect(captureTools(true).byName.has('browserless_search')).to.be.false;
+    expect(captureTools(false).byName.has('browserless_search')).to.be.true;
   });
 
   // #179 broke compliance by re-adding direct register*() calls in index.ts,
@@ -449,20 +453,6 @@ describe('compliance mode — compliant tool surface', () => {
         .true;
     });
 
-    it('search rejects scrapeOptions (strict); full keeps it', () => {
-      const conn = captureTools(true).byName.get('browserless_search')!;
-      const full = captureTools(false).byName.get('browserless_search')!;
-      const withOpts = { query: 'q', scrapeOptions: { formats: ['markdown'] } };
-      expect(conn.parameters.safeParse(withOpts).success, 'compliant rejects')
-        .to.be.false;
-      expect(
-        conn.parameters.safeParse({ query: 'q' }).success,
-        'compliant accepts without it',
-      ).to.be.true;
-      expect(full.parameters.safeParse(withOpts).success, 'full keeps it').to.be
-        .true;
-    });
-
     it('export rejects includeResources (strict); full keeps it', () => {
       const conn = captureTools(true).byName.get('browserless_export')!;
       const full = captureTools(false).byName.get('browserless_export')!;
@@ -506,10 +496,6 @@ describe('compliance mode — compliant tool surface', () => {
       // agent: explicit restrictive posture
       expect(byName.get('browserless_agent')!.description).to.match(
         /do not use to bypass access controls/i,
-      );
-      // search: no per-result-scraping relay language
-      expect(byName.get('browserless_search')!.description).to.not.match(
-        /scrape each/i,
       );
       // export: no bulk-asset / ZIP language
       expect(byName.get('browserless_export')!.description).to.not.match(
@@ -646,16 +632,6 @@ describe('compliance mode — compliant tool surface', () => {
       };
     };
 
-    it('search run() rejects scrapeOptions even when the schema is bypassed', async () => {
-      const { execute } = compliantExecute('browserless_search');
-      try {
-        await execute({ query: 'x', scrapeOptions: {} }, mockCtx);
-        expect.fail('expected UserError');
-      } catch (err) {
-        expect((err as Error).message).to.match(/not available/i);
-      }
-    });
-
     it('export run() rejects includeResources even when the schema is bypassed', async () => {
       const { execute } = compliantExecute('browserless_export');
       try {
@@ -718,17 +694,6 @@ describe('compliance mode — compliant tool surface', () => {
         'waitForTimeout',
       ],
       browserless_performance: ['budgets', 'categories', 'timeout', 'url'],
-      browserless_search: [
-        'categories',
-        'country',
-        'lang',
-        'limit',
-        'location',
-        'query',
-        'sources',
-        'tbs',
-        'timeout',
-      ],
       browserless_skill: ['id'],
       // Account-data tools: every key is a read filter. None drives a browser,
       // none names a credential, none accepts a URL to fetch.
