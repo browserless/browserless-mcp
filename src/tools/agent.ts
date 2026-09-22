@@ -248,6 +248,17 @@ const fmtBytes = (n?: number): string =>
       ? `${(n / 1_048_576).toFixed(1)}MB`
       : `${Math.round(n / 1024)}KB`;
 
+export const formatAgentCommandLog = (cmd: {
+  method: string;
+  params: Record<string, unknown>;
+}): string => {
+  const params =
+    cmd.method === 'saveSecret'
+      ? { ...cmd.params, password: '[REDACTED]', website: '[REDACTED]' }
+      : cmd.params;
+  return `agent: ${cmd.method} ${JSON.stringify(params)}`;
+};
+
 // Still-downloading entry: report progress so the caller knows to touch the
 // browser again to collect it (no bytes, nothing to save yet).
 const describeInProgressDownload = (d: DownloadEntry): string => {
@@ -769,12 +780,13 @@ export function registerAgentTools(
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
-      // specific messages). Legacy single-command calls stay loose; outcome
-      // reports need local validation because delivery is best-effort.
+      // specific messages). Legacy single-command calls stay loose except for
+      // best-effort outcome reports and credential writes.
       if (
         params.commands?.length ||
         params.method === 'reportOutcome' ||
-        params.method === 'reportSkillOutcome'
+        params.method === 'reportSkillOutcome' ||
+        params.method === 'saveSecret'
       ) {
         const commandContract = z
           .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
@@ -1109,6 +1121,7 @@ export function registerAgentTools(
         // still detects the A→snapshot cross-origin transition.
         let crossOriginBaseline: string | undefined = agentSession.lastUrl;
         let promptSent = false;
+        let saveSecretSent = false;
         for (const [commandIndex, cmd] of commands.entries()) {
           const commandFailure = (err: unknown, category: ErrorCategory) => ({
             ...failureDetails(err, {
@@ -1178,7 +1191,7 @@ export function registerAgentTools(
             continue;
           }
 
-          log.info(`agent: ${cmd.method} ${JSON.stringify(cmd.params)}`);
+          log.info(formatAgentCommandLog(cmd));
 
           agentSession.skillState.cmdIndex += 1;
 
@@ -1200,6 +1213,9 @@ export function registerAgentTools(
 
           let resp;
           try {
+            // A lost reply may follow a completed vault write. Never replay
+            // this batch after dispatching saveSecret, even if a later command fails.
+            if (cmd.method === 'saveSecret') saveSecretSent = true;
             resp = await send(
               agentSession,
               cmd.method,
@@ -1221,7 +1237,7 @@ export function registerAgentTools(
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
-            if (!isRetry) {
+            if (!isRetry && !saveSecretSent) {
               log.warn(
                 `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
               );
@@ -1258,7 +1274,7 @@ export function registerAgentTools(
                 integrationId,
                 allowedDomains,
               );
-              if (!isRetry) {
+              if (!isRetry && !saveSecretSent) {
                 return runCommands(true, agentSession.persona ?? retryPersona);
               }
             }
