@@ -437,14 +437,6 @@ export function registerStripeLinkCheckoutTool(
           );
         }
         const params = parsed.data;
-        if (params.action === 'create') {
-          const total = cartTotal(params.cart);
-          if (!Number.isSafeInteger(total) || total !== params.amount_minor) {
-            throw new UserError(
-              'amount_minor must equal the sum of cart line totals.',
-            );
-          }
-        }
         let session;
         try {
           session = getActiveSessionByHandle(

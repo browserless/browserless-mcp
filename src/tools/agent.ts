@@ -1760,6 +1760,8 @@ export function registerAgentTools(
             lastSession.handle,
             integrationId,
             allowedDomains,
+            undefined,
+            userId,
           );
         }
         sendAnalytics(true);
