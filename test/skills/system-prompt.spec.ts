@@ -5,6 +5,43 @@ import {
   COMPLIANT_AGENT_SYSTEM_PROMPT,
 } from '../../src/skills/system-prompt.js';
 
+describe('outcome reporting guidance', () => {
+  for (const [name, prompt] of [
+    ['full', AGENT_SYSTEM_PROMPT],
+    ['compliant', COMPLIANT_AGENT_SYSTEM_PROMPT],
+  ]) {
+    it(`asks the ${name} agent to report before close with bounded failure reasons`, () => {
+      const ending = prompt
+        .split('## Ending the session (REQUIRED)')[1]
+        .split('\n## ')[0];
+      for (const text of [
+        'reportOutcome',
+        'blocked_by_site',
+        'captcha',
+        'login_required',
+        'timeout',
+        'other',
+        'then send `close`',
+      ]) {
+        expect(ending).to.include(text);
+      }
+      expect(ending).not.to.include('completed`');
+    });
+  }
+  it('orders recipe reporting before task reporting and close', () => {
+    expect(AGENT_SYSTEM_PROMPT).to.include('Near the end of the run, send');
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'Send it before `reportOutcome` and any `close`',
+    );
+    expect(AGENT_SYSTEM_PROMPT).not.to.include(
+      'As your final command in the run',
+    );
+    expect(AGENT_SYSTEM_PROMPT).not.to.include(
+      'Send it as your last command **before** any `close`',
+    );
+  });
+});
+
 it('describes bounded recipe failure reasons and agent-reported provenance', () => {
   for (const reason of [
     'authentication_required',

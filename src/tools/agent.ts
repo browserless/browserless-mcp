@@ -112,6 +112,7 @@ const SECRET_SAFE_METHODS = new Set([
   'uploadFile',
   'saveProfile',
   'reportSkillOutcome',
+  'reportOutcome',
   'close',
 ]);
 const TOP_FRAME_NAVIGATION_METHODS = new Set([
@@ -588,10 +589,12 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
   params?: Record<string, unknown>;
 };
 
-const CLOSE_REMINDER =
+export const CLOSE_REMINDER =
   `This browser stays open and holds a concurrency slot until you end it. ` +
-  `When the task is done, send \`{ "method": "close" }\` as its own call — or, if ` +
-  `the user may want to keep browsing, ask them before leaving it open.`;
+  `When the task is done or you are giving up, end your last batch with ` +
+  `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then send ` +
+  `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
+  `browsing, ask them before leaving it open.`;
 
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.

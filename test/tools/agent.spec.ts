@@ -18,6 +18,7 @@ import {
   registerAgentTools,
   sanitizeUpgradeBody,
   validateSecretCaptureOrdering,
+  CLOSE_REMINDER,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
@@ -169,6 +170,32 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
+  it('allows outcome reporting after loadSecret in the same batch', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'reportOutcome', params: { success: true } },
+        { method: 'close' },
+      ]),
+    ).not.to.throw();
+  });
+
+  it('allows outcome reporting with persisted secret-visible state', () => {
+    expect(() =>
+      validateSecretCaptureOrdering(
+        [{ method: 'reportOutcome', params: { success: false } }],
+        true,
+      ),
+    ).not.to.throw();
+  });
+
+  it('reminds the caller to report the outcome before closing', () => {
+    expect(CLOSE_REMINDER).to.include('"method": "reportOutcome"');
+    expect(CLOSE_REMINDER.indexOf('"method": "reportOutcome"')).to.be.lessThan(
+      CLOSE_REMINDER.indexOf('"method": "close"'),
+    );
+  });
+
   it('rejects a screenshot after loadSecret before any command runs', () => {
     try {
       validateSecretCaptureOrdering([
