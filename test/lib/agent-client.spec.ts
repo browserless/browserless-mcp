@@ -5,6 +5,7 @@ import {
   closeSession,
   createRepeatState,
   detectRepetition,
+  getActiveSessionByHandle,
   getOrCreateSession,
   getSessionKey,
   isRetryableUpgradeError,
@@ -134,6 +135,7 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(url.pathname).to.equal('/chromium/agent');
     expect([...url.searchParams.keys()]).to.deep.equal(['token']);
     expect(url.searchParams.get('token')).to.equal('tok');
+    expect(url.searchParams.has('timeout')).to.equal(false);
   });
 
   it('uses wss:// for https', () => {
@@ -1643,6 +1645,71 @@ describe('agent-client bare-call isolation', () => {
       await server.close();
     }
   });
+
+  it('keeps an echoed handle scoped to its OAuth user', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const mine = await getOrCreateSession(
+        'mcp-user-a',
+        server.url,
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-a',
+      );
+      const theirs = await getOrCreateSession(
+        'mcp-user-b',
+        server.url,
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        mine.handle,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-b',
+      );
+      expect(theirs.ws).to.not.equal(mine.ws);
+      expect(
+        getActiveSessionByHandle(
+          mine.handle,
+          server.url,
+          'shared-token',
+          'user-b',
+        ),
+      ).to.equal(theirs);
+      expect(
+        getActiveSessionByHandle(
+          mine.handle,
+          server.url,
+          'shared-token',
+          'user-a',
+        ),
+      ).to.equal(mine);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe('agent-client session-cache isolation', () => {
@@ -1804,6 +1871,23 @@ describe('agent-client session handle', () => {
     expect(key('handle-1', 'tok-a')).to.not.equal(key('handle-1', 'tok-b'));
   });
 
+  it('scopes an echoed handle to its OAuth user under a shared account token', () => {
+    const userKey = (userId: string) =>
+      getSessionKey(
+        'mcp-1',
+        'shared-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'handle-1',
+        undefined,
+        undefined,
+        userId,
+      );
+    expect(userKey('user-a')).to.not.equal(userKey('user-b'));
+  });
+
   it('still separates conversations that echo different handles', () => {
     expect(key('handle-1')).to.not.equal(key('handle-2'));
   });
@@ -1843,6 +1927,30 @@ describe('agent-client session handle', () => {
       await server.close();
     }
   });
+
+  it('resolves only the exact open handle/token/API tuple without reconnecting', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const active = await getOrCreateSession('mcp-1', server.url, 'tok');
+      expect(
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.equal(active);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'wrong-token'),
+      ).to.throw(/unavailable/);
+      expect(() =>
+        getActiveSessionByHandle(active.handle, 'https://other.example', 'tok'),
+      ).to.throw(/unavailable/);
+
+      active.ws.close();
+      await new Promise((resolve) => active.ws.once('close', resolve));
+      expect(() =>
+        getActiveSessionByHandle(active.handle, server.url, 'tok'),
+      ).to.throw(/unavailable/);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe('agent-client integration binding key', () => {
@@ -1867,6 +1975,13 @@ describe('agent-client integration binding key', () => {
 
   it('separates a scoped binding from an unscoped one', () => {
     expect(key('op_int_a', ['https://a.com'])).to.not.equal(key('op_int_a'));
+  });
+
+  it('separates domain scopes containing delimiter characters', () => {
+    expect(key('op_int_a', ['a,b', 'c'])).to.not.equal(
+      key('op_int_a', ['a', 'b,c']),
+    );
+    expect(key('op_int_a|b')).to.not.equal(key('op_int_a', ['b']));
   });
 
   it('treats domain order as the same scope', () => {

@@ -99,7 +99,7 @@ export const resolveBrowserlessAuth = async (
 
   // A JWT is exchanged for the account's Browserless API key via PostgREST.
   if (isJwt && headerToken) {
-    const { apiKey, accountId } = await resolveApiKey(
+    const { apiKey, accountId, userId, userRole } = await resolveApiKey(
       config.supabaseUrl,
       config.supabaseServiceRoleKey,
       headerToken,
@@ -113,6 +113,9 @@ export const resolveBrowserlessAuth = async (
       authMethod: 'oauth',
       transport,
       userAgent,
+      userId,
+      userRole,
+      identityToken: headerToken,
     };
   }
 

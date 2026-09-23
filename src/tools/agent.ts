@@ -47,6 +47,7 @@ import { AnalyticsHelper } from '../lib/analytics.js';
 import { failureDetails } from '../lib/failure-details.js';
 import { defineTool } from '../lib/define-tool.js';
 import {
+  isPaymentStage,
   markFired,
   renderSkill,
   renderSkills,
@@ -715,6 +716,7 @@ export function registerAgentTools(
       openWorldHint: true,
     },
     run: async ({
+      client,
       params,
       prompt,
       log,
@@ -724,6 +726,7 @@ export function registerAgentTools(
       apiUrl,
       sessionId: mcpSessionId,
       attachSessionId,
+      userId,
     }) => {
       let commands: Array<{
         method: string;
@@ -775,6 +778,17 @@ export function registerAgentTools(
             'Credential integrations are not available on this endpoint.',
           );
         }
+      }
+
+      // Reject the reserved method before batch validation, using the same
+      // invalid-parameter diagnostics for direct and batched calls.
+      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
+        throw Object.assign(
+          new UserError(
+            'stripeLinkCheckout is reserved for browserless_link_checkout.',
+          ),
+          { code: 'INVALID_PARAMS' },
+        );
       }
 
       // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
@@ -904,6 +918,19 @@ export function registerAgentTools(
       };
       let lastFailure: Record<string, unknown> | undefined;
 
+      const hasConnectedStripeLinkWallet = async (
+        snapshot: SnapshotResult | undefined,
+      ): Promise<boolean> => {
+        if (!isPaymentStage(snapshot)) return false;
+        try {
+          return (
+            (await client.stripeLinkConnection('status')).status === 'connected'
+          );
+        } catch {
+          return false;
+        }
+      };
+
       const sendAnalytics = (success: boolean, err?: unknown) => {
         analytics?.fireToolRequest(token, 'browserless_agent', {
           ...mcpSource,
@@ -966,6 +993,7 @@ export function registerAgentTools(
           integrationId,
           allowedDomains,
           onSession,
+          userId,
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
@@ -1033,6 +1061,7 @@ export function registerAgentTools(
             record,
             persona,
             onSession,
+            userId,
           );
         } catch (connErr: unknown) {
           lastFailure = failureDetails(connErr, {
@@ -1079,6 +1108,7 @@ export function registerAgentTools(
             record,
             retryPersona,
             onSession,
+            userId,
           );
         } catch (connErr: unknown) {
           // No retry when the server gave a definitive 4xx — re-attempting
@@ -1100,6 +1130,7 @@ export function registerAgentTools(
             echoedSessionId,
             integrationId,
             allowedDomains,
+            userId,
           );
           return runCommands(true, retryPersona);
         }
@@ -1164,6 +1195,8 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              undefined,
+              userId,
             );
             results.push({ ...cmd, result: { closed: true } });
             closedDuringBatch = true;
@@ -1234,6 +1267,7 @@ export function registerAgentTools(
               echoedSessionId,
               integrationId,
               allowedDomains,
+              userId,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -1273,6 +1307,7 @@ export function registerAgentTools(
                 echoedSessionId,
                 integrationId,
                 allowedDomains,
+                userId,
               );
               if (!isRetry && !saveSecretSent) {
                 return runCommands(true, agentSession.persona ?? retryPersona);
@@ -1324,7 +1359,15 @@ export function registerAgentTools(
             const triggered = secretCaptureBlocked
               ? []
               : detectVisibleSkills(
-                  { snapshot: err.snapshot, error: err, cmd, apiUrl },
+                  {
+                    snapshot: err.snapshot,
+                    error: err,
+                    cmd,
+                    apiUrl,
+                    authenticated: await hasConnectedStripeLinkWallet(
+                      err.snapshot,
+                    ),
+                  },
                   agentSession.skillState,
                   compliant,
                 );
@@ -1434,6 +1477,7 @@ export function registerAgentTools(
             cmd: lastCmd,
             resp: lastResult,
             apiUrl,
+            authenticated: await hasConnectedStripeLinkWallet(lastSnapshot),
           },
           agentSession.skillState,
           compliant,
@@ -1716,6 +1760,8 @@ export function registerAgentTools(
             lastSession.handle,
             integrationId,
             allowedDomains,
+            undefined,
+            userId,
           );
         }
         sendAnalytics(true);
