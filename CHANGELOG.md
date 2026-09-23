@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.32.0](https://github.com/browserless/browserless-mcp/compare/v1.31.0...v1.32.0) (2026-09-23)
+
+
+### Features
+
+* add Stripe Link checkout tools ([#258](https://github.com/browserless/browserless-mcp/issues/258)) ([f8e7293](https://github.com/browserless/browserless-mcp/commit/f8e729397c34e16deff9a18d2ee865c8ea80d0fd))
+
+
+### Bug Fixes
+
+* remove browserless_search from the compliant connector surface ([#342](https://github.com/browserless/browserless-mcp/issues/342)) ([b6c3e16](https://github.com/browserless/browserless-mcp/commit/b6c3e1696d3a263c0a10e0cbfc3fbdade5c00619))
+
 ## [1.31.0](https://github.com/browserless/browserless-mcp/compare/v1.30.0...v1.31.0) (2026-09-22)
 
 
