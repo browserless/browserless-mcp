@@ -1382,6 +1382,72 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  for (const method of ['text', 'getDownloads']) {
+    it(`retains unfinished downloads from ${method} and closes after collection`, async () => {
+      let pending = true;
+      const srv = await makeRespondingServer((cmd) =>
+        cmd === 'getDownloads'
+          ? {
+              downloads: pending
+                ? [
+                    {
+                      filename: 'ready.txt',
+                      data: 'b2s=',
+                      mimeType: 'text/plain',
+                      size: 2,
+                    },
+                    {
+                      filename: 'slow.txt',
+                      inProgress: true,
+                      receivedBytes: 2,
+                      totalBytes: 10,
+                    },
+                  ]
+                : [],
+            }
+          : { text: 'completed command' },
+      );
+      const context = {
+        ...mockContext,
+        sessionId: `pending-download-${method}`,
+      };
+      try {
+        const execute = getAgentExecute(srv.url, 'httpStream');
+        const first = JSON.stringify(await execute({ method }, context));
+        expect(first).to.include('ready.txt');
+        expect(first).to.include('/download/');
+        expect(first).to.include('slow.txt');
+        expect(first).to.include('Retry getDownloads');
+        expect(first).not.to.include('Browser session closed');
+        const sessionId = /sessionId: (\S+) /.exec(first)![1];
+        expect(srv.closedConnections()).to.equal(0);
+        // Explicit false must still defer closing until the drain finishes.
+        await execute(
+          { method: 'getDownloads', sessionId, keepSessionAlive: false },
+          context,
+        );
+        expect(srv.hits()).to.equal(1);
+        expect(srv.closedConnections()).to.equal(0);
+        pending = false;
+        const final = await execute(
+          { method: 'getDownloads', sessionId, keepSessionAlive: false },
+          context,
+        );
+        expect(JSON.stringify(final)).to.include(
+          'Browser session closed (one-shot)',
+        );
+        for (let i = 0; !srv.closedConnections() && i < 100; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        expect(srv.closedConnections()).to.equal(1);
+        expect(srv.hits()).to.equal(1);
+      } finally {
+        clearSession(context.sessionId);
+        await srv.close();
+      }
+    });
+  }
+
   it('reports one-shot closure even when the batch only reports an outcome', async () => {
     const srv = await makeRespondingServer(() => ({ recorded: true }));
     try {

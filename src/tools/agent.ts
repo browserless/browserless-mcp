@@ -1091,6 +1091,7 @@ export function registerAgentTools(
       }
 
       let lastSession: ActiveSession | undefined;
+      let downloadsPending = false;
       const runCommands = async (
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
@@ -1532,6 +1533,11 @@ export function registerAgentTools(
             // Reusable sessions can surface downloads on a later call.
           }
         }
+        const downloads =
+          last.method === 'getDownloads'
+            ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
+            : autoDownloads;
+        downloadsPending = downloads.some((download) => download.inProgress);
 
         // Surface a site-recipe pointer for the URL this batch landed on — the
         // tool-description prose gate gets skipped/clipped, so push it as a
@@ -1577,9 +1583,18 @@ export function registerAgentTools(
           renderedSkills,
           siteNotice,
           repeatWarning,
+          downloadsPending &&
+          !keepAlive &&
+          !createProfile &&
+          !attachSessionId &&
+          !closedDuringBatch
+            ? 'Download collection is still in progress. Retry getDownloads with this ' +
+              'sessionId and `keepSessionAlive: false` to close when collection finishes; ' +
+              'do not repeat the completed commands.'
+            : '',
           closedDuringBatch
             ? ''
-            : keepAlive || createProfile || attachSessionId
+            : keepAlive || downloadsPending || createProfile || attachSessionId
               ? sessionLine(agentSession)
               : ONE_SHOT_CLOSED_NOTICE,
         ]
@@ -1663,8 +1678,6 @@ export function registerAgentTools(
           ];
         } else if (last.method === 'getDownloads') {
           // Explicit drain.
-          const downloads =
-            (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
           const prefix =
             batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
           return await formatDownloads(downloads, prefix, skillsText, {
@@ -1758,7 +1771,13 @@ export function registerAgentTools(
           );
         }
         const result = await runCommands(false);
-        if (!keepAlive && lastSession && !createProfile && !attachSessionId) {
+        if (
+          !keepAlive &&
+          !downloadsPending &&
+          lastSession &&
+          !createProfile &&
+          !attachSessionId
+        ) {
           closeSession(
             mcpSessionId,
             token,
