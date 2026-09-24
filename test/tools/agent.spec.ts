@@ -1382,6 +1382,23 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  it('reports one-shot closure even when the batch only reports an outcome', async () => {
+    const srv = await makeRespondingServer(() => ({ recorded: true }));
+    try {
+      const result = await getAgentExecute(srv.url)(
+        { commands: [{ method: 'reportOutcome', params: { success: true } }] },
+        mockContext,
+      );
+      const text = JSON.stringify(result);
+      expect(text).to.include('Browser session closed (one-shot)');
+      expect(text).to.include('keepSessionAlive: true');
+      expect(text).to.include('FIRST call');
+      expect(text).not.to.include('sessionId:');
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const [name, schema] of Object.entries({
     AgentParamsSchema,
     AgentToolParamsSchema,

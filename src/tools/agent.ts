@@ -596,6 +596,10 @@ export const CLOSE_REMINDER =
   `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
 
+const ONE_SHOT_CLOSED_NOTICE =
+  'Browser session closed (one-shot). If you still needed this browser, ' +
+  'set `keepSessionAlive: true` on your FIRST call next time.';
+
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
 const sessionLine = (session: { handle: string }): string =>
@@ -1455,7 +1459,11 @@ export function registerAgentTools(
           return [
             {
               type: 'text' as const,
-              text: closedDuringBatch ? 'Browser session closed.' : 'Done.',
+              text: closedDuringBatch
+                ? 'Browser session closed.'
+                : !keepAlive && !createProfile && !attachSessionId
+                  ? ONE_SHOT_CLOSED_NOTICE
+                  : 'Done.',
             },
           ];
         }
@@ -1573,8 +1581,7 @@ export function registerAgentTools(
             ? ''
             : keepAlive || createProfile || attachSessionId
               ? sessionLine(agentSession)
-              : 'Browser session closed (one-shot). If you still needed this browser, ' +
-                'set `keepSessionAlive: true` on your FIRST call next time.',
+              : ONE_SHOT_CLOSED_NOTICE,
         ]
           .filter(Boolean)
           .join('\n\n');
