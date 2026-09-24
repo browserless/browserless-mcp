@@ -1465,6 +1465,26 @@ describe('browserless_agent one-shot sessions', () => {
     }
   });
 
+  it('honors an explicit batch close even when downloads are unfinished', async () => {
+    const srv = await makeRespondingServer(() => ({
+      downloads: [{ filename: 'slow.txt', inProgress: true }],
+    }));
+    try {
+      const result = await getAgentExecute(srv.url)(
+        { commands: [{ method: 'getDownloads' }, { method: 'close' }] },
+        mockContext,
+      );
+      expect(JSON.stringify(result)).to.include('Browser session closed.');
+      expect(JSON.stringify(result)).not.to.include('sessionId:');
+      for (let i = 0; !srv.closedConnections() && i < 100; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(srv.closedConnections()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const [name, schema] of Object.entries({
     AgentParamsSchema,
     AgentToolParamsSchema,

@@ -1537,7 +1537,9 @@ export function registerAgentTools(
           last.method === 'getDownloads'
             ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
             : autoDownloads;
-        downloadsPending = downloads.some((download) => download.inProgress);
+        downloadsPending =
+          !closedDuringBatch &&
+          downloads.some((download) => download.inProgress);
 
         // Surface a site-recipe pointer for the URL this batch landed on — the
         // tool-description prose gate gets skipped/clipped, so push it as a
