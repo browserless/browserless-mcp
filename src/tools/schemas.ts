@@ -1145,11 +1145,12 @@ const agentParamsObject = z.object({
   keepSessionAlive: z
     .boolean()
     .optional()
-    .default(true)
     .describe(
-      'Keep the browser pooled for reuse when you echo the returned session id ' +
-        '(default true). Set false for a one-shot call: close the browser after ' +
-        'the command batch and download drain, freeing its concurrency slot. ' +
+      'One-shot by default: after the command batch and download drain the ' +
+        'browser closes and frees its concurrency slot. For a multi-step task, ' +
+        'set true on your FIRST call; then pass the returned sessionId on later ' +
+        'calls to keep it alive automatically. Set false to force-close even ' +
+        'when continuing. ' +
         'Ignored for profile creation and attached sessions, whose lifetimes ' +
         'are managed separately.',
     ),

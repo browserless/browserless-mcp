@@ -65,6 +65,14 @@ describe('agent system prompt contextual snapshot guidance', () => {
     ['full', AGENT_SYSTEM_PROMPT],
     ['compliant', COMPLIANT_AGENT_SYSTEM_PROMPT],
   ] as const) {
+    it(`teaches the ${name} agent one-shot and safe multi-step lifetimes`, () => {
+      expect(prompt).to.include('one-shot by default');
+      expect(prompt).to.match(/snapshot[^\n]+keepSessionAlive: true/);
+      expect(prompt).to.match(/Unsure[^\n]+keepSessionAlive: true/);
+      expect(prompt).to.include('FIRST call');
+      expect(prompt).to.include('no need to repeat the flag');
+    });
+
     it(`keeps the ${name} prompt aware of context and destructive controls`, () => {
       expect(prompt).to.include('desc="..."');
       expect(prompt).to.include('action=METHOD URL');

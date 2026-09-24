@@ -1310,6 +1310,7 @@ describe('browserless_agent repetition self-check', () => {
           const result = (await execute(
             {
               sessionId,
+              keepSessionAlive: i === 1 ? true : undefined,
               rationale: `Attempt ${i}`,
               commands: [
                 { method: 'snapshot', params: i % 2 ? {} : { ignored: true } },
@@ -1389,8 +1390,9 @@ describe('browserless_agent one-shot sessions', () => {
   })) {
     it(`validates keepSessionAlive on ${name}`, () => {
       const params = { commands: [{ method: 'text', params: {} }] };
+      expect(schema.parse(params).keepSessionAlive).to.equal(undefined);
       for (const [input, expected] of [
-        [undefined, true],
+        [undefined, undefined],
         [true, true],
         [false, false],
       ]) {
@@ -1416,8 +1418,15 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
-  for (const sessionId of [undefined, 'echoed-one-shot']) {
-    it(`closes the ${sessionId ? 'echoed' : 'bare'} session after draining downloads and preserves the result`, async () => {
+  for (const [sessionId, keepSessionAlive, kept] of [
+    [undefined, undefined, false],
+    [undefined, true, true],
+    [undefined, false, false],
+    ['echoed-one-shot', undefined, true],
+    ['echoed-one-shot', true, true],
+    ['echoed-one-shot', false, false],
+  ] as const) {
+    it(`resolves lifetime for sessionId=${sessionId}, keepSessionAlive=${keepSessionAlive}`, async () => {
       const methods: string[] = [];
       const srv = await makeRespondingServer((method) => {
         methods.push(method);
@@ -1426,24 +1435,40 @@ describe('browserless_agent one-shot sessions', () => {
           : { downloads: [] };
       });
       try {
-        const execute = getAgentExecute(srv.url);
+        const analytics = new AnalyticsHelper(false);
+        const fire = sinon.stub(analytics, 'fireToolRequest');
+        const execute = getAgentExecute(srv.url, 'stdio', analytics);
         const result = await execute(
           {
             commands: [{ method: 'text', params: {} }],
             sessionId,
-            keepSessionAlive: false,
+            keepSessionAlive,
           },
           mockContext,
         );
         const serialized = JSON.stringify(result);
         expect(serialized).to.include('finished result');
         expect(methods).to.deep.equal(['text', 'getDownloads']);
-        const handle = serialized.match(/sessionId: (\S+) /)![1];
-        await execute({ method: 'text', sessionId: handle }, mockContext);
-        expect(
-          srv.hits(),
-          'closed handle must not reuse a pooled socket',
-        ).to.equal(2);
+        // Observe the real WebSocket teardown, not just the response's claim.
+        for (let i = 0; !kept && !srv.closedConnections!() && i < 100; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        expect(srv.closedConnections!()).to.equal(kept ? 0 : 1);
+        expect(fire.lastCall.args[2].keep_session_alive).to.equal(kept);
+        if (kept) {
+          const handle = serialized.match(/sessionId: (\S+) /)![1];
+          expect(serialized).not.to.include('closed (one-shot)');
+          expect(serialized).not.to.include('This browser stays open');
+          expect(serialized).not.to.include('Omitting it opens a blank one');
+          await execute({ method: 'text', sessionId: handle }, mockContext);
+          expect(srv.hits()).to.equal(1);
+        } else {
+          expect(serialized).to.include('Browser session closed (one-shot)');
+          expect(serialized).to.include('keepSessionAlive: true');
+          expect(serialized).to.include('FIRST call');
+          expect(serialized).not.to.include('sessionId:');
+          expect(serialized).not.to.include(CLOSE_REMINDER);
+        }
       } finally {
         await srv.close();
       }
@@ -1453,6 +1478,8 @@ describe('browserless_agent one-shot sessions', () => {
   for (const extra of [
     {},
     { keepSessionAlive: true },
+    { createProfile: { name: 'one-shot-profile' } },
+    { keepSessionAlive: true, createProfile: { name: 'one-shot-profile' } },
     { keepSessionAlive: false, createProfile: { name: 'one-shot-profile' } },
   ]) {
     it(`retains a reusable session for ${JSON.stringify(extra)}`, async () => {
@@ -1466,11 +1493,14 @@ describe('browserless_agent one-shot sessions', () => {
         const execute = getAgentExecute(srv.url);
         const args = {
           method: 'text',
-          sessionId: 'retained-one-shot',
+          sessionId: 'createProfile' in extra ? undefined : 'retained-one-shot',
           ...extra,
         };
-        await execute(args, mockContext);
-        await execute(args, mockContext);
+        const result = await execute(args, mockContext);
+        expect(JSON.stringify(result)).to.include('sessionId:');
+        expect(JSON.stringify(result)).not.to.include('closed (one-shot)');
+        const handle = /sessionId: (\S+) /.exec(JSON.stringify(result))![1];
+        await execute({ ...args, sessionId: handle }, mockContext);
         expect(srv.hits()).to.equal(1);
       } finally {
         await srv.close();
@@ -1478,7 +1508,7 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
-  for (const keepSessionAlive of [false, true]) {
+  for (const keepSessionAlive of [undefined, false, true]) {
     it(`preserves recovery after a failed download drain with keepSessionAlive=${keepSessionAlive}`, async () => {
       let failDrain = true;
       const srv = await makeRespondingServer((method) =>
@@ -1490,24 +1520,27 @@ describe('browserless_agent one-shot sessions', () => {
         const execute = getAgentExecute(srv.url);
         const args = {
           method: 'text',
-          sessionId: 'failed-drain',
           keepSessionAlive,
         };
         let error: unknown;
+        let result: unknown;
         try {
-          await execute(args, mockContext);
+          result = await execute(args, mockContext);
         } catch (err) {
           error = err;
         }
         if (keepSessionAlive) {
           expect(error).to.equal(undefined);
         } else {
+          expect(error).to.be.instanceOf(UserError);
           expect(String(error)).to.include('download collection failed');
-          expect(String(error)).to.include('sessionId: failed-drain');
         }
+        const handle = /sessionId: (\S+) /.exec(
+          error ? String(error) : JSON.stringify(result),
+        )![1];
         failDrain = false;
         await execute(
-          { method: 'getDownloads', sessionId: 'failed-drain' },
+          { method: 'getDownloads', sessionId: handle },
           mockContext,
         );
         expect(
@@ -1520,22 +1553,26 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
-  it('retains attached sessions despite the one-shot flag', async () => {
-    const srv = await makeRespondingServer(() => ({}));
-    try {
-      const execute = getAgentExecute(srv.url);
-      const context = {
-        ...mockContext,
-        session: { attachSessionId: 'attached-one-shot' },
-      };
-      const args = { method: 'text', keepSessionAlive: false };
-      await execute(args, context);
-      await execute(args, context);
-      expect(srv.hits()).to.equal(1);
-    } finally {
-      await srv.close();
-    }
-  });
+  for (const keepSessionAlive of [undefined, false, true]) {
+    it(`retains attached sessions with keepSessionAlive=${keepSessionAlive}`, async () => {
+      const srv = await makeRespondingServer(() => ({}));
+      try {
+        const execute = getAgentExecute(srv.url);
+        const context = {
+          ...mockContext,
+          session: { attachSessionId: 'attached-one-shot' },
+        };
+        const args = { method: 'text', keepSessionAlive };
+        const result = await execute(args, context);
+        expect(JSON.stringify(result)).to.include('sessionId:');
+        expect(JSON.stringify(result)).not.to.include('closed (one-shot)');
+        await execute(args, context);
+        expect(srv.hits()).to.equal(1);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
 
   it('closes only the caller token scope, even when another account echoes the same handle', async () => {
     const srv = await makeRespondingServer(() => ({}));
@@ -1766,7 +1803,7 @@ describe('browserless_agent OAuth session ownership', () => {
         },
       });
       const opened = (await execute(
-        { method: 'snapshot' },
+        { method: 'snapshot', keepSessionAlive: true },
         context('user-a', 'transport-a'),
       )) as { content: Array<{ text?: string }> };
       const handle = opened.content
@@ -1911,7 +1948,11 @@ describe('browserless_agent integration binding guard', () => {
     let handle: string | undefined;
     try {
       const loaded = (await execute(
-        { method: 'loadSecret', params: { ref: 'password' } },
+        {
+          method: 'loadSecret',
+          params: { ref: 'password' },
+          keepSessionAlive: true,
+        },
         { ...mockContext, sessionId: 'secret-cross-call-1' },
       )) as { content: Array<{ text?: string }> };
       handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
@@ -1955,7 +1996,11 @@ describe('browserless_agent integration binding guard', () => {
     let handle: string | undefined;
     try {
       const loaded = (await execute(
-        { method: 'loadSecret', params: { ref: 'password' } },
+        {
+          method: 'loadSecret',
+          params: { ref: 'password' },
+          keepSessionAlive: true,
+        },
         { ...mockContext, sessionId: 'secret-selector-1' },
       )) as { content: Array<{ text?: string }> };
       handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
@@ -1995,7 +2040,11 @@ describe('browserless_agent integration binding guard', () => {
     let handle: string | undefined;
     try {
       const loaded = (await execute(
-        { method: 'loadSecret', params: { ref: 'password' } },
+        {
+          method: 'loadSecret',
+          params: { ref: 'password' },
+          keepSessionAlive: true,
+        },
         { ...mockContext, sessionId: 'secret-no-navigation-1' },
       )) as { content: Array<{ text?: string }> };
       handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
@@ -2320,7 +2369,7 @@ describe('browserless_agent retry-guard (runCommands)', () => {
     try {
       const execute = getAgentExecute(srv.url);
       const opened = (await execute(
-        { method: 'snapshot', emulationOs: 'macos' },
+        { method: 'snapshot', emulationOs: 'macos', keepSessionAlive: true },
         ctx('retry-persona-open'),
       )) as { content: Array<{ text?: string }> };
       const openedText = opened.content

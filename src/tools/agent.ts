@@ -590,7 +590,7 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
 };
 
 export const CLOSE_REMINDER =
-  `This browser stays open and holds a concurrency slot until you end it. ` +
+  `This kept-alive browser holds a concurrency slot until closed or reaped when idle. ` +
   `When the task is done or you are giving up, end your last batch with ` +
   `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then send ` +
   `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
@@ -600,7 +600,8 @@ export const CLOSE_REMINDER =
 // its old process-wide key was what collided concurrent tasks.
 const sessionLine = (session: { handle: string }): string =>
   `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
-  `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one. ` +
+  `browserless_agent call to continue this kept-alive browser without repeating ` +
+  `\`keepSessionAlive: true\`. New calls without a handle are one-shot by default. ` +
   CLOSE_REMINDER;
 
 export function registerAgentTools(
@@ -901,6 +902,7 @@ export function registerAgentTools(
         );
       }
       const echoedSessionId = params.sessionId;
+      const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.
       if (config.transport === 'httpStream') {
@@ -941,6 +943,7 @@ export function registerAgentTools(
           ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
           session_reused: sessionReused,
           session_age_ms: sessionAgeMs,
+          keep_session_alive: keepAlive,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           repeat_count: repeatCount,
@@ -1510,11 +1513,7 @@ export function registerAgentTools(
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];
           } catch {
-            if (
-              params.keepSessionAlive === false &&
-              !createProfile &&
-              !attachSessionId
-            ) {
+            if (!keepAlive && !createProfile && !attachSessionId) {
               throw new UserError(
                 'Commands completed, but download collection failed. ' +
                   'The session was not closed. Retry getDownloads with this sessionId; ' +
@@ -1570,7 +1569,12 @@ export function registerAgentTools(
           renderedSkills,
           siteNotice,
           repeatWarning,
-          closedDuringBatch ? '' : sessionLine(agentSession),
+          closedDuringBatch
+            ? ''
+            : keepAlive || createProfile || attachSessionId
+              ? sessionLine(agentSession)
+              : 'Browser session closed (one-shot). If you still needed this browser, ' +
+                'set `keepSessionAlive: true` on your FIRST call next time.',
         ]
           .filter(Boolean)
           .join('\n\n');
@@ -1747,12 +1751,7 @@ export function registerAgentTools(
           );
         }
         const result = await runCommands(false);
-        if (
-          params.keepSessionAlive === false &&
-          lastSession &&
-          !createProfile &&
-          !attachSessionId
-        ) {
+        if (!keepAlive && lastSession && !createProfile && !attachSessionId) {
           closeSession(
             mcpSessionId,
             token,
