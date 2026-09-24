@@ -1403,7 +1403,14 @@ describe('browserless_agent one-shot sessions', () => {
                       totalBytes: 10,
                     },
                   ]
-                : [],
+                : [
+                    {
+                      filename: 'slow.txt',
+                      data: 'c2xvdw==',
+                      mimeType: 'text/plain',
+                      size: 4,
+                    },
+                  ],
             }
           : { text: 'completed command' },
       );
@@ -1433,6 +1440,8 @@ describe('browserless_agent one-shot sessions', () => {
           { method: 'getDownloads', sessionId, keepSessionAlive: false },
           context,
         );
+        expect(JSON.stringify(final)).to.include('slow.txt');
+        expect(JSON.stringify(final)).to.include('/download/');
         expect(JSON.stringify(final)).to.include(
           'Browser session closed (one-shot)',
         );
