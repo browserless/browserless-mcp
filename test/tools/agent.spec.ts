@@ -1450,10 +1450,10 @@ describe('browserless_agent one-shot sessions', () => {
         expect(serialized).to.include('finished result');
         expect(methods).to.deep.equal(['text', 'getDownloads']);
         // Observe the real WebSocket teardown, not just the response's claim.
-        for (let i = 0; !kept && !srv.closedConnections!() && i < 100; i++) {
+        for (let i = 0; !kept && !srv.closedConnections() && i < 100; i++) {
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
-        expect(srv.closedConnections!()).to.equal(kept ? 0 : 1);
+        expect(srv.closedConnections()).to.equal(kept ? 0 : 1);
         expect(fire.lastCall.args[2].keep_session_alive).to.equal(kept);
         if (kept) {
           const handle = serialized.match(/sessionId: (\S+) /)![1];

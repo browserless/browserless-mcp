@@ -13,7 +13,6 @@ export interface RejectingServerHandle extends UpgradeServerHandle {
 
 export interface RespondingServerHandle extends RejectingServerHandle {
   upgradeUrls: () => string[];
-  closedConnections?: () => number;
 }
 
 export class AgentErrorFrame {
@@ -123,7 +122,7 @@ export const makeStallingServer = async (
 // for tests only
 export const makeRespondingServer = async (
   responder: (method: string, params: unknown) => unknown | Promise<unknown>,
-): Promise<RespondingServerHandle> => {
+) => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
   let upgrades = 0;
