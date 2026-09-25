@@ -1382,6 +1382,56 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  for (const lastMethod of ['snapshot', 'getDownloads']) {
+    it(`preserves earlier batch downloads before ${lastMethod} and one-shot cleanup`, async () => {
+      let polls = 0;
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads'
+          ? {
+              downloads:
+                ++polls === 1
+                  ? [
+                      {
+                        filename: 'earlier.txt',
+                        data: 'b2s=',
+                        mimeType: 'text/plain',
+                        size: 2,
+                      },
+                      { filename: 'pending.txt', inProgress: true },
+                    ]
+                  : [],
+            }
+          : { url: 'about:blank', title: 'fixture', elements: [] },
+      );
+      const context = {
+        ...mockContext,
+        sessionId: `earlier-download-${lastMethod}`,
+      };
+      try {
+        const result = JSON.stringify(
+          await getAgentExecute(srv.url, 'httpStream')(
+            { commands: [{ method: 'getDownloads' }, { method: lastMethod }] },
+            context,
+          ),
+        );
+        expect(polls).to.equal(2);
+        expect(result).to.include('earlier.txt');
+        expect(result).to.include('/download/');
+        const id = /\/download\/([a-zA-Z0-9_-]+)/.exec(result)![1];
+        const stored = getDownload(id, downloadOwner('test-token'))!;
+        expect(await fsReadFile(stored.path, 'utf8')).to.equal('ok');
+        expect(result).to.include('Browser session closed (one-shot)');
+        for (let i = 0; !srv.closedConnections() && i < 100; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        expect(srv.closedConnections()).to.equal(1);
+      } finally {
+        clearSession(context.sessionId);
+        await srv.close();
+      }
+    });
+  }
+
   for (const method of ['text', 'getDownloads']) {
     it(`retains unfinished downloads from ${method} and closes after collection`, async () => {
       let pending = true;

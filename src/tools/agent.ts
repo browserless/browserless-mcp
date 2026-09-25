@@ -1533,10 +1533,23 @@ export function registerAgentTools(
             // Reusable sessions can surface downloads on a later call.
           }
         }
-        const downloads =
-          last.method === 'getDownloads'
+        // Completed files are drained by each poll, so preserve earlier batch
+        // results too. Only the final poll describes downloads still in flight.
+        const downloads = [
+          ...reportable
+            .filter(
+              (result) => result.method === 'getDownloads' && result !== last,
+            )
+            .flatMap((result) =>
+              (
+                (result.result as { downloads?: DownloadEntry[] } | undefined)
+                  ?.downloads ?? []
+              ).filter((download) => !download.inProgress),
+            ),
+          ...(last.method === 'getDownloads'
             ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
-            : autoDownloads;
+            : autoDownloads),
+        ];
         downloadsPending =
           !closedDuringBatch &&
           downloads.some((download) => download.inProgress);
@@ -1748,8 +1761,8 @@ export function registerAgentTools(
         }
 
         // Append the captured-download notification (metadata only, no bytes).
-        if (autoDownloads.length > 0) {
-          const notice = await formatDownloads(autoDownloads, '', '', {
+        if (downloads.length > 0) {
+          const notice = await formatDownloads(downloads, '', '', {
             transport: config.transport,
             sessionId: mcpSessionId,
             mcpBaseUrl: config.mcpBaseUrl,
