@@ -1089,6 +1089,51 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  for (const status of ['approved', 'created', 'pending_approval']) {
+    it(`rejects incomplete ${status} report continuation without losing checkout custody`, async () => {
+      const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+      const browser = await makeRespondingServer(() => ({
+        status,
+        checkout_id: checkoutId,
+      }));
+      try {
+        const session = await getOrCreateSession(
+          'incomplete-report',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const continuation = {
+          checkoutId,
+          allowedNextAction: 'report' as const,
+          validUntil: VALID_UNTIL_MS,
+        };
+        session.stripeLinkContinuation = continuation;
+        const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+          ...mockConfig,
+          browserlessApiUrl: browser.url,
+        });
+        let error: unknown;
+        try {
+          await checkout(
+            {
+              action: 'report',
+              outcome: 'success',
+              checkout_id: checkoutId,
+              browser_session_handle: session.handle,
+            },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+        expect(String(error)).to.include('incomplete checkout next step');
+        expect(session.stripeLinkContinuation).to.equal(continuation);
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
   it('keeps a reported LPT checkout resumable until backend confirmation succeeds', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     let calls = 0;

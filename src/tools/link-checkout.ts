@@ -434,7 +434,7 @@ export function registerStripeLinkCheckoutTool(
       name: 'browserless_link_checkout',
       description:
         'Create, resume, cancel, or report a Stripe Link checkout in the exact active browser session. ' +
-        'Create requires the latest browserless_agent sessionId and payment-field deep selectors. ' +
+        'Create requires the latest browserless_agent sessionId. Plain card forms require payment-field deep selectors; omit selectors for Stripe-hosted checkout. ' +
         'Resume retrieves and fills only after Link approval; payment credentials never reach this tool.',
       parameters: StripeLinkCheckoutParamsSchema,
       annotations: {
@@ -539,6 +539,16 @@ export function registerStripeLinkCheckoutTool(
             );
           }
           const result = normalize(response.result);
+          if (
+            params.action === 'report' &&
+            result.status !== 'requires_action' &&
+            RESUMABLE_STATUSES.has(result.status) &&
+            !result._next
+          ) {
+            throw new Error(
+              'Browserless returned an incomplete checkout next step',
+            );
+          }
           if (
             params.action !== 'create' &&
             result._next?.checkout_id !== undefined &&
