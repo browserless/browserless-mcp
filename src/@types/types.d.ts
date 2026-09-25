@@ -701,7 +701,7 @@ export type StripeLinkCheckoutRequest =
       amount_minor: number;
       currency: 'usd';
       cart: StripeLinkCheckoutCartLine[];
-      selectors: StripeLinkCheckoutSelectors;
+      selectors?: StripeLinkCheckoutSelectors;
     }
   | {
       action: 'resume' | 'cancel';

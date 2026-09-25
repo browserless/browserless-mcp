@@ -19,6 +19,25 @@ const MAX_CHECKOUT_AMOUNT_MINOR = 5_000;
 const OUTCOME_REPORT_TTL_MS = 15 * 60 * 1_000;
 const CHECKOUT_ID_RE = /^lkco_[A-Za-z0-9_-]{32}$/;
 const HANDLE_RE = /^(s:|attach:)[A-Za-z0-9:_-]{3,200}$/;
+// Exact coordinator-owned validation messages only. Raw provider/frame errors
+// may contain payment credentials, so never forward arbitrary backend text.
+const CHECKOUT_VALIDATION_ERRORS = new Set([
+  'selectors are required',
+  'selectors require either expiry or both exp_month and exp_year',
+  'selectors must identify distinct fields',
+  'Payment field selector was not found',
+  'merchant.url must match the active checkout origin',
+  'Payment field is outside the merchant or Stripe origin',
+  ...[
+    'number',
+    'cvc',
+    'expiry',
+    'exp_month',
+    'exp_year',
+    'postal',
+    'cardholder_name',
+  ].map((field) => `selectors.${field} is invalid`),
+]);
 const STATUSES = new Set([
   'created',
   'pending_approval',
@@ -204,7 +223,7 @@ const CreateSchema = z
     amount_minor: AmountMinorSchema,
     currency: z.literal('usd'),
     cart: CartSchema,
-    selectors: SelectorsSchema,
+    selectors: SelectorsSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -263,7 +282,9 @@ export const StripeLinkCheckoutParamsSchema = z
     amount_minor: AmountMinorSchema.optional().describe('Required for create.'),
     currency: z.literal('usd').optional().describe('Required for create.'),
     cart: CartSchema.optional().describe('Required for create.'),
-    selectors: SelectorsSchema.optional().describe('Required for create.'),
+    selectors: SelectorsSchema.optional().describe(
+      'Required for plain card forms; omit for Stripe-hosted checkout. The backend detects Link Pay Token support.',
+    ),
     checkout_id: CheckoutIdSchema.optional().describe(
       'Required for resume, cancel, and report.',
     ),
@@ -275,7 +296,7 @@ export const StripeLinkCheckoutParamsSchema = z
   .describe(
     'Stripe Link checkout in the active browser session. Required fields ' +
       'depend on `action`: create needs merchant, amount_minor, currency, ' +
-      'cart, selectors; resume and cancel need checkout_id; report needs ' +
+      'cart (and selectors for plain card forms); resume and cancel need checkout_id; report needs ' +
       'checkout_id and outcome.',
   );
 
@@ -512,7 +533,9 @@ export function registerStripeLinkCheckoutTool(
           }
           if (response.error) {
             throw new UserError(
-              'Stripe Link checkout could not continue safely in this browser session.',
+              CHECKOUT_VALIDATION_ERRORS.has(response.error.message)
+                ? response.error.message
+                : 'Stripe Link checkout could not continue safely in this browser session.',
             );
           }
           const result = normalize(response.result);
@@ -532,7 +555,6 @@ export function registerStripeLinkCheckoutTool(
             session.stripeLinkContinuation?.checkoutId ===
               continuationCheckoutId;
           const terminal =
-            params.action === 'report' ||
             params.action === 'cancel' ||
             TERMINAL_STATUSES.has(result.status) ||
             (result.status === 'requires_action' && !result._next);
