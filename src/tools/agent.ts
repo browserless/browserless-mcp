@@ -590,17 +590,22 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
 };
 
 export const CLOSE_REMINDER =
-  `This browser stays open and holds a concurrency slot until you end it. ` +
+  `This kept-alive browser holds a concurrency slot until closed or reaped when idle. ` +
   `When the task is done or you are giving up, end your last batch with ` +
   `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then send ` +
   `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
 
+const ONE_SHOT_CLOSED_NOTICE =
+  'Browser session closed (one-shot). If you still needed this browser, ' +
+  'set `keepSessionAlive: true` on your FIRST call next time.';
+
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
 const sessionLine = (session: { handle: string }): string =>
   `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
-  `browserless_agent call to keep driving THIS browser. Omitting it opens a blank one. ` +
+  `browserless_agent call to continue this kept-alive browser without repeating ` +
+  `\`keepSessionAlive: true\`. New calls without a handle are one-shot by default. ` +
   CLOSE_REMINDER;
 
 export function registerAgentTools(
@@ -901,6 +906,7 @@ export function registerAgentTools(
         );
       }
       const echoedSessionId = params.sessionId;
+      const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.
       if (config.transport === 'httpStream') {
@@ -941,6 +947,7 @@ export function registerAgentTools(
           ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
           session_reused: sessionReused,
           session_age_ms: sessionAgeMs,
+          keep_session_alive: keepAlive,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           repeat_count: repeatCount,
@@ -1084,6 +1091,8 @@ export function registerAgentTools(
       }
 
       let lastSession: ActiveSession | undefined;
+      let downloadsPending = false;
+      const completedDownloads: DownloadEntry[] = [];
       const runCommands = async (
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
@@ -1440,6 +1449,14 @@ export function registerAgentTools(
               liveUrlId = result.liveURLId;
             }
           }
+          if (cmd.method === 'getDownloads') {
+            completedDownloads.push(
+              ...(
+                (resp.result as { downloads?: DownloadEntry[] } | undefined)
+                  ?.downloads ?? []
+              ).filter((download) => !download.inProgress),
+            );
+          }
           results.push({ ...cmd, result: resp.result });
         }
 
@@ -1452,7 +1469,11 @@ export function registerAgentTools(
           return [
             {
               type: 'text' as const,
-              text: closedDuringBatch ? 'Browser session closed.' : 'Done.',
+              text: closedDuringBatch
+                ? 'Browser session closed.'
+                : !keepAlive && !createProfile && !attachSessionId
+                  ? ONE_SHOT_CLOSED_NOTICE
+                  : 'Done.',
             },
           ];
         }
@@ -1509,12 +1530,11 @@ export function registerAgentTools(
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];
+            completedDownloads.push(
+              ...autoDownloads.filter((download) => !download.inProgress),
+            );
           } catch {
-            if (
-              params.keepSessionAlive === false &&
-              !createProfile &&
-              !attachSessionId
-            ) {
+            if (!keepAlive && !createProfile && !attachSessionId) {
               throw new UserError(
                 'Commands completed, but download collection failed. ' +
                   'The session was not closed. Retry getDownloads with this sessionId; ' +
@@ -1525,6 +1545,18 @@ export function registerAgentTools(
             // Reusable sessions can surface downloads on a later call.
           }
         }
+        // Completed files are drained by each poll, so preserve earlier batch
+        // results too. Only the final poll describes downloads still in flight.
+        const downloads = [
+          ...completedDownloads,
+          ...(last.method === 'getDownloads'
+            ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
+            : autoDownloads
+          ).filter((download) => download.inProgress),
+        ];
+        downloadsPending =
+          !closedDuringBatch &&
+          downloads.some((download) => download.inProgress);
 
         // Surface a site-recipe pointer for the URL this batch landed on — the
         // tool-description prose gate gets skipped/clipped, so push it as a
@@ -1570,7 +1602,20 @@ export function registerAgentTools(
           renderedSkills,
           siteNotice,
           repeatWarning,
-          closedDuringBatch ? '' : sessionLine(agentSession),
+          downloadsPending &&
+          !keepAlive &&
+          !createProfile &&
+          !attachSessionId &&
+          !closedDuringBatch
+            ? 'Download collection is still in progress. Retry getDownloads with this ' +
+              'sessionId and `keepSessionAlive: false` to close when collection finishes; ' +
+              'do not repeat the completed commands.'
+            : '',
+          closedDuringBatch
+            ? ''
+            : keepAlive || downloadsPending || createProfile || attachSessionId
+              ? sessionLine(agentSession)
+              : ONE_SHOT_CLOSED_NOTICE,
         ]
           .filter(Boolean)
           .join('\n\n');
@@ -1652,8 +1697,6 @@ export function registerAgentTools(
           ];
         } else if (last.method === 'getDownloads') {
           // Explicit drain.
-          const downloads =
-            (lastResult?.downloads as DownloadEntry[] | undefined) ?? [];
           const prefix =
             batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
           return await formatDownloads(downloads, prefix, skillsText, {
@@ -1722,8 +1765,8 @@ export function registerAgentTools(
         }
 
         // Append the captured-download notification (metadata only, no bytes).
-        if (autoDownloads.length > 0) {
-          const notice = await formatDownloads(autoDownloads, '', '', {
+        if (downloads.length > 0) {
+          const notice = await formatDownloads(downloads, '', '', {
             transport: config.transport,
             sessionId: mcpSessionId,
             mcpBaseUrl: config.mcpBaseUrl,
@@ -1748,7 +1791,8 @@ export function registerAgentTools(
         }
         const result = await runCommands(false);
         if (
-          params.keepSessionAlive === false &&
+          !keepAlive &&
+          !downloadsPending &&
           lastSession &&
           !createProfile &&
           !attachSessionId
@@ -1771,6 +1815,23 @@ export function registerAgentTools(
         return result;
       } catch (err) {
         sendAnalytics(false, err);
+        if (err instanceof Error && completedDownloads.length > 0) {
+          try {
+            const files = await formatDownloads(completedDownloads, '', '', {
+              transport: config.transport,
+              sessionId: mcpSessionId,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            });
+            err.message += `\n\n${files
+              .filter((content) => content.type === 'text')
+              .map((content) => content.text)
+              .join('\n\n')}`;
+          } catch {
+            // Preserve the original failure even if saving files also fails.
+            err.message += '\n\nCompleted download persistence also failed.';
+          }
+        }
         if (repeatWarning && err instanceof UserError) {
           err.message += `\n\n${repeatWarning}`;
         }

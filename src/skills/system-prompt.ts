@@ -3,7 +3,7 @@ export const SELF_CHECK_DIRECTIVE = `
 ## Repetition self-check
 When a tool response contains REPETITION WARNING, re-read your plan and compare your completed steps with the intended progress. Do not repeat the same batch blindly: choose a materially different approach within the task's constraints, or stop and report what is blocked and what you tried. Repetition is a signal to check progress, not proof of failure; continue a repeated action only when you can identify concrete progress or a task-required reason.`;
 
-export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in persistent agent session.
+export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in an agent session.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
 0. **Plan + check for a site recipe** — restate the goal, decide the target host, then \`browserless_skill { site: "<host>" }\` (see above). Load and follow any matching recipe before writing your own plan. Never jump straight to \`goto\`.
@@ -15,9 +15,15 @@ export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in 
 6. Repeat → **close** when done
 
 ## Ending the session (REQUIRED)
+**One-shot vs. multi-step (session lifetime).** Sessions are **one-shot by default**: when your \`commands\` batch and download drain finish, the browser closes and frees its slot. Decide on your FIRST call:
+- **One batch finishes the whole task** (e.g. \`goto\` + \`text\`/\`html\`/\`evaluate\` to read something): leave it one-shot; it closes automatically.
+- **You must look, then act on what you see** — any first batch that ends on a \`snapshot\` so you can plan later clicks/typing: set \`keepSessionAlive: true\` on that first call. The observe-then-act loop spans calls, so this covers most interactive work.
+- **Unsure? Set \`keepSessionAlive: true\`.** A kept session still auto-reaps when idle; a wrongly-closed one loses your page, login and progress.
+After a \`keepSessionAlive: true\` call, pass the returned \`sessionId\` back on every later call — it stays alive, no need to repeat the flag. Set \`keepSessionAlive: false\` to force-close even when continuing. Profile creation and attached sessions manage their lifetimes separately.
+
 An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
-- **Report the outcome, then close.** When the task is done or you are giving up, put \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` at the end of your last \`commands\` batch (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Send it once per task, then send \`close\`.
-- **Task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do. This is the default for one-shot work (a lookup, a scrape, a form submit): close without asking.
+- **Report the outcome, then close.** When the task is done or you are giving up, put \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` at the end of your last \`commands\` batch (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Send it once per task, then send \`close\` if the session was kept alive; one-shot sessions close automatically.
+- **Kept-alive task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do.
 - **Ask instead of guessing** only when follow-up in the SAME browser is genuinely likely (the user said "then...", you're mid-flow on a logged-in site, or the result invites a next step). Say the browser is still open, ask whether to close it, and close it as soon as they're done.
 - **Never** end your reply with a live session and no mention of it. Either it's closed, or you told the user it's open and why.
 
@@ -173,9 +179,15 @@ export const COMPLIANT_AGENT_SYSTEM_PROMPT = `Drive a browser to complete a user
 6. Repeat → **close** when done
 
 ## Ending the session (REQUIRED)
+**One-shot vs. multi-step (session lifetime).** Sessions are **one-shot by default**: when your \`commands\` batch and download drain finish, the browser closes and frees its slot. Decide on your FIRST call:
+- **One batch finishes the whole task** (e.g. \`goto\` + \`text\`/\`html\` to read something): leave it one-shot; it closes automatically.
+- **You must look, then act on what you see** — any first batch that ends on a \`snapshot\` so you can plan later clicks/typing: set \`keepSessionAlive: true\` on that first call. The observe-then-act loop spans calls, so this covers most interactive work.
+- **Unsure? Set \`keepSessionAlive: true\`.** A kept session still auto-reaps when idle; a wrongly-closed one loses your page, login and progress.
+After a \`keepSessionAlive: true\` call, pass the returned \`sessionId\` back on every later call — it stays alive, no need to repeat the flag. Set \`keepSessionAlive: false\` to force-close even when continuing. Attached sessions manage their lifetimes separately.
+
 An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
-- **Report the outcome, then close.** When the task is done or you are giving up, put \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` at the end of your last \`commands\` batch (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Send it once per task, then send \`close\`.
-- **Task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do. This is the default for one-shot work: close without asking.
+- **Report the outcome, then close.** When the task is done or you are giving up, put \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` at the end of your last \`commands\` batch (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Send it once per task, then send \`close\` if the session was kept alive; one-shot sessions close automatically.
+- **Kept-alive task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do.
 - **Ask instead of guessing** only when follow-up in the SAME browser is genuinely likely. Say the browser is still open, ask whether to close it, and close it as soon as they're done.
 - **Never** end your reply with a live session and no mention of it.
 
@@ -294,15 +306,17 @@ export const fileTransferModeNote = (
       `  \`curl -s -F file=@"/abs/file" "${mcpBaseUrl}/upload?token=<YOUR_TOKEN>"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
       `**Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
 
-// HTTP-only: a remote client's MCP session id isn't stable across turns, so the
-// browser is bound to the echoed `sessionId`. stdio's key is already stable.
+// HTTP-only reminder: continuation requires the echoed browser handle, not the
+// remote client's MCP session id, which may change across turns.
 export const sessionContinuityNote = (
   transport: 'stdio' | 'httpStream',
 ): string =>
   transport === 'stdio'
     ? ''
     : `\n\n## Session continuity (REQUIRED)\n` +
-      `Every response ends with \`sessionId: <handle>\`. Pass that value as the \`sessionId\` ` +
+      `Kept-alive responses include \`sessionId: <handle>\`. Set \`keepSessionAlive: true\` ` +
+      `on your FIRST call for multi-step work; one-shot sessions close automatically. ` +
+      `Pass the returned handle as the \`sessionId\` ` +
       `argument on EVERY following call in this conversation — it is what keeps you on the ` +
       `same browser, with its current page, cookies, and filled-in forms. ` +
       `Drop it and you silently get a fresh blank browser: snapshots come back \`about:blank\`, ` +
@@ -318,7 +332,7 @@ export const sessionContinuityNote = (
       `collide with another conversation. The handle stays the right value to send for the ` +
       `whole task even if a call failed or the browser was reclaimed: re-sending it is how ` +
       `you get back, so keep using it instead of starting over without it. The exception is ` +
-      `\`close\` — that ends the browser deliberately, so no \`sessionId\` comes back and a ` +
+      `\`close\` or a one-shot response — that ends the browser deliberately, so no \`sessionId\` comes back and a ` +
       `later call with the old one starts a fresh, blank browser.`;
 
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.

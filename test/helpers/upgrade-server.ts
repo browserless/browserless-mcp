@@ -122,16 +122,18 @@ export const makeStallingServer = async (
 // for tests only
 export const makeRespondingServer = async (
   responder: (method: string, params: unknown) => unknown | Promise<unknown>,
-): Promise<RespondingServerHandle> => {
+) => {
   const wss = new WebSocketServer({ noServer: true });
   const server = http.createServer();
   let upgrades = 0;
+  let closedConnections = 0;
   const upgradeUrls: string[] = [];
   server.on('upgrade', (req, socket, head) => {
     upgrades++;
     upgradeUrls.push(req.url ?? '');
     socket.on('error', () => {});
     wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on('close', () => closedConnections++);
       ws.on('message', async (data: Buffer) => {
         const msg = JSON.parse(data.toString('utf8')) as {
           id: string;
@@ -155,6 +157,7 @@ export const makeRespondingServer = async (
     url: `http://127.0.0.1:${port}`,
     hits: () => upgrades,
     upgradeUrls: () => [...upgradeUrls],
+    closedConnections: () => closedConnections,
     close: () =>
       new Promise<void>((r) => {
         wss.clients.forEach((c) => c.terminate());
