@@ -1092,6 +1092,7 @@ export function registerAgentTools(
 
       let lastSession: ActiveSession | undefined;
       let downloadsPending = false;
+      const completedDownloads: DownloadEntry[] = [];
       const runCommands = async (
         isRetry: boolean,
         retryPersona: PersonaOptions = persona,
@@ -1448,6 +1449,14 @@ export function registerAgentTools(
               liveUrlId = result.liveURLId;
             }
           }
+          if (cmd.method === 'getDownloads') {
+            completedDownloads.push(
+              ...(
+                (resp.result as { downloads?: DownloadEntry[] } | undefined)
+                  ?.downloads ?? []
+              ).filter((download) => !download.inProgress),
+            );
+          }
           results.push({ ...cmd, result: resp.result });
         }
 
@@ -1521,6 +1530,9 @@ export function registerAgentTools(
             autoDownloads =
               (dl.result as { downloads?: DownloadEntry[] } | undefined)
                 ?.downloads ?? [];
+            completedDownloads.push(
+              ...autoDownloads.filter((download) => !download.inProgress),
+            );
           } catch {
             if (!keepAlive && !createProfile && !attachSessionId) {
               throw new UserError(
@@ -1536,19 +1548,11 @@ export function registerAgentTools(
         // Completed files are drained by each poll, so preserve earlier batch
         // results too. Only the final poll describes downloads still in flight.
         const downloads = [
-          ...reportable
-            .filter(
-              (result) => result.method === 'getDownloads' && result !== last,
-            )
-            .flatMap((result) =>
-              (
-                (result.result as { downloads?: DownloadEntry[] } | undefined)
-                  ?.downloads ?? []
-              ).filter((download) => !download.inProgress),
-            ),
+          ...completedDownloads,
           ...(last.method === 'getDownloads'
             ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
-            : autoDownloads),
+            : autoDownloads
+          ).filter((download) => download.inProgress),
         ];
         downloadsPending =
           !closedDuringBatch &&
@@ -1811,6 +1815,23 @@ export function registerAgentTools(
         return result;
       } catch (err) {
         sendAnalytics(false, err);
+        if (err instanceof Error && completedDownloads.length > 0) {
+          try {
+            const files = await formatDownloads(completedDownloads, '', '', {
+              transport: config.transport,
+              sessionId: mcpSessionId,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            });
+            err.message += `\n\n${files
+              .filter((content) => content.type === 'text')
+              .map((content) => content.text)
+              .join('\n\n')}`;
+          } catch {
+            // Preserve the original failure even if saving files also fails.
+            err.message += '\n\nCompleted download persistence also failed.';
+          }
+        }
         if (repeatWarning && err instanceof UserError) {
           err.message += `\n\n${repeatWarning}`;
         }

@@ -1382,6 +1382,85 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  for (const failure of ['command', 'poll']) {
+    it(`preserves completed downloads when a later ${failure} fails`, async () => {
+      let polls = 0;
+      const srv = await makeRespondingServer((method) => {
+        if (method === 'getDownloads') {
+          polls++;
+          if (polls === 1)
+            return {
+              downloads: [
+                {
+                  filename: 'saved.txt',
+                  data: 'c2FmZQ==',
+                  mimeType: 'text/plain',
+                  size: 4,
+                },
+              ],
+            };
+          if (failure === 'poll' && polls === 2)
+            return new AgentErrorFrame({
+              code: 'UNKNOWN',
+              message: 'fixture poll failure',
+            });
+          return { downloads: [] };
+        }
+        return failure === 'command'
+          ? new AgentErrorFrame({
+              code: 'UNKNOWN',
+              message: 'fixture command failure',
+            })
+          : { text: 'done' };
+      });
+      const context = {
+        ...mockContext,
+        sessionId: `failed-download-${failure}`,
+      };
+      try {
+        const execute = getAgentExecute(srv.url, 'httpStream');
+        let error: unknown;
+        try {
+          await execute(
+            { commands: [{ method: 'getDownloads' }, { method: 'text' }] },
+            context,
+          );
+        } catch (err) {
+          error = err;
+        }
+        expect(error).to.be.instanceOf(UserError);
+        const message = String(error);
+        expect(message).to.include(
+          failure === 'command'
+            ? 'fixture command failure'
+            : 'download collection failed',
+        );
+        expect(message).to.include('saved.txt');
+        const id = /\/download\/([a-zA-Z0-9_-]+)/.exec(message)![1];
+        const stored = getDownload(id, downloadOwner('test-token'))!;
+        expect(await fsReadFile(stored.path, 'utf8')).to.equal('safe');
+        expect(getDownload(id, downloadOwner('other-token'))).to.equal(
+          undefined,
+        );
+        expect(srv.closedConnections()).to.equal(0);
+        const sessionId = /sessionId: (\S+) /.exec(message)![1];
+        await execute(
+          { method: 'getDownloads', sessionId, keepSessionAlive: false },
+          context,
+        );
+        expect(srv.hits()).to.equal(1);
+        for (let i = 0; !srv.closedConnections() && i < 100; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        expect(srv.closedConnections()).to.equal(1);
+        expect(await fsReadFile(stored.path, 'utf8')).to.equal('safe');
+      } finally {
+        clearSession(context.sessionId);
+        await srv.close();
+      }
+    });
+  }
+
   for (const lastMethod of ['snapshot', 'getDownloads']) {
     it(`preserves earlier batch downloads before ${lastMethod} and one-shot cleanup`, async () => {
       let polls = 0;
