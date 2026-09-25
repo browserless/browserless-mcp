@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.33.0](https://github.com/browserless/browserless-mcp/compare/v1.32.0...v1.33.0) (2026-09-25)
+
+
+### Features
+
+* default agent command batches to one-shot sessions ([#346](https://github.com/browserless/browserless-mcp/issues/346)) ([63ba7bb](https://github.com/browserless/browserless-mcp/commit/63ba7bb51af70a9ae3a3b326d138348e70cfa728))
+* guide agents to report task outcomes before closing ([#344](https://github.com/browserless/browserless-mcp/issues/344)) ([3f12e3d](https://github.com/browserless/browserless-mcp/commit/3f12e3df5adad4488014bb7b35e11773a2fc180f))
+
 ## [1.32.0](https://github.com/browserless/browserless-mcp/compare/v1.31.0...v1.32.0) (2026-09-23)
 
 
