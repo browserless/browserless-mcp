@@ -275,13 +275,15 @@ const formatIntegrations = (result: SessionsResult): string => {
   }
   const rows = integrations.map(
     (op) =>
-      `- ${op.label} (${op.kind}) — domains: ${op.allowedDomains.join(', ') || 'none'}` +
-      `${op.expiresAt ? `, expires ${op.expiresAt}` : ''}`,
+      `- \`${op.id}\` — "${op.label}" (${op.kind}); fills: ${op.allowedDomains.length ? op.allowedDomains.join(', ') : 'any https origin'}` +
+      `${op.expiresAt ? `; expires ${op.expiresAt}` : ''}`,
   );
   return [
     `## 1Password integrations (${integrations.length})`,
     ``,
     ...rows,
+    ``,
+    'Pass the `op_int_…` value (not the label) as `integrationId` on the FIRST browserless_agent call and on every call after — a call without it has no vault bound and credential commands return CredentialNotResolved.',
   ].join('\n');
 };
 

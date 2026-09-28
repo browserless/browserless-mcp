@@ -3,6 +3,9 @@ import {
   AgentCommandSchema,
   AgentToolParamsSchema,
   CompliantAgentCommandSchema,
+  GenericCommandSchema,
+  TypedAgentCommandSchema,
+  isTypedAgentMethod,
 } from '../../src/tools/schemas.js';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
@@ -11,6 +14,43 @@ import {
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
+
+describe('credential command schema dispatch', () => {
+  it('distinguishes typed, unknown and reserved methods', () => {
+    expect(isTypedAgentMethod('saveSecret')).to.equal(true);
+    expect(isTypedAgentMethod('fooBar')).to.equal(false);
+    expect(isTypedAgentMethod('stripeLinkCheckout')).to.equal(false);
+    const result = TypedAgentCommandSchema.safeParse({
+      method: 'saveSecret',
+      params: {},
+    });
+    expect(result.success).to.equal(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path)).to.deep.equal([
+        ['params', 'vault'],
+        ['params', 'title'],
+        ['params', 'username'],
+        ['params', 'password'],
+      ]);
+    }
+    for (const schema of [GenericCommandSchema, AgentCommandSchema]) {
+      expect(
+        schema.parse({ method: 'fooBar', params: { a: 1 } }),
+      ).to.deep.equal({ method: 'fooBar', params: { a: 1 } });
+      expect(
+        schema.safeParse({ method: 'stripeLinkCheckout', params: {} }).success,
+      ).to.equal(false);
+    }
+  });
+
+  it('points clients at the integration discovery tool', () => {
+    const description = AgentToolParamsSchema.shape.integrationId.description;
+    expect(description).to.include(
+      'browserless_sessions { action: "integrations" }',
+    );
+    expect(description).not.to.include('GET /integrations/onepassword');
+  });
+});
 
 describe('reportSkillOutcome schema', () => {
   it('preserves legacy reports, each bounded reason and attribution metadata', () => {
