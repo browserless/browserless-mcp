@@ -81,7 +81,7 @@ export const sanitizeUpgradeBody = (body: string): string => {
 };
 
 export const INTEGRATION_NOT_FOUND_HINT =
-  'The integrationId must be the integration\'s id (op_int_…), not its label. List ids with browserless_sessions { action: "integrations" } and pass one on the FIRST browserless_agent call — a binding added later opens a different browser.';
+  'The integrationId must be the integration\'s id (op_int_…), not its label. List ids with browserless_sessions { action: "integrations" } and pass one on the FIRST browserless_agent call and on every call after — a binding added later opens a different browser.';
 
 /**
  * Translate a connect-time error into UserError-ready text. Typed

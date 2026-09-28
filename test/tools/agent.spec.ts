@@ -1159,6 +1159,9 @@ describe('formatConnectError', () => {
     expect(text).to.include(body);
     expect(text).to.include('browserless_sessions { action: "integrations" }');
     expect(text).to.include('not its label');
+    expect(text).to.include(
+      'FIRST browserless_agent call and on every call after',
+    );
     expect(
       formatConnectError(new UpgradeError(404, 'Not Found', 'Session missing')),
     ).to.equal(
