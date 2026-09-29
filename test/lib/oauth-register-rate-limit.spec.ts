@@ -2,6 +2,53 @@ import { expect } from 'chai';
 import { randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { createRegisterRateLimiter } from '../../src/lib/oauth-register-rate-limit.js';
+import { getConfig } from '../../src/config.js';
+
+describe('OAuth registration quota configuration', () => {
+  it('defaults to 300 and rejects invalid quotas explicitly', () => {
+    const previous = process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR;
+    try {
+      delete process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR;
+      expect(getConfig().oauthRegisterRateLimitPerHour).to.equal(300);
+      process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR = '42';
+      expect(getConfig().oauthRegisterRateLimitPerHour).to.equal(42);
+      for (const value of [
+        '',
+        'unlimited',
+        '0',
+        '-1',
+        '1.5',
+        '2oops',
+        'Infinity',
+        '9007199254740992',
+      ]) {
+        process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR = value;
+        expect(() => getConfig(), value).to.throw(
+          'OAUTH_REGISTER_RATE_LIMIT_PER_HOUR must be a positive safe integer',
+        );
+      }
+    } finally {
+      if (previous === undefined)
+        delete process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR;
+      else process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR = previous;
+    }
+  });
+
+  it('resets every memory counter when the clock hour changes in either direction', async () => {
+    let now = 7_199_999;
+    const limiter = createRegisterRateLimiter({
+      limitPerHour: 1,
+      now: () => now,
+    });
+    for (const time of [7_199_999, 7_200_000, 0]) {
+      now = time;
+      for (const ip of ['1.2.3.4', '5.6.7.8']) {
+        expect((await limiter.hit(ip)).allowed).to.equal(true);
+        expect((await limiter.hit(ip)).allowed).to.equal(false);
+      }
+    }
+  });
+});
 
 for (const mode of ['memory', 'redis'] as const) {
   (mode === 'redis' && !process.env.REDIS_URL ? describe.skip : describe)(

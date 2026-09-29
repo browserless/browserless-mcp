@@ -50,6 +50,17 @@ export function classifyComplianceInput(
 }
 
 export function getConfig(): McpConfig & { uploadDirs: string[] } {
+  const oauthRegisterRateLimitPerHour = Number(
+    process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR ?? '300',
+  );
+  if (
+    !Number.isSafeInteger(oauthRegisterRateLimitPerHour) ||
+    oauthRegisterRateLimitPerHour <= 0
+  ) {
+    throw new Error(
+      'OAUTH_REGISTER_RATE_LIMIT_PER_HOUR must be a positive safe integer',
+    );
+  }
   return {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
@@ -78,10 +89,7 @@ export function getConfig(): McpConfig & { uploadDirs: string[] } {
     sqsRegion: process.env.SQS_REGION ?? 'us-west-2',
     // OAuth (Supabase)
     oauthEnabled: process.env.OAUTH_ENABLED === 'true',
-    oauthRegisterRateLimitPerHour: parseInt(
-      process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR ?? '300',
-      10,
-    ),
+    oauthRegisterRateLimitPerHour,
     supabaseUrl: process.env.SUPABASE_URL ?? '',
     supabaseOAuthClientId: process.env.SUPABASE_OAUTH_CLIENT_ID ?? '',
     supabaseOAuthClientSecret: process.env.SUPABASE_OAUTH_CLIENT_SECRET ?? '',

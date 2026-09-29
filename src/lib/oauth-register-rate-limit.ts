@@ -12,7 +12,8 @@ export function createRegisterRateLimiter(opts: {
   limitPerHour: number;
   now?: () => number;
 }) {
-  const entries = new Map<string, { windowStart: number; count: number }>();
+  const entries = new Map<string, number>();
+  let activeWindow: number | undefined;
   return {
     async hit(
       ip: string,
@@ -37,12 +38,12 @@ export function createRegisterRateLimiter(opts: {
         // at the clock-hour boundary, which can be sooner than its TTL.
         retryAfterSeconds = Math.max(1, Math.min(remaining, result[1]));
       } else {
-        for (const [key, entry] of entries) {
-          if (entry.windowStart !== windowStart) entries.delete(key);
+        if (activeWindow !== window) {
+          entries.clear();
+          activeWindow = window;
         }
-        const entry = entries.get(ip) ?? { windowStart, count: 0 };
-        count = ++entry.count;
-        entries.set(ip, entry);
+        count = (entries.get(ip) ?? 0) + 1;
+        entries.set(ip, count);
       }
       return { allowed: count <= opts.limitPerHour, retryAfterSeconds };
     },
