@@ -4,9 +4,13 @@ Use this flow only when an authenticated shopping session has reached the
 merchant's payment step. Do not type, request, reveal, or infer full card
 numbers, security codes, passwords, or one-time codes.
 
-1. Read the visible merchant name, merchant checkout URL, cart lines,
-   quantities, and prices from the page. Keep every amount in integer USD minor
-   units (cents) and verify the cart sum exactly matches `amount_minor`.
+1. Read the visible merchant name, checkout URL, cart lines, quantities, and
+   prices. The Link card is billed in USD, so if the checkout shows another
+   currency (a geo-localized checkout, e.g. RSD/EUR) and offers a currency
+   selector, switch it to USD before continuing — a non-USD charge may be
+   declined for currency mismatch. If there's no USD option, continue anyway;
+   the charge may still go through. Keep every amount in integer USD minor units
+   (cents) and verify the cart sum exactly matches `amount_minor`.
 2. Call `browserless_link_connect` with `action: "status"`. If the wallet is
    not connected, stop and give the user the connection instruction. Do not
    bypass the Browserless account-owner connection flow.

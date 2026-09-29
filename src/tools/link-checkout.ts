@@ -292,7 +292,12 @@ export const StripeLinkCheckoutParamsSchema = z
     browser_session_handle: SessionHandleSchema,
     merchant: MerchantSchema.optional().describe('Required for create.'),
     amount_minor: AmountMinorSchema.optional().describe('Required for create.'),
-    currency: z.literal('usd').optional().describe('Required for create.'),
+    currency: z
+      .literal('usd')
+      .optional()
+      .describe(
+        'Required for create; must be "usd". The Link card is billed in USD, so switch a geo-localized checkout (e.g. RSD/EUR) to USD with its currency selector before creating when the option exists — a non-USD charge may be declined for currency mismatch. If no USD option is available, proceed anyway; it may still succeed.',
+      ),
     cart: CartSchema.optional().describe('Required for create.'),
     selectors: SelectorsSchema.optional().describe(
       'Required for plain card forms; omit for Stripe-hosted checkout. The backend detects Link Pay Token support.',
@@ -309,7 +314,7 @@ export const StripeLinkCheckoutParamsSchema = z
     'Stripe Link checkout in the active browser session. Required fields ' +
       'depend on `action`: create needs merchant, amount_minor, currency, ' +
       'cart (and selectors for plain card forms); resume and cancel need checkout_id; report needs ' +
-      'checkout_id and outcome.',
+      'checkout_id and outcome. The Link card is billed in USD — switch the checkout to USD before create when the option exists.',
   );
 
 type StripeLinkCheckoutParams = z.infer<typeof StripeLinkCheckoutParamsSchema>;
