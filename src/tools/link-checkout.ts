@@ -39,7 +39,6 @@ const CHECKOUT_VALIDATION_ERRORS = new Set([
     'line1',
     'line2',
     'city',
-    'state',
   ].map((field) => `selectors.${field} is invalid`),
 ]);
 const STATUSES = new Set([
@@ -160,9 +159,6 @@ const SelectorsSchema = z
     ),
     city: SelectorSchema.optional().describe(
       'Billing city/locality input deep selector',
-    ),
-    state: SelectorSchema.optional().describe(
-      'Billing state/region input deep selector',
     ),
   })
   .strict()

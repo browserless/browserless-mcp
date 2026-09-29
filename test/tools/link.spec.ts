@@ -314,7 +314,7 @@ describe('Stripe Link tools', () => {
     expect(fetchStub.called).to.be.false;
   });
 
-  it('accepts billing address selectors (line1/city/state) for card checkouts', () => {
+  it('accepts billing address selectors (line1/line2/city) for card checkouts', () => {
     const input = {
       action: 'create' as const,
       browser_session_handle: 's:addr-selectors',
@@ -329,8 +329,8 @@ describe('Stripe Link tools', () => {
         postal: 'input#postal',
         cardholder_name: 'input#name',
         line1: 'input#line1',
+        line2: 'input#line2',
         city: 'input#city',
-        state: 'input#state',
       },
     };
     expect(CheckoutInputSchema.safeParse(input).success).to.be.true;
