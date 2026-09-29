@@ -96,7 +96,10 @@ export interface ToolDefinition<P, R> {
   annotations?: ToolAnnotations;
   /** Defaults also included when validation fails before run(). */
   analyticsDefaults?: Record<string, unknown>;
-  /** Throw UserError if any URL in params is invalid. Runs before progress 0. */
+  /**
+   * Throw UserError if any URL in params is invalid. Runs before progress 0.
+   * This is an input-shape check, not a network-safety check.
+   */
   validateUrl?: (params: P) => void;
   /** Override the default ProfileNotFoundError → UserError message. */
   profileNotFoundMessage?: (profile: string) => string;
@@ -133,8 +136,14 @@ const defaultProfileMessage = (profile: string): string =>
   `Create the profile with Browserless.saveProfile in a live session first, ` +
   `or omit the profile parameter.`;
 
-/** Throw a UserError if `url` is not an http/https URL. */
-export function validateHttpUrl(url: string): void {
+/**
+ * Check only the URL scheme, throwing UserError for non-HTTP(S) URLs.
+ * This is not an SSRF control: private, loopback, and link-local hosts pass
+ * intentionally. SSRF is enforced by the Browserless API making the request.
+ * Any tool fetching a user-supplied URL from the MCP process must add its own
+ * private-network check and must not rely on this function.
+ */
+export function assertHttpScheme(url: string): void {
   const urlObj = new URL(url);
   if (!['http:', 'https:'].includes(urlObj.protocol)) {
     throw new UserError(

@@ -2,9 +2,35 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool } from '../../src/lib/define-tool.js';
+import { assertHttpScheme, defineTool } from '../../src/lib/define-tool.js';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
+
+describe('assertHttpScheme', () => {
+  for (const url of ['ftp://x', 'file:///etc/passwd', 'javascript:alert(1)']) {
+    it(`rejects a non-HTTP scheme: ${url}`, () => {
+      expect(() => assertHttpScheme(url)).to.throw(
+        UserError,
+        'Only http and https are supported',
+      );
+    });
+  }
+
+  for (const url of [
+    'http://169.254.169.254/',
+    'http://localhost:3000/',
+    'http://10.0.0.1/',
+    'https://example.com',
+  ]) {
+    it(`accepts HTTP(S) regardless of host: ${url}`, () => {
+      expect(() => assertHttpScheme(url)).not.to.throw();
+    });
+  }
+
+  it('preserves the URL parser error for malformed input', () => {
+    expect(() => assertHttpScheme('not a URL')).to.throw(TypeError);
+  });
+});
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -332,13 +358,21 @@ describe('defineTool analytics', () => {
   });
 
   it('classifies a UserError thrown by validateUrl as user_error', async () => {
+    const run = sinon.stub().resolves({});
     const { execute, fire, props } = register({
-      validateUrl: () => {
-        throw new UserError('Invalid URL protocol "ftp:".');
-      },
+      validateUrl: (params) => assertHttpScheme(params.url!),
+      run,
     });
 
-    await rejects(execute({ url: 'ftp://x' }, mockContext as never));
+    const err = await rejects(
+      execute({ url: 'ftp://x' }, mockContext as never),
+    );
+    expect(err).to.be.instanceOf(UserError);
+    expect(err.message).to.equal(
+      'Invalid URL protocol "ftp:". Only http and https are supported.',
+    );
+    expect(mockContext.reportProgress.called).to.be.false;
+    expect(run.called).to.be.false;
     expect(fire.calledOnce).to.be.true;
     expect(props().error_category).to.equal('user_error');
     expect(props()).to.include({
