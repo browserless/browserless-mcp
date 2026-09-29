@@ -36,6 +36,10 @@ const CHECKOUT_VALIDATION_ERRORS = new Set([
     'exp_year',
     'postal',
     'cardholder_name',
+    'line1',
+    'line2',
+    'city',
+    'state',
   ].map((field) => `selectors.${field} is invalid`),
 ]);
 const STATUSES = new Set([
@@ -147,6 +151,18 @@ const SelectorsSchema = z
     ),
     cardholder_name: SelectorSchema.optional().describe(
       'Cardholder name input deep selector',
+    ),
+    line1: SelectorSchema.optional().describe(
+      'Billing address line 1 input deep selector',
+    ),
+    line2: SelectorSchema.optional().describe(
+      'Billing address line 2 input deep selector',
+    ),
+    city: SelectorSchema.optional().describe(
+      'Billing city/locality input deep selector',
+    ),
+    state: SelectorSchema.optional().describe(
+      'Billing state/region input deep selector',
     ),
   })
   .strict()

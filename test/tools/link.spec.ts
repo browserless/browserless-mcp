@@ -314,6 +314,28 @@ describe('Stripe Link tools', () => {
     expect(fetchStub.called).to.be.false;
   });
 
+  it('accepts billing address selectors (line1/city/state) for card checkouts', () => {
+    const input = {
+      action: 'create' as const,
+      browser_session_handle: 's:addr-selectors',
+      merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+      amount_minor: 1000,
+      currency: 'usd' as const,
+      cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+      selectors: {
+        number: 'input#num',
+        cvc: 'input#cvc',
+        expiry: 'input#exp',
+        postal: 'input#postal',
+        cardholder_name: 'input#name',
+        line1: 'input#line1',
+        city: 'input#city',
+        state: 'input#state',
+      },
+    };
+    expect(CheckoutInputSchema.safeParse(input).success).to.be.true;
+  });
+
   for (const hosted of [false, true]) {
     it(`uses the exact open agent WebSocket and returns only data-only continuation state (hosted=${hosted})`, async () => {
       let sent: { method: string; params: unknown } | undefined;
