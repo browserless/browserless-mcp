@@ -107,6 +107,7 @@ export interface McpConfig {
   sqsQueueUrl?: string;
   sqsRegion: string;
   oauthEnabled: boolean;
+  oauthRegisterRateLimitPerHour: number;
   supabaseUrl: string;
   supabaseOAuthClientId: string;
   supabaseOAuthClientSecret: string;

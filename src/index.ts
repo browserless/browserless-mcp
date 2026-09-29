@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import type { IncomingMessage } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FastMCP, OAuthProvider } from 'fastmcp';
@@ -16,6 +17,7 @@ import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
+import { createRegisterRateLimiter } from './lib/oauth-register-rate-limit.js';
 import { Redis } from 'ioredis';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
@@ -203,6 +205,40 @@ if (config.transport === 'httpStream') {
   // Out-of-band file staging for uploads (the LLM curls a file here and gets a
   // handle, instead of base64-ing it through the conversation). httpStream only.
   registerUploadRoute(server, config);
+  if (oauthProvider) {
+    const limiter = createRegisterRateLimiter({
+      redis: redisClient,
+      limitPerHour: config.oauthRegisterRateLimitPerHour,
+    });
+    server.getApp().use('/oauth/register', async (c, next) => {
+      if (c.req.method !== 'POST') return await next();
+      // Deploy behind a trusted proxy that overwrites X-Real-IP.
+      const incoming = (c.env as { incoming?: IncomingMessage } | undefined)
+        ?.incoming;
+      const ip =
+        c.req.header('x-real-ip')?.trim() ||
+        incoming?.socket?.remoteAddress ||
+        'unknown';
+      const { allowed, retryAfterSeconds } = await limiter.hit(ip);
+      if (!allowed) {
+        console.warn('[browserless-mcp] DCR rate limit hit', { ip });
+        return c.json(
+          {
+            error: 'too_many_requests',
+            error_description:
+              'Too many client registrations from this address',
+          },
+          429,
+          {
+            'Retry-After': String(retryAfterSeconds),
+            'Cache-Control': 'no-store',
+          },
+        );
+      }
+      // Leave the body unread for FastMCP's OAuth route.
+      await next();
+    });
+  }
   // Single-use, out-of-band fetch for captured downloads (the LLM GETs the file
   // instead of pulling bytes through the conversation). httpStream only.
   registerDownloadRoute(server, config);

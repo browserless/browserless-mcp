@@ -78,6 +78,10 @@ export function getConfig(): McpConfig & { uploadDirs: string[] } {
     sqsRegion: process.env.SQS_REGION ?? 'us-west-2',
     // OAuth (Supabase)
     oauthEnabled: process.env.OAUTH_ENABLED === 'true',
+    oauthRegisterRateLimitPerHour: parseInt(
+      process.env.OAUTH_REGISTER_RATE_LIMIT_PER_HOUR ?? '300',
+      10,
+    ),
     supabaseUrl: process.env.SUPABASE_URL ?? '',
     supabaseOAuthClientId: process.env.SUPABASE_OAUTH_CLIENT_ID ?? '',
     supabaseOAuthClientSecret: process.env.SUPABASE_OAUTH_CLIENT_SECRET ?? '',

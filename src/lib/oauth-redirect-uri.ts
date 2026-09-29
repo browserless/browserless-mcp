@@ -7,6 +7,9 @@ import {
   type OAuthProxyConfig,
 } from 'fastmcp/auth';
 
+export const MAX_DCR_REQUEST_BYTES = 8192;
+export const MAX_CACHED_DCR_CLIENTS = 5000;
+
 // Mirrors FastMCP's defaults for callers that omit an explicit allowlist.
 const SAFE_DEFAULT_PATTERNS = ['http://localhost:*', 'http://127.0.0.1:*'];
 
@@ -136,9 +139,37 @@ export class BrowserlessOAuthProxy extends OAuthProxy {
   constructor(config: OAuthProxyConfig) {
     super(config);
     this.allowedRedirectUriPatterns = config.allowedRedirectUriPatterns;
+
+    // FastMCP shares this private Map with its state store. Bound insertion,
+    // including storage rehydration and CIMD, not just new registrations.
+    // Eviction leaves persisted clients available for subsequent lookups.
+    const cache = (
+      this as unknown as {
+        registeredClientsByClientId: Map<string, unknown>;
+      }
+    ).registeredClientsByClientId;
+    const set = cache.set.bind(cache);
+    cache.set = (key, value) => {
+      set(key, value);
+      while (cache.size > MAX_CACHED_DCR_CLIENTS) {
+        const oldest = cache.keys().next().value;
+        if (oldest === undefined) break;
+        cache.delete(oldest);
+      }
+      return cache;
+    };
   }
 
   override async registerClient(request: DCRRequest): Promise<DCRResponse> {
+    if (
+      Buffer.byteLength(JSON.stringify(request ?? {}), 'utf8') >
+      MAX_DCR_REQUEST_BYTES
+    ) {
+      throw new OAuthProxyError(
+        'invalid_client_metadata',
+        'Client registration metadata exceeds 8192 bytes',
+      );
+    }
     const redirectUris = request?.redirect_uris;
     if (
       !Array.isArray(redirectUris) ||
