@@ -34,8 +34,10 @@ numbers, security codes, passwords, or one-time codes.
    Do not close the browser while this checkout can still be resumed.
    If create or resume returns `requires_action`, present `action_message` and
    its Stripe-owned `action_url` when one is supplied. Resume the same checkout
-   only when `_next.action` is `resume`; when `_next` is absent, complete the
-   action and create a new checkout request instead.
+   only when `_next.action` is `resume`. When `_next` is absent, create a new
+   checkout request only when `action_resolution` is `create_new_spend_request`
+   or `create_new_spend_request_after_completion`; never create one for
+   `auto_resume`.
 6. Resume fills payment fields but does not prove payment succeeded. For Link
    Pay Token, the backend verifies that the token input disappeared and a saved
    card with an email header replaced the card form. It waits a bounded time
