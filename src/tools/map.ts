@@ -1,7 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import type { MapParams, MapResponse, McpConfig } from '../@types/types.js';
 
@@ -64,7 +64,7 @@ export function registerMapTool(
       destructiveHint: false,
       openWorldHint: true,
     },
-    validateUrl: (p) => validateHttpUrl(p.url),
+    validateUrl: (p) => assertHttpScheme(p.url),
     run: async ({ client, params, log }) => {
       const response = await client.map({
         url: params.url,

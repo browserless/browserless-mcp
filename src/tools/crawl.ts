@@ -1,7 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { failureDetails } from '../lib/failure-details.js';
 import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -238,7 +238,7 @@ export function registerCrawlTool(
       destructiveHint: false,
       openWorldHint: true,
     },
-    validateUrl: (p) => validateHttpUrl(p.url),
+    validateUrl: (p) => assertHttpScheme(p.url),
     profileNotFoundMessage: (profile) =>
       `Profile "${profile}" was not found for the configured API ` +
       `token. Create the profile with Browserless.saveProfile in a ` +

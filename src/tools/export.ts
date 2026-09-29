@@ -1,7 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { isCompliant, COMPLIANT_EXPORT_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -99,7 +99,7 @@ export function registerExportTool(
       destructiveHint: false,
       openWorldHint: true,
     },
-    validateUrl: (p) => validateHttpUrl(p.url),
+    validateUrl: (p) => assertHttpScheme(p.url),
     profileNotFoundMessage: (profile) =>
       `Profile "${profile}" was not found for the configured API ` +
       `token. Create the profile with Browserless.saveProfile in a ` +
