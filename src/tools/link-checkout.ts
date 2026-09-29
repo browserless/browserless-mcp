@@ -52,6 +52,7 @@ const STATUSES = new Set([
   'failed',
   'canceled',
   'succeeded',
+  'submitted',
   'blocked',
   'abandoned',
 ]);
@@ -67,6 +68,7 @@ const TERMINAL_STATUSES = new Set([
   'failed',
   'canceled',
   'succeeded',
+  'submitted',
   'blocked',
   'abandoned',
 ]);

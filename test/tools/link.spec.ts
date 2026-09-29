@@ -1156,6 +1156,48 @@ describe('Stripe Link tools', () => {
     });
   }
 
+  it('treats a submitted card report as terminal and clears the checkout', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer(() => ({
+      status: 'submitted',
+      instruction:
+        'Payment credential was submitted to the merchant, but Link cannot confirm the merchant charge for this payment method. Clear the secret gate, then read the merchant confirmation or receipt page to verify the payment, and report what you find. Do not submit or resume again.',
+      last4: '4242',
+    }));
+    try {
+      const session = await getOrCreateSession(
+        'link-submitted-terminal',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'report',
+        validUntil: VALID_UNTIL_MS,
+      };
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      const result = await checkout(
+        {
+          action: 'report',
+          outcome: 'success',
+          checkout_id: checkoutId,
+          browser_session_handle: session.handle,
+        },
+        mockContext,
+      );
+      expect(textOf(result)).to.include('submitted');
+      expect(textOf(result)).to.include('4242');
+      // A submitted result is terminal: the continuation is cleared so the agent
+      // cannot resume or resubmit, and a fresh checkout can start.
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('keeps a reported LPT checkout resumable until backend confirmation succeeds', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     let calls = 0;

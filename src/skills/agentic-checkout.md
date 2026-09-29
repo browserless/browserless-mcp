@@ -43,16 +43,21 @@ numbers, security codes, passwords, or one-time codes.
    card with an email header replaced the card form. It waits a bounded time
    and retries once with a fresh token; no transition returns `blocked` and
    cancels the checkout. Do not submit unless the result is `filled`.
-   Capture and page-content reads remain blocked: never clear secret gates,
-   take a snapshot, or invent a readiness predicate. Use `browserless_agent`
-   to click the previously observed Pay/Submit selector once. Then call
-   checkout with `action: "report", outcome: "success"` to request backend
-   confirmation, not to assert the payment succeeded. Only a returned
-   `succeeded` confirms payment. Follow `_next.action: "resume"` while backend
-   confirmation is pending or user action permits resumption; never submit
-   again. If blocked or abandoned, report that outcome instead. Plain card
-   checkouts retain the normal outcome-report flow. Use `action: "cancel"`
-   if the user abandons before fill.
+   Capture and page-content reads remain blocked until the checkout reaches a
+   terminal result: until then never clear secret gates, take a snapshot, or
+   invent a readiness predicate. Use `browserless_agent` to click the
+   previously observed Pay/Submit selector once. Then call checkout with
+   `action: "report", outcome: "success"` to request backend confirmation, not
+   to assert the payment succeeded. A returned `succeeded` is a Link-confirmed
+   payment (Link Pay Token path). A returned `submitted` is the terminal result
+   for a one-time card: Link cannot confirm the merchant's charge, so success is
+   confirmable only on the merchant side. Clear the secret gate now — the card
+   is already spent, so a `Browserless.clearSecrets` call via `browserless_agent`
+   is safe — then read the merchant's own confirmation or receipt page and tell
+   the user what it shows. Never resume or resubmit after `submitted`. While the
+   result is still resumable (`_next.action: "resume"`), follow it for pending
+   confirmation; never submit again. If blocked or abandoned, report that
+   outcome instead. Use `action: "cancel"` if the user abandons before fill.
 7. Only report the sanitized `last4` returned by the tool. Never expose or ask
    for any other payment credential.
 
