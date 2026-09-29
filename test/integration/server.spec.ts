@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -39,6 +41,7 @@ const mockConfig: McpConfig = {
   complianceMode: false,
   sqsRegion: 'us-east-1',
   oauthEnabled: false,
+  oauthRegisterRateLimitPerHour: 300,
   supabaseUrl: '',
   supabaseOAuthClientId: '',
   supabaseOAuthClientSecret: '',
@@ -49,6 +52,73 @@ const mockConfig: McpConfig = {
 
 describe('MCP Server Integration', () => {
   let server: FastMCP;
+
+  it('preserves OAuth registration bodies and limits only POSTs per address', async () => {
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    const child = spawn(process.execPath, ['build/src/index.js'], {
+      env: {
+        ...process.env,
+        TRANSPORT: 'httpStream',
+        PORT: String(port),
+        OAUTH_ENABLED: 'true',
+        MCP_BASE_URL: base,
+        SUPABASE_URL: 'http://127.0.0.1:9',
+        SUPABASE_OAUTH_CLIENT_ID: 'test',
+        SUPABASE_OAUTH_CLIENT_SECRET: 'test',
+        REDIS_URL: '',
+        OAUTH_REGISTER_RATE_LIMIT_PER_HOUR: '2',
+        AMPLITUDE_API_KEY: '',
+        ANALYTICS_ENABLED: 'false',
+      },
+      stdio: 'ignore',
+    });
+    const exited = once(child, 'exit');
+    const post = (ip: string) =>
+      fetch(`${base}/oauth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-real-ip': ip },
+        body: JSON.stringify({
+          redirect_uris: ['http://localhost:33418/cb'],
+          client_name: 'integration',
+        }),
+      });
+    try {
+      let ready = false;
+      for (let i = 0; i < 100; i++) {
+        try {
+          ready = (await fetch(`${base}/health`)).ok;
+        } catch {
+          /* starting */
+        }
+        if (ready || child.exitCode !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(ready, 'OAuth server starts').to.equal(true);
+      for (let i = 0; i < 3; i++)
+        await fetch(`${base}/oauth/register`, {
+          headers: { 'x-real-ip': '9.9.9.9' },
+        });
+      const first = await post('9.9.9.9');
+      expect(first.status).to.equal(201);
+      expect(await first.json())
+        .to.have.property('redirect_uris')
+        .that.deep.equals(['http://localhost:33418/cb']);
+      expect((await post('9.9.9.9')).status).to.equal(201);
+      const denied = await post('9.9.9.9');
+      expect(denied.status).to.equal(429);
+      expect(denied.headers.get('retry-after')).to.match(/^\d+$/);
+      expect(denied.headers.get('cache-control')).to.equal('no-store');
+      expect(await denied.json()).to.deep.equal({
+        error: 'too_many_requests',
+        error_description: 'Too many client registrations from this address',
+      });
+      expect((await post('8.8.8.8')).status).to.equal(201);
+    } finally {
+      child.kill('SIGTERM');
+      await exited;
+    }
+  });
 
   afterEach(async () => {
     sinon.restore();

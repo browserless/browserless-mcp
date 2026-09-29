@@ -19,6 +19,7 @@ const mockConfig: McpConfig & { browserlessToken: string } = {
   complianceMode: false,
   sqsRegion: 'us-east-1',
   oauthEnabled: false,
+  oauthRegisterRateLimitPerHour: 300,
   supabaseUrl: '',
   supabaseOAuthClientId: '',
   supabaseOAuthClientSecret: '',
