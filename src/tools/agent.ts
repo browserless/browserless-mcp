@@ -59,7 +59,12 @@ import {
   siteRecipeNotice,
   hydrateRemoteSkills,
 } from '../skills/sites.js';
-import { AgentCommandSchema, AgentToolParamsSchema } from './schemas.js';
+import {
+  AgentToolParamsSchema,
+  GenericCommandSchema,
+  TypedAgentCommandSchema,
+  isTypedAgentMethod,
+} from './schemas.js';
 import {
   isCompliant,
   detectVisibleSkills,
@@ -111,6 +116,8 @@ const SECRET_SAFE_METHODS = new Set([
   'waitForTimeout',
   'uploadFile',
   'saveProfile',
+  // Saving registers values for redaction but neither arms nor reads the capture gate.
+  'saveSecret',
   'reportSkillOutcome',
   'reportOutcome',
   'close',
@@ -145,6 +152,26 @@ export const validateSecretCaptureOrdering = (
       );
     }
   }
+};
+
+export const secretVisibleAfter = (
+  visible: boolean,
+  method: string,
+  result: unknown,
+): boolean => {
+  if (method === 'loadSecret') {
+    return (result as { ok?: unknown } | null)?.ok === true ? true : visible;
+  }
+  if (
+    method === 'clearSecrets' ||
+    (TOP_FRAME_NAVIGATION_METHODS.has(method) &&
+      result !== null &&
+      typeof result === 'object' &&
+      (result as { rejected?: unknown }).rejected !== true)
+  ) {
+    return false;
+  }
+  return visible;
 };
 
 const appendSkills = (
@@ -810,13 +837,36 @@ export function registerAgentTools(
         params.method === 'reportSkillOutcome' ||
         params.method === 'saveSecret'
       ) {
-        const commandContract = z
-          .array(compliant ? CompliantAgentCommandSchema : AgentCommandSchema)
-          .safeParse(params.commands?.length ? params.commands : commands);
-        if (!commandContract.success) {
+        const list = params.commands?.length ? params.commands : commands;
+        const parsedCommands: Array<{
+          method: string;
+          params?: Record<string, unknown>;
+        }> = [];
+        const issues: z.core.$ZodIssue[] = [];
+        if (compliant) {
+          const parsed = z.array(CompliantAgentCommandSchema).safeParse(list);
+          if (parsed.success) parsedCommands.push(...parsed.data);
+          else issues.push(...parsed.error.issues);
+        } else {
+          for (const [index, command] of list.entries()) {
+            const schema = isTypedAgentMethod(command.method)
+              ? TypedAgentCommandSchema
+              : GenericCommandSchema;
+            const parsed = schema.safeParse(command);
+            if (parsed.success) parsedCommands.push(parsed.data);
+            else
+              issues.push(
+                ...parsed.error.issues.map((issue) => ({
+                  ...issue,
+                  path: [index, ...issue.path],
+                })),
+              );
+          }
+        }
+        if (issues.length) {
           throw Object.assign(
             new UserError(
-              commandContract.error.issues
+              issues
                 .map(
                   (i) =>
                     (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
@@ -830,13 +880,10 @@ export function registerAgentTools(
         // apply typed defaults and strip unknown keys (the flat boundary schema
         // does neither), matching the behaviour when the rich schema validated
         // at the boundary.
-        commands = commandContract.data.map((c) => {
-          const parsed = c as {
-            method: string;
-            params?: Record<string, unknown>;
-          };
-          return { method: parsed.method, params: parsed.params ?? {} };
-        });
+        commands = parsedCommands.map(({ method, params }) => ({
+          method,
+          params: params ?? {},
+        }));
       }
 
       const proxy = params.proxy;
@@ -1179,9 +1226,7 @@ export function registerAgentTools(
                       : 'unknown',
             }),
             failed_command_index: commandIndex,
-            ...(AgentCommandSchema.options[0].options.some(
-              (schema) => schema.shape.method.safeParse(cmd.method).success,
-            )
+            ...(isTypedAgentMethod(cmd.method)
               ? { failed_method: cmd.method }
               : {}),
           });
@@ -1414,17 +1459,11 @@ export function registerAgentTools(
             );
           }
 
-          if (cmd.method === 'loadSecret') {
-            agentSession.secretVisible = true;
-          } else if (
-            cmd.method === 'clearSecrets' ||
-            (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method) &&
-              resp.result !== null &&
-              typeof resp.result === 'object' &&
-              (resp.result as { rejected?: unknown }).rejected !== true)
-          ) {
-            agentSession.secretVisible = false;
-          }
+          agentSession.secretVisible = secretVisibleAfter(
+            agentSession.secretVisible,
+            cmd.method,
+            resp.result,
+          );
 
           // Capture the first URL we observe in the batch as a fallback
           // baseline for the cross-origin notice.

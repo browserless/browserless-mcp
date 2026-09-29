@@ -797,9 +797,11 @@ const KNOWN_METHODS = new Set<string>(
   specificCommandSchemas.map((schema) => schema.shape.method.value),
 );
 const RESERVED_AGENT_METHODS = new Set(['stripeLinkCheckout']);
+export const isTypedAgentMethod = (method: string): boolean =>
+  KNOWN_METHODS.has(method);
 
 // fallback for non typed bql methods
-const GenericCommandSchema = z.object({
+export const GenericCommandSchema = z.object({
   method: z
     .string()
     .refine((m) => !KNOWN_METHODS.has(m) && !RESERVED_AGENT_METHODS.has(m), {
@@ -814,8 +816,13 @@ const GenericCommandSchema = z.object({
     .describe('Parameters for the method'),
 });
 
+export const TypedAgentCommandSchema = z.discriminatedUnion(
+  'method',
+  specificCommandSchemas,
+);
+
 export const AgentCommandSchema = z.union([
-  z.discriminatedUnion('method', specificCommandSchemas),
+  TypedAgentCommandSchema,
   GenericCommandSchema,
 ]);
 
@@ -1090,10 +1097,10 @@ const agentParamsObject = z.object({
     .describe(
       'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
         'session so `loadSecret` can resolve credentials and `saveSecret` can persist ' +
-        'a new login. Find ' +
-        'it via GET /integrations/onepassword. Bind it on EVERY call in a multi-call ' +
-        'flow (like `profile`); a call that omits it runs with no vault bound and ' +
-        'credential commands return CredentialNotResolved. `saveSecret` requires a ' +
+        'a new login. Get it from browserless_sessions { action: "integrations" } — ' +
+        'pass the op_int_… id, not the label. Bind it on the FIRST call and on EVERY call in a multi-call ' +
+        'flow (like `profile`): a call that omits it runs with no vault bound and ' +
+        'credential commands return CredentialNotResolved; adding it later opens a different browser. `saveSecret` requires a ' +
         'write-enabled connection. Pair with `allowedDomains` to permit filling on ' +
         'the target sites.',
     ),

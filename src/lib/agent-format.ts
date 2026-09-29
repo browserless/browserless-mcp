@@ -80,6 +80,9 @@ export const sanitizeUpgradeBody = (body: string): string => {
     : cleaned;
 };
 
+export const INTEGRATION_NOT_FOUND_HINT =
+  'The integrationId must be the integration\'s id (op_int_…), not its label. List ids with browserless_sessions { action: "integrations" } and pass one on the FIRST browserless_agent call and on every call after — a binding added later opens a different browser.';
+
 /**
  * Translate a connect-time error into UserError-ready text. Typed
  * UpgradeErrors carry the HTTP response for status-aware guidance; anything
@@ -107,7 +110,11 @@ export const formatConnectError = (err: unknown): string => {
         return `Concurrency limit reached (429)${detail ? `: ${detail}` : ''}. Stop retrying — each new attempt opens another session and stacks more against the limit. Close any sessions you still have open (call browserless_agent with method "close"), wait for in-flight sessions to finish, or upgrade the plan, then start over.`;
       default: {
         const fallback = detail || err.statusMessage || '';
-        return `Failed to connect to browser agent (HTTP ${err.statusCode})${fallback ? `: ${fallback}` : ''}.`;
+        const message = `Failed to connect to browser agent (HTTP ${err.statusCode})${fallback ? `: ${fallback}` : ''}.`;
+        return err.statusCode === 404 &&
+          /1Password integration was not found/i.test(detail)
+          ? `${message} ${INTEGRATION_NOT_FOUND_HINT}`
+          : message;
       }
     }
   }

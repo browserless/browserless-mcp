@@ -17,6 +17,7 @@ import {
   buildSkillEventProps,
   registerAgentTools,
   sanitizeUpgradeBody,
+  secretVisibleAfter,
   validateSecretCaptureOrdering,
   CLOSE_REMINDER,
 } from '../../src/tools/agent.js';
@@ -170,6 +171,32 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
+  it('allows saveSecret after loadSecret without permitting captures', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        {
+          method: 'loadSecret',
+          params: { ref: 'op://v/i/password', selector: '#password' },
+        },
+        {
+          method: 'saveSecret',
+          params: {
+            vault: 'v',
+            title: 't',
+            username: 'u',
+            password: 'synthetic-password',
+          },
+        },
+      ]),
+    ).not.to.throw();
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'snapshot' },
+      ]),
+    ).to.throw('snapshot cannot run after loadSecret');
+  });
+
   it('allows outcome reporting after loadSecret in the same batch', () => {
     expect(() =>
       validateSecretCaptureOrdering([
@@ -228,6 +255,27 @@ describe('agent secret-capture preflight', () => {
       ).to.throw(`${method} cannot run after loadSecret`);
     }
   });
+});
+
+describe('secretVisibleAfter', () => {
+  for (const [visible, method, result, expected] of [
+    [false, 'loadSecret', { ok: true }, true],
+    [false, 'loadSecret', { ok: false, error: 'CredentialNotResolved' }, false],
+    [true, 'loadSecret', { ok: false }, true],
+    [true, 'loadSecret', null, true],
+    [false, 'loadSecret', { ok: 'true' }, false],
+    [false, 'loadSecret', undefined, false],
+    [true, 'clearSecrets', { ok: true }, false],
+    [true, 'goto', { url: 'https://example.com' }, false],
+    [true, 'goto', { rejected: true }, true],
+    [true, 'goto', null, true],
+    [true, 'click', {}, true],
+    [false, 'snapshot', {}, false],
+  ] as const) {
+    it(`${visible} + ${method} ${JSON.stringify(result)} → ${expected}`, () => {
+      expect(secretVisibleAfter(visible, method, result)).to.equal(expected);
+    });
+  }
 });
 
 describe('formatAgentCommandLog', () => {
@@ -1103,6 +1151,27 @@ describe('buildCrossOriginNotice', () => {
 });
 
 describe('formatConnectError', () => {
+  it('appends discovery guidance only to the integration-not-found 404', () => {
+    const body =
+      'The referenced 1Password integration was not found (requestId: abc)';
+    const text = formatConnectError(new UpgradeError(404, 'Not Found', body));
+    expect(text).to.include('HTTP 404');
+    expect(text).to.include(body);
+    expect(text).to.include('browserless_sessions { action: "integrations" }');
+    expect(text).to.include('not its label');
+    expect(text).to.include(
+      'FIRST browserless_agent call and on every call after',
+    );
+    expect(
+      formatConnectError(new UpgradeError(404, 'Not Found', 'Session missing')),
+    ).to.equal(
+      'Failed to connect to browser agent (HTTP 404): Session missing.',
+    );
+    expect(
+      formatConnectError(new UpgradeError(500, 'Error', body)),
+    ).not.to.include('browserless_sessions');
+  });
+
   it('uses profile-aware wording for ProfileNotFoundError', () => {
     const out = formatConnectError(
       new ProfileNotFoundError('my-login', 'Not Found', ''),
@@ -1266,6 +1335,151 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent credential feedback', () => {
+  afterEach(() => sinon.restore());
+
+  for (const ok of [false, true]) {
+    it(`keeps same-session captures gated only after a successful fill (${ok})`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return method === 'loadSecret'
+          ? { ok, ...(ok ? {} : { error: 'TargetNotFillable' }) }
+          : { elements: [] };
+      });
+      const execute = getAgentExecute(srv.url);
+      try {
+        const first = (await execute(
+          {
+            keepSessionAlive: true,
+            method: 'loadSecret',
+            params: {
+              ref: 'op://v/i/password',
+              selector: 'body',
+            },
+          },
+          mockContext,
+        )) as { content: Array<{ text?: string }> };
+        const sessionId = first.content
+          .map((c) => c.text ?? '')
+          .join('\n')
+          .match(/sessionId:\s*(\S+)/)?.[1];
+        expect(sessionId).to.be.a('string');
+        let error: unknown;
+        try {
+          await execute({ sessionId, method: 'snapshot' }, mockContext);
+        } catch (caught) {
+          error = caught;
+        }
+        if (ok) {
+          expect((error as Error)?.message).to.include(
+            'snapshot cannot run after loadSecret',
+          );
+          expect(methods).not.to.include('snapshot');
+        } else {
+          expect(error).to.equal(undefined);
+          expect(methods).to.include('snapshot');
+        }
+        expect(srv.hits()).to.equal(1);
+        await execute({ sessionId, method: 'close' }, mockContext);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const batch of [false, true]) {
+    it(`names missing credential fields instead of the generic branch (batch=${batch})`, async () => {
+      const execute = getAgentExecute('http://127.0.0.1:1');
+      const command = { method: 'saveSecret', params: {} };
+      let error: unknown;
+      try {
+        await execute(batch ? { commands: [command] } : command, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(UserError);
+      expect(error).to.have.property('code', 'INVALID_PARAMS');
+      for (const field of ['vault', 'title', 'username', 'password']) {
+        expect((error as Error).message).to.include(`0.params.${field}`);
+      }
+      expect((error as Error).message).not.to.include(
+        'reserved or has a typed schema',
+      );
+    });
+  }
+
+  it('reports indexed typed errors without echoing credential values', async () => {
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    let error: unknown;
+    try {
+      await execute(
+        {
+          commands: [
+            {
+              method: 'saveSecret',
+              params: {
+                title: 't',
+                username: 'u',
+                password: 'do-not-echo-this-value',
+                url: 'x',
+              },
+            },
+            { method: 'reportOutcome', params: {} },
+          ],
+        },
+        mockContext,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).to.have.property('code', 'INVALID_PARAMS');
+    expect((error as Error).message).to.include('0.params.vault');
+    expect((error as Error).message).to.include('1.params.success');
+    expect((error as Error).message).not.to.include('do-not-echo-this-value');
+    expect((error as Error).message).not.to.include(
+      'reserved or has a typed schema',
+    );
+  });
+
+  it('forwards unknown commands and long valid vault names to the backend', async () => {
+    const received: Array<{ method: string; params: unknown }> = [];
+    const srv = await makeRespondingServer((method, params) => {
+      received.push({ method, params });
+      return { ok: false, error: 'VaultNotFound' };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const vault = 'v'.repeat(10_000);
+      await execute(
+        {
+          commands: [
+            { method: 'fooBar', params: { value: 42 } },
+            {
+              method: 'saveSecret',
+              params: {
+                vault,
+                title: 't',
+                username: 'u',
+                password: 'synthetic-password',
+              },
+            },
+          ],
+        },
+        mockContext,
+      );
+      expect(received.find((c) => c.method === 'fooBar')?.params).to.deep.equal(
+        { value: 42 },
+      );
+      expect(
+        received.find((c) => c.method === 'saveSecret')?.params,
+      ).to.have.property('vault', vault);
+    } finally {
+      await srv.close();
+    }
+  });
+});
 
 describe('browserless_agent repetition self-check', () => {
   afterEach(() => sinon.restore());
@@ -2184,7 +2398,9 @@ describe('browserless_agent integration binding guard', () => {
   });
 
   it('rejects capture in a later call reusing a secret-bearing session', async () => {
-    const srv = await makeRespondingServer(() => ({}));
+    const srv = await makeRespondingServer((method) =>
+      method === 'loadSecret' ? { ok: true } : {},
+    );
     const execute = getAgentExecute(srv.url);
     let handle: string | undefined;
     try {
@@ -2231,7 +2447,9 @@ describe('browserless_agent integration binding guard', () => {
             message: 'No element found for selector: < #missing',
             suggestion: captureBlocked,
           })
-        : {},
+        : method === 'loadSecret'
+          ? { ok: true }
+          : {},
     );
     const execute = getAgentExecute(srv.url);
     let handle: string | undefined;
@@ -2275,7 +2493,7 @@ describe('browserless_agent integration binding guard', () => {
 
   it('keeps capture blocked when top-frame navigation does not occur', async () => {
     const srv = await makeRespondingServer((method) =>
-      method === 'back' ? null : {},
+      method === 'back' ? null : method === 'loadSecret' ? { ok: true } : {},
     );
     const execute = getAgentExecute(srv.url);
     let handle: string | undefined;
