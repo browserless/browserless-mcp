@@ -10,7 +10,7 @@ import { registerSurface } from './tools/register.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
 import { clearSession } from './lib/download-store.js';
-import { dropMcpSession } from './lib/agent-client.js';
+import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
@@ -186,11 +186,15 @@ if (amplitudeAnalytics) {
 
 server.on('disconnect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
+  // Remote clients replace MCP transports between turns and after a 401.
+  // Do not close agent browsers here: their handles survive transport churn.
   // Drop any files staged/captured for this session (TTL is the backstop).
   clearSession(event.session.sessionId);
   dropMcpSession(event.session.sessionId);
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
 });
+
+startSweepTimer();
 
 if (config.transport === 'httpStream') {
   server.start({
