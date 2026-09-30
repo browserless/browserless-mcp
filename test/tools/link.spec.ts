@@ -1156,6 +1156,55 @@ describe('Stripe Link tools', () => {
     });
   }
 
+  it('rejects an auto_resume requires_action response with no next step without losing custody', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    // requires_action + auto_resume promises a resume continuation, but the
+    // backend omitted _next. Accepting it would let the caller treat the result
+    // as terminal and drop custody of a checkout the skill forbids replacing, so
+    // normalize must reject it and the continuation must survive.
+    const browser = await makeRespondingServer(() => ({
+      status: 'requires_action',
+      checkout_id: checkoutId,
+      action_type: 'three_d_secure',
+      action_resolution: 'auto_resume',
+      action_message: 'Complete 3D Secure verification.',
+    }));
+    try {
+      const session = await getOrCreateSession(
+        'auto-resume-no-next',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const continuation = {
+        checkoutId,
+        allowedNextAction: 'resume' as const,
+        validUntil: VALID_UNTIL_MS,
+      };
+      session.stripeLinkContinuation = continuation;
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      let error: unknown;
+      try {
+        await checkout(
+          {
+            action: 'resume',
+            checkout_id: checkoutId,
+            browser_session_handle: session.handle,
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).to.include('incomplete checkout next step');
+      expect(session.stripeLinkContinuation).to.equal(continuation);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('treats a submitted card report as terminal and clears the checkout', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     const browser = await makeRespondingServer(() => ({

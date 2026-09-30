@@ -434,6 +434,17 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
       valid_until: next.valid_until,
     };
   }
+  // An `auto_resume` action must carry a resume continuation. Without `_next`
+  // the caller treats the result as terminal and drops the checkout custody,
+  // stranding a checkout the skill forbids replacing. Reject the malformed
+  // response instead.
+  if (
+    result.status === 'requires_action' &&
+    result.action_resolution === 'auto_resume' &&
+    !result._next
+  ) {
+    throw new Error('Browserless returned an incomplete checkout next step');
+  }
   if (typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4)) {
     result.last4 = body.last4;
   }

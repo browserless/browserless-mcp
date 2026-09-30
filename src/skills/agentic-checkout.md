@@ -8,9 +8,12 @@ numbers, security codes, passwords, or one-time codes.
    prices. The Link card is billed in USD, so if the checkout shows another
    currency (a geo-localized checkout, e.g. RSD/EUR) and offers a currency
    selector, switch it to USD before continuing — a non-USD charge may be
-   declined for currency mismatch. If there's no USD option, continue anyway;
-   the charge may still go through. Keep every amount in integer USD minor units
-   (cents) and verify the cart sum exactly matches `amount_minor`.
+   declined for currency mismatch. If there's no USD option, stop and tell the
+   user rather than continuing: a non-USD price cannot be turned into a correct
+   USD `amount_minor`, so the user would approve a dollar figure that does not
+   match the merchant's charge. Never pass a foreign-currency amount as USD
+   cents. Keep every amount in integer USD minor units (cents) and verify the
+   cart sum exactly matches `amount_minor`.
 2. Call `browserless_link_connect` with `action: "status"`. If the wallet is
    not connected, stop and give the user the connection instruction. Do not
    bypass the Browserless account-owner connection flow.
