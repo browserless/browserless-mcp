@@ -120,6 +120,8 @@ const SECRET_SAFE_METHODS = new Set([
   'saveSecret',
   'reportSkillOutcome',
   'reportOutcome',
+  // Not a page action; must be sendable right after a credential fill.
+  'reportProfileAuthentication',
   'close',
 ]);
 const TOP_FRAME_NAVIGATION_METHODS = new Set([
@@ -830,11 +832,12 @@ export function registerAgentTools(
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
       // specific messages). Legacy single-command calls stay loose except for
-      // best-effort outcome reports and credential writes.
+      // outcome reports and credential writes.
       if (
         params.commands?.length ||
         params.method === 'reportOutcome' ||
         params.method === 'reportSkillOutcome' ||
+        params.method === 'reportProfileAuthentication' ||
         params.method === 'saveSecret'
       ) {
         const list = params.commands?.length ? params.commands : commands;
@@ -1259,6 +1262,8 @@ export function registerAgentTools(
             closedDuringBatch = true;
             break;
           }
+          // reportProfileAuthentication deliberately takes the normal path:
+          // return its recorded result or actionable error to the model.
           if (
             cmd.method === 'reportSkillOutcome' ||
             cmd.method === 'reportOutcome'
@@ -1293,6 +1298,23 @@ export function registerAgentTools(
           if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
             outboundParams = { ...cmd.params };
             delete (outboundParams as Record<string, unknown>).toDisk;
+          }
+          if (
+            cmd.method === 'reportProfileAuthentication' &&
+            cmd.params.targetId === undefined
+          ) {
+            if (!agentSession.lastActiveTargetId) {
+              throw Object.assign(
+                new UserError(
+                  'reportProfileAuthentication: no active tab known — end a batch with snapshot first, or pass targetId',
+                ),
+                { code: 'INVALID_PARAMS' },
+              );
+            }
+            outboundParams = {
+              ...cmd.params,
+              targetId: agentSession.lastActiveTargetId,
+            };
           }
           // Cascade the self-reported prompt once per session so the server can
           // author a first-party skill from the run (server keeps the first).
