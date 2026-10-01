@@ -19,6 +19,28 @@ const MAX_CHECKOUT_AMOUNT_MINOR = 5_000;
 const OUTCOME_REPORT_TTL_MS = 15 * 60 * 1_000;
 const CHECKOUT_ID_RE = /^lkco_[A-Za-z0-9_-]{32}$/;
 const HANDLE_RE = /^(s:|attach:)[A-Za-z0-9:_-]{3,200}$/;
+// Exact coordinator-owned validation messages only. Raw provider/frame errors
+// may contain payment credentials, so never forward arbitrary backend text.
+const CHECKOUT_VALIDATION_ERRORS = new Set([
+  'selectors are required',
+  'selectors require either expiry or both exp_month and exp_year',
+  'selectors must identify distinct fields',
+  'Payment field selector was not found',
+  'merchant.url must match the active checkout origin',
+  'Payment field is outside the merchant or Stripe origin',
+  ...[
+    'number',
+    'cvc',
+    'expiry',
+    'exp_month',
+    'exp_year',
+    'postal',
+    'cardholder_name',
+    'line1',
+    'line2',
+    'city',
+  ].map((field) => `selectors.${field} is invalid`),
+]);
 const STATUSES = new Set([
   'created',
   'pending_approval',
@@ -30,6 +52,7 @@ const STATUSES = new Set([
   'failed',
   'canceled',
   'succeeded',
+  'submitted',
   'blocked',
   'abandoned',
 ]);
@@ -45,6 +68,7 @@ const TERMINAL_STATUSES = new Set([
   'failed',
   'canceled',
   'succeeded',
+  'submitted',
   'blocked',
   'abandoned',
 ]);
@@ -129,6 +153,15 @@ const SelectorsSchema = z
     cardholder_name: SelectorSchema.optional().describe(
       'Cardholder name input deep selector',
     ),
+    line1: SelectorSchema.optional().describe(
+      'Billing address line 1 input deep selector',
+    ),
+    line2: SelectorSchema.optional().describe(
+      'Billing address line 2 input deep selector',
+    ),
+    city: SelectorSchema.optional().describe(
+      'Billing city/locality input deep selector',
+    ),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -204,7 +237,7 @@ const CreateSchema = z
     amount_minor: AmountMinorSchema,
     currency: z.literal('usd'),
     cart: CartSchema,
-    selectors: SelectorsSchema,
+    selectors: SelectorsSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -261,9 +294,16 @@ export const StripeLinkCheckoutParamsSchema = z
     browser_session_handle: SessionHandleSchema,
     merchant: MerchantSchema.optional().describe('Required for create.'),
     amount_minor: AmountMinorSchema.optional().describe('Required for create.'),
-    currency: z.literal('usd').optional().describe('Required for create.'),
+    currency: z
+      .literal('usd')
+      .optional()
+      .describe(
+        'Required for create; must be "usd". The Link card is billed in USD, so switch a geo-localized checkout (e.g. RSD/EUR) to USD with its currency selector before creating when the option exists — a non-USD charge may be declined for currency mismatch. If no USD option is available, stop and tell the user rather than proceeding: a non-USD price cannot form a correct USD amount, so never pass a foreign-currency amount as USD cents.',
+      ),
     cart: CartSchema.optional().describe('Required for create.'),
-    selectors: SelectorsSchema.optional().describe('Required for create.'),
+    selectors: SelectorsSchema.optional().describe(
+      'Required for plain card forms; omit for Stripe-hosted checkout. The backend detects Link Pay Token support.',
+    ),
     checkout_id: CheckoutIdSchema.optional().describe(
       'Required for resume, cancel, and report.',
     ),
@@ -275,8 +315,8 @@ export const StripeLinkCheckoutParamsSchema = z
   .describe(
     'Stripe Link checkout in the active browser session. Required fields ' +
       'depend on `action`: create needs merchant, amount_minor, currency, ' +
-      'cart, selectors; resume and cancel need checkout_id; report needs ' +
-      'checkout_id and outcome.',
+      'cart (and selectors for plain card forms); resume and cancel need checkout_id; report needs ' +
+      'checkout_id and outcome. The Link card is billed in USD — switch the checkout to USD before create when the option exists.',
   );
 
 type StripeLinkCheckoutParams = z.infer<typeof StripeLinkCheckoutParamsSchema>;
@@ -394,6 +434,17 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
       valid_until: next.valid_until,
     };
   }
+  // An `auto_resume` action must carry a resume continuation. Without `_next`
+  // the caller treats the result as terminal and drops the checkout custody,
+  // stranding a checkout the skill forbids replacing. Reject the malformed
+  // response instead.
+  if (
+    result.status === 'requires_action' &&
+    result.action_resolution === 'auto_resume' &&
+    !result._next
+  ) {
+    throw new Error('Browserless returned an incomplete checkout next step');
+  }
   if (typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4)) {
     result.last4 = body.last4;
   }
@@ -413,7 +464,7 @@ export function registerStripeLinkCheckoutTool(
       name: 'browserless_link_checkout',
       description:
         'Create, resume, cancel, or report a Stripe Link checkout in the exact active browser session. ' +
-        'Create requires the latest browserless_agent sessionId and payment-field deep selectors. ' +
+        'Create requires the latest browserless_agent sessionId. Plain card forms require payment-field deep selectors; omit selectors for Stripe-hosted checkout. ' +
         'Resume retrieves and fills only after Link approval; payment credentials never reach this tool.',
       parameters: StripeLinkCheckoutParamsSchema,
       annotations: {
@@ -512,10 +563,22 @@ export function registerStripeLinkCheckoutTool(
           }
           if (response.error) {
             throw new UserError(
-              'Stripe Link checkout could not continue safely in this browser session.',
+              CHECKOUT_VALIDATION_ERRORS.has(response.error.message)
+                ? response.error.message
+                : 'Stripe Link checkout could not continue safely in this browser session.',
             );
           }
           const result = normalize(response.result);
+          if (
+            params.action === 'report' &&
+            result.status !== 'requires_action' &&
+            RESUMABLE_STATUSES.has(result.status) &&
+            !result._next
+          ) {
+            throw new Error(
+              'Browserless returned an incomplete checkout next step',
+            );
+          }
           if (
             params.action !== 'create' &&
             result._next?.checkout_id !== undefined &&
@@ -532,7 +595,6 @@ export function registerStripeLinkCheckoutTool(
             session.stripeLinkContinuation?.checkoutId ===
               continuationCheckoutId;
           const terminal =
-            params.action === 'report' ||
             params.action === 'cancel' ||
             TERMINAL_STATUSES.has(result.status) ||
             (result.status === 'requires_action' && !result._next);
