@@ -24,6 +24,7 @@ const mockConfig: McpConfig = {
   complianceMode: false,
   sqsRegion: 'us-east-1',
   oauthEnabled: false,
+  oauthRegisterRateLimitPerHour: 300,
   supabaseUrl: '',
   supabaseOAuthClientId: '',
   supabaseOAuthClientSecret: '',
@@ -545,6 +546,14 @@ describe('account-data tools', () => {
               expiresAt: null,
               lastResolvedAt: null,
             },
+            {
+              id: 'op_2',
+              label: 'open',
+              kind: 'service_account',
+              allowedDomains: [],
+              expiresAt: '2027-01-01T00:00:00.000Z',
+              lastResolvedAt: null,
+            },
           ],
         }),
       );
@@ -556,8 +565,16 @@ describe('account-data tools', () => {
         ),
       );
 
-      expect(text).to.include('vault');
-      expect(text).to.include('example.com');
+      expect(text).to.include(
+        '- `op_1` — "vault" (service-account); fills: example.com',
+      );
+      expect(text).to.include(
+        '- `op_2` — "open" (service_account); fills: any https origin; expires 2027-01-01T00:00:00.000Z',
+      );
+      expect(text).not.to.include('domains: none');
+      expect(text).to.include(
+        'Pass the `op_int_…` value (not the label) as `integrationId`',
+      );
     });
   });
 

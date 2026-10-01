@@ -13,7 +13,7 @@ import {
   getActiveSessionByHandle,
   send,
 } from '../lib/agent-client.js';
-import { defineTool, validateHttpUrl } from '../lib/define-tool.js';
+import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 
 const MAX_CHECKOUT_AMOUNT_MINOR = 5_000;
 const OUTCOME_REPORT_TTL_MS = 15 * 60 * 1_000;
@@ -476,7 +476,7 @@ export function registerStripeLinkCheckoutTool(
       },
       validateUrl: (params) => {
         if (params.action === 'create' && params.merchant) {
-          validateHttpUrl(params.merchant.url);
+          assertHttpScheme(params.merchant.url);
         }
       },
       run: async ({ params: rawParams, token, apiUrl, log, userId }) => {

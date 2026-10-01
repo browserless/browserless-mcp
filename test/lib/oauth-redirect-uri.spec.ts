@@ -73,6 +73,89 @@ describe('Browserless OAuth redirect URI validation', () => {
   let originalAdditionalPatterns: string | undefined;
   let patterns: string[];
 
+  it('bounds serialized UTF-8 registration metadata before persistence', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const proxy = new BrowserlessOAuthProxy(
+      buildConfig({
+        encryptionKey: false,
+        tokenStorage: new RedisTokenStorage(redis),
+      }),
+    );
+    const request = {
+      redirect_uris: ['http://localhost:1/cb'],
+      client_name: '',
+    };
+    const overhead = Buffer.byteLength(JSON.stringify(request));
+    const keysBefore = await redis.keys('mcp:oauth:client:*');
+    const createdKeys: string[] = [];
+    try {
+      for (const name of ['x'.repeat(1000), 'x'.repeat(8192 - overhead)]) {
+        const registration = await proxy.registerClient({
+          ...request,
+          client_name: name,
+        });
+        expect(registration.client_id).to.be.a('string');
+        createdKeys.push(`mcp:oauth:client:${registration.client_id}`);
+      }
+      for (const name of [
+        'x'.repeat(9000),
+        'x'.repeat(8193 - overhead),
+        'é'.repeat(4096),
+      ]) {
+        try {
+          await proxy.registerClient({ ...request, client_name: name });
+          expect.fail('accepted oversized metadata');
+        } catch (error) {
+          expect(error).to.be.instanceOf(OAuthProxyError);
+          expect((error as OAuthProxyError).code).to.equal(
+            'invalid_client_metadata',
+          );
+        }
+      }
+      expect(await redis.keys('mcp:oauth:client:*')).to.have.members([
+        ...keysBefore,
+        ...createdKeys,
+      ]);
+    } finally {
+      proxy.destroy();
+      if (createdKeys.length) await redis.del(...createdKeys);
+      await redis.quit();
+    }
+  });
+
+  it('bounds the client cache during registration and storage rehydration', async () => {
+    const proxy = new BrowserlessOAuthProxy(
+      buildConfig({ encryptionKey: false }),
+    );
+    const internals = proxy as unknown as {
+      registeredClientsByClientId: Map<string, unknown>;
+      stateStore: {
+        getRegisteredClientByClientId(
+          id: string,
+        ): Promise<{ redirectUris: string[] }>;
+      };
+    };
+    try {
+      expect(internals.registeredClientsByClientId).to.be.instanceOf(Map);
+      const ids: string[] = [];
+      const redirect_uris = ['http://localhost:1/cb'];
+      for (let i = 0; i < 5010; i++) {
+        ids.push((await proxy.registerClient({ redirect_uris })).client_id);
+      }
+      expect(internals.registeredClientsByClientId.size).to.equal(5000);
+      expect(internals.registeredClientsByClientId.has(ids[0])).to.equal(false);
+      for (const id of ids.slice(0, 10)) {
+        expect(
+          (await internals.stateStore.getRegisteredClientByClientId(id))
+            .redirectUris,
+        ).to.deep.equal(redirect_uris);
+        expect(internals.registeredClientsByClientId.size).to.equal(5000);
+      }
+    } finally {
+      proxy.destroy();
+    }
+  });
+
   before(() => {
     originalAdditionalPatterns =
       process.env.OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS;
