@@ -71,7 +71,22 @@ describe('site skills', function () {
     await seedShop();
     const body = loadSiteSkill('shop.example/search');
     expect(body).to.include('SITE SKILL:');
-    expect(body).to.include('## Purpose');
+    expect(body).to.include(SKILL_BODY);
+    expect(body).to.include(
+      '{ "method": "reportSkillOutcome", "params": { "domain": "shop.example", "task": "search", "success": <bool> } }',
+    );
+    expect(body).to.include('before reportOutcome');
+    expect(body).to.include(
+      'success: false if a step in this recipe failed as written',
+    );
+    expect(body).to.include('even if you finished another way');
+    expect(body).to.include('failure_reason: "site_changed"');
+    expect(body).to.include(
+      "Cosmetic differences that didn't break a step are still success: true.",
+    );
+    expect(body).to.match(
+      /Search the catalog\.\nWhen you finish,[^\n]+\n--- END SITE SKILL ---$/,
+    );
   });
 
   it('returns null for an unknown id', function () {
