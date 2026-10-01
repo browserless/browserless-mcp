@@ -15,7 +15,10 @@ numbers, security codes, passwords, or one-time codes.
    cents. Keep every amount in integer USD minor units (cents) and verify the
    cart sum exactly matches `amount_minor`.
 2. Call `browserless_link_connect` with `action: "status"`. If the wallet is
-   not connected, stop and give the user the connection instruction. Do not
+   not connected, call `browserless_link_connect` again with `action: "connect"`
+   to obtain the Stripe-owned `authorization_url`, give that URL to the user, and
+   stop until they have connected. The `status` action never returns a URL, so
+   relaying its instruction alone leaves the user with no way to connect. Do not
    bypass the Browserless account-owner connection flow.
 3. Before initiating a purchase, state the merchant, items, and exact total and
    obtain the user's clear approval when it is not already explicit in the
