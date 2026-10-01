@@ -302,7 +302,7 @@ export const StripeLinkCheckoutParamsSchema = z
       ),
     cart: CartSchema.optional().describe('Required for create.'),
     selectors: SelectorsSchema.optional().describe(
-      'Required for plain card forms; omit for Stripe-hosted checkout. The backend detects Link Pay Token support.',
+      'Required whenever a card form is shown, including Stripe-hosted checkout — its Link CLI one-time-card variant shows an AI-agent steering checkbox yet still renders a card form. Omit only for a pure Link Pay Token handoff: a link_pay_token input with no card form.',
     ),
     checkout_id: CheckoutIdSchema.optional().describe(
       'Required for resume, cancel, and report.',
@@ -315,7 +315,7 @@ export const StripeLinkCheckoutParamsSchema = z
   .describe(
     'Stripe Link checkout in the active browser session. Required fields ' +
       'depend on `action`: create needs merchant, amount_minor, currency, ' +
-      'cart (and selectors for plain card forms); resume and cancel need checkout_id; report needs ' +
+      'cart (and selectors whenever a card form is shown); resume and cancel need checkout_id; report needs ' +
       'checkout_id and outcome. The Link card is billed in USD — switch the checkout to USD before create when the option exists.',
   );
 
@@ -464,7 +464,7 @@ export function registerStripeLinkCheckoutTool(
       name: 'browserless_link_checkout',
       description:
         'Create, resume, cancel, or report a Stripe Link checkout in the exact active browser session. ' +
-        'Create requires the latest browserless_agent sessionId. Plain card forms require payment-field deep selectors; omit selectors for Stripe-hosted checkout. ' +
+        'Create requires the latest browserless_agent sessionId. Pass payment-field deep selectors whenever a card form is shown, including Stripe-hosted checkout; omit them only for a pure Link Pay Token handoff. ' +
         'Resume retrieves and fills only after Link approval; payment credentials never reach this tool.',
       parameters: StripeLinkCheckoutParamsSchema,
       annotations: {
