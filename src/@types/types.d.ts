@@ -692,6 +692,9 @@ export interface StripeLinkCheckoutSelectors {
   exp_year?: string;
   postal?: string;
   cardholder_name?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
 }
 
 export type StripeLinkCheckoutRequest =
