@@ -55,8 +55,9 @@ numbers, security codes, passwords, or one-time codes.
    payment (Link Pay Token path). A returned `submitted` is the terminal result
    for a one-time card: Link cannot confirm the merchant's charge, so success is
    confirmable only on the merchant side. Clear the secret gate now — the card
-   is already spent, so a `Browserless.clearSecrets` call via `browserless_agent`
-   is safe — then read the merchant's own confirmation or receipt page and tell
+   is already spent, so sending `browserless_agent` the command
+   `{ "method": "clearSecrets" }` is safe — then read the merchant's own
+   confirmation or receipt page and tell
    the user what it shows. Never resume or resubmit after `submitted`. While the
    result is still resumable (`_next.action: "resume"`), follow it for pending
    confirmation; never submit again. If blocked or abandoned, report that
