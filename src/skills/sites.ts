@@ -73,6 +73,10 @@ export const loadSiteSkill = (id: string): string | null => {
   return [
     `--- SITE SKILL: ${skill.id} ---`,
     skill.body.trimEnd(),
+    `When you finish, put { "method": "reportSkillOutcome", "params": { "domain": "${skill.host}", "task": "${skill.slug}", "success": <bool> } } ` +
+      `in your last commands batch, before reportOutcome. Send success: false if a step in this recipe failed as written, ` +
+      `even if you finished another way; use failure_reason: "site_changed" when a URL or element no longer matches. ` +
+      `Cosmetic differences that didn't break a step are still success: true.`,
     '--- END SITE SKILL ---',
   ].join('\n');
 };
