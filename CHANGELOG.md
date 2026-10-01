@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.34.0](https://github.com/browserless/browserless-mcp/compare/v1.33.0...v1.34.0) (2026-10-01)
+
+
+### Features
+
+* support hosted Link checkout without card selectors ([#347](https://github.com/browserless/browserless-mcp/issues/347)) ([68b96c4](https://github.com/browserless/browserless-mcp/commit/68b96c494e4e2256ebc1d07be00212af9412944f))
+
+
+### Bug Fixes
+
+* bound OAuth client registration resources ([#359](https://github.com/browserless/browserless-mcp/issues/359)) ([9a93af3](https://github.com/browserless/browserless-mcp/commit/9a93af3e1b5e7f699c5edefcf3bf7bcb91e7bc48))
+* improve credential discovery and command feedback ([#348](https://github.com/browserless/browserless-mcp/issues/348)) ([4b2f02f](https://github.com/browserless/browserless-mcp/commit/4b2f02f99c1adc4bc904d094cafc33c5fc44d185))
+
 ## [1.33.0](https://github.com/browserless/browserless-mcp/compare/v1.32.0...v1.33.0) (2026-09-25)
 
 
