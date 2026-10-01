@@ -298,7 +298,7 @@ export const StripeLinkCheckoutParamsSchema = z
       .literal('usd')
       .optional()
       .describe(
-        'Required for create; must be "usd". The Link card is billed in USD, so switch a geo-localized checkout (e.g. RSD/EUR) to USD with its currency selector before creating when the option exists — a non-USD charge may be declined for currency mismatch. If no USD option is available, proceed anyway; it may still succeed.',
+        'Required for create; must be "usd". The Link card is billed in USD, so switch a geo-localized checkout (e.g. RSD/EUR) to USD with its currency selector before creating when the option exists — a non-USD charge may be declined for currency mismatch. If no USD option is available, stop and tell the user rather than proceeding: a non-USD price cannot form a correct USD amount, so never pass a foreign-currency amount as USD cents.',
       ),
     cart: CartSchema.optional().describe('Required for create.'),
     selectors: SelectorsSchema.optional().describe(
