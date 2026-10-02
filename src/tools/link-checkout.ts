@@ -63,7 +63,9 @@ const CHECKOUT_VALIDATION_ERROR_PATTERNS: RegExp[] = [
 ];
 const isPassThroughCheckoutError = (message: string): boolean =>
   CHECKOUT_VALIDATION_ERRORS.has(message) ||
-  CHECKOUT_VALIDATION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+  CHECKOUT_VALIDATION_ERROR_PATTERNS.some(
+    (pattern) => pattern.exec(message)?.[0] === message,
+  );
 const STATUSES = new Set([
   'created',
   'pending_approval',

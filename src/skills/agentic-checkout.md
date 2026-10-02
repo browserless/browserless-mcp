@@ -63,9 +63,8 @@ numbers, security codes, passwords, or one-time codes.
    for a one-time card: Link cannot confirm the merchant's charge, so success is
    confirmable only on the merchant side. Read the merchant's own confirmation
    or receipt page from a `snapshot` — card values stay redacted, so no gate
-   clear is needed to read it — and tell the user what it shows. Only if you
-   need a screenshot, clear the gate now; the card is already spent, so sending
-   `browserless_agent` the command `{ "method": "clearSecrets" }` is safe. Never resume or resubmit after `submitted`. While the
+   clear is needed to read it — and tell the user what it shows. Never resume or
+   resubmit after `submitted`. While the
    result is still resumable (`_next.action: "resume"`), follow it for pending
    confirmation; never submit again. If blocked or abandoned, report that
    outcome instead. Use `action: "cancel"` if the user abandons before fill.

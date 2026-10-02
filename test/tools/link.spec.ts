@@ -424,6 +424,12 @@ describe('Stripe Link tools', () => {
       'amount_minor must be an integer between 50 and 500000 lpt_secret_x',
       'could not continue safely',
     ],
+    // JS `$` matches before a final newline, so a recognized message with a
+    // trailing newline must still collapse to the generic message.
+    [
+      'amount_minor must be an integer between 50 and 500000\n',
+      'could not continue safely',
+    ],
   ]) {
     it(`surfaces only safe checkout validation errors: ${message}`, async () => {
       const browser = await makeRespondingServer(
