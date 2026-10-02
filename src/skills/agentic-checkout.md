@@ -25,8 +25,9 @@ numbers, security codes, passwords, or one-time codes.
    current request.
 4. Copy the latest `sessionId` returned by `browserless_agent`. Call
    `browserless_link_checkout` with `action: "create"`, that
-   `browser_session_handle`, and the merchant/cart/total. Before filling,
-   retain the observed Pay/Submit selector for the later click. Whenever the
+   `browser_session_handle`, and the merchant/cart/total. Note the Pay/Submit
+   control for the later click — before the fill, or from the redacted snapshot
+   after it. Whenever the
    page shows a card form, copy the exact deep selectors for card number, CVC,
    combined expiry (or separate month/year), and any required postal/name fields
    into `selectors` — including Stripe-hosted checkout, whose Link CLI (one-time
@@ -50,19 +51,21 @@ numbers, security codes, passwords, or one-time codes.
    card with an email header replaced the card form. It waits a bounded time
    and retries once with a fresh token; no transition returns `blocked` and
    cancels the checkout. Do not submit unless the result is `filled`.
-   Capture and page-content reads remain blocked until the checkout reaches a
-   terminal result: until then never clear secret gates, take a snapshot, or
-   invent a readiness predicate. Use `browserless_agent` to click the
-   previously observed Pay/Submit selector once. Then call checkout with
+   Pixel captures (screenshot, PDF, live URL) and `evaluate` stay blocked until
+   the checkout reaches a terminal result, but a structured `snapshot` stays
+   available after the fill — the registered card values are redacted from it —
+   so use it to locate the Pay/Submit control, then use `browserless_agent` to
+   click that selector once. Never clear secret gates before a terminal result
+   or invent a readiness predicate. Then call checkout with
    `action: "report", outcome: "success"` to request backend confirmation, not
    to assert the payment succeeded. A returned `succeeded` is a Link-confirmed
    payment (Link Pay Token path). A returned `submitted` is the terminal result
    for a one-time card: Link cannot confirm the merchant's charge, so success is
-   confirmable only on the merchant side. Clear the secret gate now — the card
-   is already spent, so sending `browserless_agent` the command
-   `{ "method": "clearSecrets" }` is safe — then read the merchant's own
-   confirmation or receipt page and tell
-   the user what it shows. Never resume or resubmit after `submitted`. While the
+   confirmable only on the merchant side. Read the merchant's own confirmation
+   or receipt page from a `snapshot` — card values stay redacted, so no gate
+   clear is needed to read it — and tell the user what it shows. Only if you
+   need a screenshot, clear the gate now; the card is already spent, so sending
+   `browserless_agent` the command `{ "method": "clearSecrets" }` is safe. Never resume or resubmit after `submitted`. While the
    result is still resumable (`_next.action: "resume"`), follow it for pending
    confirmation; never submit again. If blocked or abandoned, report that
    outcome instead. Use `action: "cancel"` if the user abandons before fill.

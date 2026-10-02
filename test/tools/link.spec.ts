@@ -410,6 +410,13 @@ describe('Stripe Link tools', () => {
       'Payment field selector was not found',
     ],
     ['selectors are required: lpt_secret', 'could not continue safely'],
+    // Coordinator validation messages that carry a cart index or a numeric
+    // bound are matched by pattern and forwarded verbatim.
+    ['cart[0].name is invalid', 'cart[0].name is invalid'],
+    [
+      'amount_minor must be an integer between 50 and 500000',
+      'amount_minor must be an integer between 50 and 500000',
+    ],
   ]) {
     it(`surfaces only safe checkout validation errors: ${message}`, async () => {
       const browser = await makeRespondingServer(
