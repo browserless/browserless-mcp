@@ -1436,6 +1436,7 @@ export const closeSession = (
   }
   retainedPersonas.delete(key);
   retainedProxies.delete(key);
+  retainedProfiles.delete(key);
 };
 
 /**
