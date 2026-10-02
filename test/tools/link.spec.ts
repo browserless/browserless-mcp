@@ -417,6 +417,13 @@ describe('Stripe Link tools', () => {
       'amount_minor must be an integer between 50 and 500000',
       'amount_minor must be an integer between 50 and 500000',
     ],
+    // A pattern-shaped prefix with trailing secret data breaks the `$` anchor,
+    // so it must collapse to the generic message rather than leak through the
+    // regex path.
+    [
+      'amount_minor must be an integer between 50 and 500000 lpt_secret_x',
+      'could not continue safely',
+    ],
   ]) {
     it(`surfaces only safe checkout validation errors: ${message}`, async () => {
       const browser = await makeRespondingServer(
