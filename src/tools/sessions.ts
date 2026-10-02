@@ -18,7 +18,6 @@ import {
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import { isCompliant } from './compliance.js';
-import { DEFAULT_REPLAY_CDN_URL } from '../config.js';
 import type { McpConfig } from '../@types/types.js';
 
 export const SessionsParamsSchema = z.object({
@@ -88,8 +87,6 @@ interface ReplayEntry {
   duration: number | null;
   eventCount: number | null;
   timestamp: number | null;
-  // Only selected for the download path; the list never renders it.
-  path?: string | null;
 }
 
 interface OpIntegration {
@@ -154,6 +151,19 @@ const PERSISTENT_QUERY = `
   }
 `;
 
+// Replay storage is private: the server issues a short-lived signed `url`
+// only to the replay's owner, so it is requested per download, not listed.
+const REPLAY_QUERY = `
+  query SessionReplay($apiToken: String!, $sessionId: String!) {
+    sessionReplayBySessionId(apiToken: $apiToken, sessionId: $sessionId) {
+      sessionId
+      website
+      timestamp
+      url
+    }
+  }
+`;
+
 // `apiKey` is deliberately not selected — it is token material.
 const REPLAYS_QUERY = `
   query SessionReplays(
@@ -174,7 +184,6 @@ const REPLAYS_QUERY = `
         duration
         eventCount
         timestamp
-        path
       }
       totalCount
       page
@@ -419,25 +428,21 @@ export function registerSessionsTool(
               'A sessionId is required to download a replay. List them with action "replays" first.',
             );
           }
-          // Search by id rather than paging the whole list to find one row.
-          const data = await accountQuery<{
-            sessionReplayList: SessionsResult['replays'];
-          }>(config, token, REPLAYS_QUERY, {
-            search: params.sessionId,
-            pageSize: 50,
-          });
-          const entry = (data.sessionReplayList?.data ?? []).find(
-            (row) => row.sessionId === params.sessionId,
-          );
-          if (!entry?.path) {
+          const { sessionReplayBySessionId: entry } = await accountQuery<{
+            sessionReplayBySessionId: {
+              website?: string | null;
+              timestamp?: number | null;
+              url?: string | null;
+            } | null;
+          }>(config, token, REPLAY_QUERY, { sessionId: params.sessionId });
+          if (!entry?.url) {
             throw new UserError(
               `No replay found for session "${params.sessionId}". It may have been deleted or expired.`,
             );
           }
 
           const artifact = await fetchReplayArtifact(
-            config.replayCdnUrl ?? DEFAULT_REPLAY_CDN_URL,
-            entry.path,
+            entry.url,
             {
               sessionId: params.sessionId,
               website: entry.website ?? undefined,
