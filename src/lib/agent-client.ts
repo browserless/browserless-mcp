@@ -1197,6 +1197,11 @@ export const getOrCreateSession = async (
         'Recording mode is fixed when a browser session opens. Close the session before changing it.',
       );
     }
+    if (profile !== undefined && (session.profile ?? undefined) !== profile) {
+      throw new PersonaConflictError(
+        'Profile is fixed when a browser session opens. Close the session before changing it.',
+      );
+    }
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     return session;
   }

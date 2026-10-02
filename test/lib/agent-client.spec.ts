@@ -1662,6 +1662,34 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('rejects a conflicting profile while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const open = (mcpSessionId: string, profile: string) =>
+        getOrCreateSession(
+          mcpSessionId,
+          server.url,
+          'tok',
+          undefined,
+          profile,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'shared-pending-profile',
+        );
+
+      const first = open('mcp-pending-profile-a', 'first-profile');
+      const second = open('mcp-pending-profile-b', 'second-profile').catch(
+        (error: unknown) => error,
+      );
+      expect((await first).profile).to.equal('first-profile');
+      expect(await second).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects persona before allocating a profile-creation session', async () => {
     const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
       new Response(JSON.stringify({ id: 'created-profile' }), {
