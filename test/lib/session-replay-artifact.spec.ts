@@ -171,9 +171,8 @@ describe('fetchReplayArtifact', () => {
   });
   afterEach(() => sinon.restore());
 
-  // The origin check only covers the first hop, so following a redirect would
-  // let the CDN move the download to another origin.
-  it('refuses to follow a redirect off the configured origin', async () => {
+  // The signed link is the only location the server vouched for.
+  it('refuses to follow a redirect away from the signed link', async () => {
     fetchStub.resolves(
       new Response(null, {
         status: 302,
@@ -183,8 +182,7 @@ describe('fetchReplayArtifact', () => {
 
     try {
       await fetchReplayArtifact(
-        'https://cdn.example.com/',
-        'replays/a.json',
+        'https://replays.example/a.json?X-Amz-Signature=sig',
         { sessionId: 'a' },
         1000,
       );

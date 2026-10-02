@@ -73,21 +73,16 @@ const replayFilename = (
     .filter(Boolean)
     .join('-') + `.${extension}`;
 
-// The path is origin-checked against the configured base, so a server-supplied
-// value cannot redirect the fetch somewhere else.
+// `signedUrl` is the short-lived link the account API issues to the replay's
+// owner. Only http(s) links are fetched, and redirects are never followed.
 export const fetchReplayArtifact = async (
-  cdnUrl: string,
-  path: string,
+  signedUrl: string,
   meta: { sessionId: string; website?: string; timestamp?: number },
   timeoutMs: number,
 ): Promise<ReplayArtifact> => {
-  const base = new URL(cdnUrl.endsWith('/') ? cdnUrl : `${cdnUrl}/`);
-  const requestUrl = new URL(path.replace(/^\/+/, ''), base);
-
-  if (requestUrl.origin !== base.origin) {
-    throw new UserError(
-      'The replay path does not resolve to the configured replay CDN origin.',
-    );
+  const requestUrl = URL.parse(signedUrl);
+  if (!requestUrl || !['http:', 'https:'].includes(requestUrl.protocol)) {
+    throw new UserError('The account API returned an invalid replay link.');
   }
 
   const controller = new AbortController();
@@ -96,8 +91,7 @@ export const fetchReplayArtifact = async (
   try {
     response = await fetch(requestUrl.toString(), {
       signal: controller.signal,
-      // The origin check above only covers the first hop; following a redirect
-      // would let the CDN move the download off the configured origin.
+      // Never follow a redirect away from the signed storage link.
       redirect: 'manual',
     });
   } finally {
@@ -106,7 +100,7 @@ export const fetchReplayArtifact = async (
 
   if (response.status >= 300 && response.status < 400) {
     throw new UserError(
-      'The replay CDN redirected the download. Refusing to follow it off the configured origin.',
+      'Replay storage redirected the download. Refusing to follow it.',
     );
   }
 

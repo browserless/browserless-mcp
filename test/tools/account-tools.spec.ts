@@ -14,7 +14,6 @@ const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://runtime.example.com',
   apiServerUrl: 'https://account.example.com',
-  replayCdnUrl: 'https://replay.example.com/',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -374,21 +373,14 @@ describe('account-data tools', () => {
     });
 
     describe("action 'replay'", () => {
-      const listResponse = (path: string | null) => ({
-        sessionReplayList: {
-          data: [
-            {
-              sessionId: 'sr_1',
-              website: 'https://example.com',
-              duration: 12000,
-              eventCount: 42,
-              timestamp: 1700000000,
-              path: path,
-            },
-          ],
-          totalCount: 1,
-          page: 1,
-          totalPages: 1,
+      const SIGNED_URL =
+        'https://replays.example/abc/sr_1.json?X-Amz-Signature=sig';
+      const replayResponse = (url: string | null) => ({
+        sessionReplayBySessionId: {
+          sessionId: 'sr_1',
+          website: 'https://example.com',
+          timestamp: 1700000000,
+          url,
         },
       });
 
@@ -412,8 +404,8 @@ describe('account-data tools', () => {
         }
       });
 
-      it('fetches the artifact from the replay CDN and attaches a player resource', async () => {
-        fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
+      it('fetches the artifact from the signed link and attaches a player resource', async () => {
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
         fetchStub.onSecondCall().resolves(
           new Response(JSON.stringify(artifact), {
             status: 200,
@@ -426,9 +418,13 @@ describe('account-data tools', () => {
           mockContext,
         )) as { content: Content[] };
 
-        // Second call is the CDN, not the account API.
-        expect(fetchStub.secondCall.args[0]).to.include('replay.example.com');
-        expect(fetchStub.secondCall.args[0]).to.include('abc/sr_1.json');
+        // First call asks the account API for this replay's signed link;
+        // the second downloads exactly that link.
+        expect(requestBody(fetchStub).query).to.include(
+          'sessionReplayBySessionId',
+        );
+        expect(requestBody(fetchStub).variables.sessionId).to.equal('sr_1');
+        expect(String(fetchStub.secondCall.args[0])).to.equal(SIGNED_URL);
 
         const resource = result.content.find(
           (c) => (c as { type: string }).type === 'resource',
@@ -446,7 +442,7 @@ describe('account-data tools', () => {
       // The model must be steered to a command, not to reading the artifact:
       // it previously jq'd a 460 KB player file into the context window.
       const primeReplay = () => {
-        fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
         fetchStub.onSecondCall().resolves(
           new Response(JSON.stringify(artifact), {
             status: 200,
@@ -504,7 +500,7 @@ describe('account-data tools', () => {
       });
 
       it('errors clearly when the replay has no stored artifact', async () => {
-        fetchStub.onFirstCall().resolves(gql(listResponse(null)));
+        fetchStub.onFirstCall().resolves(gql(replayResponse(null)));
 
         try {
           await executeFor(registerSessionsTool)(
@@ -517,10 +513,10 @@ describe('account-data tools', () => {
         }
       });
 
-      it('rejects a path that escapes the configured CDN origin', async () => {
+      it('rejects a replay link that is not http(s)', async () => {
         fetchStub
           .onFirstCall()
-          .resolves(gql(listResponse('https://evil.example.com/steal.json')));
+          .resolves(gql(replayResponse('file:///etc/passwd')));
 
         try {
           await executeFor(registerSessionsTool)(
@@ -529,8 +525,9 @@ describe('account-data tools', () => {
           );
           expect.fail('expected a UserError');
         } catch (error) {
-          expect((error as Error).message).to.include('CDN origin');
+          expect((error as Error).message).to.include('invalid replay link');
         }
+        expect(fetchStub.callCount).to.equal(1);
       });
     });
 
