@@ -360,20 +360,36 @@ export const dropMcpSession = (id: string | undefined): void => {
   if (id) mcpSeenAt.delete(id);
 };
 
-const closeAndDelete = (key: string, reason: string): void => {
-  const session = sessions.get(key);
-  if (!session) return;
-  try {
-    session.ws.close();
-  } catch {
-    /* ignore */
-  }
+const properClose = (
+  key: string,
+  session: ActiveSession,
+  reason: string,
+): void => {
+  const ws = session.ws;
+  // Unlike send(), cleanup must never reconnect and launch a new browser.
+  const closing =
+    ws.readyState === WebSocket.OPEN
+      ? sendMessage(ws, { id: ++session.msgId, method: 'close', params: {} })
+      : Promise.resolve();
+  // Stop reuse and repeated eviction while the close response is in flight.
   sessions.delete(key);
-  console.error(`[agent-client] evicted session key=${key} reason=${reason}`);
+  void closing
+    .catch(() => {
+      /* browser may already be gone */
+    })
+    .finally(() => {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      console.error(
+        `[agent-client] evicted session key=${key} reason=${reason}`,
+      );
+    });
 };
 
-// Sweep idle sessions and enforce a hard cap. Called on every
-// getOrCreateSession; cheap because the map is bounded.
+// Sweep periodically and on getOrCreateSession; the map is bounded.
 export const sweepSessions = (
   now = Date.now(),
   maxSessions = MAX_SESSIONS,
@@ -384,7 +400,7 @@ export const sweepSessions = (
       continue;
     }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
-      closeAndDelete(key, 'idle');
+      properClose(key, session, 'idle');
     }
   }
   if (sessions.size <= maxSessions) return;
@@ -396,9 +412,17 @@ export const sweepSessions = (
     )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
-  for (const [key] of oldest) {
-    closeAndDelete(key, 'cap');
+  for (const [key, session] of oldest) {
+    properClose(key, session, 'cap');
   }
+};
+
+let sweepTimer: ReturnType<typeof setInterval> | undefined;
+export const startSweepTimer = (): void => {
+  if (sweepTimer) return;
+  const ms = Number(process.env.MCP_SWEEP_MS) || 60_000;
+  sweepTimer = setInterval(() => sweepSessions(), ms);
+  sweepTimer.unref();
 };
 
 // Separator between the host segment (mcpSessionId or stdio:<hash>) and
