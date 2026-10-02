@@ -1169,6 +1169,59 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('retains the profile on an echoed handle and rejects a conflicting profile', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-profile',
+        server.url,
+        'tok',
+        undefined,
+        'my-profile',
+      );
+      expect(opened.profile).to.equal('my-profile');
+
+      // Omitting `profile` on a follow-up must reconnect to the same hydrated
+      // session, not silently open a blank, un-hydrated one.
+      const resumed = await getOrCreateSession(
+        'mcp-profile-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+      expect(resumed.ws).to.equal(opened.ws);
+      expect(resumed.profile).to.equal('my-profile');
+
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-profile-2',
+          server.url,
+          'tok',
+          undefined,
+          'other-profile',
+          undefined,
+          undefined,
+          false,
+          undefined,
+          opened.handle,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect((thrown as Error).message).to.match(/profile is fixed/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('keeps a proxy-backed persona when only the handle is repeated', async () => {
     const server = await makeAcceptingServer();
     try {
