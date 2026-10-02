@@ -319,6 +319,11 @@ const pending = new Map<string, Promise<ActiveSession>>();
 const retainedPersonas = new Map<string, PersonaOptions>();
 // null is an explicit no-proxy configuration; absence means no retained state.
 const retainedProxies = new Map<string, ProxyOptions | null>();
+// Profile is retained like proxy so an echoed handle reconnects to — or, after
+// eviction, recreates — the same hydrated session without the caller repeating
+// `profile` on every call. null is an explicit no-profile session; absence
+// means no retained state.
+const retainedProfiles = new Map<string, string | null>();
 
 /** Resolve only the already-open handled browser; never reconnect or adopt. */
 export const getActiveSessionByHandle = (
@@ -456,10 +461,13 @@ export const getSessionKey = (
   KEY_SEP +
   'conv#' +
   sessionHandle(mcpSessionId, token, echoedSessionId) +
-  // A returned handle identifies proxy state; profile and integration bindings
-  // remain contractual scope and must be repeated on every call.
+  // A returned handle identifies proxy and profile state, so neither is folded
+  // into the key for an echoed handle; integration bindings remain contractual
+  // scope and must be repeated on every call.
   (echoedSessionId ? '' : proxyFingerprint(proxy)) +
-  (profile ? KEY_SEP + 'profile#' + hashToken(profile) : '') +
+  (echoedSessionId || !profile
+    ? ''
+    : KEY_SEP + 'profile#' + hashToken(profile)) +
   (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
   (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
   // Different integration scope must key to a different WS. Sorted so domain
@@ -1080,6 +1088,25 @@ export const getOrCreateSession = async (
     retainedProxies.set(key, retainedProxy ?? null);
   }
 
+  const hasRetainedProfile = retainedProfiles.has(key);
+  const retainedProfile = retainedProfiles.get(key);
+  if (
+    hasRetainedProfile &&
+    profile !== undefined &&
+    (retainedProfile ?? undefined) !== profile
+  ) {
+    throw new PersonaConflictError(
+      'Profile is fixed when a browser session opens. Close the session before changing it.',
+    );
+  }
+  const effectiveProfile = hasRetainedProfile
+    ? (retainedProfile ?? undefined)
+    : profile;
+  if (hasRetainedProfile) {
+    retainedProfiles.delete(key);
+    retainedProfiles.set(key, retainedProfile ?? null);
+  }
+
   if (
     retainedPersona &&
     requestedPersona &&
@@ -1108,6 +1135,16 @@ export const getOrCreateSession = async (
   ) {
     throw new PersonaConflictError(
       'Proxy options are fixed when a browser session opens. Close the session before changing them.',
+    );
+  }
+
+  if (
+    existing &&
+    profile !== undefined &&
+    (existing.profile ?? undefined) !== profile
+  ) {
+    throw new PersonaConflictError(
+      'Profile is fixed when a browser session opens. Close the session before changing it.',
     );
   }
 
@@ -1160,6 +1197,11 @@ export const getOrCreateSession = async (
         'Recording mode is fixed when a browser session opens. Close the session before changing it.',
       );
     }
+    if (profile !== undefined && (session.profile ?? undefined) !== profile) {
+      throw new PersonaConflictError(
+        'Profile is fixed when a browser session opens. Close the session before changing it.',
+      );
+    }
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     return session;
   }
@@ -1197,7 +1239,7 @@ export const getOrCreateSession = async (
       apiUrl,
       token,
       effectiveProxy,
-      profile,
+      effectiveProfile,
       creationSessionId,
       compliant,
       source,
@@ -1214,7 +1256,7 @@ export const getOrCreateSession = async (
       apiUrl,
       token,
       proxy: effectiveProxy,
-      profile,
+      profile: effectiveProfile,
       createProfile,
       creationSessionId,
       source,
@@ -1249,6 +1291,13 @@ export const getOrCreateSession = async (
       const oldest = retainedProxies.keys().next().value;
       if (oldest === undefined) break;
       retainedProxies.delete(oldest);
+    }
+    retainedProfiles.delete(key);
+    retainedProfiles.set(key, effectiveProfile ?? null);
+    while (retainedProfiles.size > MAX_RETAINED_CONFIGS) {
+      const oldest = retainedProfiles.keys().next().value;
+      if (oldest === undefined) break;
+      retainedProfiles.delete(oldest);
     }
 
     // Auto-cleanup on close
@@ -1392,6 +1441,7 @@ export const closeSession = (
   }
   retainedPersonas.delete(key);
   retainedProxies.delete(key);
+  retainedProfiles.delete(key);
 };
 
 /**
