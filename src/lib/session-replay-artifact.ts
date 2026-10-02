@@ -80,13 +80,8 @@ export const fetchReplayArtifact = async (
   meta: { sessionId: string; website?: string; timestamp?: number },
   timeoutMs: number,
 ): Promise<ReplayArtifact> => {
-  let requestUrl: URL;
-  try {
-    requestUrl = new URL(signedUrl);
-  } catch {
-    throw new UserError('The account API returned an invalid replay link.');
-  }
-  if (requestUrl.protocol !== 'https:' && requestUrl.protocol !== 'http:') {
+  const requestUrl = URL.parse(signedUrl);
+  if (!requestUrl || !['http:', 'https:'].includes(requestUrl.protocol)) {
     throw new UserError('The account API returned an invalid replay link.');
   }
 
