@@ -41,6 +41,31 @@ const CHECKOUT_VALIDATION_ERRORS = new Set([
     'city',
   ].map((field) => `selectors.${field} is invalid`),
 ]);
+// Coordinator-owned checkout-input validation messages. They describe the
+// caller's own merchant/cart/amount payload, carry no session or credential
+// detail, and are actionable, so forward them verbatim. Patterns because cart
+// messages carry a line index and the amount messages carry the configured
+// bound.
+const CHECKOUT_VALIDATION_ERROR_PATTERNS: RegExp[] = [
+  /^Checkout body must be an object$/,
+  /^merchant is required$/,
+  /^merchant\.name is invalid$/,
+  /^merchant\.url is invalid$/,
+  /^merchant\.url must be an absolute HTTP\(S\) URL$/,
+  /^currency must be usd$/,
+  /^amount_minor must be an integer between \d+ and \d+$/,
+  /^amount_minor must equal the sum of cart quantity \* unit_amount_minor$/,
+  /^cart must contain between 1 and 100 lines$/,
+  /^cart\[\d+\] must be an object$/,
+  /^cart\[\d+\]\.name is invalid$/,
+  /^cart\[\d+\]\.quantity must be an integer between \d+ and \d+$/,
+  /^cart\[\d+\]\.unit_amount_minor must be an integer between \d+ and \d+$/,
+];
+const isPassThroughCheckoutError = (message: string): boolean =>
+  CHECKOUT_VALIDATION_ERRORS.has(message) ||
+  CHECKOUT_VALIDATION_ERROR_PATTERNS.some(
+    (pattern) => pattern.exec(message)?.[0] === message,
+  );
 const STATUSES = new Set([
   'created',
   'pending_approval',
@@ -563,7 +588,7 @@ export function registerStripeLinkCheckoutTool(
           }
           if (response.error) {
             throw new UserError(
-              CHECKOUT_VALIDATION_ERRORS.has(response.error.message)
+              isPassThroughCheckoutError(response.error.message)
                 ? response.error.message
                 : 'Stripe Link checkout could not continue safely in this browser session.',
             );
