@@ -66,6 +66,19 @@ const isPassThroughCheckoutError = (message: string): boolean =>
   CHECKOUT_VALIDATION_ERROR_PATTERNS.some(
     (pattern) => pattern.exec(message)?.[0] === message,
   );
+const CHECKOUT_ERROR_CODES = new Set([
+  'SELECTOR_NOT_FOUND',
+  'NAVIGATION_TIMEOUT',
+  'TIMEOUT',
+  'BROWSER_CRASHED',
+  'INVALID_PARAMS',
+  'UNKNOWN_METHOD',
+  'RATE_LIMITED',
+  'INTERNAL_ERROR',
+  'TAB_NOT_FOUND',
+  'TAB_CLOSED',
+  'TAB_LIMIT_EXCEEDED',
+]);
 const STATUSES = new Set([
   'created',
   'pending_approval',
@@ -587,11 +600,29 @@ export function registerStripeLinkCheckoutTool(
             );
           }
           if (response.error) {
-            throw new UserError(
+            const code =
+              typeof response.error.code === 'string' &&
+              CHECKOUT_ERROR_CODES.has(response.error.code)
+                ? response.error.code
+                : undefined;
+            const retryable =
+              typeof response.error.retryable === 'boolean'
+                ? response.error.retryable
+                : undefined;
+            const error = new UserError(
               isPassThroughCheckoutError(response.error.message)
                 ? response.error.message
-                : 'Stripe Link checkout could not continue safely in this browser session.',
+                : 'Stripe Link checkout could not continue safely in this browser session.' +
+                    (code ? ` Error code: ${code}.` : '') +
+                    (retryable === true
+                      ? params.action === 'create'
+                        ? ' Close this browser session, then start a fresh session and retry once. Do not retry the command in the current session.'
+                        : ` Keep this browser session and checkout_id; retry once with the same ${params.action} command. Do not submit payment again or create another checkout.`
+                      : ''),
             );
+            if (code) Object.assign(error, { code });
+            if (retryable !== undefined) Object.assign(error, { retryable });
+            throw error;
           }
           const result = normalize(response.result);
           if (
@@ -670,6 +701,10 @@ export function registerStripeLinkCheckoutTool(
         cart_lines:
           params.action === 'create' ? params.cart?.length : undefined,
       }),
+      analyticsErrorProps: (params) =>
+        ['create', 'resume', 'cancel', 'report'].includes(params.action)
+          ? { action: params.action }
+          : {},
       format: (result) => [
         {
           type: 'text' as const,

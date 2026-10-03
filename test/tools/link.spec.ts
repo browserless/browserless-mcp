@@ -8,6 +8,7 @@ import {
   registerStripeLinkCheckoutTool,
 } from '../../src/tools/link-checkout.js';
 import { registerAgentTools } from '../../src/tools/agent.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
   closeSession,
@@ -80,12 +81,17 @@ const textOf = (result: unknown): string =>
   ((result as { content: Content[] }).content[0] as { text: string }).text;
 
 const captureExecute = (
-  register: (server: FastMCP, config: McpConfig) => void,
+  register: (
+    server: FastMCP,
+    config: McpConfig,
+    analytics?: AnalyticsHelper,
+  ) => void,
   config = mockConfig,
+  analytics?: AnalyticsHelper,
 ) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  register(server, config);
+  register(server, config, analytics);
   return addToolSpy.firstCall.args[0].execute;
 };
 
@@ -433,18 +439,29 @@ describe('Stripe Link tools', () => {
   ]) {
     it(`surfaces only safe checkout validation errors: ${message}`, async () => {
       const browser = await makeRespondingServer(
-        () => new AgentErrorFrame({ message }),
+        () =>
+          new AgentErrorFrame({
+            message,
+            code: 'INVALID_PARAMS',
+            retryable: false,
+          }),
       );
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
       try {
         const session = await getOrCreateSession(
           'validation',
           browser.url,
           mockConfig.browserlessToken!,
         );
-        const execute = captureExecute(registerStripeLinkCheckoutTool, {
-          ...mockConfig,
-          browserlessApiUrl: browser.url,
-        });
+        const execute = captureExecute(
+          registerStripeLinkCheckoutTool,
+          {
+            ...mockConfig,
+            browserlessApiUrl: browser.url,
+          },
+          analytics,
+        );
         let error: unknown;
         try {
           await execute(
@@ -463,11 +480,162 @@ describe('Stripe Link tools', () => {
         }
         expect(String(error)).to.include(expected);
         expect(String(error)).not.to.include('lpt_secret');
+        expect(fire.firstCall.args[2]).to.include({
+          error_code: 'INVALID_PARAMS',
+          retryable: false,
+        });
       } finally {
         await browser.close();
       }
     });
   }
+
+  it('does not publish an unvalidated checkout action to analytics', async () => {
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    const execute = captureExecute(
+      registerStripeLinkCheckoutTool,
+      mockConfig,
+      analytics,
+    );
+    await execute({ action: 'lpt_secret_action' }, mockContext).catch(() => {});
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).not.to.have.property('action');
+    expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+      'lpt_secret_action',
+    );
+  });
+
+  for (const action of ['create', 'resume', 'cancel', 'report'] as const) {
+    it(`surfaces safe diagnostics and action-aware retry guidance for ${action}`, async () => {
+      const browser = await makeRespondingServer(
+        () =>
+          new AgentErrorFrame({
+            code: 'NAVIGATION_TIMEOUT',
+            message: 'provider failed with lpt_secret',
+            retryable: true,
+            suggestion: 'retry with card 4242424242424242',
+          }),
+      );
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      try {
+        const session = await getOrCreateSession(
+          'safe-diagnostics',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const execute = captureExecute(
+          registerStripeLinkCheckoutTool,
+          { ...mockConfig, browserlessApiUrl: browser.url },
+          analytics,
+        );
+        const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+        if (action !== 'create') {
+          session.stripeLinkContinuation = {
+            checkoutId,
+            allowedNextAction: action === 'report' ? 'report' : 'resume',
+            validUntil: VALID_UNTIL_MS,
+          };
+        }
+
+        let error: unknown;
+        try {
+          await execute(
+            action === 'create'
+              ? {
+                  action: 'create',
+                  browser_session_handle: session.handle,
+                  merchant: {
+                    name: 'Shop',
+                    url: 'https://shop.example/checkout',
+                  },
+                  amount_minor: 1000,
+                  currency: 'usd',
+                  cart: [
+                    { name: 'Item', quantity: 1, unit_amount_minor: 1000 },
+                  ],
+                }
+              : {
+                  action,
+                  browser_session_handle: session.handle,
+                  checkout_id: checkoutId,
+                  ...(action === 'report' ? { outcome: 'success' } : {}),
+                },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+
+        expect(String(error)).to.include('NAVIGATION_TIMEOUT');
+        if (action === 'create') {
+          expect(String(error)).to.match(/close.*session.*fresh.*session/i);
+        } else {
+          expect(String(error)).to.include('Keep this browser session');
+          expect(String(error)).not.to.match(/close.*session|fresh.*session/i);
+          expect(String(error)).to.include('Do not submit payment again');
+          expect(session.stripeLinkContinuation?.checkoutId).to.equal(
+            checkoutId,
+          );
+        }
+        expect(String(error)).to.include('retry once');
+        expect(String(error)).not.to.match(/lpt_secret|4242424242424242/);
+        expect(fire.firstCall.args[2]).to.include({
+          action,
+          error_code: 'NAVIGATION_TIMEOUT',
+          error_reason: 'timeout',
+          retryable: true,
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  it('redacts unknown diagnostics and ignores non-boolean retryability', async () => {
+    const browser = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'lpt_secret_code',
+          message: 'private backend text',
+          retryable: 'true' as unknown as boolean,
+        }),
+    );
+    try {
+      const session = await getOrCreateSession(
+        'unsafe-diagnostics',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      let error: unknown;
+      try {
+        await execute(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+            amount_minor: 1000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).to.include('could not continue safely');
+      expect(String(error)).not.to.match(
+        /lpt_secret|private backend text|fresh.*session/i,
+      );
+    } finally {
+      await browser.close();
+    }
+  });
 
   it('directs an indeterminate create failure through browser-session cleanup', async () => {
     const browser = await makeRespondingServer(() => new Promise(() => {}));
