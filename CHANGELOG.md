@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.35.1](https://github.com/browserless/browserless-mcp/compare/v1.35.0...v1.35.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* resume an agent session by handle without re-passing its profile ([#372](https://github.com/browserless/browserless-mcp/issues/372)) ([fc98fde](https://github.com/browserless/browserless-mcp/commit/fc98fdea66518deba3b6e19066f6d9d33df7b446))
+* surface Link checkout validation errors to the caller ([#371](https://github.com/browserless/browserless-mcp/issues/371)) ([fcd7c14](https://github.com/browserless/browserless-mcp/commit/fcd7c14acbe0e27821f894f285c03ac08671f917))
+
 ## [1.35.0](https://github.com/browserless/browserless-mcp/compare/v1.34.0...v1.35.0) (2026-10-01)
 
 
