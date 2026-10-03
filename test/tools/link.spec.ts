@@ -506,60 +506,92 @@ describe('Stripe Link tools', () => {
     );
   });
 
-  it('surfaces allowlisted diagnostics and retry guidance without backend text', async () => {
-    const browser = await makeRespondingServer(
-      () =>
-        new AgentErrorFrame({
-          code: 'TIMEOUT',
-          message: 'provider failed with lpt_secret',
-          retryable: true,
-          suggestion: 'retry with card 4242424242424242',
-        }),
-    );
-    const analytics = new AnalyticsHelper(false);
-    const fire = sinon.stub(analytics, 'fireToolRequest');
-    try {
-      const session = await getOrCreateSession(
-        'safe-diagnostics',
-        browser.url,
-        mockConfig.browserlessToken!,
+  for (const action of ['create', 'resume', 'cancel', 'report'] as const) {
+    it(`surfaces safe diagnostics and action-aware retry guidance for ${action}`, async () => {
+      const browser = await makeRespondingServer(
+        () =>
+          new AgentErrorFrame({
+            code: 'NAVIGATION_TIMEOUT',
+            message: 'provider failed with lpt_secret',
+            retryable: true,
+            suggestion: 'retry with card 4242424242424242',
+          }),
       );
-      const execute = captureExecute(
-        registerStripeLinkCheckoutTool,
-        { ...mockConfig, browserlessApiUrl: browser.url },
-        analytics,
-      );
-
-      let error: unknown;
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
       try {
-        await execute(
-          {
-            action: 'create',
-            browser_session_handle: session.handle,
-            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
-            amount_minor: 1000,
-            currency: 'usd',
-            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
-          },
-          mockContext,
+        const session = await getOrCreateSession(
+          'safe-diagnostics',
+          browser.url,
+          mockConfig.browserlessToken!,
         );
-      } catch (caught) {
-        error = caught;
-      }
+        const execute = captureExecute(
+          registerStripeLinkCheckoutTool,
+          { ...mockConfig, browserlessApiUrl: browser.url },
+          analytics,
+        );
+        const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+        if (action !== 'create') {
+          session.stripeLinkContinuation = {
+            checkoutId,
+            allowedNextAction: action === 'report' ? 'report' : 'resume',
+            validUntil: VALID_UNTIL_MS,
+          };
+        }
 
-      expect(String(error)).to.include('TIMEOUT');
-      expect(String(error)).to.match(/close.*session.*fresh.*session/i);
-      expect(String(error)).to.include('retry once');
-      expect(String(error)).not.to.match(/lpt_secret|4242424242424242/);
-      expect(fire.firstCall.args[2]).to.include({
-        action: 'create',
-        error_code: 'TIMEOUT',
-        retryable: true,
-      });
-    } finally {
-      await browser.close();
-    }
-  });
+        let error: unknown;
+        try {
+          await execute(
+            action === 'create'
+              ? {
+                  action: 'create',
+                  browser_session_handle: session.handle,
+                  merchant: {
+                    name: 'Shop',
+                    url: 'https://shop.example/checkout',
+                  },
+                  amount_minor: 1000,
+                  currency: 'usd',
+                  cart: [
+                    { name: 'Item', quantity: 1, unit_amount_minor: 1000 },
+                  ],
+                }
+              : {
+                  action,
+                  browser_session_handle: session.handle,
+                  checkout_id: checkoutId,
+                  ...(action === 'report' ? { outcome: 'success' } : {}),
+                },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+
+        expect(String(error)).to.include('NAVIGATION_TIMEOUT');
+        if (action === 'create') {
+          expect(String(error)).to.match(/close.*session.*fresh.*session/i);
+        } else {
+          expect(String(error)).to.include('Keep this browser session');
+          expect(String(error)).not.to.match(/close.*session|fresh.*session/i);
+          expect(String(error)).to.include('Do not submit payment again');
+          expect(session.stripeLinkContinuation?.checkoutId).to.equal(
+            checkoutId,
+          );
+        }
+        expect(String(error)).to.include('retry once');
+        expect(String(error)).not.to.match(/lpt_secret|4242424242424242/);
+        expect(fire.firstCall.args[2]).to.include({
+          action,
+          error_code: 'NAVIGATION_TIMEOUT',
+          error_reason: 'timeout',
+          retryable: true,
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+  }
 
   it('redacts unknown diagnostics and ignores non-boolean retryability', async () => {
     const browser = await makeRespondingServer(

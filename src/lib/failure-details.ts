@@ -85,17 +85,19 @@ export function failureDetails(
       ? 'SELECTOR_MISS'
       : code === 'BROWSER_CRASHED'
         ? 'SESSION_LOST'
-        : code && Object.hasOwn(reasons, code)
-          ? (code as ErrorCategory)
-          : status === 401
-            ? 'UNAUTHORIZED'
-            : status === 403
-              ? 'FORBIDDEN'
-              : status === 404
-                ? 'NOT_FOUND'
-                : status !== undefined && status >= 500
-                  ? 'SERVER_ERROR'
-                  : 'UNKNOWN');
+        : code === 'NAVIGATION_TIMEOUT'
+          ? 'TIMEOUT'
+          : code && Object.hasOwn(reasons, code)
+            ? (code as ErrorCategory)
+            : status === 401
+              ? 'UNAUTHORIZED'
+              : status === 403
+                ? 'FORBIDDEN'
+                : status === 404
+                  ? 'NOT_FOUND'
+                  : status !== undefined && status >= 500
+                    ? 'SERVER_ERROR'
+                    : 'UNKNOWN');
   const reason = reasons[category];
   const source =
     options.source ??

@@ -615,7 +615,9 @@ export function registerStripeLinkCheckoutTool(
                 : 'Stripe Link checkout could not continue safely in this browser session.' +
                     (code ? ` Error code: ${code}.` : '') +
                     (retryable === true
-                      ? ' Close this browser session, then start a fresh session and retry once. Do not retry the command in the current session.'
+                      ? params.action === 'create'
+                        ? ' Close this browser session, then start a fresh session and retry once. Do not retry the command in the current session.'
+                        : ` Keep this browser session and checkout_id; retry once with the same ${params.action} command. Do not submit payment again or create another checkout.`
                       : ''),
             );
             if (code) Object.assign(error, { code });
