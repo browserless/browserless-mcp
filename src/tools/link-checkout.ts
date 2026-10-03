@@ -600,9 +600,6 @@ export function registerStripeLinkCheckoutTool(
             );
           }
           if (response.error) {
-            if (isPassThroughCheckoutError(response.error.message)) {
-              throw new UserError(response.error.message);
-            }
             const code =
               typeof response.error.code === 'string' &&
               CHECKOUT_ERROR_CODES.has(response.error.code)
@@ -613,11 +610,13 @@ export function registerStripeLinkCheckoutTool(
                 ? response.error.retryable
                 : undefined;
             const error = new UserError(
-              'Stripe Link checkout could not continue safely in this browser session.' +
-                (code ? ` Error code: ${code}.` : '') +
-                (retryable === true
-                  ? ' Close this browser session, then start a fresh session before retrying. Do not retry the command in the current session.'
-                  : ''),
+              isPassThroughCheckoutError(response.error.message)
+                ? response.error.message
+                : 'Stripe Link checkout could not continue safely in this browser session.' +
+                    (code ? ` Error code: ${code}.` : '') +
+                    (retryable === true
+                      ? ' Close this browser session, then start a fresh session and retry once. Do not retry the command in the current session.'
+                      : ''),
             );
             if (code) Object.assign(error, { code });
             if (retryable !== undefined) Object.assign(error, { retryable });
@@ -700,7 +699,10 @@ export function registerStripeLinkCheckoutTool(
         cart_lines:
           params.action === 'create' ? params.cart?.length : undefined,
       }),
-      analyticsErrorProps: (params) => ({ action: params.action }),
+      analyticsErrorProps: (params) =>
+        ['create', 'resume', 'cancel', 'report'].includes(params.action)
+          ? { action: params.action }
+          : {},
       format: (result) => [
         {
           type: 'text' as const,

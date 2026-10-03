@@ -439,18 +439,29 @@ describe('Stripe Link tools', () => {
   ]) {
     it(`surfaces only safe checkout validation errors: ${message}`, async () => {
       const browser = await makeRespondingServer(
-        () => new AgentErrorFrame({ message }),
+        () =>
+          new AgentErrorFrame({
+            message,
+            code: 'INVALID_PARAMS',
+            retryable: false,
+          }),
       );
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
       try {
         const session = await getOrCreateSession(
           'validation',
           browser.url,
           mockConfig.browserlessToken!,
         );
-        const execute = captureExecute(registerStripeLinkCheckoutTool, {
-          ...mockConfig,
-          browserlessApiUrl: browser.url,
-        });
+        const execute = captureExecute(
+          registerStripeLinkCheckoutTool,
+          {
+            ...mockConfig,
+            browserlessApiUrl: browser.url,
+          },
+          analytics,
+        );
         let error: unknown;
         try {
           await execute(
@@ -469,11 +480,31 @@ describe('Stripe Link tools', () => {
         }
         expect(String(error)).to.include(expected);
         expect(String(error)).not.to.include('lpt_secret');
+        expect(fire.firstCall.args[2]).to.include({
+          error_code: 'INVALID_PARAMS',
+          retryable: false,
+        });
       } finally {
         await browser.close();
       }
     });
   }
+
+  it('does not publish an unvalidated checkout action to analytics', async () => {
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    const execute = captureExecute(
+      registerStripeLinkCheckoutTool,
+      mockConfig,
+      analytics,
+    );
+    await execute({ action: 'lpt_secret_action' }, mockContext).catch(() => {});
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).not.to.have.property('action');
+    expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+      'lpt_secret_action',
+    );
+  });
 
   it('surfaces allowlisted diagnostics and retry guidance without backend text', async () => {
     const browser = await makeRespondingServer(
@@ -518,6 +549,7 @@ describe('Stripe Link tools', () => {
 
       expect(String(error)).to.include('TIMEOUT');
       expect(String(error)).to.match(/close.*session.*fresh.*session/i);
+      expect(String(error)).to.include('retry once');
       expect(String(error)).not.to.match(/lpt_secret|4242424242424242/);
       expect(fire.firstCall.args[2]).to.include({
         action: 'create',

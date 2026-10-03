@@ -24,7 +24,6 @@ const safeCodes = new Set([
   ...Object.keys(reasons),
   'SELECTOR_NOT_FOUND',
   'NAVIGATION_TIMEOUT',
-  'TIMEOUT',
   'BROWSER_CRASHED',
   'RATE_LIMITED',
   'INTERNAL_ERROR',
