@@ -3454,6 +3454,215 @@ describe('browserless_agent _prompt capture', () => {
   });
 });
 
+describe('browserless_agent reportProfileAuthentication', () => {
+  afterEach(() => sinon.restore());
+  const method = 'reportProfileAuthentication';
+  const params = {
+    targetId: 'OTHER-TAB',
+    checkpointId: 'example.com:first-page',
+    outcome: 'login_required',
+    newLoginActivity: false,
+  };
+
+  it('allows reporting after a fill without clearing capture protection', () => {
+    const commands = [{ method: 'loadSecret' }, { method, params }];
+    expect(() =>
+      validateSecretCaptureOrdering([...commands, { method: 'close' }]),
+    ).not.to.throw();
+    expect(() =>
+      validateSecretCaptureOrdering([...commands, { method: 'screenshot' }]),
+    ).to.throw('screenshot cannot run after loadSecret');
+    expect(secretVisibleAfter(true, method, { recorded: true })).to.equal(true);
+  });
+
+  it('rejects invalid single and batch reports before opening a connection', async () => {
+    const srv = await makeRespondingServer(() => ({ recorded: true }));
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const batch of [false, true]) {
+        for (const [invalid, field, message] of [
+          [{}, 'params.outcome', 'Invalid option'],
+          [
+            { ...params, outcome: 'logged_in' },
+            'params.outcome',
+            'Invalid option',
+          ],
+          [
+            { ...params, newLoginActivity: 'yes' },
+            'params.newLoginActivity',
+            'expected boolean',
+          ],
+        ] as const) {
+          let error: unknown;
+          try {
+            const command = { method, params: invalid };
+            await execute(
+              batch ? { commands: [command] } : command,
+              mockContext,
+            );
+          } catch (caught) {
+            error = caught;
+          }
+          expect(error).to.be.instanceOf(UserError);
+          expect(error).to.have.property('code', 'INVALID_PARAMS');
+          expect((error as Error).message)
+            .to.include(field)
+            .and.include(message);
+        }
+      }
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const recorded of [true, false]) {
+    it(`returns recorded=${recorded} and forwards explicit targets verbatim`, async () => {
+      const calls: Array<{ method: string; params: unknown }> = [];
+      const srv = await makeRespondingServer((method, params) => {
+        calls.push({ method, params });
+        return { recorded };
+      });
+      try {
+        const result = (await getAgentExecute(srv.url)(
+          { method, params },
+          mockContext,
+        )) as { content: Array<{ text?: string }> };
+        expect(result.content.map((c) => c.text ?? '').join('\n')).to.include(
+          `"recorded": ${recorded}`,
+        );
+        expect(calls).to.deep.equal([
+          { method, params },
+          { method: 'getDownloads', params: {} },
+        ]);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('surfaces server errors instead of swallowing them', async () => {
+    const message = 'Target has no observed navigation in this profile session';
+    const srv = await makeRespondingServer(
+      () => new AgentErrorFrame({ code: 'BadRequest', message }),
+    );
+    try {
+      let error: unknown;
+      try {
+        await getAgentExecute(srv.url)({ method, params }, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include(`${method} failed:`)
+        .and.include(message);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('rejects reports on the compliant endpoint before forwarding', async () => {
+    const srv = await makeRespondingServer(() => ({ recorded: true }));
+    try {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const spy = sinon.spy(server, 'addTool');
+      registerAgentTools(server, {
+        ...mockConfig,
+        browserlessApiUrl: srv.url,
+        complianceMode: true,
+      });
+      const execute = spy
+        .getCalls()
+        .find((c) => c.args[0].name === 'browserless_agent')!.args[0]
+        .execute as (args: unknown, ctx: unknown) => unknown;
+      let error: unknown;
+      try {
+        await execute({ commands: [{ method, params }] }, mockContext);
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error).message).to.include(
+        `Command "${method}" is not available on this endpoint.`,
+      );
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const profile of [undefined, 'saved-login']) {
+    it(`uses the prior snapshot target and explicit overrides (profile=${profile})`, async () => {
+      const calls: unknown[] = [];
+      const srv = await makeRespondingServer((command, values) => {
+        if (command === method) calls.push(values);
+        return command === 'snapshot'
+          ? { elements: [], activeTargetId: 'TAB-1' }
+          : { recorded: true };
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        const first = (await execute(
+          {
+            profile,
+            keepSessionAlive: true,
+            commands: [{ method: 'snapshot' }],
+          },
+          mockContext,
+        )) as { content: Array<{ text?: string }> };
+        const sessionId = first.content
+          .map((c) => c.text ?? '')
+          .join('\n')
+          .match(/sessionId:\s*(\S+)/)?.[1];
+        expect(sessionId).to.be.a('string');
+        const { targetId: _targetId, ...withoutTarget } = params;
+        await execute(
+          { sessionId, profile, commands: [{ method, params: withoutTarget }] },
+          mockContext,
+        );
+        await execute(
+          { sessionId, profile, commands: [{ method, params }] },
+          mockContext,
+        );
+        expect(calls).to.deep.equal([
+          { ...withoutTarget, targetId: 'TAB-1' },
+          params,
+        ]);
+        expect(srv.hits()).to.equal(1);
+        await execute({ sessionId, profile, method: 'close' }, mockContext);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('rejects an omitted target before send when no snapshot target is known', async () => {
+    const calls: string[] = [];
+    const srv = await makeRespondingServer((command) => {
+      calls.push(command);
+      return { recorded: true };
+    });
+    try {
+      const { targetId: _targetId, ...withoutTarget } = params;
+      let error: unknown;
+      try {
+        await getAgentExecute(srv.url)(
+          { method, params: withoutTarget },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(UserError);
+      expect(error).to.have.property('code', 'INVALID_PARAMS');
+      expect((error as Error).message).to.include('no active tab known');
+      expect(calls).not.to.include(method);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('browserless_agent reportOutcome', () => {
   afterEach(() => sinon.restore());
 

@@ -5,6 +5,25 @@ import {
   COMPLIANT_AGENT_SYSTEM_PROMPT,
 } from '../../src/skills/system-prompt.js';
 
+it('guides saved-login reporting only in the full Auth section', () => {
+  const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
+  for (const text of [
+    'reportProfileAuthentication',
+    'newLoginActivity',
+    'authenticated',
+    'login_required',
+    'challenge',
+    'unknown',
+    'last command',
+    'Never send it on sessions without',
+    'same `profile`',
+  ])
+    expect(auth).to.include(text);
+  expect(COMPLIANT_AGENT_SYSTEM_PROMPT).not.to.include(
+    'reportProfileAuthentication',
+  );
+});
+
 describe('outcome reporting guidance', () => {
   for (const [name, prompt] of [
     ['full', AGENT_SYSTEM_PROMPT],

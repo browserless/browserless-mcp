@@ -3,6 +3,7 @@ import {
   AgentCommandSchema,
   AgentToolParamsSchema,
   CompliantAgentCommandSchema,
+  COMPLIANT_AGENT_METHODS,
   GenericCommandSchema,
   TypedAgentCommandSchema,
   isTypedAgentMethod,
@@ -49,6 +50,64 @@ describe('credential command schema dispatch', () => {
       'browserless_sessions { action: "integrations" }',
     );
     expect(description).not.to.include('GET /integrations/onepassword');
+  });
+});
+
+describe('reportProfileAuthentication schema', () => {
+  const command = {
+    method: 'reportProfileAuthentication',
+    params: {
+      targetId: 'T1',
+      checkpointId: 'example.com:first-page',
+      outcome: 'login_required',
+      newLoginActivity: false,
+    },
+  };
+
+  it('accepts all outcomes, optional targets and the checkpoint boundary', () => {
+    expect(isTypedAgentMethod(command.method)).to.equal(true);
+    for (const outcome of [
+      'authenticated',
+      'login_required',
+      'challenge',
+      'unknown',
+    ]) {
+      for (const targetId of ['T1', undefined]) {
+        const input = {
+          ...command,
+          params: {
+            ...command.params,
+            outcome,
+            targetId,
+            checkpointId: 'a'.repeat(128),
+          },
+        };
+        expect(TypedAgentCommandSchema.safeParse(input).success).to.equal(true);
+        expect(AgentCommandSchema.safeParse(input).success).to.equal(true);
+      }
+    }
+  });
+
+  it('rejects malformed fields without falling through to generic commands', () => {
+    for (const invalid of [
+      { targetId: '' },
+      { checkpointId: '' },
+      { checkpointId: 'a'.repeat(129) },
+      { outcome: 'logged_in' },
+      { newLoginActivity: undefined },
+      { newLoginActivity: 'yes' },
+    ]) {
+      const input = { ...command, params: { ...command.params, ...invalid } };
+      expect(TypedAgentCommandSchema.safeParse(input).success).to.equal(false);
+      expect(AgentCommandSchema.safeParse(input).success).to.equal(false);
+    }
+  });
+
+  it('does not expose profile reporting on the compliant surface', () => {
+    expect(CompliantAgentCommandSchema.safeParse(command).success).to.equal(
+      false,
+    );
+    expect(COMPLIANT_AGENT_METHODS.has(command.method)).to.equal(false);
   });
 });
 

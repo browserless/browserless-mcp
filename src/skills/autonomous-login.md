@@ -64,6 +64,16 @@ One batched call (type username, type password, click submit) with Gate-2 values
 
 The visible account/display name will usually NOT equal the email or username you typed (it's the profile's display name, often a real name) — that's expected, NOT a mismatch. Never mark a login failed because the shown identity differs from the credential; judge only by the three signals above.
 
+**If this session was opened with** `profile`, end the verifying batch with
+`snapshot`, then report the result as the last command of the next batch:
+`reportProfileAuthentication` with `checkpointId` = `"<host>:after-login"`,
+`outcome: "authenticated"` when a signal held, `"login_required"` when none held,
+and `"newLoginActivity": true` in both cases (you just logged in, so the restored
+profile gets no credit). It applies to the tab of that snapshot. Send it before
+`clearSecrets` and before any `close`; it is secret-safe.
+Repeat the same `profile` together with `sessionId` on every follow-up call,
+including reports and `close`.
+
 None holds:
 
 - Error matching `/invalid|incorrect|wrong|doesn'?t match|not recognized|please try again/i` → `INVALID_CREDENTIALS`.
