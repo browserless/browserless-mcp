@@ -8,6 +8,7 @@ import {
   registerStripeLinkCheckoutTool,
 } from '../../src/tools/link-checkout.js';
 import { registerAgentTools } from '../../src/tools/agent.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
   closeSession,
@@ -80,12 +81,17 @@ const textOf = (result: unknown): string =>
   ((result as { content: Content[] }).content[0] as { text: string }).text;
 
 const captureExecute = (
-  register: (server: FastMCP, config: McpConfig) => void,
+  register: (
+    server: FastMCP,
+    config: McpConfig,
+    analytics?: AnalyticsHelper,
+  ) => void,
   config = mockConfig,
+  analytics?: AnalyticsHelper,
 ) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  register(server, config);
+  register(server, config, analytics);
   return addToolSpy.firstCall.args[0].execute;
 };
 
@@ -468,6 +474,104 @@ describe('Stripe Link tools', () => {
       }
     });
   }
+
+  it('surfaces allowlisted diagnostics and retry guidance without backend text', async () => {
+    const browser = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'TIMEOUT',
+          message: 'provider failed with lpt_secret',
+          retryable: true,
+          suggestion: 'retry with card 4242424242424242',
+        }),
+    );
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    try {
+      const session = await getOrCreateSession(
+        'safe-diagnostics',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(
+        registerStripeLinkCheckoutTool,
+        { ...mockConfig, browserlessApiUrl: browser.url },
+        analytics,
+      );
+
+      let error: unknown;
+      try {
+        await execute(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+            amount_minor: 1000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect(String(error)).to.include('TIMEOUT');
+      expect(String(error)).to.match(/close.*session.*fresh.*session/i);
+      expect(String(error)).not.to.match(/lpt_secret|4242424242424242/);
+      expect(fire.firstCall.args[2]).to.include({
+        action: 'create',
+        error_code: 'TIMEOUT',
+        retryable: true,
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('redacts unknown diagnostics and ignores non-boolean retryability', async () => {
+    const browser = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'lpt_secret_code',
+          message: 'private backend text',
+          retryable: 'true' as unknown as boolean,
+        }),
+    );
+    try {
+      const session = await getOrCreateSession(
+        'unsafe-diagnostics',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const execute = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      let error: unknown;
+      try {
+        await execute(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+            amount_minor: 1000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).to.include('could not continue safely');
+      expect(String(error)).not.to.match(
+        /lpt_secret|private backend text|fresh.*session/i,
+      );
+    } finally {
+      await browser.close();
+    }
+  });
 
   it('directs an indeterminate create failure through browser-session cleanup', async () => {
     const browser = await makeRespondingServer(() => new Promise(() => {}));

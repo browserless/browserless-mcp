@@ -20,6 +20,7 @@ export class AgentErrorFrame {
     public readonly error: {
       code?: string;
       message: string;
+      retryable?: boolean;
       suggestion?: string;
     },
   ) {}
