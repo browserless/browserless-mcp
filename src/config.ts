@@ -13,6 +13,9 @@ export const DEFAULT_REPLAY_CDN_URL = 'https://d3uycvholi7jx8.cloudfront.net/';
 const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'http://localhost:*', // Claude Desktop, VS Code, Windsurf, and anything else using a local loopback callback
   'http://127.0.0.1:*',
+  'http://127.0.0.1/', // VS Code also registers portless loopback
+  'https://vscode.dev/redirect', // VS Code stable redirect relay
+  'https://insiders.vscode.dev/redirect', // VS Code Insiders redirect relay
   'https://claude.ai/api/mcp/auth_callback', // Claude.ai web custom connectors
   'https://chatgpt.com/connector/oauth/*', // ChatGPT / OpenAI Apps SDK connector (current per-connector callback id)
   'https://chatgpt.com/connector_platform_oauth_redirect', // ChatGPT MCP connector (legacy, still honored for already-published apps)

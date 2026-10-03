@@ -14,6 +14,9 @@ import {
 import { RedisTokenStorage } from '../../src/lib/redis-token-storage.js';
 
 const EXACT_CALLBACKS = [
+  'http://127.0.0.1/',
+  'https://vscode.dev/redirect',
+  'https://insiders.vscode.dev/redirect',
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'https://grok.com/connectors/oauth/callback',
@@ -35,6 +38,13 @@ const WILDCARD_CALLBACKS = [
 ];
 
 const LOOKALIKE_CALLBACKS = [
+  'https://vscodexdev/redirect',
+  'https://insidersxvscode.dev/redirect',
+  'https://vscode.dev.evil.example/redirect',
+  'https://vscode.dev/other',
+  'https://insiders.vscode.dev/redirect?next=evil',
+  'https://vscode.dev/redirect#fragment',
+  'http://127.0.0.1/other',
   'https://wwwxcursor.com/agents/mcp/oauth/callback',
   'https://apixdevin.ai/mcp/oauth/callback',
   'https://api.betaxdevin.ai/mcp/oauth/callback',
@@ -485,6 +495,40 @@ describe('Browserless OAuth redirect URI validation', () => {
             'invalid_client_metadata',
           );
         }
+      }
+    } finally {
+      proxy.destroy();
+    }
+  });
+
+  it('registers the full VS Code redirect set and authorizes each callback', async () => {
+    const proxy = new BrowserlessOAuthProxy(buildConfig());
+    const redirectUris = [
+      'https://insiders.vscode.dev/redirect',
+      'https://vscode.dev/redirect',
+      'http://127.0.0.1/',
+      'http://127.0.0.1:33418/',
+    ];
+    try {
+      const registration = await proxy.registerClient({
+        client_name: 'VS Code test',
+        redirect_uris: redirectUris,
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+      });
+      expect(registration.redirect_uris).to.deep.equal(redirectUris);
+      for (const redirectUri of redirectUris) {
+        const response = await proxy.authorize({
+          client_id: registration.client_id,
+          redirect_uri: redirectUri,
+          response_type: 'code',
+          state: 'client-state',
+        });
+        expect(response.status).to.equal(302);
+        expect(response.headers.get('location')).to.include(
+          '127.0.0.1:9/oauth/authorize',
+        );
       }
     } finally {
       proxy.destroy();
