@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.36.0](https://github.com/browserless/browserless-mcp/compare/v1.35.0...v1.36.0) (2026-10-05)
+
+
+### Features
+
+* add device and Lighthouse config options to browserless_performance ([#375](https://github.com/browserless/browserless-mcp/issues/375)) ([b8bfa82](https://github.com/browserless/browserless-mcp/commit/b8bfa82093c313523a2dfb30a88584d90feff3aa))
+* add profile authentication reporting to agent commands ([#361](https://github.com/browserless/browserless-mcp/issues/361)) ([46d96f9](https://github.com/browserless/browserless-mcp/commit/46d96f95769c0bbb7a8773cf4ecc9ac570c460bf))
+
+
+### Bug Fixes
+
+* allow VS Code OAuth redirect URIs ([#365](https://github.com/browserless/browserless-mcp/issues/365)) ([09f73bc](https://github.com/browserless/browserless-mcp/commit/09f73bcfbd37c732eac183ca68b8e19556149ce9))
+* close idle agent sessions and reap leaked MCP session ping intervals ([#362](https://github.com/browserless/browserless-mcp/issues/362)) ([8c42fc2](https://github.com/browserless/browserless-mcp/commit/8c42fc289cd3f689cf99e6daf0d0880442ed823c))
+* preserve safe checkout failure diagnostics ([#374](https://github.com/browserless/browserless-mcp/issues/374)) ([d1d04c0](https://github.com/browserless/browserless-mcp/commit/d1d04c0cd12e441ce7a788c75a248640bb9d35f4))
+* resume an agent session by handle without re-passing its profile ([#372](https://github.com/browserless/browserless-mcp/issues/372)) ([fc98fde](https://github.com/browserless/browserless-mcp/commit/fc98fdea66518deba3b6e19066f6d9d33df7b446))
+* surface Link checkout validation errors to the caller ([#371](https://github.com/browserless/browserless-mcp/issues/371)) ([fcd7c14](https://github.com/browserless/browserless-mcp/commit/fcd7c14acbe0e27821f894f285c03ac08671f917))
+
 ## [1.35.0](https://github.com/browserless/browserless-mcp/compare/v1.34.0...v1.35.0) (2026-10-01)
 
 
