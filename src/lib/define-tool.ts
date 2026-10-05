@@ -18,6 +18,7 @@ import type {
   McpConfig,
 } from '../@types/types.js';
 import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
+import { touchSession } from './session-reaper.js';
 
 /**
  * Minimal log surface tools use. Tools only call the level methods with a
@@ -176,6 +177,9 @@ export function defineTool<P, R>(
       args,
       { reportProgress, session, sessionId, log, client: mcpClient },
     ) => {
+      // Inbound activity refreshes the idle clock so the reaper never closes a
+      // live session between tool calls (see session-reaper.ts).
+      touchSession(sessionId);
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
       const prompt =

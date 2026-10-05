@@ -11,6 +11,11 @@ import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
 import { clearSession } from './lib/download-store.js';
 import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
+import {
+  touchSession,
+  forgetSession,
+  startSessionReaper,
+} from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
@@ -111,11 +116,19 @@ const oauthProvider =
 // header with a Supabase JWT → resolve the Browserless API key via PostgREST.
 const hybridAuthenticate =
   config.transport === 'httpStream'
-    ? async (request: Parameters<typeof resolveBrowserlessRequestAuth>[0]) =>
-        (await resolveBrowserlessRequestAuth(
+    ? async (request: Parameters<typeof resolveBrowserlessRequestAuth>[0]) => {
+        // Any authenticated inbound request proves the client is alive, so
+        // refresh the idle clock here — not only on tool calls. This keeps the
+        // reaper from closing a session that is merely between calls or only
+        // listing tools. `initialize` carries no session id yet; `connect`
+        // stamps that case.
+        const sid = request.headers?.['mcp-session-id'];
+        touchSession(Array.isArray(sid) ? sid[0] : sid);
+        return (await resolveBrowserlessRequestAuth(
           request,
           config,
-        )) as BrowserlessSession
+        )) as BrowserlessSession;
+      }
     : undefined;
 
 const server = new FastMCP<BrowserlessSession>({
@@ -150,6 +163,8 @@ console.error(`[browserless-mcp] Tool surface: ${complianceSurface}`);
 let warnedAboutServerIdentity = false;
 server.on('connect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
+  // Stamp activity so the idle reaper gives a fresh session a full TTL.
+  touchSession(event.session.sessionId);
   console.error(`[browserless-mcp] Client connected: ${id}`);
   if (
     amplitudeAnalytics &&
@@ -191,10 +206,21 @@ server.on('disconnect', (event) => {
   // Drop any files staged/captured for this session (TTL is the backstop).
   clearSession(event.session.sessionId);
   dropMcpSession(event.session.sessionId);
+  forgetSession(event.session.sessionId);
+  // Release this torn-down MCP session's keepalive ping. fastmcp removes the
+  // session from its registry on disconnect but never calls close(), so the 5s
+  // ping setInterval — and the session graph it pins — would otherwise live
+  // until the process exits. The transport is already gone, so this
+  // only frees the timer and the MCP server; the agent browser handle is keyed
+  // separately in agent-client and is untouched.
+  void Promise.resolve(event.session.close()).catch(() => {});
   console.error(`[browserless-mcp] Client disconnected: ${id}`);
 });
 
 startSweepTimer();
+// Backstop for abandoned httpStream transports that never fire `disconnect`:
+// close MCP sessions idle past the TTL so their ping intervals cannot pile up.
+startSessionReaper(() => server.sessions);
 
 if (config.transport === 'httpStream') {
   server.start({
