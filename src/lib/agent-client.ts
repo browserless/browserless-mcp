@@ -366,7 +366,19 @@ export const getActiveSessionByHandle = (
 };
 
 const DEFAULT_TIMEOUT = 60_000;
-const IDLE_TTL_MS = 15 * 60 * 1000;
+// Parse a positive millisecond env value, falling back when unset or invalid
+// (clamped to a valid setInterval/comparison range).
+const parsePositiveMs = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 && n <= 2_147_483_647 ? n : fallback;
+};
+// Idle window before a pooled agent session is reaped and properly closed on the
+// cloud. Configurable so ops can free concurrency slots sooner than the
+// 15-minute default.
+const IDLE_TTL_MS = parsePositiveMs(
+  process.env.MCP_IDLE_TTL_MS,
+  15 * 60 * 1000,
+);
 const MAX_SESSIONS = 500;
 const MAX_RETAINED_CONFIGS = 500;
 // mcp session id -> last time a request arrived on it. `disconnect` is the
@@ -456,13 +468,7 @@ export const sweepSessions = (
 let sweepTimer: ReturnType<typeof setInterval> | undefined;
 export const startSweepTimer = (): void => {
   if (sweepTimer) return;
-  const configured = Number(process.env.MCP_SWEEP_MS);
-  const ms =
-    Number.isFinite(configured) &&
-    configured >= 1 &&
-    configured <= 2_147_483_647
-      ? configured
-      : 60_000;
+  const ms = parsePositiveMs(process.env.MCP_SWEEP_MS, 60_000);
   sweepTimer = setInterval(() => sweepSessions(), ms);
   sweepTimer.unref();
 };
