@@ -731,6 +731,41 @@ const ReportOutcomeCommandSchema = z.object({
   }),
 });
 
+const ReportProfileAuthenticationCommandSchema = z.object({
+  method: z.literal('reportProfileAuthentication'),
+  params: z.object({
+    targetId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Optional. Defaults to the last active-tab snapshot. After a snapshot peek ' +
+          'at another tab, repeat its targetId here. The session must have navigated that tab.',
+      ),
+    checkpointId: z
+      .string()
+      .min(1)
+      .max(128)
+      .describe(
+        'Short label for this check, e.g. "github.com:first-page". One report per ' +
+          'target+checkpoint is kept; use a new label for a later check.',
+      ),
+    outcome: z
+      .enum(['authenticated', 'login_required', 'challenge', 'unknown'])
+      .describe(
+        'authenticated only when the page shows a signed-in element; login_required ' +
+          'for a sign-in form or wall; challenge for a captcha or verification wall; ' +
+          'unknown when you cannot tell.',
+      ),
+    newLoginActivity: z
+      .boolean()
+      .describe(
+        'true if you logged in on this site during this session (typed credentials, ' +
+          'loadSecret, or the autonomous-login skill); the restored profile then gets no credit.',
+      ),
+  }),
+});
+
 const CloseCommandSchema = z.object({
   method: z.literal('close'),
   params: z.object({}).optional().default({}),
@@ -790,6 +825,7 @@ const specificCommandSchemas = [
   StopRecordingCommandSchema,
   ReportSkillOutcomeCommandSchema,
   ReportOutcomeCommandSchema,
+  ReportProfileAuthenticationCommandSchema,
   CloseCommandSchema,
 ] as const;
 

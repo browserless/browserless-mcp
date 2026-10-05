@@ -13,6 +13,19 @@ passing its `name` as `profile` to the tool you're running — no new login
 needed. Only fall through to the creation recipe below when no suitable profile
 exists.
 
+After the batch that ends with your first `snapshot` on the site, send
+`reportProfileAuthentication` as the only command of the next batch, before any login actions
+(params: `checkpointId` = `"<host>:first-page"`, `outcome`, `newLoginActivity: false`).
+If login activity already occurred on this site, use `newLoginActivity: true` instead.
+It defaults to the last active-tab snapshot; if you used `snapshot { targetId }`
+to peek at another tab, repeat that `targetId` in the report.
+`authenticated` only if a signed-in element is visible; `login_required` if you
+see a sign-in form or wall; `challenge` for a captcha or verification wall;
+otherwise `unknown`. If the saved login turns out to be dead and you log in
+again, load `autonomous-login` and let it report with `newLoginActivity: true`.
+Pass `sessionId` on every follow-up call, including reports and `close`;
+the session handle retains the profile, so repeating `profile` is optional.
+
 ## Recipe — creating a profile
 
 1. **Open a creation session.** Call `browserless_agent` with a top-level
