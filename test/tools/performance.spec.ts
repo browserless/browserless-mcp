@@ -150,6 +150,133 @@ describe('browserless_performance tool', () => {
     });
   });
 
+  it('sends the Lighthouse desktop preset when device is desktop', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      { url: 'https://example.com/', device: 'desktop' },
+      mockContext,
+    );
+
+    const body = JSON.parse(fetchStub.firstCall.args[1].body);
+    expect(body.config.extends).to.equal('lighthouse:default');
+    expect(body.config.settings.formFactor).to.equal('desktop');
+    expect(body.config.settings.screenEmulation).to.deep.equal({
+      mobile: false,
+      width: 1350,
+      height: 940,
+      deviceScaleFactor: 1,
+      disabled: false,
+    });
+    expect(body.config.settings.throttling.cpuSlowdownMultiplier).to.equal(1);
+    expect(body.config.settings.emulatedUserAgent).to.not.include('Mobile');
+  });
+
+  it('sends the Lighthouse mobile preset when device is mobile', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      { url: 'https://example.com/', device: 'mobile' },
+      mockContext,
+    );
+
+    const body = JSON.parse(fetchStub.firstCall.args[1].body);
+    expect(body.config.settings.formFactor).to.equal('mobile');
+    expect(body.config.settings.screenEmulation.mobile).to.be.true;
+    expect(body.config.settings.throttling.cpuSlowdownMultiplier).to.equal(4);
+    expect(body.config.settings.emulatedUserAgent).to.include('Mobile');
+  });
+
+  it('forwards a custom config, letting device and categories override its settings', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute(
+      {
+        url: 'https://example.com/',
+        device: 'desktop',
+        categories: ['performance'],
+        config: {
+          settings: {
+            formFactor: 'mobile',
+            onlyCategories: ['seo'],
+            onlyAudits: ['first-contentful-paint'],
+          },
+        },
+      },
+      mockContext,
+    );
+
+    const body = JSON.parse(fetchStub.firstCall.args[1].body);
+    expect(body.config.extends).to.equal('lighthouse:default');
+    expect(body.config.settings.onlyAudits).to.deep.equal([
+      'first-contentful-paint',
+    ]);
+    expect(body.config.settings.formFactor).to.equal('desktop');
+    expect(body.config.settings.onlyCategories).to.deep.equal(['performance']);
+  });
+
+  it('sends a custom config as-is when no device or categories are set', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    const config = {
+      extends: 'lighthouse:default',
+      settings: { onlyAudits: ['unminified-css'] },
+    };
+    await execute({ url: 'https://example.com/', config }, mockContext);
+
+    const body = JSON.parse(fetchStub.firstCall.args[1].body);
+    expect(body.config).to.deep.equal(config);
+  });
+
+  it('omits config when no device, categories or config are set', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    await execute({ url: 'https://example.com/' }, mockContext);
+
+    const body = JSON.parse(fetchStub.firstCall.args[1].body);
+    expect(body).to.not.have.property('config');
+  });
+
   it('sends budgets in the request body', async () => {
     fetchStub.resolves(
       new Response(JSON.stringify({ data: {}, type: 'json' }), {
@@ -246,6 +373,30 @@ describe('browserless_performance tool', () => {
       text: string;
     };
     expect(metadata.text).to.include('Categories: accessibility');
+  });
+
+  it('includes device in metadata when specified', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const execute = getToolExecute(server);
+
+    const result = await execute(
+      { url: 'https://example.com/', device: 'desktop' },
+      mockContext,
+    );
+
+    const content = (result as { content: Content[] }).content;
+    const metadata = content[content.length - 1] as {
+      type: string;
+      text: string;
+    };
+    expect(metadata.text).to.include('Device: desktop');
   });
 
   it('does not include profile in the outbound URL when omitted', async () => {

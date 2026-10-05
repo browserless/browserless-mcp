@@ -705,7 +705,14 @@ describe('compliance mode — compliant tool surface', () => {
         'url',
         'waitForTimeout',
       ],
-      browserless_performance: ['budgets', 'categories', 'timeout', 'url'],
+      browserless_performance: [
+        'budgets',
+        'categories',
+        'config',
+        'device',
+        'timeout',
+        'url',
+      ],
       browserless_skill: ['id'],
       // Account-data tools: every key is a read filter. None drives a browser,
       // none names a credential, none accepts a URL to fetch.
