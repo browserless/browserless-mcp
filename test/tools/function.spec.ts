@@ -114,6 +114,40 @@ describe('browserless_function tool', () => {
     });
   }
 
+  it('does not attribute a local size-limit failure to the successful API response', async () => {
+    fetchStub.resolves(
+      new Response('x'.repeat(MAX_TEXT_RESPONSE_CHARS + 1), {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerFunctionTool(server, mockConfig, analytics);
+    const err = await addTool.firstCall.args[0]
+      .execute({ code: 'export default async () => ({})' }, mockContext)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(err).to.be.instanceOf(UserError);
+    expect((err as Error).message).to.include('exceeding the 200000-char');
+    expect(fire.calledOnce).to.be.true;
+    const props = fire.firstCall.args[2];
+    expect(props).to.include({
+      success: false,
+      ok: true,
+      status_code: 200,
+      error_reason: 'unknown',
+      error_source: 'unknown',
+      error_category: 'user_error',
+    });
+    expect(props).not.to.have.property('error_status_code');
+    expect(props).not.to.have.property('error_status_origin');
+  });
+
   it('returns JSON text on successful function execution', async () => {
     const responseData = JSON.stringify({
       books: [{ title: 'A Light in the Attic' }],

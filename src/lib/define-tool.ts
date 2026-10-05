@@ -122,7 +122,7 @@ export interface ToolDefinition<P, R> {
    * that throws on `!response.ok` still reports `ok`/`status_code`.
    */
   analyticsProps?: (params: P, result: R) => Record<string, unknown>;
-  /** Origin of a recorded status_code used when format throws. */
+  /** Origin of a failed result's status_code used when format throws. */
   failureStatus?: {
     origin: 'api' | 'target_website';
     badRequest?: FailureCategory;
@@ -334,7 +334,9 @@ export function defineTool<P, R>(
         if (!fired) {
           const declared = def.failureStatus;
           const status =
-            declared && typeof resultProps?.status_code === 'number'
+            declared &&
+            resultProps?.ok === false &&
+            typeof resultProps.status_code === 'number'
               ? resultProps.status_code
               : undefined;
           const details =

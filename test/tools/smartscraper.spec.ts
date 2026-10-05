@@ -107,6 +107,7 @@ describe('browserless_smartscraper tool', () => {
   for (const [status, reason] of [
     [404, 'not_found'],
     [403, 'forbidden'],
+    [200, 'unknown'],
   ] as const) {
     it(`reports safe failure analytics for target status ${status}`, async () => {
       fetchStub.resolves(
