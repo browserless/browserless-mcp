@@ -6,6 +6,11 @@ describe('failureDetails', () => {
     [429, 'rate_limited'],
     [408, 'timeout'],
     [401, 'unauthorized'],
+    [403, 'forbidden'],
+    [404, 'not_found'],
+    [499, 'unknown'],
+    [500, 'server_error'],
+    [599, 'server_error'],
   ] as const) {
     it(`maps structured status ${status} to ${reason}`, () => {
       expect(failureDetails({ status })).to.include({
@@ -14,6 +19,24 @@ describe('failureDetails', () => {
         error_status_code: status,
         error_status_origin: 'unknown',
       });
+    });
+  }
+
+  for (const [code, reason] of [
+    ['SELECTOR_NOT_FOUND', 'selector_miss'],
+    ['BROWSER_CRASHED', 'session_lost'],
+    ['NAVIGATION_TIMEOUT', 'timeout'],
+    ['FORBIDDEN', 'forbidden'],
+    ['INTERNAL_ERROR', 'unauthorized'],
+  ] as const) {
+    it(`preserves code/status precedence for ${code}`, () => {
+      expect(failureDetails({ code, status: 401 })).to.include({
+        error_code: code,
+        error_reason: reason,
+      });
+      expect(
+        failureDetails({ code, status: 401 }, { category: 'SCRIPT_ERROR' }),
+      ).to.have.property('error_reason', 'script_error');
     });
   }
 

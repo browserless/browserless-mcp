@@ -21,14 +21,25 @@ const reasons = {
   UNKNOWN: 'unknown',
 } satisfies Record<FailureCategory, string>;
 
+const codeCategories: Partial<Record<string, FailureCategory>> = {
+  SELECTOR_NOT_FOUND: 'SELECTOR_MISS',
+  BROWSER_CRASHED: 'SESSION_LOST',
+  NAVIGATION_TIMEOUT: 'TIMEOUT',
+};
+
+const statusCategories: Partial<Record<number, FailureCategory>> = {
+  401: 'UNAUTHORIZED',
+  403: 'FORBIDDEN',
+  404: 'NOT_FOUND',
+  408: 'TIMEOUT',
+  429: 'RATE_LIMITED',
+};
+
 // Codes are untrusted text too. Only documented categories and transport codes
 // are safe to publish; an opaque provider code could itself contain a secret.
 const safeCodes = new Set([
   ...Object.keys(reasons),
-  'SELECTOR_NOT_FOUND',
-  'NAVIGATION_TIMEOUT',
-  'BROWSER_CRASHED',
-  'RATE_LIMITED',
+  ...Object.keys(codeCategories),
   'INTERNAL_ERROR',
   'TAB_NOT_FOUND',
   'TAB_CLOSED',
@@ -85,27 +96,12 @@ export function failureDetails(
     typeof rawCode === 'string' && safeCodes.has(rawCode) ? rawCode : undefined;
   const category =
     options.category ??
-    (code === 'SELECTOR_NOT_FOUND'
-      ? 'SELECTOR_MISS'
-      : code === 'BROWSER_CRASHED'
-        ? 'SESSION_LOST'
-        : code === 'NAVIGATION_TIMEOUT'
-          ? 'TIMEOUT'
-          : code && Object.hasOwn(reasons, code)
-            ? (code as FailureCategory)
-            : status === 408
-              ? 'TIMEOUT'
-              : status === 429
-                ? 'RATE_LIMITED'
-                : status === 401
-                  ? 'UNAUTHORIZED'
-                  : status === 403
-                    ? 'FORBIDDEN'
-                    : status === 404
-                      ? 'NOT_FOUND'
-                      : status !== undefined && status >= 500
-                        ? 'SERVER_ERROR'
-                        : 'UNKNOWN');
+    (code === undefined ? undefined : codeCategories[code]) ??
+    (code && Object.hasOwn(reasons, code)
+      ? (code as FailureCategory)
+      : undefined) ??
+    (status === undefined ? undefined : statusCategories[status]) ??
+    (status !== undefined && status >= 500 ? 'SERVER_ERROR' : 'UNKNOWN');
   const reason = reasons[category];
   const source =
     options.source ??
