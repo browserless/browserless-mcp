@@ -157,15 +157,18 @@ describe('agent-client session sweep', () => {
         'tok',
       );
       const clock = sinon.useFakeTimers({
-        now: Date.now(),
+        now: Date.now() + 1000,
         toFake: ['Date', 'setInterval', 'clearInterval'],
       });
+      idle.lastUsedAt = clock.now;
+      active.lastUsedAt = clock.now;
       const interval = sinon.spy(globalThis, 'setInterval');
       client.startSweepTimer();
       client.startSweepTimer();
       expect(interval.calledOnce).to.equal(true);
       expect(interval.firstCall.returnValue.hasRef()).to.equal(false);
       await clock.tickAsync(15 * 60 * 1000);
+      expect(idle.ws.readyState).to.equal(1);
       await client.send(active, 'getCookies');
       const closed = once(idle.ws, 'close');
       await clock.tickAsync(60_000);

@@ -1169,6 +1169,143 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  it('retains the profile on an echoed handle and rejects a conflicting profile', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-profile',
+        server.url,
+        'tok',
+        undefined,
+        'my-profile',
+      );
+      expect(opened.profile).to.equal('my-profile');
+
+      // Omitting `profile` on a follow-up must reconnect to the same hydrated
+      // session, not silently open a blank, un-hydrated one.
+      const resumed = await getOrCreateSession(
+        'mcp-profile-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+      expect(resumed.ws).to.equal(opened.ws);
+      expect(resumed.profile).to.equal('my-profile');
+
+      let thrown: unknown;
+      try {
+        await getOrCreateSession(
+          'mcp-profile-2',
+          server.url,
+          'tok',
+          undefined,
+          'other-profile',
+          undefined,
+          undefined,
+          false,
+          undefined,
+          opened.handle,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+      expect((thrown as Error).message).to.match(/profile is fixed/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('clears the retained profile on close so the handle can reopen with a new profile', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-close-profile',
+        server.url,
+        'tok',
+        undefined,
+        'first-profile',
+      );
+      closeSession(
+        'mcp-close-profile',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        opened.handle,
+      );
+
+      // After an explicit close the retained profile must not linger, or the
+      // reopened handle would reject or silently inherit the old profile.
+      const reopened = await getOrCreateSession(
+        'mcp-close-profile-2',
+        server.url,
+        'tok',
+        undefined,
+        'second-profile',
+        undefined,
+        undefined,
+        false,
+        undefined,
+        opened.handle,
+      );
+      expect(reopened.ws).to.not.equal(opened.ws);
+      expect(reopened.profile).to.equal('second-profile');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('retains the profile when a dropped session is recreated by handle', async () => {
+    const server = await makeAcceptingServer();
+    try {
+      const opened = await getOrCreateSession(
+        'mcp-dropped-profile',
+        server.url,
+        'tok',
+        undefined,
+        'dropped-profile',
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-profile-handle',
+      );
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await getOrCreateSession(
+        'mcp-dropped-profile-2',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'dropped-profile-handle',
+      );
+      expect(resumed.profile).to.equal('dropped-profile');
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('profile')).to.equal(
+        'dropped-profile',
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it('keeps a proxy-backed persona when only the handle is repeated', async () => {
     const server = await makeAcceptingServer();
     try {
@@ -1520,6 +1657,34 @@ describe('agent-client bare-call isolation', () => {
         proxy: 'residential',
       });
       expect(await datacenter).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a conflicting profile while sharing an in-flight creation', async () => {
+    const server = await makeAcceptingServer(25);
+    try {
+      const open = (mcpSessionId: string, profile: string) =>
+        getOrCreateSession(
+          mcpSessionId,
+          server.url,
+          'tok',
+          undefined,
+          profile,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'shared-pending-profile',
+        );
+
+      const first = open('mcp-pending-profile-a', 'first-profile');
+      const second = open('mcp-pending-profile-b', 'second-profile').catch(
+        (error: unknown) => error,
+      );
+      expect((await first).profile).to.equal('first-profile');
+      expect(await second).to.be.instanceOf(PersonaConflictError);
     } finally {
       await server.close();
     }

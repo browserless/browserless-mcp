@@ -29,6 +29,24 @@ describe('outcome reporting guidance', () => {
     });
   }
   it('orders recipe reporting before task reporting and close', () => {
+    const ending = AGENT_SYSTEM_PROMPT.split(
+      '## Ending the session (REQUIRED)',
+    )[1].split('\n## ')[0];
+    expect(ending).to.include('reportSkillOutcome');
+    expect(ending.indexOf('reportSkillOutcome')).to.be.lessThan(
+      ending.indexOf('**Report the outcome, then close.**'),
+    );
+    expect(ending).to.include(
+      'false if a step in this recipe failed as written',
+    );
+    expect(ending).to.include('even if you finished another way');
+    expect(ending).to.include("Cosmetic differences that didn't break a step");
+    expect(ending).to.include('failure_reason');
+    expect(ending).to.include('site_changed');
+    expect(AGENT_SYSTEM_PROMPT.split('## Site recipes')[1]).not.to.include(
+      '**Report the outcome (only if',
+    );
+    expect(COMPLIANT_AGENT_SYSTEM_PROMPT).not.to.include('reportSkillOutcome');
     expect(AGENT_SYSTEM_PROMPT).to.include('Near the end of the run, send');
     expect(AGENT_SYSTEM_PROMPT).to.include(
       'Send it before `reportOutcome` and any `close`',

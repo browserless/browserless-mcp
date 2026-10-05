@@ -19,7 +19,7 @@ import {
   sanitizeUpgradeBody,
   secretVisibleAfter,
   validateSecretCaptureOrdering,
-  CLOSE_REMINDER,
+  closeReminder,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
@@ -217,10 +217,25 @@ describe('agent secret-capture preflight', () => {
     ).not.to.throw();
   });
 
-  it('reminds the caller to report the outcome before closing', () => {
-    expect(CLOSE_REMINDER).to.include('"method": "reportOutcome"');
-    expect(CLOSE_REMINDER.indexOf('"method": "reportOutcome"')).to.be.lessThan(
-      CLOSE_REMINDER.indexOf('"method": "close"'),
+  it('reminds full-mode callers to report recipe, then task, then close', () => {
+    const reminder = closeReminder(false);
+    expect(reminder).to.include('only if you loaded a site recipe');
+    expect(reminder).to.include('its footer has the exact call');
+    expect(reminder.indexOf('reportSkillOutcome')).to.be.lessThan(
+      reminder.indexOf('"method": "reportOutcome"'),
+    );
+    expect(reminder.indexOf('"method": "reportOutcome"')).to.be.lessThan(
+      reminder.indexOf('"method": "close"'),
+    );
+  });
+
+  it('preserves the compliant close reminder exactly', () => {
+    expect(closeReminder(true)).to.equal(
+      'This kept-alive browser holds a concurrency slot until closed or reaped when idle. ' +
+        'When the task is done or you are giving up, end your last batch with ' +
+        '`{ "method": "reportOutcome", "params": { "success": <bool> } }`, then send ' +
+        '`{ "method": "close" }` as its own call — or, if the user may want to keep ' +
+        'browsing, ask them before leaving it open.',
     );
   });
 
@@ -1319,6 +1334,7 @@ const getAgentExecute = (
   apiUrl: string,
   transport: McpConfig['transport'] = 'stdio',
   analytics?: AnalyticsHelper,
+  complianceMode = false,
 ): ((args: unknown, ctx: unknown) => unknown) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
@@ -1328,6 +1344,7 @@ const getAgentExecute = (
       ...mockConfig,
       browserlessApiUrl: apiUrl,
       transport,
+      complianceMode,
     },
     analytics,
   );
@@ -1336,6 +1353,45 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent close reminder surface', () => {
+  afterEach(() => sinon.restore());
+
+  for (const transport of ['stdio', 'httpStream'] as const) {
+    for (const compliant of [false, true]) {
+      it(`repeats the correct reminder for ${transport}, compliant=${compliant}`, async () => {
+        const srv = await makeRespondingServer(() => ({ text: 'result' }));
+        try {
+          const execute = getAgentExecute(
+            srv.url,
+            transport,
+            undefined,
+            compliant,
+          );
+          let sessionId: string | undefined;
+          for (let i = 0; i < 2; i++) {
+            const result = await execute(
+              { method: 'text', sessionId, keepSessionAlive: true },
+              mockContext,
+            );
+            const serialized = JSON.stringify(result);
+            expect(serialized).to.include(
+              JSON.stringify(closeReminder(compliant)).slice(1, -1),
+            );
+            expect(serialized.includes('reportSkillOutcome')).to.equal(
+              !compliant,
+            );
+            sessionId = /sessionId: (\S+)/.exec(serialized)?.[1];
+            expect(sessionId).to.match(/^s:/);
+          }
+          await execute({ method: 'close', sessionId }, mockContext);
+        } finally {
+          await srv.close();
+        }
+      });
+    }
+  }
+});
 
 describe('browserless_agent credential feedback', () => {
   afterEach(() => sinon.restore());
@@ -1913,6 +1969,7 @@ describe('browserless_agent one-shot sessions', () => {
         expect(fire.lastCall.args[2].keep_session_alive).to.equal(kept);
         if (kept) {
           const handle = serialized.match(/sessionId: (\S+) /)![1];
+          expect(serialized).to.include('reportSkillOutcome');
           expect(serialized).not.to.include('closed (one-shot)');
           expect(serialized).not.to.include('This browser stays open');
           expect(serialized).not.to.include('Omitting it opens a blank one');
@@ -1923,7 +1980,7 @@ describe('browserless_agent one-shot sessions', () => {
           expect(serialized).to.include('keepSessionAlive: true');
           expect(serialized).to.include('FIRST call');
           expect(serialized).not.to.include('sessionId:');
-          expect(serialized).not.to.include(CLOSE_REMINDER);
+          expect(serialized).not.to.include('reportSkillOutcome');
         }
       } finally {
         await srv.close();
