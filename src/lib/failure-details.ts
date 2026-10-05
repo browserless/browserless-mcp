@@ -23,7 +23,13 @@ const reasons = {
 const safeCodes = new Set([
   ...Object.keys(reasons),
   'SELECTOR_NOT_FOUND',
+  'NAVIGATION_TIMEOUT',
   'BROWSER_CRASHED',
+  'RATE_LIMITED',
+  'INTERNAL_ERROR',
+  'TAB_NOT_FOUND',
+  'TAB_CLOSED',
+  'TAB_LIMIT_EXCEEDED',
   'ECONNRESET',
   'ECONNREFUSED',
   'ENOTFOUND',
@@ -40,6 +46,7 @@ export const failureFields = [
   'error_status_origin',
   'failed_method',
   'failed_command_index',
+  'retryable',
 ] as const;
 
 /** Build analytics only from structured evidence, never arbitrary error prose. */
@@ -58,6 +65,7 @@ export function failureDetails(
           statusCode?: unknown;
           apiStatus?: unknown;
           apiCode?: unknown;
+          retryable?: unknown;
         })
       : {};
   const rawStatus = err.apiStatus ?? err.status ?? err.statusCode;
@@ -77,17 +85,19 @@ export function failureDetails(
       ? 'SELECTOR_MISS'
       : code === 'BROWSER_CRASHED'
         ? 'SESSION_LOST'
-        : code && Object.hasOwn(reasons, code)
-          ? (code as ErrorCategory)
-          : status === 401
-            ? 'UNAUTHORIZED'
-            : status === 403
-              ? 'FORBIDDEN'
-              : status === 404
-                ? 'NOT_FOUND'
-                : status !== undefined && status >= 500
-                  ? 'SERVER_ERROR'
-                  : 'UNKNOWN');
+        : code === 'NAVIGATION_TIMEOUT'
+          ? 'TIMEOUT'
+          : code && Object.hasOwn(reasons, code)
+            ? (code as ErrorCategory)
+            : status === 401
+              ? 'UNAUTHORIZED'
+              : status === 403
+                ? 'FORBIDDEN'
+                : status === 404
+                  ? 'NOT_FOUND'
+                  : status !== undefined && status >= 500
+                    ? 'SERVER_ERROR'
+                    : 'UNKNOWN');
   const reason = reasons[category];
   const source =
     options.source ??
@@ -106,6 +116,7 @@ export function failureDetails(
       500,
     ),
     ...(code === undefined ? {} : { error_code: code }),
+    ...(typeof err.retryable === 'boolean' ? { retryable: err.retryable } : {}),
     ...(status === undefined
       ? {}
       : {

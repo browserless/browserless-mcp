@@ -33,9 +33,11 @@ export function registerStripeLinkConnectTool(
       name: 'browserless_link_connect',
       description:
         'Manage the Browserless Stripe Link wallet. Use action "status" to ' +
-        'check availability, "connect" to get a Stripe-owned authorization ' +
-        'URL, or "disconnect" to remove the connection. Never ask the user ' +
-        'for raw card details.',
+        'check availability; it never returns a URL. Use "connect" to mint a ' +
+        'Stripe-owned authorization URL to give the user, or "disconnect" to ' +
+        'remove the connection. When "status" is not_connected, call "connect" ' +
+        'to obtain that URL — the status instruction alone has no link. Never ' +
+        'ask the user for raw card details.',
       parameters: StripeLinkConnectParamsSchema,
       annotations: {
         title: 'Browserless Stripe Link Connection',

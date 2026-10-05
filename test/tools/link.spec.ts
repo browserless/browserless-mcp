@@ -8,6 +8,7 @@ import {
   registerStripeLinkCheckoutTool,
 } from '../../src/tools/link-checkout.js';
 import { registerAgentTools } from '../../src/tools/agent.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
   closeSession,
@@ -15,7 +16,10 @@ import {
   getOrCreateSession,
   sweepSessions,
 } from '../../src/lib/agent-client.js';
-import { makeRespondingServer } from '../helpers/upgrade-server.js';
+import {
+  AgentErrorFrame,
+  makeRespondingServer,
+} from '../helpers/upgrade-server.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -77,12 +81,17 @@ const textOf = (result: unknown): string =>
   ((result as { content: Content[] }).content[0] as { text: string }).text;
 
 const captureExecute = (
-  register: (server: FastMCP, config: McpConfig) => void,
+  register: (
+    server: FastMCP,
+    config: McpConfig,
+    analytics?: AnalyticsHelper,
+  ) => void,
   config = mockConfig,
+  analytics?: AnalyticsHelper,
 ) => {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const addToolSpy = sinon.spy(server, 'addTool');
-  register(server, config);
+  register(server, config, analytics);
   return addToolSpy.firstCall.args[0].execute;
 };
 
@@ -312,26 +321,290 @@ describe('Stripe Link tools', () => {
     expect(fetchStub.called).to.be.false;
   });
 
-  it('uses the exact open agent WebSocket and returns only data-only continuation state', async () => {
-    let sent: { method: string; params: unknown } | undefined;
-    const browser = await makeRespondingServer((method, params) => {
-      sent = { method, params };
-      return {
-        status: 'pending_approval',
-        approval_url: 'https://app.link.com/approve/abc',
-        instruction: 'Approve the payment.',
-        checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
-        _next: {
-          action: 'resume',
+  it('accepts billing address selectors (line1/line2/city) for card checkouts', () => {
+    const input = {
+      action: 'create' as const,
+      browser_session_handle: 's:addr-selectors',
+      merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+      amount_minor: 1000,
+      currency: 'usd' as const,
+      cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+      selectors: {
+        number: 'input#num',
+        cvc: 'input#cvc',
+        expiry: 'input#exp',
+        postal: 'input#postal',
+        cardholder_name: 'input#name',
+        line1: 'input#line1',
+        line2: 'input#line2',
+        city: 'input#city',
+      },
+    };
+    expect(CheckoutInputSchema.safeParse(input).success).to.be.true;
+  });
+
+  for (const hosted of [false, true]) {
+    it(`uses the exact open agent WebSocket and returns only data-only continuation state (hosted=${hosted})`, async () => {
+      let sent: { method: string; params: unknown } | undefined;
+      const browser = await makeRespondingServer((method, params) => {
+        sent = { method, params };
+        return {
+          status: 'pending_approval',
+          approval_url: 'https://app.link.com/approve/abc',
+          instruction: 'Approve the payment.',
           checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
-          valid_until: VALID_UNTIL,
-        },
-        card_number: '4242424242424242',
-      };
+          _next: {
+            action: 'resume',
+            checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+            valid_until: VALID_UNTIL,
+          },
+          card_number: '4242424242424242',
+        };
+      });
+      try {
+        const session = await getOrCreateSession(
+          'link-checkout',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const execute = captureExecute(registerStripeLinkCheckoutTool, {
+          ...mockConfig,
+          browserlessApiUrl: browser.url,
+        });
+        const input = {
+          action: 'create' as const,
+          browser_session_handle: session.handle,
+          merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
+          amount_minor: 1000,
+          currency: 'usd' as const,
+          cart: [{ name: 'Item', quantity: 2, unit_amount_minor: 500 }],
+          selectors: hosted
+            ? undefined
+            : {
+                number: 'input[name=cardnumber]',
+                expiry: 'input[name=exp-date]',
+                cvc: 'input[name=cvc]',
+              },
+        };
+
+        const result = await execute(input, mockContext);
+
+        expect(sent?.method).to.equal('stripeLinkCheckout');
+        expect(sent?.params).to.deep.equal({
+          action: 'create',
+          merchant: input.merchant,
+          amount_minor: 1000,
+          currency: 'usd',
+          cart: input.cart,
+          ...(hosted ? {} : { selectors: input.selectors }),
+        });
+        expect(textOf(result)).to.include('"action": "resume"');
+        expect(textOf(result)).to.not.include('"command"');
+        expect(textOf(result)).to.not.include('4242424242424242');
+        expect(fetchStub.called).to.be.false;
+        expect(session.skillState.fired.has('agentic-checkout')).to.be.true;
+      } finally {
+        await browser.close();
+      }
     });
+  }
+
+  for (const [message, expected] of [
+    ['selectors are required', 'selectors are required'],
+    [
+      'Payment field selector was not found',
+      'Payment field selector was not found',
+    ],
+    ['selectors are required: lpt_secret', 'could not continue safely'],
+    // Coordinator validation messages that carry a cart index or a numeric
+    // bound are matched by pattern and forwarded verbatim.
+    ['cart[0].name is invalid', 'cart[0].name is invalid'],
+    [
+      'amount_minor must be an integer between 50 and 500000',
+      'amount_minor must be an integer between 50 and 500000',
+    ],
+    // A pattern-shaped prefix with trailing secret data breaks the `$` anchor,
+    // so it must collapse to the generic message rather than leak through the
+    // regex path.
+    [
+      'amount_minor must be an integer between 50 and 500000 lpt_secret_x',
+      'could not continue safely',
+    ],
+    // JS `$` matches before a final newline, so a recognized message with a
+    // trailing newline must still collapse to the generic message.
+    [
+      'amount_minor must be an integer between 50 and 500000\n',
+      'could not continue safely',
+    ],
+  ]) {
+    it(`surfaces only safe checkout validation errors: ${message}`, async () => {
+      const browser = await makeRespondingServer(
+        () =>
+          new AgentErrorFrame({
+            message,
+            code: 'INVALID_PARAMS',
+            retryable: false,
+          }),
+      );
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      try {
+        const session = await getOrCreateSession(
+          'validation',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const execute = captureExecute(
+          registerStripeLinkCheckoutTool,
+          {
+            ...mockConfig,
+            browserlessApiUrl: browser.url,
+          },
+          analytics,
+        );
+        let error: unknown;
+        try {
+          await execute(
+            {
+              action: 'create',
+              browser_session_handle: session.handle,
+              merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+              amount_minor: 1700,
+              currency: 'usd',
+              cart: [{ name: 'Socks', quantity: 2, unit_amount_minor: 850 }],
+            },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+        expect(String(error)).to.include(expected);
+        expect(String(error)).not.to.include('lpt_secret');
+        expect(fire.firstCall.args[2]).to.include({
+          error_code: 'INVALID_PARAMS',
+          retryable: false,
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  it('does not publish an unvalidated checkout action to analytics', async () => {
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    const execute = captureExecute(
+      registerStripeLinkCheckoutTool,
+      mockConfig,
+      analytics,
+    );
+    await execute({ action: 'lpt_secret_action' }, mockContext).catch(() => {});
+    expect(fire.calledOnce).to.equal(true);
+    expect(fire.firstCall.args[2]).not.to.have.property('action');
+    expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+      'lpt_secret_action',
+    );
+  });
+
+  for (const action of ['create', 'resume', 'cancel', 'report'] as const) {
+    it(`surfaces safe diagnostics and action-aware retry guidance for ${action}`, async () => {
+      const browser = await makeRespondingServer(
+        () =>
+          new AgentErrorFrame({
+            code: 'NAVIGATION_TIMEOUT',
+            message: 'provider failed with lpt_secret',
+            retryable: true,
+            suggestion: 'retry with card 4242424242424242',
+          }),
+      );
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      try {
+        const session = await getOrCreateSession(
+          'safe-diagnostics',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const execute = captureExecute(
+          registerStripeLinkCheckoutTool,
+          { ...mockConfig, browserlessApiUrl: browser.url },
+          analytics,
+        );
+        const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+        if (action !== 'create') {
+          session.stripeLinkContinuation = {
+            checkoutId,
+            allowedNextAction: action === 'report' ? 'report' : 'resume',
+            validUntil: VALID_UNTIL_MS,
+          };
+        }
+
+        let error: unknown;
+        try {
+          await execute(
+            action === 'create'
+              ? {
+                  action: 'create',
+                  browser_session_handle: session.handle,
+                  merchant: {
+                    name: 'Shop',
+                    url: 'https://shop.example/checkout',
+                  },
+                  amount_minor: 1000,
+                  currency: 'usd',
+                  cart: [
+                    { name: 'Item', quantity: 1, unit_amount_minor: 1000 },
+                  ],
+                }
+              : {
+                  action,
+                  browser_session_handle: session.handle,
+                  checkout_id: checkoutId,
+                  ...(action === 'report' ? { outcome: 'success' } : {}),
+                },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+
+        expect(String(error)).to.include('NAVIGATION_TIMEOUT');
+        if (action === 'create') {
+          expect(String(error)).to.match(/close.*session.*fresh.*session/i);
+        } else {
+          expect(String(error)).to.include('Keep this browser session');
+          expect(String(error)).not.to.match(/close.*session|fresh.*session/i);
+          expect(String(error)).to.include('Do not submit payment again');
+          expect(session.stripeLinkContinuation?.checkoutId).to.equal(
+            checkoutId,
+          );
+        }
+        expect(String(error)).to.include('retry once');
+        expect(String(error)).not.to.match(/lpt_secret|4242424242424242/);
+        expect(fire.firstCall.args[2]).to.include({
+          action,
+          error_code: 'NAVIGATION_TIMEOUT',
+          error_reason: 'timeout',
+          retryable: true,
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  it('redacts unknown diagnostics and ignores non-boolean retryability', async () => {
+    const browser = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'lpt_secret_code',
+          message: 'private backend text',
+          retryable: 'true' as unknown as boolean,
+        }),
+    );
     try {
       const session = await getOrCreateSession(
-        'link-checkout',
+        'unsafe-diagnostics',
         browser.url,
         mockConfig.browserlessToken!,
       );
@@ -339,36 +612,26 @@ describe('Stripe Link tools', () => {
         ...mockConfig,
         browserlessApiUrl: browser.url,
       });
-      const input = {
-        action: 'create' as const,
-        browser_session_handle: session.handle,
-        merchant: { name: 'Shop', url: 'https://shop.example.com/checkout' },
-        amount_minor: 1000,
-        currency: 'usd' as const,
-        cart: [{ name: 'Item', quantity: 2, unit_amount_minor: 500 }],
-        selectors: {
-          number: 'input[name=cardnumber]',
-          expiry: 'input[name=exp-date]',
-          cvc: 'input[name=cvc]',
-        },
-      };
-
-      const result = await execute(input, mockContext);
-
-      expect(sent?.method).to.equal('stripeLinkCheckout');
-      expect(sent?.params).to.deep.equal({
-        action: 'create',
-        merchant: input.merchant,
-        amount_minor: 1000,
-        currency: 'usd',
-        cart: input.cart,
-        selectors: input.selectors,
-      });
-      expect(textOf(result)).to.include('"action": "resume"');
-      expect(textOf(result)).to.not.include('"command"');
-      expect(textOf(result)).to.not.include('4242424242424242');
-      expect(fetchStub.called).to.be.false;
-      expect(session.skillState.fired.has('agentic-checkout')).to.be.true;
+      let error: unknown;
+      try {
+        await execute(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+            amount_minor: 1000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).to.include('could not continue safely');
+      expect(String(error)).not.to.match(
+        /lpt_secret|private backend text|fresh.*session/i,
+      );
     } finally {
       await browser.close();
     }
@@ -1032,6 +1295,200 @@ describe('Stripe Link tools', () => {
       expect(checkoutCalls).to.equal(0);
       expect(session.stripeLinkContinuation).to.equal(undefined);
       expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
+    } finally {
+      await browser.close();
+    }
+  });
+
+  for (const status of ['approved', 'created', 'pending_approval']) {
+    it(`rejects incomplete ${status} report continuation without losing checkout custody`, async () => {
+      const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+      const browser = await makeRespondingServer(() => ({
+        status,
+        checkout_id: checkoutId,
+      }));
+      try {
+        const session = await getOrCreateSession(
+          'incomplete-report',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const continuation = {
+          checkoutId,
+          allowedNextAction: 'report' as const,
+          validUntil: VALID_UNTIL_MS,
+        };
+        session.stripeLinkContinuation = continuation;
+        const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+          ...mockConfig,
+          browserlessApiUrl: browser.url,
+        });
+        let error: unknown;
+        try {
+          await checkout(
+            {
+              action: 'report',
+              outcome: 'success',
+              checkout_id: checkoutId,
+              browser_session_handle: session.handle,
+            },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+        expect(String(error)).to.include('incomplete checkout next step');
+        expect(session.stripeLinkContinuation).to.equal(continuation);
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  it('rejects an auto_resume requires_action response with no next step without losing custody', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    // requires_action + auto_resume promises a resume continuation, but the
+    // backend omitted _next. Accepting it would let the caller treat the result
+    // as terminal and drop custody of a checkout the skill forbids replacing, so
+    // normalize must reject it and the continuation must survive.
+    const browser = await makeRespondingServer(() => ({
+      status: 'requires_action',
+      checkout_id: checkoutId,
+      action_type: 'three_d_secure',
+      action_resolution: 'auto_resume',
+      action_message: 'Complete 3D Secure verification.',
+    }));
+    try {
+      const session = await getOrCreateSession(
+        'auto-resume-no-next',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const continuation = {
+        checkoutId,
+        allowedNextAction: 'resume' as const,
+        validUntil: VALID_UNTIL_MS,
+      };
+      session.stripeLinkContinuation = continuation;
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      let error: unknown;
+      try {
+        await checkout(
+          {
+            action: 'resume',
+            checkout_id: checkoutId,
+            browser_session_handle: session.handle,
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).to.include('incomplete checkout next step');
+      expect(session.stripeLinkContinuation).to.equal(continuation);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('treats a submitted card report as terminal and clears the checkout', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    const browser = await makeRespondingServer(() => ({
+      status: 'submitted',
+      instruction:
+        'Payment credential was submitted to the merchant, but Link cannot confirm the merchant charge for this payment method. Clear the secret gate, then read the merchant confirmation or receipt page to verify the payment, and report what you find. Do not submit or resume again.',
+      last4: '4242',
+    }));
+    try {
+      const session = await getOrCreateSession(
+        'link-submitted-terminal',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'report',
+        validUntil: VALID_UNTIL_MS,
+      };
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      const result = await checkout(
+        {
+          action: 'report',
+          outcome: 'success',
+          checkout_id: checkoutId,
+          browser_session_handle: session.handle,
+        },
+        mockContext,
+      );
+      expect(textOf(result)).to.include('submitted');
+      expect(textOf(result)).to.include('4242');
+      // A submitted result is terminal: the continuation is cleared so the agent
+      // cannot resume or resubmit, and a fresh checkout can start.
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('keeps a reported LPT checkout resumable until backend confirmation succeeds', async () => {
+    const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+    let calls = 0;
+    const browser = await makeRespondingServer(() =>
+      ++calls === 1
+        ? {
+            status: 'approved',
+            checkout_id: checkoutId,
+            _next: {
+              action: 'resume',
+              checkout_id: checkoutId,
+              valid_until: VALID_UNTIL,
+            },
+          }
+        : { status: 'succeeded' },
+    );
+    try {
+      const session = await getOrCreateSession(
+        'lpt-confirm',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'report',
+        validUntil: VALID_UNTIL_MS,
+      };
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      await checkout(
+        {
+          action: 'report',
+          outcome: 'success',
+          checkout_id: checkoutId,
+          browser_session_handle: session.handle,
+        },
+        mockContext,
+      );
+      expect(session.stripeLinkContinuation?.allowedNextAction).to.equal(
+        'resume',
+      );
+      const confirmed = await checkout(
+        {
+          action: 'resume',
+          checkout_id: checkoutId,
+          browser_session_handle: session.handle,
+        },
+        mockContext,
+      );
+      expect(textOf(confirmed)).to.include('succeeded');
+      expect(session.stripeLinkContinuation).to.equal(undefined);
     } finally {
       await browser.close();
     }

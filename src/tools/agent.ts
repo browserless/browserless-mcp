@@ -618,9 +618,12 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
   params?: Record<string, unknown>;
 };
 
-export const CLOSE_REMINDER =
+export const closeReminder = (compliant: boolean): string =>
   `This kept-alive browser holds a concurrency slot until closed or reaped when idle. ` +
   `When the task is done or you are giving up, end your last batch with ` +
+  (compliant
+    ? ''
+    : '`reportSkillOutcome` (only if you loaded a site recipe; its footer has the exact call), then ') +
   `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then send ` +
   `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
@@ -631,11 +634,11 @@ const ONE_SHOT_CLOSED_NOTICE =
 
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
-const sessionLine = (session: { handle: string }): string =>
+const sessionLine = (session: { handle: string }, compliant: boolean): string =>
   `sessionId: ${session.handle} — pass this back as \`sessionId\` on your next ` +
   `browserless_agent call to continue this kept-alive browser without repeating ` +
   `\`keepSessionAlive: true\`. New calls without a handle are one-shot by default. ` +
-  CLOSE_REMINDER;
+  closeReminder(compliant);
 
 export function registerAgentTools(
   server: FastMCP,
@@ -1134,7 +1137,7 @@ export function registerAgentTools(
         const text = createProfile
           ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
           : 'Browser session is open. Send commands to drive it.';
-        const line = sessionLine(opened);
+        const line = sessionLine(opened, compliant);
         return [
           { type: 'text' as const, text: line ? `${text}\n\n${line}` : text },
         ];
@@ -1455,7 +1458,7 @@ export function registerAgentTools(
             throw new UserError(
               [
                 appendSkills(body, triggered, compliant),
-                fatal ? '' : sessionLine(agentSession),
+                fatal ? '' : sessionLine(agentSession, compliant),
               ]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -1474,7 +1477,7 @@ export function registerAgentTools(
                   message: `the page did not load — the browser is on ${(resp.result as { url?: string }).url ?? 'an error page'}`,
                   recovery: navFailure.recovery,
                 }),
-                sessionLine(agentSession),
+                sessionLine(agentSession, compliant),
               ]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -1600,7 +1603,7 @@ export function registerAgentTools(
                 'Commands completed, but download collection failed. ' +
                   'The session was not closed. Retry getDownloads with this sessionId; ' +
                   'do not repeat the completed commands.\n\n' +
-                  sessionLine(agentSession),
+                  sessionLine(agentSession, compliant),
               );
             }
             // Reusable sessions can surface downloads on a later call.
@@ -1675,7 +1678,7 @@ export function registerAgentTools(
           closedDuringBatch
             ? ''
             : keepAlive || downloadsPending || createProfile || attachSessionId
-              ? sessionLine(agentSession)
+              ? sessionLine(agentSession, compliant)
               : ONE_SHOT_CLOSED_NOTICE,
         ]
           .filter(Boolean)

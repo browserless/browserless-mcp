@@ -118,6 +118,8 @@ export interface ToolDefinition<P, R> {
    * that throws on `!response.ok` still reports `ok`/`status_code`.
    */
   analyticsProps?: (params: P, result: R) => Record<string, unknown>;
+  /** Safe tool-specific properties to include when execution throws. */
+  analyticsErrorProps?: (params: P) => Record<string, unknown>;
 }
 
 // v2 = every invocation emits. Quality charts must filter on it; v1 series
@@ -329,6 +331,7 @@ export function defineTool<P, R>(
                 : {},
             ),
             ...resultProps,
+            ...def.analyticsErrorProps?.(params),
             success: false,
             error_category:
               error instanceof UserError

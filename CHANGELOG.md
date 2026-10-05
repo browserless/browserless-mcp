@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.35.0](https://github.com/browserless/browserless-mcp/compare/v1.34.0...v1.35.0) (2026-10-01)
+
+
+### Features
+
+* enhance skill outcome reporting AUTO-515 ([#369](https://github.com/browserless/browserless-mcp/issues/369)) ([d19c01d](https://github.com/browserless/browserless-mcp/commit/d19c01d6a1cc672bf3c8881c8b82b2caaa781791))
+
+
+### Bug Fixes
+
+* pass card selectors on Stripe-hosted Link CLI checkout ([#366](https://github.com/browserless/browserless-mcp/issues/366)) ([80d83e5](https://github.com/browserless/browserless-mcp/commit/80d83e56cb66815a82624b4714467adefd28b972))
+* return a connect link when the Link wallet is not connected ([#367](https://github.com/browserless/browserless-mcp/issues/367)) ([99972e6](https://github.com/browserless/browserless-mcp/commit/99972e654273f17f84b7b90a2ec4e31fc38f4d1b))
+
+## [1.34.0](https://github.com/browserless/browserless-mcp/compare/v1.33.0...v1.34.0) (2026-10-01)
+
+
+### Features
+
+* support hosted Link checkout without card selectors ([#347](https://github.com/browserless/browserless-mcp/issues/347)) ([68b96c4](https://github.com/browserless/browserless-mcp/commit/68b96c494e4e2256ebc1d07be00212af9412944f))
+
+
+### Bug Fixes
+
+* bound OAuth client registration resources ([#359](https://github.com/browserless/browserless-mcp/issues/359)) ([9a93af3](https://github.com/browserless/browserless-mcp/commit/9a93af3e1b5e7f699c5edefcf3bf7bcb91e7bc48))
+* improve credential discovery and command feedback ([#348](https://github.com/browserless/browserless-mcp/issues/348)) ([4b2f02f](https://github.com/browserless/browserless-mcp/commit/4b2f02f99c1adc4bc904d094cafc33c5fc44d185))
+
 ## [1.33.0](https://github.com/browserless/browserless-mcp/compare/v1.32.0...v1.33.0) (2026-09-25)
 
 
