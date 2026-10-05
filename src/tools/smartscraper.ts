@@ -131,6 +131,7 @@ export function registerSmartScraperTool(
 
   defineTool<SmartScraperParams, SmartScrapeResult>(server, config, analytics, {
     name: 'browserless_smartscraper',
+    failureStatus: { origin: 'target_website' },
     description:
       'Scrape a SINGLE webpage and return HTML, markdown, raw DOM text, links, screenshots, or PDFs plus page metadata. ' +
       'Handles JavaScript-heavy pages and anti-bot measures automatically. ' +

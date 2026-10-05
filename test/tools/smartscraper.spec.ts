@@ -104,6 +104,57 @@ describe('browserless_smartscraper tool', () => {
     expect(() => registerSmartScraperTool(server, mockConfig)).to.not.throw();
   });
 
+  for (const [status, reason] of [
+    [404, 'not_found'],
+    [403, 'forbidden'],
+    [200, 'unknown'],
+  ] as const) {
+    it(`reports safe failure analytics for target status ${status}`, async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify(
+            makeFailResponse({
+              statusCode: status,
+              message: 'secret-body',
+            }),
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const addTool = sinon.spy(server, 'addTool');
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      registerSmartScraperTool(server, mockConfig, analytics);
+      const err = await addTool.firstCall.args[0]
+        .execute(
+          { url: 'https://example.com', formats: ['markdown'] },
+          mockContext,
+        )
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.equal(
+        `Scraping failed: secret-body (status: ${status}, strategies attempted: http-fetch, browser-fetch)`,
+      );
+      expect(fire.calledOnce).to.be.true;
+      const props = fire.firstCall.args[2];
+      expect(props).to.include({
+        success: false,
+        ok: false,
+        status_code: status,
+        error_category: 'user_error',
+        error_reason: reason,
+        error_source: 'target_website',
+        error_status_code: status,
+        error_status_origin: 'target_website',
+      });
+      expect(JSON.stringify(props)).not.to.include('secret-body');
+    });
+  }
+
   it('returns markdown content on successful scrape', async () => {
     fetchStub.resolves(
       new Response(JSON.stringify(makeSuccessResponse()), {

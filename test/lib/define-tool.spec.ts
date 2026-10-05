@@ -159,6 +159,7 @@ describe('defineTool analytics', () => {
 
   it('omits stale diagnostic properties on success', async () => {
     const { execute, props } = register({
+      failureStatus: { origin: 'api' },
       analyticsProps: () => ({
         success: true,
         error_category: 'timeout',
@@ -433,7 +434,59 @@ describe('defineTool analytics', () => {
       success: false,
       status_code: 500,
       error_category: 'api_error',
+      error_reason: 'unknown',
     });
+    expect(props()).not.to.have.property('error_status_code');
+  });
+
+  for (const [origin, status, reason, source, category] of [
+    ['api', 400, 'script_error', 'script', 'user_error'],
+    ['api', 429, 'rate_limited', 'api', 'user_error'],
+    ['api', 408, 'timeout', 'api', 'timeout'],
+    ['target_website', 404, 'not_found', 'target_website', 'user_error'],
+  ] as const) {
+    it(`derives ${reason} from declared ${origin} status ${status}`, async () => {
+      const error = new UserError('Function execution failed: secret-body');
+      const { execute, fire, props } = register({
+        failureStatus: { origin, badRequest: 'SCRIPT_ERROR' },
+        analyticsProps: () => ({ ok: false, status_code: status }),
+        format: () => {
+          throw error;
+        },
+      });
+      expect(await rejects(execute({}, mockContext as never))).to.equal(error);
+      expect(fire.calledOnce).to.be.true;
+      expect(props()).to.include({
+        success: false,
+        ok: false,
+        status_code: status,
+        error_category: category,
+        error_reason: reason,
+        error_source: source,
+        error_status_code: status,
+        error_status_origin: origin,
+        error_message: `Request failed: ${reason.replaceAll('_', ' ')}.`,
+      });
+      expect(JSON.stringify(props())).not.to.include('secret-body');
+    });
+  }
+
+  it('uses the thrown status when a declared tool fails before returning', async () => {
+    const error = Object.assign(new Error('secret-body'), { status: 403 });
+    const { execute, props } = register({
+      failureStatus: { origin: 'api' },
+      run: async () => {
+        throw error;
+      },
+    });
+    expect(await rejects(execute({}, mockContext as never))).to.equal(error);
+    expect(props()).to.include({
+      error_reason: 'forbidden',
+      error_source: 'unknown',
+      error_status_code: 403,
+      error_status_origin: 'unknown',
+    });
+    expect(JSON.stringify(props())).not.to.include('secret-body');
   });
 
   it('reports failure when format throws on otherwise successful props', async () => {

@@ -11,7 +11,11 @@ import { ResponseCache } from './cache.js';
 import { AnalyticsHelper } from './analytics.js';
 import { setAmplitudeToolContext } from './amplitude-analytics.js';
 import { categorizeThrown, categoryFromStatus } from './error-classifier.js';
-import { failureDetails, failureFields } from './failure-details.js';
+import {
+  failureDetails,
+  failureFields,
+  type FailureCategory,
+} from './failure-details.js';
 import type {
   ApiClient,
   BrowserlessSession,
@@ -123,6 +127,11 @@ export interface ToolDefinition<P, R> {
    * that throws on `!response.ok` still reports `ok`/`status_code`.
    */
   analyticsProps?: (params: P, result: R) => Record<string, unknown>;
+  /** Origin of a failed result's status_code used when format throws. */
+  failureStatus?: {
+    origin: 'api' | 'target_website';
+    badRequest?: FailureCategory;
+  };
   /** Safe tool-specific properties to include when execution throws. */
   analyticsErrorProps?: (params: P) => Record<string, unknown>;
 }
@@ -340,13 +349,32 @@ export function defineTool<P, R>(
             : err;
 
         if (!fired) {
+          const declared = def.failureStatus;
+          const status =
+            declared &&
+            resultProps?.ok === false &&
+            typeof resultProps.status_code === 'number'
+              ? resultProps.status_code
+              : undefined;
+          const details =
+            !declared || status === undefined
+              ? failureDetails(
+                  err,
+                  validating
+                    ? { category: 'INVALID_PARAMS', source: 'validation' }
+                    : {},
+                )
+              : failureDetails(
+                  { status },
+                  {
+                    ...(status === 400 && declared.badRequest
+                      ? { category: declared.badRequest, source: 'script' }
+                      : { source: declared.origin }),
+                    statusOrigin: declared.origin,
+                  },
+                );
           emit({
-            ...failureDetails(
-              err,
-              validating
-                ? { category: 'INVALID_PARAMS', source: 'validation' }
-                : {},
-            ),
+            ...details,
             ...resultProps,
             ...def.analyticsErrorProps?.(params),
             success: false,

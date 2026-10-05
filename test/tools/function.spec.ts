@@ -9,6 +9,7 @@ import {
 } from '../../src/tools/function.js';
 import type { GenericApiResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -67,6 +68,84 @@ describe('browserless_function tool', () => {
   it('registers the tool on the server', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     expect(() => registerFunctionTool(server, mockConfig)).to.not.throw();
+  });
+
+  for (const [status, reason, source, category] of [
+    [400, 'script_error', 'script', 'user_error'],
+    [429, 'rate_limited', 'api', 'user_error'],
+    [408, 'timeout', 'api', 'timeout'],
+    [401, 'unauthorized', 'api', 'user_error'],
+  ] as const) {
+    it(`reports safe failure analytics for API status ${status}`, async () => {
+      fetchStub.resolves(
+        new Response('secret-body', {
+          status,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const addTool = sinon.spy(server, 'addTool');
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      registerFunctionTool(server, mockConfig, analytics);
+      const err = await addTool.firstCall.args[0]
+        .execute({ code: 'export default async () => ({})' }, mockContext)
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.equal(
+        `Function execution failed (status ${status}): secret-body`,
+      );
+      expect(fire.calledOnce).to.be.true;
+      const props = fire.firstCall.args[2];
+      expect(props).to.include({
+        success: false,
+        ok: false,
+        status_code: status,
+        error_category: category,
+        error_reason: reason,
+        error_source: source,
+        error_status_code: status,
+        error_status_origin: 'api',
+      });
+      expect(JSON.stringify(props)).not.to.include('secret-body');
+    });
+  }
+
+  it('does not attribute a local size-limit failure to the successful API response', async () => {
+    fetchStub.resolves(
+      new Response('x'.repeat(MAX_TEXT_RESPONSE_CHARS + 1), {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerFunctionTool(server, mockConfig, analytics);
+    const err = await addTool.firstCall.args[0]
+      .execute({ code: 'export default async () => ({})' }, mockContext)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(err).to.be.instanceOf(UserError);
+    expect((err as Error).message).to.include('exceeding the 200000-char');
+    expect(fire.calledOnce).to.be.true;
+    const props = fire.firstCall.args[2];
+    expect(props).to.include({
+      success: false,
+      ok: true,
+      status_code: 200,
+      error_reason: 'unknown',
+      error_source: 'unknown',
+      error_category: 'user_error',
+    });
+    expect(props).not.to.have.property('error_status_code');
+    expect(props).not.to.have.property('error_status_origin');
   });
 
   it('returns JSON text on successful function execution', async () => {

@@ -1,5 +1,7 @@
 import type { ErrorCategory } from '../@types/types.js';
 
+export type FailureCategory = ErrorCategory | 'RATE_LIMITED';
+
 type Source =
   'validation' | 'script' | 'target_website' | 'api' | 'transport' | 'unknown';
 
@@ -15,17 +17,32 @@ const reasons = {
   SESSION_LOST: 'session_lost',
   NAVIGATION_FAILED: 'navigation_failed',
   TIMEOUT: 'timeout',
+  RATE_LIMITED: 'rate_limited',
   UNKNOWN: 'unknown',
-} satisfies Record<ErrorCategory, string>;
+} satisfies Record<FailureCategory, string>;
+
+// Every category name is also a code that maps to itself; the rest are aliases.
+const codeCategories: Partial<Record<string, FailureCategory>> = {
+  ...(Object.fromEntries(
+    Object.keys(reasons).map((category) => [category, category]),
+  ) as Record<FailureCategory, FailureCategory>),
+  SELECTOR_NOT_FOUND: 'SELECTOR_MISS',
+  BROWSER_CRASHED: 'SESSION_LOST',
+  NAVIGATION_TIMEOUT: 'TIMEOUT',
+};
+
+const statusCategories: Partial<Record<number, FailureCategory>> = {
+  401: 'UNAUTHORIZED',
+  403: 'FORBIDDEN',
+  404: 'NOT_FOUND',
+  408: 'TIMEOUT',
+  429: 'RATE_LIMITED',
+};
 
 // Codes are untrusted text too. Only documented categories and transport codes
 // are safe to publish; an opaque provider code could itself contain a secret.
 const safeCodes = new Set([
-  ...Object.keys(reasons),
-  'SELECTOR_NOT_FOUND',
-  'NAVIGATION_TIMEOUT',
-  'BROWSER_CRASHED',
-  'RATE_LIMITED',
+  ...Object.keys(codeCategories),
   'INTERNAL_ERROR',
   'TAB_NOT_FOUND',
   'TAB_CLOSED',
@@ -53,8 +70,9 @@ export const failureFields = [
 export function failureDetails(
   error: unknown,
   options: {
-    category?: ErrorCategory;
+    category?: FailureCategory;
     source?: Source;
+    statusOrigin?: 'api' | 'target_website';
   } = {},
 ): Record<string, unknown> {
   const err =
@@ -81,23 +99,9 @@ export function failureDetails(
     typeof rawCode === 'string' && safeCodes.has(rawCode) ? rawCode : undefined;
   const category =
     options.category ??
-    (code === 'SELECTOR_NOT_FOUND'
-      ? 'SELECTOR_MISS'
-      : code === 'BROWSER_CRASHED'
-        ? 'SESSION_LOST'
-        : code === 'NAVIGATION_TIMEOUT'
-          ? 'TIMEOUT'
-          : code && Object.hasOwn(reasons, code)
-            ? (code as ErrorCategory)
-            : status === 401
-              ? 'UNAUTHORIZED'
-              : status === 403
-                ? 'FORBIDDEN'
-                : status === 404
-                  ? 'NOT_FOUND'
-                  : status !== undefined && status >= 500
-                    ? 'SERVER_ERROR'
-                    : 'UNKNOWN');
+    (code === undefined ? undefined : codeCategories[code]) ??
+    (status === undefined ? undefined : statusCategories[status]) ??
+    (status !== undefined && status >= 500 ? 'SERVER_ERROR' : 'UNKNOWN');
   const reason = reasons[category];
   const source =
     options.source ??
@@ -122,9 +126,10 @@ export function failureDetails(
       : {
           error_status_code: status,
           error_status_origin:
-            source === 'api' || source === 'target_website'
+            options.statusOrigin ??
+            (source === 'api' || source === 'target_website'
               ? source
-              : 'unknown',
+              : 'unknown'),
         }),
   };
 }

@@ -81,6 +81,7 @@ export function registerExportTool(
 
   defineTool<ExportParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_export',
+    failureStatus: { origin: 'api' },
     description: compliant
       ? COMPLIANT_EXPORT_DESCRIPTION
       : 'Export a webpage from a URL via the Browserless /export API. ' +

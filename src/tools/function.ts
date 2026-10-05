@@ -119,6 +119,7 @@ export function registerFunctionTool(
 ): void {
   defineTool<FunctionParams, GenericApiResult>(server, config, analytics, {
     name: 'browserless_function',
+    failureStatus: { origin: 'api', badRequest: 'SCRIPT_ERROR' },
     description:
       'Execute custom Puppeteer JavaScript code on the Browserless cloud. ' +
       'Your function receives a Puppeteer `page` object and optional `context` data. ' +
