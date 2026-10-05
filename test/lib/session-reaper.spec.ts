@@ -111,6 +111,29 @@ describe('session-reaper', () => {
     expect(busy.close.calledOnce).to.equal(true);
   });
 
+  it('prunes tracked ids that never became sessions (unauthenticated/bogus requests)', () => {
+    const now = 10 * TTL;
+    // Pre-auth touches for 200 distinct ids that are then rejected (401) and
+    // never become sessions.
+    for (let i = 0; i < 200; i++) touchSession('bogus-' + i, now);
+    expect(trackedSessionCount()).to.equal(200);
+    // A reaper pass with no live sessions must drop every orphaned id.
+    expect(reapIdleSessions(() => [], { now: now + 1, ttlMs: TTL })).to.equal(
+      0,
+    );
+    expect(trackedSessionCount()).to.equal(0);
+  });
+
+  it('prunes bogus ids but keeps a live session alongside them', () => {
+    const now = 10 * TTL;
+    const live = fakeSession('live');
+    touchSession('live', now); // real, in server.sessions, recently active
+    touchSession('bogus', now); // stamped pre-auth, never a session
+    reapIdleSessions(() => [live], { now: now + 1000, ttlMs: TTL });
+    expect(trackedSessionCount()).to.equal(1); // bogus dropped, live kept
+    expect(live.close.called).to.equal(false); // live not reaped (within TTL)
+  });
+
   it('swallows a throwing close() and still forgets the session', () => {
     const now = 10 * TTL;
     const bad: ReapableSession = {

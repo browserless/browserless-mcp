@@ -106,9 +106,11 @@ export const reapIdleSessions = (
   }: { now?: number; ttlMs?: number } = {},
 ): number => {
   let closed = 0;
+  const liveIds = new Set<string>();
   for (const session of getSessions()) {
     const id = session.sessionId;
     if (!id) continue;
+    liveIds.add(id);
     // A tool execution in flight keeps the session alive and refreshed, so a
     // long-running call is never reaped mid-flight.
     if ((activeExec.get(id) ?? 0) > 0) {
@@ -126,6 +128,13 @@ export const reapIdleSessions = (
     closed++;
     console.error(`[session-reaper] closed idle mcp session id=${id}`);
   }
+  // Drop tracking for ids with no live session. `touchSession` stamps the
+  // mcp-session-id before auth (and rejected/unknown requests carry arbitrary
+  // ids), so without this an unauthenticated caller could grow these maps
+  // without bound. This bounds them to live sessions plus one sweep's transients.
+  for (const id of lastSeen.keys()) if (!liveIds.has(id)) lastSeen.delete(id);
+  for (const id of activeExec.keys())
+    if (!liveIds.has(id)) activeExec.delete(id);
   return closed;
 };
 
