@@ -4,6 +4,7 @@ import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { registerExportTool } from '../../src/tools/export.js';
 import type { McpConfig } from '../../src/@types/types.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -63,6 +64,50 @@ describe('browserless_export tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     expect(() => registerExportTool(server, mockConfig)).to.not.throw();
   });
+
+  for (const [status, reason, category] of [
+    [400, 'unknown', 'user_error'],
+    [401, 'unauthorized', 'user_error'],
+    [408, 'timeout', 'timeout'],
+    [429, 'rate_limited', 'user_error'],
+  ] as const) {
+    it(`reports safe failure analytics for API status ${status}`, async () => {
+      fetchStub.resolves(
+        new Response('secret-body', {
+          status,
+          headers: { 'Content-Type': 'text/plain' },
+        }),
+      );
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const addTool = sinon.spy(server, 'addTool');
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      registerExportTool(server, mockConfig, analytics);
+      const err = await addTool.firstCall.args[0]
+        .execute({ url: 'https://example.com' }, mockContext)
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(err).to.be.instanceOf(UserError);
+      expect((err as Error).message).to.equal(
+        `Export failed (status ${status}): secret-body`,
+      );
+      expect(fire.calledOnce).to.be.true;
+      const props = fire.firstCall.args[2];
+      expect(props).to.include({
+        success: false,
+        ok: false,
+        status_code: status,
+        error_category: category,
+        error_reason: reason,
+        error_source: 'api',
+        error_status_code: status,
+        error_status_origin: 'api',
+      });
+      expect(JSON.stringify(props)).not.to.include('secret-body');
+    });
+  }
 
   it('returns HTML content from an export', async () => {
     const htmlContent = '<html><body>Hello World</body></html>';
