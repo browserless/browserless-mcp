@@ -11,6 +11,9 @@ const ENV_KEY = 'OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS';
 const BASELINE_PATTERNS = [
   'http://localhost:*',
   'http://127.0.0.1:*',
+  'http://127.0.0.1/',
+  'https://vscode.dev/redirect',
+  'https://insiders.vscode.dev/redirect',
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector/oauth/*',
   'https://chatgpt.com/connector_platform_oauth_redirect',
