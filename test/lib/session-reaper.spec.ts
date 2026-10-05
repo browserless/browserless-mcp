@@ -134,6 +134,31 @@ describe('session-reaper', () => {
     expect(live.close.called).to.equal(false); // live not reaped (within TTL)
   });
 
+  it('keeps a live session that follows a reaped one in a mutable session array', () => {
+    const now = 10 * TTL;
+    // Emulate FastMCP's mutable server.sessions: closing a session splices it out.
+    const arr: ReapableSession[] = [];
+    const idle: ReapableSession = {
+      sessionId: 'idle',
+      close: () => {
+        const i = arr.indexOf(idle);
+        if (i >= 0) arr.splice(i, 1);
+        return Promise.resolve();
+      },
+    };
+    const live = fakeSession('live');
+    arr.push(idle, live); // live follows the idle one that will splice itself
+    touchSession('idle', now - TTL - 1);
+    touchSession('live', now);
+    beginSessionExec('live'); // live has a tool call in flight
+    reapIdleSessions(() => arr, { now, ttlMs: TTL });
+    // live must not be skipped+pruned: its tracking survives...
+    expect(trackedSessionCount()).to.equal(1);
+    // ...and its in-flight guard survives (stays unreaped even when idle-aged).
+    reapIdleSessions(() => [live], { now: now + 10 * TTL, ttlMs: TTL });
+    expect(live.close.called).to.equal(false);
+  });
+
   it('swallows a throwing close() and still forgets the session', () => {
     const now = 10 * TTL;
     const bad: ReapableSession = {

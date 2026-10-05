@@ -107,7 +107,12 @@ export const reapIdleSessions = (
 ): number => {
   let closed = 0;
   const liveIds = new Set<string>();
-  for (const session of getSessions()) {
+  // Snapshot first: closing an idle session synchronously splices it out of
+  // FastMCP's live `server.sessions` array, which would skip the next entry if we
+  // iterated that array directly — dropping a live session from liveIds and
+  // letting the prune below delete its tracking and in-flight guard.
+  const sessions = [...getSessions()];
+  for (const session of sessions) {
     const id = session.sessionId;
     if (!id) continue;
     liveIds.add(id);
