@@ -26,6 +26,22 @@ export type {
 
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
+// Count of agent commands awaiting a response per session. A command may run
+// past the idle TTL (an explicit long timeoutMs), so the sweep must not evict a
+// session with work still in flight — doing so would send `close` on the same
+// socket and abort the pending command. Mirrors the stripeLinkOperations guard.
+const inFlightCommands = new WeakMap<ActiveSession, number>();
+const beginCommand = (session: ActiveSession): void => {
+  inFlightCommands.set(session, (inFlightCommands.get(session) ?? 0) + 1);
+};
+const endCommand = (session: ActiveSession): void => {
+  const remaining = (inFlightCommands.get(session) ?? 1) - 1;
+  if (remaining > 0) inFlightCommands.set(session, remaining);
+  else inFlightCommands.delete(session);
+};
+const hasInFlightCommand = (session: ActiveSession): boolean =>
+  (inFlightCommands.get(session) ?? 0) > 0;
+
 export const clearExpiredStripeLinkContinuation = (
   session: ActiveSession,
 ): boolean => {
@@ -350,7 +366,19 @@ export const getActiveSessionByHandle = (
 };
 
 const DEFAULT_TIMEOUT = 60_000;
-const IDLE_TTL_MS = 15 * 60 * 1000;
+// Parse a positive millisecond env value, falling back when unset or invalid
+// (clamped to a valid setInterval/comparison range).
+const parsePositiveMs = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 && n <= 2_147_483_647 ? n : fallback;
+};
+// Idle window before a pooled agent session is reaped and properly closed on the
+// cloud. Configurable so ops can free concurrency slots sooner than the
+// 15-minute default.
+const IDLE_TTL_MS = parsePositiveMs(
+  process.env.MCP_IDLE_TTL_MS,
+  15 * 60 * 1000,
+);
 const MAX_SESSIONS = 500;
 const MAX_RETAINED_CONFIGS = 500;
 // mcp session id -> last time a request arrived on it. `disconnect` is the
@@ -365,31 +393,60 @@ export const dropMcpSession = (id: string | undefined): void => {
   if (id) mcpSeenAt.delete(id);
 };
 
-const closeAndDelete = (key: string, reason: string): void => {
-  const session = sessions.get(key);
-  if (!session) return;
-  try {
-    session.ws.close();
-  } catch {
-    /* ignore */
-  }
+const properClose = (
+  key: string,
+  session: ActiveSession,
+  reason: string,
+): void => {
+  const ws = session.ws;
+  // Unlike send(), cleanup must never reconnect and launch a new browser.
+  // Attached (attachSessionId) and profile-creation browsers are owned
+  // elsewhere — their id is held in creationSessionId and keepSessionAlive does
+  // not manage them. Evicting the idle agent connection must close only our
+  // socket, never send the agent `close` command, or it would destroy a browser
+  // the MCP process did not create (e.g. an autologin runner's session).
+  const closing =
+    ws.readyState === WebSocket.OPEN && !session.creationSessionId
+      ? sendMessage(
+          ws,
+          { id: ++session.msgId, method: 'close', params: {} },
+          5000,
+        )
+      : Promise.resolve();
+  // Stop reuse and repeated eviction while the close response is in flight.
   sessions.delete(key);
-  console.error(`[agent-client] evicted session key=${key} reason=${reason}`);
+  void closing
+    .catch(() => {
+      /* browser may already be gone */
+    })
+    .finally(() => {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      console.error(
+        `[agent-client] evicted session key=${key} reason=${reason}`,
+      );
+    });
 };
 
-// Sweep idle sessions and enforce a hard cap. Called on every
-// getOrCreateSession; cheap because the map is bounded.
+// Sweep periodically and on getOrCreateSession; the map is bounded.
 export const sweepSessions = (
   now = Date.now(),
   maxSessions = MAX_SESSIONS,
 ): void => {
   for (const [key, session] of sessions) {
     clearExpiredStripeLinkContinuation(session);
-    if (stripeLinkOperations.has(session) || session.stripeLinkContinuation) {
+    if (
+      stripeLinkOperations.has(session) ||
+      session.stripeLinkContinuation ||
+      hasInFlightCommand(session)
+    ) {
       continue;
     }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
-      closeAndDelete(key, 'idle');
+      properClose(key, session, 'idle');
     }
   }
   if (sessions.size <= maxSessions) return;
@@ -397,13 +454,28 @@ export const sweepSessions = (
   const oldest = [...sessions.entries()]
     .filter(
       ([, session]) =>
-        !stripeLinkOperations.has(session) && !session.stripeLinkContinuation,
+        !stripeLinkOperations.has(session) &&
+        !session.stripeLinkContinuation &&
+        !hasInFlightCommand(session),
     )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
-  for (const [key] of oldest) {
-    closeAndDelete(key, 'cap');
+  for (const [key, session] of oldest) {
+    properClose(key, session, 'cap');
   }
+};
+
+let sweepTimer: ReturnType<typeof setInterval> | undefined;
+export const startSweepTimer = (): void => {
+  if (sweepTimer) return;
+  const ms = parsePositiveMs(process.env.MCP_SWEEP_MS, 60_000);
+  sweepTimer = setInterval(() => sweepSessions(), ms);
+  sweepTimer.unref();
+};
+
+export const stopSweepTimer = (): void => {
+  clearInterval(sweepTimer);
+  sweepTimer = undefined;
 };
 
 // Separator between the host segment (mcpSessionId or stdio:<hash>) and
@@ -1339,55 +1411,65 @@ export const send = async (
   timeoutMs?: number,
   onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
-  if (session.ws.readyState !== WebSocket.OPEN) {
-    if (!session.reconnecting) {
-      // A creation session must re-attach to the same browser by id — a fresh
-      // connect() would launch a new one and lose all auth progress.
-      session.reconnecting = connect(
-        session.apiUrl,
-        session.token,
-        session.proxy,
-        session.profile,
-        session.creationSessionId,
-        session.compliant,
-        session.source,
-        session.integrationId,
-        session.allowedDomains,
-        session.creationSessionId ? undefined : session.os,
-        session.humanlike,
-        session.record,
-        session.creationSessionId ? undefined : session.persona,
-      ).finally(() => {
-        session.reconnecting = undefined;
-      });
-    }
-    const ws = await session.reconnecting;
-
-    if (session.ws !== ws) {
-      session.ws = ws;
-      session.msgId = 0;
-      createdAt.set(session, Date.now());
-
-      const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
-      if (key) {
-        ws.on('close', () => {
-          const current = sessions.get(key);
-          if (current?.ws === ws) {
-            sessions.delete(key);
-          }
+  // Mark the command in flight for the whole operation — including any reconnect
+  // wait — so a sweep tick cannot evict the session mid-send (which would drop
+  // the new socket's cleanup listener). Refresh the idle clock on completion.
+  beginCommand(session);
+  try {
+    if (session.ws.readyState !== WebSocket.OPEN) {
+      if (!session.reconnecting) {
+        // A creation session must re-attach to the same browser by id — a fresh
+        // connect() would launch a new one and lose all auth progress.
+        session.reconnecting = connect(
+          session.apiUrl,
+          session.token,
+          session.proxy,
+          session.profile,
+          session.creationSessionId,
+          session.compliant,
+          session.source,
+          session.integrationId,
+          session.allowedDomains,
+          session.creationSessionId ? undefined : session.os,
+          session.humanlike,
+          session.record,
+          session.creationSessionId ? undefined : session.persona,
+        ).finally(() => {
+          session.reconnecting = undefined;
         });
       }
-    }
-    onSession?.(false, 0);
-  }
+      const ws = await session.reconnecting;
 
-  session.msgId++;
-  session.lastUsedAt = Date.now();
-  return sendMessage(
-    session.ws,
-    { id: session.msgId, method, params },
-    timeoutMs,
-  );
+      if (session.ws !== ws) {
+        session.ws = ws;
+        session.msgId = 0;
+        createdAt.set(session, Date.now());
+
+        const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
+        if (key) {
+          ws.on('close', () => {
+            const current = sessions.get(key);
+            if (current?.ws === ws) {
+              sessions.delete(key);
+            }
+          });
+        }
+      }
+      onSession?.(false, 0);
+    }
+
+    session.msgId++;
+    session.lastUsedAt = Date.now();
+    const response = await sendMessage(
+      session.ws,
+      { id: session.msgId, method, params },
+      timeoutMs,
+    );
+    session.lastUsedAt = Date.now();
+    return response;
+  } finally {
+    endCommand(session);
+  }
 };
 
 export const closeSession = (
@@ -1460,6 +1542,7 @@ export const destroySession = (
   integrationId?: string,
   allowedDomains?: string[],
   userId?: string,
+  expectedSession?: ActiveSession,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -1474,6 +1557,8 @@ export const destroySession = (
     userId,
   );
   const session = sessions.get(key);
+  // A failed command may belong to a browser evicted before its reply arrived.
+  if (expectedSession && session !== expectedSession) return;
   if (session) {
     try {
       session.ws.close();

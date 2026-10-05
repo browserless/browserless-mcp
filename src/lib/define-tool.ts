@@ -18,6 +18,11 @@ import type {
   McpConfig,
 } from '../@types/types.js';
 import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
+import {
+  touchSession,
+  beginSessionExec,
+  endSessionExec,
+} from './session-reaper.js';
 
 /**
  * Minimal log surface tools use. Tools only call the level methods with a
@@ -176,6 +181,9 @@ export function defineTool<P, R>(
       args,
       { reportProgress, session, sessionId, log, client: mcpClient },
     ) => {
+      // Inbound activity refreshes the idle clock so the reaper never closes a
+      // live session between tool calls (see session-reaper.ts).
+      touchSession(sessionId);
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
       const prompt =
@@ -286,22 +294,31 @@ export function defineTool<P, R>(
           def.cache,
         );
 
-        const result = await def.run({
-          client,
-          params,
-          prompt,
-          log,
-          analytics: toolAnalytics,
-          mcpSource,
-          token,
-          apiUrl,
-          reportProgress,
-          sessionId,
-          attachSessionId: s?.attachSessionId,
-          userId: s?.userId,
-          userRole: s?.userRole,
-          identityToken: s?.identityToken,
-        });
+        // Mark the session busy for the whole run so a long-running call is not
+        // reaped mid-flight by the idle session reaper (it refreshes the idle
+        // clock on completion).
+        beginSessionExec(sessionId);
+        let result: R;
+        try {
+          result = await def.run({
+            client,
+            params,
+            prompt,
+            log,
+            analytics: toolAnalytics,
+            mcpSource,
+            token,
+            apiUrl,
+            reportProgress,
+            sessionId,
+            attachSessionId: s?.attachSessionId,
+            userId: s?.userId,
+            userRole: s?.userRole,
+            identityToken: s?.identityToken,
+          });
+        } finally {
+          endSessionExec(sessionId);
+        }
 
         await reportProgress({ progress: 100, total: 100 });
         resultProps = def.analyticsProps?.(params, result) ?? {};

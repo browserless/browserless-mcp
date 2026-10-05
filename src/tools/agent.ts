@@ -1353,6 +1353,7 @@ export function registerAgentTools(
               integrationId,
               allowedDomains,
               userId,
+              agentSession,
             );
             const errMessage =
               sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -1393,6 +1394,7 @@ export function registerAgentTools(
                 integrationId,
                 allowedDomains,
                 userId,
+                agentSession,
               );
               if (!isRetry && !saveSecretSent) {
                 return runCommands(true, agentSession.persona ?? retryPersona);
