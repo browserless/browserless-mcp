@@ -1309,7 +1309,10 @@ export function registerAgentTools(
             if (!agentSession.lastActiveTargetId) {
               throw Object.assign(
                 new UserError(
-                  'reportProfileAuthentication: no active tab known — end a batch with snapshot first, or pass targetId',
+                  (commands.length > 1
+                    ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
+                    : `${cmd.method}: `) +
+                    'no active tab known — end a batch with snapshot first, or pass targetId',
                 ),
                 { code: 'INVALID_PARAMS' },
               );

@@ -3647,7 +3647,12 @@ describe('browserless_agent reportProfileAuthentication', () => {
       let error: unknown;
       try {
         await getAgentExecute(srv.url)(
-          { method, params: withoutTarget },
+          {
+            commands: [
+              { method: 'waitForTimeout', params: { time: 1 } },
+              { method, params: withoutTarget },
+            ],
+          },
           mockContext,
         );
       } catch (caught) {
@@ -3656,7 +3661,8 @@ describe('browserless_agent reportProfileAuthentication', () => {
       expect(error).to.be.instanceOf(UserError);
       expect(error).to.have.property('code', 'INVALID_PARAMS');
       expect((error as Error).message).to.include('no active tab known');
-      expect(calls).not.to.include(method);
+      expect((error as Error).message).to.include('(after waitForTimeout)');
+      expect(calls).to.deep.equal(['waitForTimeout']);
     } finally {
       await srv.close();
     }
