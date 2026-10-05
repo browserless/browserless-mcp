@@ -374,7 +374,11 @@ const properClose = (
   // Unlike send(), cleanup must never reconnect and launch a new browser.
   const closing =
     ws.readyState === WebSocket.OPEN
-      ? sendMessage(ws, { id: ++session.msgId, method: 'close', params: {} })
+      ? sendMessage(
+          ws,
+          { id: ++session.msgId, method: 'close', params: {} },
+          5000,
+        )
       : Promise.resolve();
   // Stop reuse and repeated eviction while the close response is in flight.
   sessions.delete(key);
@@ -425,9 +429,20 @@ export const sweepSessions = (
 let sweepTimer: ReturnType<typeof setInterval> | undefined;
 export const startSweepTimer = (): void => {
   if (sweepTimer) return;
-  const ms = Number(process.env.MCP_SWEEP_MS) || 60_000;
+  const configured = Number(process.env.MCP_SWEEP_MS);
+  const ms =
+    Number.isFinite(configured) &&
+    configured >= 1 &&
+    configured <= 2_147_483_647
+      ? configured
+      : 60_000;
   sweepTimer = setInterval(() => sweepSessions(), ms);
   sweepTimer.unref();
+};
+
+export const stopSweepTimer = (): void => {
+  clearInterval(sweepTimer);
+  sweepTimer = undefined;
 };
 
 // Separator between the host segment (mcpSessionId or stdio:<hash>) and

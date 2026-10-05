@@ -114,11 +114,15 @@ describe('agent-client session sweep', () => {
         toFake: ['setTimeout', 'clearTimeout'],
       });
       const outbound = sinon.spy(session.ws, 'send');
+      const closeSocket = sinon.spy(session.ws, 'close');
       session.lastUsedAt = Date.now() - 16 * 60 * 1000;
       const closed = once(session.ws, 'close');
       client.sweepSessions();
       expect(outbound.calledOnce).to.equal(true);
-      await clock.tickAsync(60_000);
+      await clock.tickAsync(4999);
+      expect(closeSocket.called).to.equal(false);
+      await clock.tickAsync(1);
+      expect(closeSocket.calledOnce).to.equal(true);
       await closed;
       expect(browser.hits()).to.equal(1);
       expect(() =>
@@ -176,9 +180,41 @@ describe('agent-client session sweep', () => {
       expect(
         client.getActiveSessionByHandle(active.handle, browser.url, 'tok'),
       ).to.equal(active);
+      client.stopSweepTimer();
+      expect(clock.countTimers()).to.equal(0);
+      client.startSweepTimer();
+      expect(interval.callCount).to.equal(2);
     } finally {
+      client.stopSweepTimer();
       sinon.restore();
       await browser.close();
     }
   });
+
+  for (const [value, expected] of [
+    ['-1', 60_000],
+    ['2147483648', 60_000],
+    ['Infinity', 60_000],
+    ['NaN', 60_000],
+    ['0', 60_000],
+    ['0.5', 60_000],
+    ['1', 1],
+    ['1234', 1234],
+    ['2147483647', 2147483647],
+  ] as const) {
+    it(`schedules MCP_SWEEP_MS=${value} at ${expected}ms`, () => {
+      const previous = process.env.MCP_SWEEP_MS;
+      sinon.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const interval = sinon.spy(globalThis, 'setInterval');
+      try {
+        process.env.MCP_SWEEP_MS = value;
+        client.startSweepTimer();
+        expect(interval.firstCall.args[1]).to.equal(expected);
+      } finally {
+        client.stopSweepTimer();
+        if (previous === undefined) delete process.env.MCP_SWEEP_MS;
+        else process.env.MCP_SWEEP_MS = previous;
+      }
+    });
+  }
 });
