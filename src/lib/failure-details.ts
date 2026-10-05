@@ -21,7 +21,11 @@ const reasons = {
   UNKNOWN: 'unknown',
 } satisfies Record<FailureCategory, string>;
 
+// Every category name is also a code that maps to itself; the rest are aliases.
 const codeCategories: Partial<Record<string, FailureCategory>> = {
+  ...(Object.fromEntries(
+    Object.keys(reasons).map((category) => [category, category]),
+  ) as Record<FailureCategory, FailureCategory>),
   SELECTOR_NOT_FOUND: 'SELECTOR_MISS',
   BROWSER_CRASHED: 'SESSION_LOST',
   NAVIGATION_TIMEOUT: 'TIMEOUT',
@@ -38,7 +42,6 @@ const statusCategories: Partial<Record<number, FailureCategory>> = {
 // Codes are untrusted text too. Only documented categories and transport codes
 // are safe to publish; an opaque provider code could itself contain a secret.
 const safeCodes = new Set([
-  ...Object.keys(reasons),
   ...Object.keys(codeCategories),
   'INTERNAL_ERROR',
   'TAB_NOT_FOUND',
@@ -97,9 +100,6 @@ export function failureDetails(
   const category =
     options.category ??
     (code === undefined ? undefined : codeCategories[code]) ??
-    (code && Object.hasOwn(reasons, code)
-      ? (code as FailureCategory)
-      : undefined) ??
     (status === undefined ? undefined : statusCategories[status]) ??
     (status !== undefined && status >= 500 ? 'SERVER_ERROR' : 'UNKNOWN');
   const reason = reasons[category];
