@@ -26,6 +26,22 @@ export type {
 
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
+// Count of agent commands awaiting a response per session. A command may run
+// past the idle TTL (an explicit long timeoutMs), so the sweep must not evict a
+// session with work still in flight — doing so would send `close` on the same
+// socket and abort the pending command. Mirrors the stripeLinkOperations guard.
+const inFlightCommands = new WeakMap<ActiveSession, number>();
+const beginCommand = (session: ActiveSession): void => {
+  inFlightCommands.set(session, (inFlightCommands.get(session) ?? 0) + 1);
+};
+const endCommand = (session: ActiveSession): void => {
+  const remaining = (inFlightCommands.get(session) ?? 1) - 1;
+  if (remaining > 0) inFlightCommands.set(session, remaining);
+  else inFlightCommands.delete(session);
+};
+const hasInFlightCommand = (session: ActiveSession): boolean =>
+  (inFlightCommands.get(session) ?? 0) > 0;
+
 export const clearExpiredStripeLinkContinuation = (
   session: ActiveSession,
 ): boolean => {
@@ -372,8 +388,13 @@ const properClose = (
 ): void => {
   const ws = session.ws;
   // Unlike send(), cleanup must never reconnect and launch a new browser.
+  // Attached (attachSessionId) and profile-creation browsers are owned
+  // elsewhere — their id is held in creationSessionId and keepSessionAlive does
+  // not manage them. Evicting the idle agent connection must close only our
+  // socket, never send the agent `close` command, or it would destroy a browser
+  // the MCP process did not create (e.g. an autologin runner's session).
   const closing =
-    ws.readyState === WebSocket.OPEN
+    ws.readyState === WebSocket.OPEN && !session.creationSessionId
       ? sendMessage(
           ws,
           { id: ++session.msgId, method: 'close', params: {} },
@@ -405,7 +426,11 @@ export const sweepSessions = (
 ): void => {
   for (const [key, session] of sessions) {
     clearExpiredStripeLinkContinuation(session);
-    if (stripeLinkOperations.has(session) || session.stripeLinkContinuation) {
+    if (
+      stripeLinkOperations.has(session) ||
+      session.stripeLinkContinuation ||
+      hasInFlightCommand(session)
+    ) {
       continue;
     }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
@@ -417,7 +442,9 @@ export const sweepSessions = (
   const oldest = [...sessions.entries()]
     .filter(
       ([, session]) =>
-        !stripeLinkOperations.has(session) && !session.stripeLinkContinuation,
+        !stripeLinkOperations.has(session) &&
+        !session.stripeLinkContinuation &&
+        !hasInFlightCommand(session),
     )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
@@ -1422,11 +1449,20 @@ export const send = async (
 
   session.msgId++;
   session.lastUsedAt = Date.now();
-  return sendMessage(
-    session.ws,
-    { id: session.msgId, method, params },
-    timeoutMs,
-  );
+  // Mark the command in flight so a sweep tick during a long-running response
+  // cannot evict the session, then refresh the idle clock on completion.
+  beginCommand(session);
+  try {
+    const response = await sendMessage(
+      session.ws,
+      { id: session.msgId, method, params },
+      timeoutMs,
+    );
+    session.lastUsedAt = Date.now();
+    return response;
+  } finally {
+    endCommand(session);
+  }
 };
 
 export const closeSession = (
