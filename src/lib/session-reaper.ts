@@ -35,6 +35,10 @@ const MAX_DELAY_MS = 2_147_483_647;
 
 // mcp session id -> last time an inbound request was seen on it.
 const lastSeen = new Map<string, number>();
+// mcp session id -> count of tool executions currently in flight on it. A long
+// call holds one request open with no further inbound activity, so without this
+// it could be reaped mid-flight once its idle window elapsed.
+const activeExec = new Map<string, number>();
 
 /** Record inbound activity for an mcp session (connect and every tool call). */
 export const touchSession = (
@@ -46,7 +50,27 @@ export const touchSession = (
 
 /** Forget an mcp session's activity (on disconnect or after it is reaped). */
 export const forgetSession = (id: string | undefined): void => {
-  if (id) lastSeen.delete(id);
+  if (id) {
+    lastSeen.delete(id);
+    activeExec.delete(id);
+  }
+};
+
+/** Mark a tool execution started on a session so the reaper won't close it. */
+export const beginSessionExec = (id: string | undefined): void => {
+  if (id) activeExec.set(id, (activeExec.get(id) ?? 0) + 1);
+};
+
+/** Mark a tool execution finished, and refresh the session's idle clock. */
+export const endSessionExec = (
+  id: string | undefined,
+  now: number = Date.now(),
+): void => {
+  if (!id) return;
+  const remaining = (activeExec.get(id) ?? 1) - 1;
+  if (remaining > 0) activeExec.set(id, remaining);
+  else activeExec.delete(id);
+  lastSeen.set(id, now);
 };
 
 /** Number of sessions with tracked activity — diagnostics and tests. */
@@ -85,6 +109,12 @@ export const reapIdleSessions = (
   for (const session of getSessions()) {
     const id = session.sessionId;
     if (!id) continue;
+    // A tool execution in flight keeps the session alive and refreshed, so a
+    // long-running call is never reaped mid-flight.
+    if ((activeExec.get(id) ?? 0) > 0) {
+      lastSeen.set(id, now);
+      continue;
+    }
     const seen = lastSeen.get(id);
     if (seen === undefined) {
       lastSeen.set(id, now);
@@ -138,4 +168,5 @@ export const stopSessionReaper = (): void => {
 export const resetSessionReaperForTests = (): void => {
   stopSessionReaper();
   lastSeen.clear();
+  activeExec.clear();
 };

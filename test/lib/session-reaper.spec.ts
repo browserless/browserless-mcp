@@ -4,6 +4,8 @@ import sinon from 'sinon';
 import {
   touchSession,
   forgetSession,
+  beginSessionExec,
+  endSessionExec,
   trackedSessionCount,
   reapIdleSessions,
   startSessionReaper,
@@ -88,6 +90,25 @@ describe('session-reaper', () => {
       reapIdleSessions(() => [unseen], { now: now + TTL + 1, ttlMs: TTL }),
     ).to.equal(1);
     expect(unseen.close.calledOnce).to.equal(true);
+  });
+
+  it('never reaps a session with a tool execution in flight', () => {
+    const now = 10 * TTL;
+    const busy = fakeSession('busy');
+    touchSession('busy', now - TTL - 1); // idle beyond the TTL...
+    beginSessionExec('busy'); // ...but a tool call is running
+    expect(reapIdleSessions(() => [busy], { now, ttlMs: TTL })).to.equal(0);
+    expect(busy.close.called).to.equal(false);
+    // Completing the call refreshes the idle clock.
+    endSessionExec('busy', now);
+    expect(
+      reapIdleSessions(() => [busy], { now: now + 1000, ttlMs: TTL }),
+    ).to.equal(0);
+    // Idle again past the TTL -> reaped.
+    expect(
+      reapIdleSessions(() => [busy], { now: now + TTL + 2000, ttlMs: TTL }),
+    ).to.equal(1);
+    expect(busy.close.calledOnce).to.equal(true);
   });
 
   it('swallows a throwing close() and still forgets the session', () => {
