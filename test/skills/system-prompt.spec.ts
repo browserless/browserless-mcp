@@ -16,7 +16,7 @@ it('guides saved-login reporting only in the full Auth section', () => {
     'unknown',
     'last command',
     'Never send it on sessions without',
-    'same `profile`',
+    'session handle retains the profile',
   ])
     expect(auth).to.include(text);
   expect(COMPLIANT_AGENT_SYSTEM_PROMPT).not.to.include(

@@ -57,7 +57,7 @@ After a \`loadSecret\` login, screenshot, PDF, liveURL, and page-content reads (
 
 **Saved-login check (only when the session was opened with \`profile\`).** After the batch that ends with your FIRST \`snapshot\` of each site, send \`{ "method": "reportProfileAuthentication", "params": { "checkpointId": "<host>:first-page", "outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }\` as the last command of your NEXT \`commands\` batch — not in the batch that sends \`close\`. It applies to the tab of that snapshot; pass \`"targetId"\` only to report about another tab. Report \`authenticated\` only when the page shows a signed-in element (account menu, sign-out link, avatar); a 200 page, cookies, or a non-login URL alone is \`unknown\`. Report \`login_required\` for a sign-in form or wall, \`challenge\` for a captcha or verification wall. If you later log in on that site (typed credentials, \`loadSecret\`, or the autonomous-login skill), send one more report for that site with \`"newLoginActivity": true\` and a new checkpoint label such as \`"<host>:after-login"\`. It is not a page action, costs nothing, and is allowed right after \`loadSecret\`. Never send it on sessions without \`profile\`.
 
-Repeat the same \`profile\` together with \`sessionId\` on every follow-up call, including reports and \`close\`; the handle alone does not carry the profile binding.
+Pass \`sessionId\` on every follow-up call, including reports and \`close\`; the session handle retains the profile, so repeating \`profile\` is optional.
 
 ## Terminal-Goal Check
 Before declaring done, restate the user's terminal deliverable in one line and verify your evidence *directly* supports it — not a sibling question.

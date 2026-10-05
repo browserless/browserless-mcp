@@ -71,8 +71,8 @@ The visible account/display name will usually NOT equal the email or username yo
 and `"newLoginActivity": true` in both cases (you just logged in, so the restored
 profile gets no credit). It applies to the tab of that snapshot. Send it before
 `clearSecrets` and before any `close`; it is secret-safe.
-Repeat the same `profile` together with `sessionId` on every follow-up call,
-including reports and `close`.
+Pass `sessionId` on every follow-up call, including reports and `close`;
+the session handle retains the profile, so repeating `profile` is optional.
 
 None holds:
 

@@ -21,8 +21,8 @@ applies to the tab of that snapshot — pass `targetId` only for another tab).
 see a sign-in form or wall; `challenge` for a captcha or verification wall;
 otherwise `unknown`. If the saved login turns out to be dead and you log in
 again, load `autonomous-login` and let it report with `newLoginActivity: true`.
-Repeat the same `profile` together with `sessionId` on every follow-up call,
-including reports and `close`.
+Pass `sessionId` on every follow-up call, including reports and `close`;
+the session handle retains the profile, so repeating `profile` is optional.
 
 ## Recipe — creating a profile
 

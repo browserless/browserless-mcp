@@ -3617,7 +3617,7 @@ describe('browserless_agent reportProfileAuthentication', () => {
         expect(sessionId).to.be.a('string');
         const { targetId: _targetId, ...withoutTarget } = params;
         await execute(
-          { sessionId, profile, commands: [{ method, params: withoutTarget }] },
+          { sessionId, commands: [{ method, params: withoutTarget }] },
           mockContext,
         );
         await execute(
