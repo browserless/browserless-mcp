@@ -17,6 +17,7 @@ import type { SitemapModeSchema, MapParamsSchema } from '../tools/map.js';
 import type { ListProfilesParamsSchema } from '../tools/profiles.js';
 import type {
   LighthouseCategorySchema,
+  LighthouseDeviceSchema,
   PerformanceParamsSchema,
 } from '../tools/performance.js';
 import type {
@@ -405,6 +406,7 @@ export type SitemapMode = z.infer<typeof SitemapModeSchema>;
 export type MapParams = z.infer<typeof MapParamsSchema>;
 export type ListProfilesRequest = z.infer<typeof ListProfilesParamsSchema>;
 export type LighthouseCategory = z.infer<typeof LighthouseCategorySchema>;
+export type LighthouseDevice = z.infer<typeof LighthouseDeviceSchema>;
 export type PerformanceParams = z.infer<typeof PerformanceParamsSchema>;
 export type CrawlStatus = z.infer<typeof CrawlStatusSchema>;
 export type PageStatus = z.infer<typeof PageStatusSchema>;
@@ -621,6 +623,8 @@ export interface MapRequest {
 export interface PerformanceRequest {
   url: string;
   categories?: LighthouseCategory[];
+  device?: LighthouseDevice;
+  config?: Record<string, unknown>;
   budgets?: Array<Record<string, unknown>>;
   timeout?: number;
   profile?: string;

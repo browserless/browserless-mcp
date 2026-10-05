@@ -9,6 +9,7 @@ import type {
   ExportRequest,
   FunctionRequest,
   GenericApiResult,
+  LighthouseDevice,
   ListProfilesRequest,
   MapRequest,
   MapResponse,
@@ -103,6 +104,58 @@ interface ApiFetchOptions<T> {
    */
   shouldRetry?: (error: Error) => boolean;
 }
+
+/**
+ * Mirrors Lighthouse's built-in mobile (default) and desktop presets
+ * (lighthouse/core/config/constants.js, desktop-config.js).
+ */
+const LIGHTHOUSE_DEVICE_SETTINGS: Record<
+  LighthouseDevice,
+  Record<string, unknown>
+> = {
+  mobile: {
+    formFactor: 'mobile',
+    throttling: {
+      rttMs: 150,
+      throughputKbps: 1.6 * 1024,
+      requestLatencyMs: 150 * 3.75,
+      downloadThroughputKbps: 1.6 * 1024 * 0.9,
+      uploadThroughputKbps: 750 * 0.9,
+      cpuSlowdownMultiplier: 4,
+    },
+    screenEmulation: {
+      mobile: true,
+      width: 412,
+      height: 823,
+      deviceScaleFactor: 1.75,
+      disabled: false,
+    },
+    emulatedUserAgent:
+      'Mozilla/5.0 (Linux; Android 11; moto g power (2022)) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/136.0.0.0 Mobile Safari/537.36',
+  },
+  desktop: {
+    formFactor: 'desktop',
+    throttling: {
+      rttMs: 40,
+      throughputKbps: 10 * 1024,
+      cpuSlowdownMultiplier: 1,
+      requestLatencyMs: 0,
+      downloadThroughputKbps: 0,
+      uploadThroughputKbps: 0,
+    },
+    screenEmulation: {
+      mobile: false,
+      width: 1350,
+      height: 940,
+      deviceScaleFactor: 1,
+      disabled: false,
+    },
+    emulatedUserAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  },
+};
 
 const defaultShouldRetry = (error: Error): boolean => {
   if (error instanceof ProfileNotFoundError) return false;
@@ -537,10 +590,15 @@ export function createApiClient(
     ): Promise<PerformanceResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
       const body: Record<string, unknown> = { url: params.url };
-      if (params.categories) {
+      if (params.config || params.device || params.categories) {
         body.config = {
           extends: 'lighthouse:default',
-          settings: { onlyCategories: params.categories },
+          ...params.config,
+          settings: {
+            ...(params.config?.settings as Record<string, unknown> | undefined),
+            ...(params.device && LIGHTHOUSE_DEVICE_SETTINGS[params.device]),
+            ...(params.categories && { onlyCategories: params.categories }),
+          },
         };
       }
       if (params.budgets) body.budgets = params.budgets;

@@ -19,6 +19,8 @@ export const LighthouseCategorySchema = z.enum([
   'seo',
 ]);
 
+export const LighthouseDeviceSchema = z.enum(['mobile', 'desktop']);
+
 export const PerformanceParamsSchema = z.object({
   url: z.url().describe('The URL to audit (must be http or https)'),
   categories: z
@@ -27,6 +29,20 @@ export const PerformanceParamsSchema = z.object({
     .describe(
       'Lighthouse categories to audit: "accessibility", "best-practices", ' +
         '"performance", "pwa", "seo". Omit for all categories.',
+    ),
+  device: LighthouseDeviceSchema.optional().describe(
+    'Device to emulate during the audit: "mobile" or "desktop". Applies ' +
+      "Lighthouse's matching form factor, screen size, network/CPU throttling " +
+      'and user agent. Omit for the Lighthouse default (mobile).',
+  ),
+  config: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Custom Lighthouse config object, sent as the /performance "config" ' +
+        'field. Defaults to { extends: "lighthouse:default" }. "categories" ' +
+        'and "device" override the matching keys in config.settings. ' +
+        'See https://github.com/GoogleChrome/lighthouse/blob/main/docs/configuration.md',
     ),
   budgets: z
     .array(z.record(z.string(), z.unknown()))
@@ -49,6 +65,8 @@ export const PerformanceParamsSchema = z.object({
 const CompliantPerformanceParamsSchema = PerformanceParamsSchema.pick({
   url: true,
   categories: true,
+  device: true,
+  config: true,
   budgets: true,
   timeout: true,
 }).strict();
@@ -68,7 +86,8 @@ export function registerPerformanceTool(
       description:
         'Run a Lighthouse performance audit on any URL via the Browserless /performance API. ' +
         'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
-        'Optionally filter by category or supply performance budgets. ' +
+        'Optionally filter by category, emulate a mobile or desktop device, ' +
+        'supply a custom Lighthouse config, or supply performance budgets. ' +
         'Note: audits can take 30s–120s depending on the site.',
       parameters: compliant
         ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
@@ -94,6 +113,8 @@ export function registerPerformanceTool(
         const response = await client.performance({
           url: params.url,
           categories: params.categories,
+          device: params.device,
+          config: params.config,
           budgets: params.budgets,
           timeout: params.timeout,
           profile: params.profile,
@@ -107,6 +128,8 @@ export function registerPerformanceTool(
       analyticsProps: (params) => ({
         url: params.url,
         categories: (params.categories ?? []).join(','),
+        device: params.device ?? '',
+        custom_config: !!params.config,
         profile_used: !!params.profile,
       }),
       format: (response, params) => {
@@ -143,6 +166,9 @@ export function registerPerformanceTool(
         ];
         if (params.categories) {
           meta.push(`Categories: ${params.categories.join(', ')}`);
+        }
+        if (params.device) {
+          meta.push(`Device: ${params.device}`);
         }
         meta.push('---');
         blocks.push({ type: 'text' as const, text: meta.join('\n') });
