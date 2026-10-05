@@ -159,7 +159,7 @@ describe('defineTool analytics', () => {
 
   it('omits stale diagnostic properties on success', async () => {
     const { execute, props } = register({
-      ...{ failureStatus: { origin: 'api' as const } },
+      failureStatus: { origin: 'api' },
       analyticsProps: () => ({
         success: true,
         error_category: 'timeout',
@@ -448,7 +448,7 @@ describe('defineTool analytics', () => {
     it(`derives ${reason} from declared ${origin} status ${status}`, async () => {
       const error = new UserError('Function execution failed: secret-body');
       const { execute, fire, props } = register({
-        ...{ failureStatus: { origin, badRequest: 'SCRIPT_ERROR' as const } },
+        failureStatus: { origin, badRequest: 'SCRIPT_ERROR' },
         analyticsProps: () => ({ ok: false, status_code: status }),
         format: () => {
           throw error;
@@ -474,7 +474,7 @@ describe('defineTool analytics', () => {
   it('uses the thrown status when a declared tool fails before returning', async () => {
     const error = Object.assign(new Error('secret-body'), { status: 403 });
     const { execute, props } = register({
-      ...{ failureStatus: { origin: 'api' as const } },
+      failureStatus: { origin: 'api' },
       run: async () => {
         throw error;
       },
