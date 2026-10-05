@@ -1405,54 +1405,55 @@ export const send = async (
   timeoutMs?: number,
   onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
-  if (session.ws.readyState !== WebSocket.OPEN) {
-    if (!session.reconnecting) {
-      // A creation session must re-attach to the same browser by id — a fresh
-      // connect() would launch a new one and lose all auth progress.
-      session.reconnecting = connect(
-        session.apiUrl,
-        session.token,
-        session.proxy,
-        session.profile,
-        session.creationSessionId,
-        session.compliant,
-        session.source,
-        session.integrationId,
-        session.allowedDomains,
-        session.creationSessionId ? undefined : session.os,
-        session.humanlike,
-        session.record,
-        session.creationSessionId ? undefined : session.persona,
-      ).finally(() => {
-        session.reconnecting = undefined;
-      });
-    }
-    const ws = await session.reconnecting;
-
-    if (session.ws !== ws) {
-      session.ws = ws;
-      session.msgId = 0;
-      createdAt.set(session, Date.now());
-
-      const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
-      if (key) {
-        ws.on('close', () => {
-          const current = sessions.get(key);
-          if (current?.ws === ws) {
-            sessions.delete(key);
-          }
-        });
-      }
-    }
-    onSession?.(false, 0);
-  }
-
-  session.msgId++;
-  session.lastUsedAt = Date.now();
-  // Mark the command in flight so a sweep tick during a long-running response
-  // cannot evict the session, then refresh the idle clock on completion.
+  // Mark the command in flight for the whole operation — including any reconnect
+  // wait — so a sweep tick cannot evict the session mid-send (which would drop
+  // the new socket's cleanup listener). Refresh the idle clock on completion.
   beginCommand(session);
   try {
+    if (session.ws.readyState !== WebSocket.OPEN) {
+      if (!session.reconnecting) {
+        // A creation session must re-attach to the same browser by id — a fresh
+        // connect() would launch a new one and lose all auth progress.
+        session.reconnecting = connect(
+          session.apiUrl,
+          session.token,
+          session.proxy,
+          session.profile,
+          session.creationSessionId,
+          session.compliant,
+          session.source,
+          session.integrationId,
+          session.allowedDomains,
+          session.creationSessionId ? undefined : session.os,
+          session.humanlike,
+          session.record,
+          session.creationSessionId ? undefined : session.persona,
+        ).finally(() => {
+          session.reconnecting = undefined;
+        });
+      }
+      const ws = await session.reconnecting;
+
+      if (session.ws !== ws) {
+        session.ws = ws;
+        session.msgId = 0;
+        createdAt.set(session, Date.now());
+
+        const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
+        if (key) {
+          ws.on('close', () => {
+            const current = sessions.get(key);
+            if (current?.ws === ws) {
+              sessions.delete(key);
+            }
+          });
+        }
+      }
+      onSession?.(false, 0);
+    }
+
+    session.msgId++;
+    session.lastUsedAt = Date.now();
     const response = await sendMessage(
       session.ws,
       { id: session.msgId, method, params },
