@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { renderSkill } from '../../src/skills/index.js';
 
 import {
   AGENT_SYSTEM_PROMPT,
@@ -17,11 +18,28 @@ it('guides saved-login reporting only in the full Auth section', () => {
     'last command',
     'Never send it on sessions without',
     'session handle retains the profile',
+    'before any login actions',
+    'peek',
   ])
     expect(auth).to.include(text);
   expect(COMPLIANT_AGENT_SYSTEM_PROMPT).not.to.include(
     'reportProfileAuthentication',
   );
+});
+
+it('keeps profile reporting evidence and ordering explicit in login guidance', () => {
+  expect(renderSkill('auth-profile', false)).to.include(
+    'before any login actions',
+  );
+  for (const id of ['auth-profile', 'autonomous-login'] as const) {
+    const skill = renderSkill(id, false);
+    expect(skill).to.include('peek');
+    expect(skill).to.include('signed-in element');
+  }
+  const login = renderSkill('autonomous-login', false);
+  expect(login).to.include('"challenge"');
+  expect(login).to.include('"unknown"');
+  expect(login).not.to.include('when a signal held');
 });
 
 describe('outcome reporting guidance', () => {

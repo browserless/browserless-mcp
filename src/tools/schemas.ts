@@ -739,8 +739,8 @@ const ReportProfileAuthenticationCommandSchema = z.object({
       .min(1)
       .optional()
       .describe(
-        'Optional. Defaults to the tab of the snapshot that ended your previous batch. ' +
-          'Pass a targetId only to report about another tab this session navigated.',
+        'Optional. Defaults to the last active-tab snapshot. After a snapshot peek ' +
+          'at another tab, repeat its targetId here. The session must have navigated that tab.',
       ),
     checkpointId: z
       .string()

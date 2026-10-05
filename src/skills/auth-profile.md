@@ -14,9 +14,11 @@ needed. Only fall through to the creation recipe below when no suitable profile
 exists.
 
 After the batch that ends with your first `snapshot` on the site, send
-`reportProfileAuthentication` as the last command of the next batch (params:
-`checkpointId` = `"<host>:first-page"`, `outcome`, `newLoginActivity: false`; it
-applies to the tab of that snapshot — pass `targetId` only for another tab).
+`reportProfileAuthentication` as the only command of the next batch, before any login actions
+(params: `checkpointId` = `"<host>:first-page"`, `outcome`, `newLoginActivity: false`).
+If login activity already occurred on this site, use `newLoginActivity: true` instead.
+It defaults to the last active-tab snapshot; if you used `snapshot { targetId }`
+to peek at another tab, repeat that `targetId` in the report.
 `authenticated` only if a signed-in element is visible; `login_required` if you
 see a sign-in form or wall; `challenge` for a captcha or verification wall;
 otherwise `unknown`. If the saved login turns out to be dead and you log in

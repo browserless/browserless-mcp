@@ -67,9 +67,13 @@ The visible account/display name will usually NOT equal the email or username yo
 **If this session was opened with** `profile`, end the verifying batch with
 `snapshot`, then report the result as the last command of the next batch:
 `reportProfileAuthentication` with `checkpointId` = `"<host>:after-login"`,
-`outcome: "authenticated"` when a signal held, `"login_required"` when none held,
-and `"newLoginActivity": true` in both cases (you just logged in, so the restored
-profile gets no credit). It applies to the tab of that snapshot. Send it before
+`outcome: "authenticated"` only for a visible signed-in element, `"login_required"`
+for a sign-in form or wall, `"challenge"` for MFA, captcha or verification walls,
+and `"unknown"` otherwise. A changed URL or missing password input alone is not
+signed-in evidence. Always set `"newLoginActivity": true` (you attempted login,
+so the restored profile gets no credit). It defaults to the last active-tab
+snapshot; if you used `snapshot { targetId }` to peek at another tab, repeat
+that `targetId` in the report. Send it before
 `clearSecrets` and before any `close`; it is secret-safe.
 Pass `sessionId` on every follow-up call, including reports and `close`;
 the session handle retains the profile, so repeating `profile` is optional.

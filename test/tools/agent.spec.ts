@@ -3621,6 +3621,15 @@ describe('browserless_agent reportProfileAuthentication', () => {
           mockContext,
         );
         await execute(
+          {
+            sessionId,
+            commands: [
+              { method: 'snapshot', params: { targetId: 'OTHER-TAB' } },
+            ],
+          },
+          mockContext,
+        );
+        await execute(
           { sessionId, profile, commands: [{ method, params }] },
           mockContext,
         );
