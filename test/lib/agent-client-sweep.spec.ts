@@ -54,9 +54,38 @@ describe('agent-client session sweep', () => {
       const closed = once(session.ws, 'close');
       acknowledge();
       await closed;
+      client.destroySession(
+        'idle-sweep',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        session.handle,
+        undefined,
+        undefined,
+        undefined,
+        session,
+      );
       expect(
         client.getActiveSessionByHandle(replacement.handle, browser.url, 'tok'),
       ).to.equal(replacement);
+      client.destroySession(
+        'idle-sweep',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        replacement.handle,
+        undefined,
+        undefined,
+        undefined,
+        replacement,
+      );
+      expect(() =>
+        client.getActiveSessionByHandle(replacement.handle, browser.url, 'tok'),
+      ).to.throw('unavailable');
     } finally {
       acknowledge?.();
       await browser.close();

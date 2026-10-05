@@ -1499,6 +1499,7 @@ export const destroySession = (
   integrationId?: string,
   allowedDomains?: string[],
   userId?: string,
+  expectedSession?: ActiveSession,
 ): void => {
   const key = getSessionKey(
     mcpSessionId,
@@ -1513,6 +1514,8 @@ export const destroySession = (
     userId,
   );
   const session = sessions.get(key);
+  // A failed command may belong to a browser evicted before its reply arrived.
+  if (expectedSession && session !== expectedSession) return;
   if (session) {
     try {
       session.ws.close();
