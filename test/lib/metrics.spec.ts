@@ -58,4 +58,18 @@ describe('metrics (OTLP telemetry)', () => {
     // And flushed on shutdown.
     expect(source).to.include('telemetryShutdown');
   });
+
+  it('counts MCP requests on the authenticate hook, not the Hono fall-through app', () => {
+    const source = readFileSync('src/index.ts', 'utf8');
+    // The Hono app from getApp() only sees non-/mcp fall-through routes, so the
+    // request metrics must NOT live in a getApp().use('*') middleware.
+    expect(source).to.not.match(/getApp\(\)\.use\(\s*['"]\*['"]/);
+    // They belong on the authenticate hook (the one supported hook that observes
+    // every POST /mcp), tracking in-flight + recording per request.
+    const authStart = source.indexOf('const hybridAuthenticate');
+    const authSlice = source.slice(authStart, authStart + 2000);
+    expect(authStart, 'hybridAuthenticate not found').to.be.greaterThan(-1);
+    expect(authSlice).to.include('mcpInFlightAdd(1)');
+    expect(authSlice).to.include('recordMcpRequest(');
+  });
 });

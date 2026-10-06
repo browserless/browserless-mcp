@@ -1491,7 +1491,10 @@ export const send = async (
         { id: session.msgId, method, params },
         timeoutMs,
       );
-      recordUpstreamCall(method, true, Date.now() - upstreamStart);
+      // A JSON-RPC error comes back as a resolved {error} payload, not a
+      // thrown exception (only network/timeout/socket-close reject). Treat an
+      // error payload as an upstream failure so success reflects the result.
+      recordUpstreamCall(method, !response.error, Date.now() - upstreamStart);
       session.lastUsedAt = Date.now();
       return response;
     } catch (err) {
@@ -1550,6 +1553,14 @@ export const closeSession = (
     } catch {
       /* ignore */
     }
+    // Record the agent session's lifetime on explicit (one-shot / caller) close,
+    // not only on idle/cap eviction in properClose — otherwise the common close
+    // path emits no session.lifetime_ms{kind=agent} sample. The sessions-map
+    // guard above (one session per key, deleted on close) keeps any single
+    // session from being recorded by more than one close path.
+    const bornAt = createdAt.get(session);
+    if (bornAt !== undefined)
+      recordSessionLifetime('agent', Date.now() - bornAt);
     sessions.delete(key);
   }
   retainedPersonas.delete(key);

@@ -17,9 +17,9 @@ import {
   recordRedisOp,
   recordRedisError,
   recordSessionLifetime,
-  recordHttpRequest,
+  recordMcpRequest,
   recordGcPause,
-  httpInFlightAdd,
+  mcpInFlightAdd,
   noteAccountRequest,
   collectAccountWindow,
 } from '../../src/lib/metrics-recorders.js';
@@ -51,7 +51,7 @@ describe('metrics shape (full exported inventory)', () => {
 
     registerRuntimeInstruments(() => 2);
     createSyncInstruments();
-    httpInFlightAdd(2);
+    mcpInFlightAdd(2);
     recordToolRequest('browserless_scrape', true, 123);
     recordToolRequest('browserless_scrape', false, 45, 'target_website');
     recordUpstreamCall('goto', true, 200);
@@ -59,7 +59,7 @@ describe('metrics shape (full exported inventory)', () => {
     recordRedisError();
     recordSessionLifetime('mcp', 60_000);
     recordSessionLifetime('agent', 120_000);
-    recordHttpRequest(200, 15);
+    recordMcpRequest('authenticated', 15);
     recordGcPause(1.5); // production records these from the PerformanceObserver
     noteAccountRequest('token-aaa');
     noteAccountRequest('token-aaa');
@@ -86,7 +86,7 @@ describe('metrics shape (full exported inventory)', () => {
     'browserless.mcp.process.memory_bytes',
     'browserless.mcp.process.active_resources',
     'browserless.mcp.process.uptime_seconds',
-    'browserless.mcp.http.in_flight',
+    'browserless.mcp.requests.in_flight',
     'browserless.mcp.sessions.live',
     'browserless.mcp.sessions.tracked',
     'browserless.mcp.sessions.in_flight_exec',
@@ -101,8 +101,8 @@ describe('metrics shape (full exported inventory)', () => {
     'browserless.mcp.redis.op.duration_ms',
     'browserless.mcp.redis.errors',
     'browserless.mcp.session.lifetime_ms',
-    'browserless.mcp.http.requests',
-    'browserless.mcp.http.duration_ms',
+    'browserless.mcp.requests',
+    'browserless.mcp.request.duration_ms',
     'browserless.mcp.gc.pause_ms',
     'browserless.mcp.accounts.active',
     'browserless.mcp.account.requests',
@@ -118,7 +118,7 @@ describe('metrics shape (full exported inventory)', () => {
     const gauges = [
       'browserless.mcp.eventloop.utilization',
       'browserless.mcp.sessions.live',
-      'browserless.mcp.http.in_flight',
+      'browserless.mcp.requests.in_flight',
       'browserless.mcp.agent.sessions.pending',
       'browserless.mcp.process.uptime_seconds',
     ];
@@ -130,7 +130,7 @@ describe('metrics shape (full exported inventory)', () => {
       'browserless.mcp.agent.upstream.duration_ms',
       'browserless.mcp.redis.op.duration_ms',
       'browserless.mcp.session.lifetime_ms',
-      'browserless.mcp.http.duration_ms',
+      'browserless.mcp.request.duration_ms',
       'browserless.mcp.gc.pause_ms',
     ];
     for (const h of histograms)
@@ -141,7 +141,7 @@ describe('metrics shape (full exported inventory)', () => {
       'browserless.mcp.agent.sessions.swept',
       'browserless.mcp.tool.requests',
       'browserless.mcp.redis.errors',
-      'browserless.mcp.http.requests',
+      'browserless.mcp.requests',
     ]) {
       const m = byName(c);
       expect(m?.dataPointType, c).to.equal(DataPointType.SUM);
@@ -182,16 +182,16 @@ describe('metrics shape (full exported inventory)', () => {
     expect(up?.dataPoints[0]?.attributes.method).to.equal('goto');
     const redis = byName('browserless.mcp.redis.op.duration_ms');
     expect(redis?.dataPoints[0]?.attributes.op).to.equal('get');
-    const http = byName('browserless.mcp.http.requests');
-    expect(http?.dataPoints.some((d) => d.attributes.status === 200)).to.equal(
-      true,
-    );
+    const req = byName('browserless.mcp.requests');
+    expect(
+      req?.dataPoints.some((d) => d.attributes.outcome === 'authenticated'),
+    ).to.equal(true);
     const life = byName('browserless.mcp.session.lifetime_ms');
     const kinds = new Set(life?.dataPoints.map((d) => d.attributes.kind) ?? []);
     expect(kinds.has('mcp')).to.equal(true);
     expect(kinds.has('agent')).to.equal(true);
     expect(
-      byName('browserless.mcp.http.in_flight')?.dataPoints[0]?.value,
+      byName('browserless.mcp.requests.in_flight')?.dataPoints[0]?.value,
     ).to.equal(2);
   });
 

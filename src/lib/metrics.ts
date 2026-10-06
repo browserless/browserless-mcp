@@ -49,7 +49,7 @@ import {
   createSyncInstruments,
   resetSyncInstruments,
   recordGcPause,
-  getHttpInFlight,
+  getMcpInFlight,
   collectAccountWindow,
 } from './metrics-recorders.js';
 
@@ -261,10 +261,10 @@ export const registerRuntimeInstruments = (
       unit: 's',
     },
   );
-  const httpInFlightGauge = meter.createObservableGauge(
-    'browserless.mcp.http.in_flight',
+  const mcpInFlightGauge = meter.createObservableGauge(
+    'browserless.mcp.requests.in_flight',
     {
-      description: 'Inbound HTTP requests currently in flight',
+      description: 'Inbound MCP requests (POST /mcp) currently in flight',
     },
   );
   // Abuse / top-talker attribution. accounts.active = distinct accounts (hashed
@@ -350,7 +350,7 @@ export const registerRuntimeInstruments = (
       obs.observe(memGauge, mem.external, { type: 'external' });
       obs.observe(resourcesGauge, process.getActiveResourcesInfo().length);
       obs.observe(uptimeGauge, process.uptime());
-      obs.observe(httpInFlightGauge, getHttpInFlight());
+      obs.observe(mcpInFlightGauge, getMcpInFlight());
 
       obs.observe(liveSessions, getLiveSessionCount());
       obs.observe(trackedSessions, trackedSessionCount());
@@ -373,7 +373,7 @@ export const registerRuntimeInstruments = (
       memGauge,
       resourcesGauge,
       uptimeGauge,
-      httpInFlightGauge,
+      mcpInFlightGauge,
       activeAccounts,
       accountRequests,
       liveSessions,

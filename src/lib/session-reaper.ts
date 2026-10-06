@@ -145,8 +145,11 @@ export const reapIdleSessions = (
       continue;
     }
     if (now - seen <= ttlMs) continue;
-    safeClose(session);
+    // Capture bornAt BEFORE safeClose: session.close() synchronously runs
+    // FastMCP's disconnect handler → forgetSession(id), which deletes the
+    // firstSeen entry, so reading it afterwards would always miss the sample.
     const bornAt = firstSeen.get(id);
+    safeClose(session);
     if (bornAt !== undefined) recordSessionLifetime('mcp', now - bornAt);
     lastSeen.delete(id);
     firstSeen.delete(id);

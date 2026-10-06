@@ -39,13 +39,14 @@ let upstreamDuration: Histogram | undefined;
 let redisDuration: Histogram | undefined;
 let redisErrors: Counter | undefined;
 let sessionLifetime: Histogram | undefined;
-let httpRequests: Counter | undefined;
-let httpDuration: Histogram | undefined;
+let mcpRequests: Counter | undefined;
+let mcpDuration: Histogram | undefined;
 let gcPause: Histogram | undefined;
 
-// Inbound HTTP requests currently in flight (point-in-time; read by metrics.ts's
-// observable gauge). Maintained by the transport middleware via httpInFlightAdd.
-let httpInFlight = 0;
+// Inbound MCP requests (POST /mcp) currently in flight (point-in-time; read by
+// metrics.ts's observable gauge). Maintained by the authenticate hook via
+// mcpInFlightAdd.
+let mcpInFlight = 0;
 
 /** Create the sync instruments once the provider is started (from initTelemetry). */
 export const createSyncInstruments = (): void => {
@@ -82,11 +83,11 @@ export const createSyncInstruments = (): void => {
       unit: 'ms',
     },
   );
-  httpRequests = meter.createCounter('browserless.mcp.http.requests', {
-    description: 'Inbound HTTP requests, by status',
+  mcpRequests = meter.createCounter('browserless.mcp.requests', {
+    description: 'Inbound MCP requests (POST /mcp), by auth outcome',
   });
-  httpDuration = meter.createHistogram('browserless.mcp.http.duration_ms', {
-    description: 'Inbound HTTP request duration',
+  mcpDuration = meter.createHistogram('browserless.mcp.request.duration_ms', {
+    description: 'Inbound MCP request handling duration (POST /mcp)',
     unit: 'ms',
   });
   gcPause = meter.createHistogram('browserless.mcp.gc.pause_ms', {
@@ -104,8 +105,8 @@ export const resetSyncInstruments = (): void => {
   redisDuration = undefined;
   redisErrors = undefined;
   sessionLifetime = undefined;
-  httpRequests = undefined;
-  httpDuration = undefined;
+  mcpRequests = undefined;
+  mcpDuration = undefined;
   gcPause = undefined;
   accountsEnabled = false;
   accountWindow.clear();
@@ -182,13 +183,22 @@ export const recordSessionLifetime = (
   }
 };
 
-/** Record one completed inbound HTTP request (transport middleware). */
-export const recordHttpRequest = (status: number, durationMs: number): void => {
-  if (!httpRequests) return;
+/**
+ * Record one completed inbound MCP request (POST /mcp), observed via FastMCP's
+ * authenticate hook — the one supported hook that sees /mcp traffic. `outcome`
+ * is the only result that hook can know (whether auth passed), not the final
+ * HTTP status; per-tool success/failure is tagged on tool.requests. Safe on any
+ * transport; never throws into request handling.
+ */
+export const recordMcpRequest = (
+  outcome: 'authenticated' | 'rejected',
+  durationMs: number,
+): void => {
+  if (!mcpRequests) return;
   try {
-    httpRequests.add(1, { status });
+    mcpRequests.add(1, { outcome });
     if (Number.isFinite(durationMs))
-      httpDuration?.record(durationMs, { status });
+      mcpDuration?.record(durationMs, { outcome });
   } catch {
     /* never break request handling */
   }
@@ -204,13 +214,13 @@ export const recordGcPause = (durationMs: number): void => {
   }
 };
 
-/** Adjust the in-flight HTTP request gauge (+1 on entry, -1 on exit). */
-export const httpInFlightAdd = (delta: number): void => {
-  httpInFlight += delta;
+/** Adjust the in-flight MCP-request gauge (+1 on entry, -1 on completion). */
+export const mcpInFlightAdd = (delta: number): void => {
+  mcpInFlight += delta;
 };
 
-/** Current in-flight HTTP request count (read by the observable gauge). */
-export const getHttpInFlight = (): number => httpInFlight;
+/** Current in-flight MCP-request count (read by the observable gauge). */
+export const getMcpInFlight = (): number => mcpInFlight;
 
 /** Attribute one unit of load to an account (hashed token). No-op until started. */
 export const noteAccountRequest = (token: string | undefined): void => {

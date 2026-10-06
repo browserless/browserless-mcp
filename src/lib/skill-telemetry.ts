@@ -56,7 +56,14 @@ export const logSkillEvent = async (
   event: 'skill.retrieval.failed' | 'skill.telemetry.delivery_failed',
   fields: Record<string, string | number>,
 ): Promise<void> => {
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+  // Prefer the explicit logs endpoint; otherwise derive it from the shared base
+  // (OTEL_EXPORTER_OTLP_ENDPOINT) the SDK telemetry uses, so this keeps emitting
+  // when the deploy env sets only the base var. Without this, moving to the base
+  // endpoint would silently drop the skill-failure signal.
+  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const endpoint =
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ??
+    (base ? `${base.replace(/\/+$/, '')}/v1/logs` : undefined);
   if (!endpoint || inFlight >= 16) return;
   inFlight++;
   try {

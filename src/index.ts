@@ -33,8 +33,8 @@ import {
 import { initTelemetry } from './lib/metrics.js';
 import {
   recordRedisError,
-  recordHttpRequest,
-  httpInFlightAdd,
+  recordMcpRequest,
+  mcpInFlightAdd,
 } from './lib/metrics-recorders.js';
 
 const pkg = JSON.parse(
@@ -131,10 +131,39 @@ const hybridAuthenticate =
         // stamps that case.
         const sid = request.headers?.['mcp-session-id'];
         touchSession(Array.isArray(sid) ? sid[0] : sid);
-        return (await resolveBrowserlessRequestAuth(
-          request,
-          config,
-        )) as BrowserlessSession;
+
+        // Transport-level MCP request metrics. This is the one supported hook
+        // that actually observes `/mcp` traffic: mcp-proxy calls authenticate on
+        // every POST /mcp and FastMCP memoizes it per request, so this body runs
+        // exactly once per request. (The Hono app from getApp() only sees
+        // non-MCP fall-through routes — OAuth/upload/health/404 — never /mcp, so
+        // instrumenting it missed all real load.) authenticate gets no
+        // ServerResponse, so the only result we can tag is the auth outcome, not
+        // the final HTTP status; per-tool success lives on tool.requests. Count
+        // + time + track in-flight, settling on the request's one-shot 'close'.
+        // Fully transparent — never alters auth and never throws.
+        mcpInFlightAdd(1);
+        const requestStartedAt = Date.now();
+        let outcome: 'authenticated' | 'rejected' = 'authenticated';
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          mcpInFlightAdd(-1);
+          recordMcpRequest(outcome, Date.now() - requestStartedAt);
+        };
+        if (request.closed || request.destroyed) finish();
+        else request.once('close', finish);
+
+        try {
+          return (await resolveBrowserlessRequestAuth(
+            request,
+            config,
+          )) as BrowserlessSession;
+        } catch (err) {
+          outcome = 'rejected';
+          throw err;
+        }
       }
     : undefined;
 
@@ -269,20 +298,6 @@ if (config.transport === 'httpStream') {
       eventStore: new BoundedEventStore(10_000),
       stateless: false,
     },
-  });
-  // Transport-level request metrics: count every inbound HTTP request by status
-  // + duration, and track in-flight depth. Fully transparent — always calls
-  // next(), always restores the gauge, and the recorders never throw, so it can
-  // neither drop a request nor alter a response.
-  server.getApp().use('*', async (c, next) => {
-    httpInFlightAdd(1);
-    const startedAt = Date.now();
-    try {
-      await next();
-    } finally {
-      httpInFlightAdd(-1);
-      recordHttpRequest(c.res?.status ?? 0, Date.now() - startedAt);
-    }
   });
   // Out-of-band file staging for uploads (the LLM curls a file here and gets a
   // handle, instead of base64-ing it through the conversation). httpStream only.
