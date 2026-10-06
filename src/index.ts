@@ -41,17 +41,29 @@ const pkg = JSON.parse(
 const config = getConfig();
 
 // Crash safety net: this MCP runs as a single instance behind the LB, so one
-// stray throw or unhandled rejection anywhere (a tool, a dependency, a periodic
-// timer) would otherwise exit the process and take the whole service down for
-// every client until it restarts. Log and keep serving instead; per-request and
-// per-sweep failures are already isolated at their call sites, so this is the
-// last-resort backstop. Trade-off: a genuinely corrupting error is logged rather
-// than fast-failing, which is acceptable here where a full outage is worse.
+// stray throw or unhandled rejection during steady-state operation (a tool, a
+// dependency, a periodic timer) would otherwise exit the process and take the
+// whole service down for every client until it restarts. Once the server is
+// serving, log and keep running instead; per-request and per-sweep failures are
+// already isolated at their call sites, so this is the last-resort backstop.
+// Trade-off: a genuinely corrupting runtime error is logged rather than
+// fast-failing, which is acceptable here where a full outage is worse.
+//
+// Before the server is confirmed up the opposite holds: a crash during startup
+// (e.g. the listen port is taken) leaves nothing to "keep serving", and
+// swallowing it would strand a process that is alive but never accepting
+// connections — the hardest outage to detect behind a load balancer. So fail
+// loud until `serverReady`, matching Node's default fast-fail on boot.
+let serverReady = false;
 const logUnhandled = (kind: string, err: unknown): void => {
   console.error(
     `[browserless-mcp] ${kind}:`,
     err instanceof Error ? (err.stack ?? err.message) : err,
   );
+  if (!serverReady) {
+    // Startup fault: don't limp on in a permanently non-serving state.
+    process.exit(1);
+  }
 };
 process.on('uncaughtException', (err) =>
   logUnhandled('uncaughtException', err),
@@ -243,7 +255,7 @@ startSweepTimer();
 startSessionReaper(() => server.sessions);
 
 if (config.transport === 'httpStream') {
-  server.start({
+  const started = server.start({
     transportType: 'httpStream',
     httpStream: {
       port: config.port,
@@ -251,6 +263,13 @@ if (config.transport === 'httpStream') {
       eventStore: new BoundedEventStore(10_000),
       stateless: false,
     },
+  });
+  // A failed listen (e.g. EADDRINUSE) never resolves this and instead surfaces
+  // as an uncaughtException — which the guard above fast-fails while serverReady
+  // is still false. A clean listen flips the flag so steady-state faults from
+  // here on are survivable rather than fatal.
+  void Promise.resolve(started).then(() => {
+    serverReady = true;
   });
   // Out-of-band file staging for uploads (the LLM curls a file here and gets a
   // handle, instead of base64-ing it through the conversation). httpStream only.
@@ -296,8 +315,11 @@ if (config.transport === 'httpStream') {
     `[browserless-mcp] HTTP Streamable server listening on port ${config.port}`,
   );
 } else {
-  server.start({
+  const started = server.start({
     transportType: 'stdio',
+  });
+  void Promise.resolve(started).then(() => {
+    serverReady = true;
   });
 }
 

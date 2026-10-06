@@ -279,5 +279,9 @@ describe('session-reaper', () => {
     const source = readFileSync('src/index.ts', 'utf8');
     expect(source).to.include("process.on('uncaughtException'");
     expect(source).to.include("process.on('unhandledRejection'");
+    // The handlers keep the process alive only once it is serving; a crash
+    // during startup must still fast-fail rather than strand a non-serving box.
+    expect(source).to.include('serverReady');
+    expect(source).to.include('process.exit(1)');
   });
 });
