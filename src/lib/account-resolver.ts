@@ -136,6 +136,10 @@ export async function resolveApiKey(
   // throws and is never cached, so a forged token can't poison the cache.
   const verifyKey = fullHash(accessToken);
   let verified = verifyCache.get<VerifiedOwner>(verifyKey);
+  // The shared cache includes its deadline; JWT expiry is exclusive.
+  if (verified && (tokenExpiryMs(accessToken) ?? Infinity) <= Date.now()) {
+    verified = undefined;
+  }
   if (!verified) {
     verified = await verifyAccessToken(
       supabaseUrl,

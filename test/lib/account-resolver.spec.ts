@@ -75,6 +75,26 @@ describe('account-resolver', () => {
       expect(fetchStub.thirdCall.args[0]).to.include('/auth/v1/user');
     });
 
+    it('re-verifies and rejects a cached token at the exact expiry boundary', async () => {
+      const jwt = buildFakeJwt({ exp: 1_800_000_002 });
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      sinon.clock.tick(1999);
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      expect(fetchStub.callCount).to.equal(2);
+      fetchStub.onCall(2).resolves(new Response('{}', { status: 401 }));
+      sinon.clock.tick(1);
+      try {
+        await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+        expect.fail('should have re-verified the expired token');
+      } catch (error) {
+        expect((error as Error).message).to.include(
+          'rejected the access token',
+        );
+      }
+      expect(fetchStub.callCount).to.equal(3);
+      expect(fetchStub.thirdCall.args[0]).to.include('/auth/v1/user');
+    });
+
     for (const exp of [1_799_999_999, 1_800_000_000]) {
       it(`does not cache a verified token expiring at ${exp}`, async () => {
         const jwt = buildFakeJwt({ exp });
