@@ -53,6 +53,77 @@ describe('account-resolver', () => {
     sinon.restore();
   });
 
+  describe('verification cache lifetime', () => {
+    beforeEach(() => {
+      sinon.useFakeTimers({ now: 1_800_000_000_000, toFake: ['Date'] });
+      fetchStub.callsFake(async (url: string) =>
+        url.includes('/auth/v1/user')
+          ? supabaseUser({ accountId: 'victim-acct', role: 'viewer' })
+          : postgrestRows([{ api_key: 'key', email: 'user@example.com' }]),
+      );
+    });
+
+    it('re-verifies after token expiry while retaining the account lookup', async () => {
+      const jwt = buildFakeJwt({ exp: 1_800_000_002 });
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      sinon.clock.tick(1000);
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      expect(fetchStub.callCount).to.equal(2);
+      sinon.clock.tick(2000);
+      await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      expect(fetchStub.callCount).to.equal(3);
+      expect(fetchStub.thirdCall.args[0]).to.include('/auth/v1/user');
+    });
+
+    for (const exp of [1_799_999_999, 1_800_000_000]) {
+      it(`does not cache a verified token expiring at ${exp}`, async () => {
+        const jwt = buildFakeJwt({ exp });
+        await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+        await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+        expect(fetchStub.callCount).to.equal(3);
+        expect(fetchStub.thirdCall.args[0]).to.include('/auth/v1/user');
+      });
+    }
+
+    for (const [name, jwt] of [
+      ['malformed JSON', 'header.@@@.sig'],
+      ['null payload', 'header.bnVsbA.sig'],
+      ['missing expiry', buildFakeJwt({})],
+      ['string expiry', buildFakeJwt({ exp: '1800000002' })],
+      [
+        'non-finite expiry',
+        `header.${Buffer.from('{"exp":1e400}').toString('base64url')}.sig`,
+      ],
+      ['distant expiry', buildFakeJwt({ exp: 1_800_003_600 })],
+    ]) {
+      it(`keeps the five-minute maximum for ${name}`, async () => {
+        await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+        sinon.clock.tick(240_000);
+        const result = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+        expect(result.accountId).to.equal('victim-acct');
+        expect(fetchStub.callCount).to.equal(2);
+        sinon.clock.tick(60_001);
+        await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+        expect(fetchStub.callCount).to.equal(4);
+      });
+    }
+
+    it('uses only verified identity and role, not decoded claims', async () => {
+      const jwt = buildFakeJwt({
+        exp: 1_800_000_002,
+        sub: 'attacker-user',
+        app_metadata: { accountId: 'attacker', role: 'owner' },
+      });
+      const result = await resolveApiKey(SUPABASE_URL, SERVICE_ROLE_KEY, jwt);
+      expect(result.accountId).to.equal('victim-acct');
+      expect(result.userId).to.equal('user-uuid');
+      expect(result.userRole).to.equal('viewer');
+      expect(fetchStub.secondCall.args[0]).to.include(
+        'account_id=eq.victim-acct',
+      );
+    });
+  });
+
   it('verifies the token with Supabase Auth, then resolves the API key via PostgREST', async () => {
     const jwt = buildFakeJwt({
       sub: 'user-uuid',

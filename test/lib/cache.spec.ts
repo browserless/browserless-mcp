@@ -33,6 +33,19 @@ describe('ResponseCache', () => {
     expect(cache.get('key1')).to.be.undefined;
   });
 
+  it('supports a per-entry TTL without changing the default lifetime', () => {
+    const cache = new ResponseCache(1000);
+    cache.set('short', 'short-lived', 50);
+    cache.set('default', 'default-lived');
+    expect(cache.get('short')).to.equal('short-lived');
+    clock.tick(60);
+    expect(cache.get('short')).to.be.undefined;
+    expect(cache.get('default')).to.equal('default-lived');
+    clock.tick(941);
+    expect(cache.get('default')).to.be.undefined;
+    cache.dispose();
+  });
+
   it('does not expire entries before TTL', () => {
     const cache = new ResponseCache(1000);
     cache.set('key1', 'value');

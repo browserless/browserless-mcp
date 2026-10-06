@@ -36,10 +36,10 @@ export class ResponseCache {
     return entry.value as T;
   }
 
-  set<T>(key: string, value: T): void {
+  set<T>(key: string, value: T, ttlMs: number = this.ttlMs): void {
     this.store.set(key, {
       value,
-      expiresAt: Date.now() + this.ttlMs,
+      expiresAt: Date.now() + ttlMs,
     });
   }
 
