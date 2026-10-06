@@ -23,6 +23,13 @@ export const METER_NAME = 'browserless-mcp';
 // distinct accounts), and only the top N are emitted (so label cardinality is
 // capped regardless of how many accounts are active).
 const TOP_ACCOUNTS = 20;
+// Hard cap on distinct accounts tracked per window. Any non-empty token is
+// accepted before backend validation, so a flood of distinct bogus tokens could
+// otherwise grow this map without bound between exports (TOP_ACCOUNTS caps only
+// what is emitted, not the map). Once full we drop NEW hashes but keep counting
+// existing ones, so real top-talkers are still attributed and the flood still
+// shows up as a pinned-high accounts.active.
+const MAX_WINDOW_ACCOUNTS = 10_000;
 const accountWindow = new Map<string, number>();
 let accountsEnabled = false;
 
@@ -199,6 +206,8 @@ export const getHttpInFlight = (): number => httpInFlight;
 export const noteAccountRequest = (token: string | undefined): void => {
   if (!accountsEnabled || !token) return;
   const hash = hashToken(token);
+  if (!accountWindow.has(hash) && accountWindow.size >= MAX_WINDOW_ACCOUNTS)
+    return;
   accountWindow.set(hash, (accountWindow.get(hash) ?? 0) + 1);
 };
 

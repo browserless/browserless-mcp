@@ -21,6 +21,7 @@ import {
   recordGcPause,
   httpInFlightAdd,
   noteAccountRequest,
+  collectAccountWindow,
 } from '../../src/lib/metrics-recorders.js';
 
 // Collect the exact instruments the server registers through an in-memory reader
@@ -208,5 +209,14 @@ describe('metrics shape (full exported inventory)', () => {
     ).to.equal(true);
     // The top talker (aaa) made 2 requests this window.
     expect(acct?.dataPoints.some((d) => d.value === 2)).to.equal(true);
+  });
+
+  it('caps the account window so a distinct-token flood cannot grow it unbounded', () => {
+    // before()'s forceFlush drained the window; accountsEnabled is still on.
+    for (let i = 0; i < 10_050; i++) noteAccountRequest('flood-token-' + i);
+    noteAccountRequest('flood-token-0'); // an already-counted account still increments
+    const w = collectAccountWindow();
+    expect(w.active).to.be.at.most(10_000); // bounded despite 10050 distinct tokens
+    expect(w.active).to.be.greaterThan(0);
   });
 });
