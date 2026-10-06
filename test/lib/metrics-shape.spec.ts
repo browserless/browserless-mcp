@@ -80,32 +80,32 @@ describe('metrics shape (full exported inventory)', () => {
     all().find((m) => m.descriptor.name === n);
 
   const EXPECTED = [
-    'mcp.eventloop.delay.p50_ms',
-    'mcp.eventloop.delay.p99_ms',
-    'mcp.eventloop.utilization',
-    'mcp.process.memory_bytes',
-    'mcp.process.active_resources',
-    'mcp.process.uptime_seconds',
-    'mcp.http.in_flight',
-    'mcp.sessions.live',
-    'mcp.sessions.tracked',
-    'mcp.sessions.in_flight_exec',
-    'mcp.agent.sessions.active',
-    'mcp.agent.sessions.pending',
-    'mcp.agent.commands.in_flight',
-    'mcp.sessions.reaped',
-    'mcp.agent.sessions.swept',
-    'mcp.tool.requests',
-    'mcp.tool.duration_ms',
-    'mcp.agent.upstream.duration_ms',
-    'mcp.redis.op.duration_ms',
-    'mcp.redis.errors',
-    'mcp.session.lifetime_ms',
-    'mcp.http.requests',
-    'mcp.http.duration_ms',
-    'mcp.gc.pause_ms',
-    'mcp.accounts.active',
-    'mcp.account.requests',
+    'browserless.mcp.eventloop.delay.p50_ms',
+    'browserless.mcp.eventloop.delay.p99_ms',
+    'browserless.mcp.eventloop.utilization',
+    'browserless.mcp.process.memory_bytes',
+    'browserless.mcp.process.active_resources',
+    'browserless.mcp.process.uptime_seconds',
+    'browserless.mcp.http.in_flight',
+    'browserless.mcp.sessions.live',
+    'browserless.mcp.sessions.tracked',
+    'browserless.mcp.sessions.in_flight_exec',
+    'browserless.mcp.agent.sessions.active',
+    'browserless.mcp.agent.sessions.pending',
+    'browserless.mcp.agent.commands.in_flight',
+    'browserless.mcp.sessions.reaped',
+    'browserless.mcp.agent.sessions.swept',
+    'browserless.mcp.tool.requests',
+    'browserless.mcp.tool.duration_ms',
+    'browserless.mcp.agent.upstream.duration_ms',
+    'browserless.mcp.redis.op.duration_ms',
+    'browserless.mcp.redis.errors',
+    'browserless.mcp.session.lifetime_ms',
+    'browserless.mcp.http.requests',
+    'browserless.mcp.http.duration_ms',
+    'browserless.mcp.gc.pause_ms',
+    'browserless.mcp.accounts.active',
+    'browserless.mcp.account.requests',
   ];
 
   it('exports every expected metric name and nothing less', () => {
@@ -116,32 +116,32 @@ describe('metrics shape (full exported inventory)', () => {
 
   it('uses the correct instrument kind per metric', () => {
     const gauges = [
-      'mcp.eventloop.utilization',
-      'mcp.sessions.live',
-      'mcp.http.in_flight',
-      'mcp.agent.sessions.pending',
-      'mcp.process.uptime_seconds',
+      'browserless.mcp.eventloop.utilization',
+      'browserless.mcp.sessions.live',
+      'browserless.mcp.http.in_flight',
+      'browserless.mcp.agent.sessions.pending',
+      'browserless.mcp.process.uptime_seconds',
     ];
     for (const g of gauges)
       expect(byName(g)?.dataPointType, g).to.equal(DataPointType.GAUGE);
 
     const histograms = [
-      'mcp.tool.duration_ms',
-      'mcp.agent.upstream.duration_ms',
-      'mcp.redis.op.duration_ms',
-      'mcp.session.lifetime_ms',
-      'mcp.http.duration_ms',
-      'mcp.gc.pause_ms',
+      'browserless.mcp.tool.duration_ms',
+      'browserless.mcp.agent.upstream.duration_ms',
+      'browserless.mcp.redis.op.duration_ms',
+      'browserless.mcp.session.lifetime_ms',
+      'browserless.mcp.http.duration_ms',
+      'browserless.mcp.gc.pause_ms',
     ];
     for (const h of histograms)
       expect(byName(h)?.dataPointType, h).to.equal(DataPointType.HISTOGRAM);
 
     for (const c of [
-      'mcp.sessions.reaped',
-      'mcp.agent.sessions.swept',
-      'mcp.tool.requests',
-      'mcp.redis.errors',
-      'mcp.http.requests',
+      'browserless.mcp.sessions.reaped',
+      'browserless.mcp.agent.sessions.swept',
+      'browserless.mcp.tool.requests',
+      'browserless.mcp.redis.errors',
+      'browserless.mcp.http.requests',
     ]) {
       const m = byName(c);
       expect(m?.dataPointType, c).to.equal(DataPointType.SUM);
@@ -151,7 +151,7 @@ describe('metrics shape (full exported inventory)', () => {
   });
 
   it('splits process.memory_bytes across rss/heap_used/heap_total/external in bytes', () => {
-    const mem = byName('mcp.process.memory_bytes');
+    const mem = byName('browserless.mcp.process.memory_bytes');
     expect(mem?.descriptor.unit).to.equal('By');
     const types = new Set(
       mem?.dataPoints.map((d) => d.attributes.type as string) ?? [],
@@ -161,7 +161,7 @@ describe('metrics shape (full exported inventory)', () => {
   });
 
   it('tags tool metrics with tool + success, and error_category on failures only', () => {
-    const req = byName('mcp.tool.requests');
+    const req = byName('browserless.mcp.tool.requests');
     const ok = req?.dataPoints.find(
       (d) =>
         d.attributes.tool === 'browserless_scrape' &&
@@ -178,24 +178,28 @@ describe('metrics shape (full exported inventory)', () => {
   });
 
   it('tags the new upstream / redis / http / lifetime metrics correctly', () => {
-    const up = byName('mcp.agent.upstream.duration_ms');
+    const up = byName('browserless.mcp.agent.upstream.duration_ms');
     expect(up?.dataPoints[0]?.attributes.method).to.equal('goto');
-    const redis = byName('mcp.redis.op.duration_ms');
+    const redis = byName('browserless.mcp.redis.op.duration_ms');
     expect(redis?.dataPoints[0]?.attributes.op).to.equal('get');
-    const http = byName('mcp.http.requests');
+    const http = byName('browserless.mcp.http.requests');
     expect(http?.dataPoints.some((d) => d.attributes.status === 200)).to.equal(
       true,
     );
-    const life = byName('mcp.session.lifetime_ms');
+    const life = byName('browserless.mcp.session.lifetime_ms');
     const kinds = new Set(life?.dataPoints.map((d) => d.attributes.kind) ?? []);
     expect(kinds.has('mcp')).to.equal(true);
     expect(kinds.has('agent')).to.equal(true);
-    expect(byName('mcp.http.in_flight')?.dataPoints[0]?.value).to.equal(2);
+    expect(
+      byName('browserless.mcp.http.in_flight')?.dataPoints[0]?.value,
+    ).to.equal(2);
   });
 
   it('tracks distinct accounts and the top talkers by hashed token (no raw token)', () => {
-    expect(byName('mcp.accounts.active')?.dataPoints[0]?.value).to.equal(2);
-    const acct = byName('mcp.account.requests');
+    expect(
+      byName('browserless.mcp.accounts.active')?.dataPoints[0]?.value,
+    ).to.equal(2);
+    const acct = byName('browserless.mcp.account.requests');
     // Every series is labelled by a hashed account id — never a raw token.
     expect(
       acct?.dataPoints.every(

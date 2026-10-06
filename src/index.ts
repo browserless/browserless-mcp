@@ -148,16 +148,18 @@ const server = new FastMCP<BrowserlessSession>({
 instrumentFastMcpTools(server, amplitudeAnalytics);
 registerSurface(server, config, analytics);
 
-// Export metrics + logs to an OTLP collector — enabled only when
-// OTEL_EXPORTER_OTLP_ENDPOINT is set and only on the httpStream transport, since
-// stdio keeps stdout as a clean JSON-RPC channel (nothing is started there).
-// Best-effort: a telemetry failure must never block or crash the server.
+// Export metrics + logs to an OTLP collector. Gated like the rest of the fleet:
+// the OTEL_ENABLED master toggle must be "true" (the flag enterprise/workers use)
+// AND OTEL_EXPORTER_OTLP_ENDPOINT must point at a collector — and only on the
+// httpStream transport, since stdio keeps stdout a clean JSON-RPC channel
+// (nothing is started there). Best-effort: a telemetry failure must never block
+// or crash the server.
 let telemetryShutdown: (() => Promise<void>) | undefined;
 const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 if (
   config.transport === 'httpStream' &&
-  otelEndpoint &&
-  process.env.OTEL_SDK_DISABLED !== 'true'
+  process.env.OTEL_ENABLED === 'true' &&
+  otelEndpoint
 ) {
   try {
     telemetryShutdown = initTelemetry({

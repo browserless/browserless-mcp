@@ -55,10 +55,11 @@ import {
 
 const DEFAULT_EXPORT_INTERVAL_MS = 60_000;
 
-// Export cadence, overridable for ops tuning / tests. Floored at 1s so a fumbled
-// value can't hammer the collector; anything invalid falls back to the default.
+// Export cadence in milliseconds, overridable via OTEL_METRIC_EXPORT_INTERVAL —
+// the standard OTel var the rest of the fleet sets (to 300000 = 5 min). Floored
+// at 1s so a fumbled value can't hammer the collector; invalid falls back.
 const resolveExportIntervalMs = (): number => {
-  const parsed = Number(process.env.OTEL_METRIC_EXPORT_INTERVAL_MS);
+  const parsed = Number(process.env.OTEL_METRIC_EXPORT_INTERVAL);
   return Number.isFinite(parsed) && parsed >= 1000
     ? parsed
     : DEFAULT_EXPORT_INTERVAL_MS;
@@ -222,79 +223,114 @@ export const registerRuntimeInstruments = (
   loopDelay.enable();
   let prevElu = performance.eventLoopUtilization();
 
-  const delayP50 = meter.createObservableGauge('mcp.eventloop.delay.p50_ms', {
-    description: 'Event-loop delay, 50th percentile, over the export window',
-    unit: 'ms',
-  });
-  const delayP99 = meter.createObservableGauge('mcp.eventloop.delay.p99_ms', {
-    description: 'Event-loop delay, 99th percentile, over the export window',
-    unit: 'ms',
-  });
-  const eluGauge = meter.createObservableGauge('mcp.eventloop.utilization', {
-    description: 'Event-loop utilization (0..1) over the export window',
-  });
-  const memGauge = meter.createObservableGauge('mcp.process.memory_bytes', {
-    description: 'Process memory usage',
-    unit: 'By',
-  });
+  const delayP50 = meter.createObservableGauge(
+    'browserless.mcp.eventloop.delay.p50_ms',
+    {
+      description: 'Event-loop delay, 50th percentile, over the export window',
+      unit: 'ms',
+    },
+  );
+  const delayP99 = meter.createObservableGauge(
+    'browserless.mcp.eventloop.delay.p99_ms',
+    {
+      description: 'Event-loop delay, 99th percentile, over the export window',
+      unit: 'ms',
+    },
+  );
+  const eluGauge = meter.createObservableGauge(
+    'browserless.mcp.eventloop.utilization',
+    {
+      description: 'Event-loop utilization (0..1) over the export window',
+    },
+  );
+  const memGauge = meter.createObservableGauge(
+    'browserless.mcp.process.memory_bytes',
+    {
+      description: 'Process memory usage',
+      unit: 'By',
+    },
+  );
   const resourcesGauge = meter.createObservableGauge(
-    'mcp.process.active_resources',
+    'browserless.mcp.process.active_resources',
     { description: 'Active libuv resources (handles + requests)' },
   );
   const uptimeGauge = meter.createObservableGauge(
-    'mcp.process.uptime_seconds',
+    'browserless.mcp.process.uptime_seconds',
     {
       description: 'Process uptime; a reset toward 0 marks a restart',
       unit: 's',
     },
   );
-  const httpInFlightGauge = meter.createObservableGauge('mcp.http.in_flight', {
-    description: 'Inbound HTTP requests currently in flight',
-  });
+  const httpInFlightGauge = meter.createObservableGauge(
+    'browserless.mcp.http.in_flight',
+    {
+      description: 'Inbound HTTP requests currently in flight',
+    },
+  );
   // Abuse / top-talker attribution. accounts.active = distinct accounts (hashed
   // token) with load this window; account.requests = per-window request count for
   // the top accounts only (bounded label cardinality).
-  const activeAccounts = meter.createObservableGauge('mcp.accounts.active', {
-    description:
-      'Distinct accounts (hashed token) that drove load in the window',
-  });
-  const accountRequests = meter.createObservableGauge('mcp.account.requests', {
-    description: 'Requests this window for the top accounts (by hashed token)',
-  });
+  const activeAccounts = meter.createObservableGauge(
+    'browserless.mcp.accounts.active',
+    {
+      description:
+        'Distinct accounts (hashed token) that drove load in the window',
+    },
+  );
+  const accountRequests = meter.createObservableGauge(
+    'browserless.mcp.account.requests',
+    {
+      description:
+        'Requests this window for the top accounts (by hashed token)',
+    },
+  );
 
   // "What the server is currently holding" — the session pools the idle reaper
   // and sweep keep bounded. A flat `sessions.tracked` confirms they stay
   // bounded; a steady climb is the regression signal.
-  const liveSessions = meter.createObservableGauge('mcp.sessions.live', {
-    description: 'Live FastMCP httpStream sessions',
-  });
-  const trackedSessions = meter.createObservableGauge('mcp.sessions.tracked', {
-    description: 'Session ids tracked by the idle reaper',
-  });
+  const liveSessions = meter.createObservableGauge(
+    'browserless.mcp.sessions.live',
+    {
+      description: 'Live FastMCP httpStream sessions',
+    },
+  );
+  const trackedSessions = meter.createObservableGauge(
+    'browserless.mcp.sessions.tracked',
+    {
+      description: 'Session ids tracked by the idle reaper',
+    },
+  );
   const inFlightExec = meter.createObservableGauge(
-    'mcp.sessions.in_flight_exec',
+    'browserless.mcp.sessions.in_flight_exec',
     { description: 'Sessions with a tool execution in flight' },
   );
   const agentSessions = meter.createObservableGauge(
-    'mcp.agent.sessions.active',
+    'browserless.mcp.agent.sessions.active',
     { description: 'Agent browser sessions held in the pool' },
   );
   const pendingSessions = meter.createObservableGauge(
-    'mcp.agent.sessions.pending',
+    'browserless.mcp.agent.sessions.pending',
     {
       description: 'Agent sessions mid-creation (in-flight getOrCreateSession)',
     },
   );
   const agentCommands = meter.createObservableGauge(
-    'mcp.agent.commands.in_flight',
+    'browserless.mcp.agent.commands.in_flight',
     { description: 'Pooled agent sessions with a command in flight' },
   );
-  const reaped = meter.createObservableCounter('mcp.sessions.reaped', {
-    description: 'Idle MCP sessions closed by the reaper (cumulative)',
-  });
-  const swept = meter.createObservableCounter('mcp.agent.sessions.swept', {
-    description: 'Idle agent sessions proper-closed by the sweep (cumulative)',
-  });
+  const reaped = meter.createObservableCounter(
+    'browserless.mcp.sessions.reaped',
+    {
+      description: 'Idle MCP sessions closed by the reaper (cumulative)',
+    },
+  );
+  const swept = meter.createObservableCounter(
+    'browserless.mcp.agent.sessions.swept',
+    {
+      description:
+        'Idle agent sessions proper-closed by the sweep (cumulative)',
+    },
+  );
 
   meter.addBatchObservableCallback(
     (obs: BatchObservableResult) => {

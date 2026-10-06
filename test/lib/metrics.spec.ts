@@ -47,9 +47,11 @@ describe('metrics (OTLP telemetry)', () => {
     expect(console.warn).to.equal(originalWarn);
   });
 
-  it('index.ts starts telemetry only in httpStream mode, guarded so it cannot crash boot', () => {
+  it('index.ts gates telemetry on OTEL_ENABLED + httpStream, guarded so it cannot crash boot', () => {
     const source = readFileSync('src/index.ts', 'utf8');
     expect(source).to.include("config.transport === 'httpStream'");
+    // Master toggle matches the fleet convention (enterprise/workers).
+    expect(source).to.include("process.env.OTEL_ENABLED === 'true'");
     expect(source).to.include('initTelemetry(');
     // The init is wrapped in try/catch — a telemetry failure must not abort boot.
     expect(source).to.match(/try\s*\{[\s\S]*?initTelemetry\(/);

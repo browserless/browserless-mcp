@@ -50,36 +50,46 @@ let httpInFlight = 0;
 /** Create the sync instruments once the provider is started (from initTelemetry). */
 export const createSyncInstruments = (): void => {
   const meter = metrics.getMeter(METER_NAME);
-  toolRequests = meter.createCounter('mcp.tool.requests', {
+  toolRequests = meter.createCounter('browserless.mcp.tool.requests', {
     description: 'MCP tool invocations, by tool and outcome',
   });
-  toolDuration = meter.createHistogram('mcp.tool.duration_ms', {
+  toolDuration = meter.createHistogram('browserless.mcp.tool.duration_ms', {
     description: 'MCP tool invocation duration',
     unit: 'ms',
   });
-  upstreamDuration = meter.createHistogram('mcp.agent.upstream.duration_ms', {
-    description: 'Agent upstream command round-trip duration (browser runtime)',
-    unit: 'ms',
-  });
-  redisDuration = meter.createHistogram('mcp.redis.op.duration_ms', {
-    description: 'Redis operation duration (OAuth state store)',
-    unit: 'ms',
-  });
-  redisErrors = meter.createCounter('mcp.redis.errors', {
+  upstreamDuration = meter.createHistogram(
+    'browserless.mcp.agent.upstream.duration_ms',
+    {
+      description:
+        'Agent upstream command round-trip duration (browser runtime)',
+      unit: 'ms',
+    },
+  );
+  redisDuration = meter.createHistogram(
+    'browserless.mcp.redis.op.duration_ms',
+    {
+      description: 'Redis operation duration (OAuth state store)',
+      unit: 'ms',
+    },
+  );
+  redisErrors = meter.createCounter('browserless.mcp.redis.errors', {
     description: 'Redis client errors (cumulative)',
   });
-  sessionLifetime = meter.createHistogram('mcp.session.lifetime_ms', {
-    description: 'Session lifetime at close, by kind (mcp | agent)',
-    unit: 'ms',
-  });
-  httpRequests = meter.createCounter('mcp.http.requests', {
+  sessionLifetime = meter.createHistogram(
+    'browserless.mcp.session.lifetime_ms',
+    {
+      description: 'Session lifetime at close, by kind (mcp | agent)',
+      unit: 'ms',
+    },
+  );
+  httpRequests = meter.createCounter('browserless.mcp.http.requests', {
     description: 'Inbound HTTP requests, by status',
   });
-  httpDuration = meter.createHistogram('mcp.http.duration_ms', {
+  httpDuration = meter.createHistogram('browserless.mcp.http.duration_ms', {
     description: 'Inbound HTTP request duration',
     unit: 'ms',
   });
-  gcPause = meter.createHistogram('mcp.gc.pause_ms', {
+  gcPause = meter.createHistogram('browserless.mcp.gc.pause_ms', {
     description: 'V8 garbage-collection pause duration',
     unit: 'ms',
   });
