@@ -76,6 +76,15 @@ export const endSessionExec = (
 /** Number of sessions with tracked activity — diagnostics and tests. */
 export const trackedSessionCount = (): number => lastSeen.size;
 
+// Cumulative count of idle sessions the reaper has closed since process start.
+let reapedTotal = 0;
+
+/** Sessions currently holding an in-flight tool execution. Telemetry read-only. */
+export const inFlightExecCount = (): number => activeExec.size;
+
+/** Cumulative idle sessions reaped since start. Source for an observable counter. */
+export const reapedSessionTotal = (): number => reapedTotal;
+
 /** The subset of FastMCPSession this module needs; keeps the core testable. */
 export interface ReapableSession {
   readonly sessionId?: string;
@@ -140,6 +149,7 @@ export const reapIdleSessions = (
   for (const id of lastSeen.keys()) if (!liveIds.has(id)) lastSeen.delete(id);
   for (const id of activeExec.keys())
     if (!liveIds.has(id)) activeExec.delete(id);
+  reapedTotal += closed;
   return closed;
 };
 
@@ -183,4 +193,5 @@ export const resetSessionReaperForTests = (): void => {
   stopSessionReaper();
   lastSeen.clear();
   activeExec.clear();
+  reapedTotal = 0;
 };

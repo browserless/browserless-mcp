@@ -431,6 +431,19 @@ const properClose = (
     });
 };
 
+// Cumulative count of pooled agent sessions the sweep has proper-closed.
+let sweptTotal = 0;
+
+/** Agent browser sessions currently held in the pool. Telemetry read-only. */
+export const activeAgentSessionCount = (): number => sessions.size;
+
+/** Pooled agent sessions with a command in flight. Telemetry read-only. */
+export const inFlightCommandCount = (): number =>
+  [...sessions.values()].filter(hasInFlightCommand).length;
+
+/** Cumulative agent sessions swept since start. Source for an observable counter. */
+export const sweptSessionTotal = (): number => sweptTotal;
+
 // Sweep periodically and on getOrCreateSession; the map is bounded.
 export const sweepSessions = (
   now = Date.now(),
@@ -447,6 +460,7 @@ export const sweepSessions = (
     }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
       properClose(key, session, 'idle');
+      sweptTotal++;
     }
   }
   if (sessions.size <= maxSessions) return;
@@ -462,6 +476,7 @@ export const sweepSessions = (
     .slice(0, overage);
   for (const [key, session] of oldest) {
     properClose(key, session, 'cap');
+    sweptTotal++;
   }
 };
 

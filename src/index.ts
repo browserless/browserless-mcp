@@ -30,6 +30,7 @@ import {
   initializeAmplitudeAnalytics,
   shutdownAmplitudeAnalytics,
 } from './lib/amplitude-analytics.js';
+import { initTelemetry } from './lib/metrics.js';
 
 const pkg = JSON.parse(
   readFileSync(
@@ -140,6 +141,32 @@ const server = new FastMCP<BrowserlessSession>({
 
 instrumentFastMcpTools(server, amplitudeAnalytics);
 registerSurface(server, config, analytics);
+
+// Export metrics + logs to an OTLP collector — enabled only when
+// OTEL_EXPORTER_OTLP_ENDPOINT is set and only on the httpStream transport, since
+// stdio keeps stdout as a clean JSON-RPC channel (nothing is started there).
+// Best-effort: a telemetry failure must never block or crash the server.
+let telemetryShutdown: (() => Promise<void>) | undefined;
+const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+if (
+  config.transport === 'httpStream' &&
+  otelEndpoint &&
+  process.env.OTEL_SDK_DISABLED !== 'true'
+) {
+  try {
+    telemetryShutdown = initTelemetry({
+      endpoint: otelEndpoint,
+      serviceName: process.env.OTEL_SERVICE_NAME ?? 'browserless-mcp',
+      serviceVersion: pkg.version,
+      getLiveSessionCount: () => server.sessions.length,
+    });
+  } catch (err) {
+    console.error(
+      '[browserless-mcp] telemetry init failed:',
+      err instanceof Error ? (err.stack ?? err.message) : err,
+    );
+  }
+}
 // Log the active surface (both transports) so it's visible in the boot logs.
 // Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
 // on a directory deploy) from opt-out, and warn on an unrecognized value (typo).
@@ -182,14 +209,17 @@ server.on('connect', (event) => {
   );
 });
 
-if (amplitudeAnalytics) {
-  let amplitudeShutdown = false;
+if (amplitudeAnalytics || telemetryShutdown) {
+  let shuttingDown = false;
   const shutdown = (exitCode: number): void => {
-    if (amplitudeShutdown) return;
-    amplitudeShutdown = true;
+    if (shuttingDown) return;
+    shuttingDown = true;
     void (async () => {
       try {
-        await shutdownAmplitudeAnalytics(amplitudeAnalytics);
+        if (amplitudeAnalytics)
+          await shutdownAmplitudeAnalytics(amplitudeAnalytics);
+        // Flush the final metric + log batch before exit.
+        if (telemetryShutdown) await telemetryShutdown();
       } finally {
         process.exit(exitCode);
       }

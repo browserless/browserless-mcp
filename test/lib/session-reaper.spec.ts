@@ -7,6 +7,8 @@ import {
   beginSessionExec,
   endSessionExec,
   trackedSessionCount,
+  inFlightExecCount,
+  reapedSessionTotal,
   reapIdleSessions,
   startSessionReaper,
   stopSessionReaper,
@@ -254,5 +256,26 @@ describe('session-reaper', () => {
     expect(source).to.include('event.session.close()');
     // Every authenticated inbound request refreshes the session's idle clock.
     expect(source).to.include("request.headers?.['mcp-session-id']");
+  });
+
+  it('reports in-flight tool executions via inFlightExecCount (telemetry)', () => {
+    expect(inFlightExecCount()).to.equal(0);
+    beginSessionExec('a');
+    beginSessionExec('b');
+    expect(inFlightExecCount()).to.equal(2);
+    endSessionExec('a');
+    expect(inFlightExecCount()).to.equal(1);
+  });
+
+  it('counts reaped idle sessions cumulatively via reapedSessionTotal (telemetry)', () => {
+    const now = 10 * TTL;
+    const idle = fakeSession('idle');
+    touchSession('idle', now - TTL - 1);
+    expect(reapedSessionTotal()).to.equal(0); // reset in beforeEach
+    expect(reapIdleSessions(() => [idle], { now, ttlMs: TTL })).to.equal(1);
+    expect(reapedSessionTotal()).to.equal(1);
+    // A pass that closes nothing does not advance the counter.
+    reapIdleSessions(() => [], { now: now + 1, ttlMs: TTL });
+    expect(reapedSessionTotal()).to.equal(1);
   });
 });
