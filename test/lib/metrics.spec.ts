@@ -1,10 +1,7 @@
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
-import {
-  recordToolRequest,
-  initTelemetry,
-  normalizeOtlpBase,
-} from '../../src/lib/metrics.js';
+import { initTelemetry, normalizeOtlpBase } from '../../src/lib/metrics.js';
+import { recordToolRequest } from '../../src/lib/metrics-recorders.js';
 
 describe('metrics (OTLP telemetry)', () => {
   it('recordToolRequest never throws when telemetry is not started (stdio/disabled)', () => {

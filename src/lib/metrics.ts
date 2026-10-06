@@ -28,7 +28,11 @@ import {
   BatchLogRecordProcessor,
 } from '@opentelemetry/sdk-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
-import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import {
+  monitorEventLoopDelay,
+  performance,
+  PerformanceObserver,
+} from 'node:perf_hooks';
 import {
   trackedSessionCount,
   inFlightExecCount,
@@ -40,8 +44,15 @@ import {
   inFlightCommandCount,
   sweptSessionTotal,
 } from './agent-client.js';
+import {
+  METER_NAME,
+  createSyncInstruments,
+  resetSyncInstruments,
+  recordGcPause,
+  getHttpInFlight,
+  collectAccountWindow,
+} from './metrics-recorders.js';
 
-const METER_NAME = 'browserless-mcp';
 const DEFAULT_EXPORT_INTERVAL_MS = 60_000;
 
 // Export cadence, overridable for ops tuning / tests. Floored at 1s so a fumbled
@@ -61,46 +72,6 @@ export interface TelemetryOptions {
   /** Live FastMCP httpStream session count (server.sessions.length). */
   getLiveSessionCount: () => number;
 }
-
-// Request instruments are created lazily so `recordToolRequest` is safe to call
-// before (or without) init: `metrics.getMeter` returns a no-op meter until a
-// global MeterProvider is registered, so every record is a no-op in stdio mode.
-let toolRequests: ReturnType<
-  ReturnType<typeof metrics.getMeter>['createCounter']
->;
-let toolDuration: ReturnType<
-  ReturnType<typeof metrics.getMeter>['createHistogram']
->;
-const ensureRequestInstruments = (): void => {
-  if (toolRequests) return;
-  const meter = metrics.getMeter(METER_NAME);
-  toolRequests = meter.createCounter('mcp.tool.requests', {
-    description: 'MCP tool invocations, by tool and outcome',
-  });
-  toolDuration = meter.createHistogram('mcp.tool.duration_ms', {
-    description: 'MCP tool invocation duration',
-    unit: 'ms',
-  });
-};
-
-/**
- * Record one completed tool invocation. Always safe to call — a no-op until
- * telemetry is started (stdio or disabled). Never throws.
- */
-export const recordToolRequest = (
-  tool: string,
-  success: boolean,
-  durationMs: number,
-): void => {
-  try {
-    ensureRequestInstruments();
-    const attrs = { tool, success };
-    toolRequests.add(1, attrs);
-    if (Number.isFinite(durationMs)) toolDuration.record(durationMs, attrs);
-  } catch {
-    // Telemetry must never break a tool call.
-  }
-};
 
 let provider: MeterProvider | undefined;
 let loggerProvider: LoggerProvider | undefined;
@@ -156,14 +127,28 @@ const bridgeConsole = (): (() => void) => {
   };
 };
 
-/**
- * Start metrics + logs export to the OTLP collector. Hosted mode only; call
- * inside try/catch. Returns a shutdown fn that flushes the final batch.
- */
 /** Strip trailing slashes so appending `/v1/...` can never double them. */
 export const normalizeOtlpBase = (endpoint: string): string =>
   endpoint.replace(/\/+$/, '');
 
+// Observe V8 GC pauses as a histogram. Best-effort: if the platform doesn't
+// support the perf_hooks 'gc' entry type, telemetry just omits it.
+const startGcObserver = (): PerformanceObserver | undefined => {
+  try {
+    const obs = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) recordGcPause(entry.duration);
+    });
+    obs.observe({ entryTypes: ['gc'] });
+    return obs;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Start metrics + logs export to the OTLP collector. Hosted mode only; call
+ * inside try/catch. Returns a shutdown fn that flushes the final batch.
+ */
 export const initTelemetry = (
   opts: TelemetryOptions,
 ): (() => Promise<void>) => {
@@ -197,11 +182,14 @@ export const initTelemetry = (
   logs.setGlobalLoggerProvider(loggerProvider);
 
   registerRuntimeInstruments(opts.getLiveSessionCount);
+  createSyncInstruments();
+  const gcObserver = startGcObserver();
   restoreConsole = bridgeConsole();
 
   return async () => {
     restoreConsole?.();
     restoreConsole = undefined;
+    gcObserver?.disconnect();
     try {
       // Flush the final batch, but never let a flush to an unreachable collector
       // block process exit (the OTLP export timeout is far longer than any
@@ -217,6 +205,7 @@ export const initTelemetry = (
     } finally {
       provider = undefined;
       loggerProvider = undefined;
+      resetSyncInstruments();
     }
   };
 };
@@ -224,7 +213,7 @@ export const initTelemetry = (
 // Register the observable runtime + session-state instruments against one batch
 // callback, so each export collects every signal in a single pass (and resets
 // the event-loop-delay histogram exactly once per window).
-const registerRuntimeInstruments = (
+export const registerRuntimeInstruments = (
   getLiveSessionCount: () => number,
 ): void => {
   const meter = metrics.getMeter(METER_NAME);
@@ -259,6 +248,19 @@ const registerRuntimeInstruments = (
       unit: 's',
     },
   );
+  const httpInFlightGauge = meter.createObservableGauge('mcp.http.in_flight', {
+    description: 'Inbound HTTP requests currently in flight',
+  });
+  // Abuse / top-talker attribution. accounts.active = distinct accounts (hashed
+  // token) with load this window; account.requests = per-window request count for
+  // the top accounts only (bounded label cardinality).
+  const activeAccounts = meter.createObservableGauge('mcp.accounts.active', {
+    description:
+      'Distinct accounts (hashed token) that drove load in the window',
+  });
+  const accountRequests = meter.createObservableGauge('mcp.account.requests', {
+    description: 'Requests this window for the top accounts (by hashed token)',
+  });
 
   // "What the server is currently holding" — the session pools the idle reaper
   // and sweep keep bounded. A flat `sessions.tracked` confirms they stay
@@ -312,6 +314,7 @@ const registerRuntimeInstruments = (
       obs.observe(memGauge, mem.external, { type: 'external' });
       obs.observe(resourcesGauge, process.getActiveResourcesInfo().length);
       obs.observe(uptimeGauge, process.uptime());
+      obs.observe(httpInFlightGauge, getHttpInFlight());
 
       obs.observe(liveSessions, getLiveSessionCount());
       obs.observe(trackedSessions, trackedSessionCount());
@@ -321,6 +324,11 @@ const registerRuntimeInstruments = (
       obs.observe(agentCommands, inFlightCommandCount());
       obs.observe(reaped, reapedSessionTotal());
       obs.observe(swept, sweptSessionTotal());
+
+      const accounts = collectAccountWindow();
+      obs.observe(activeAccounts, accounts.active);
+      for (const a of accounts.top)
+        obs.observe(accountRequests, a.count, { account_hash: a.hash });
     },
     [
       delayP50,
@@ -329,6 +337,9 @@ const registerRuntimeInstruments = (
       memGauge,
       resourcesGauge,
       uptimeGauge,
+      httpInFlightGauge,
+      activeAccounts,
+      accountRequests,
       liveSessions,
       trackedSessions,
       inFlightExec,

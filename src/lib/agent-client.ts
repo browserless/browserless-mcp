@@ -4,6 +4,10 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
+import {
+  recordUpstreamCall,
+  recordSessionLifetime,
+} from './metrics-recorders.js';
 import type { CreateProfileParams } from '../tools/schemas.js';
 import type {
   ActiveSession,
@@ -415,6 +419,8 @@ const properClose = (
       : Promise.resolve();
   // Stop reuse and repeated eviction while the close response is in flight.
   sessions.delete(key);
+  const bornAt = createdAt.get(session);
+  if (bornAt !== undefined) recordSessionLifetime('agent', Date.now() - bornAt);
   void closing
     .catch(() => {
       /* browser may already be gone */
@@ -1478,13 +1484,20 @@ export const send = async (
 
     session.msgId++;
     session.lastUsedAt = Date.now();
-    const response = await sendMessage(
-      session.ws,
-      { id: session.msgId, method, params },
-      timeoutMs,
-    );
-    session.lastUsedAt = Date.now();
-    return response;
+    const upstreamStart = Date.now();
+    try {
+      const response = await sendMessage(
+        session.ws,
+        { id: session.msgId, method, params },
+        timeoutMs,
+      );
+      recordUpstreamCall(method, true, Date.now() - upstreamStart);
+      session.lastUsedAt = Date.now();
+      return response;
+    } catch (err) {
+      recordUpstreamCall(method, false, Date.now() - upstreamStart);
+      throw err;
+    }
   } finally {
     endCommand(session);
   }

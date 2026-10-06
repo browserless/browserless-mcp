@@ -1,5 +1,6 @@
 import { Redis } from 'ioredis';
 import type { TokenStorage } from 'fastmcp/auth';
+import { recordRedisOp } from './metrics-recorders.js';
 
 const KEY_PREFIX = 'mcp:oauth:';
 
@@ -12,26 +13,43 @@ export class RedisTokenStorage implements TokenStorage {
     return `${KEY_PREFIX}${key}`;
   }
 
+  // Time a Redis op for telemetry without altering its result or errors.
+  private async timed<T>(op: string, fn: () => Promise<T>): Promise<T> {
+    const start = Date.now();
+    try {
+      const result = await fn();
+      recordRedisOp(op, true, Date.now() - start);
+      return result;
+    } catch (err) {
+      recordRedisOp(op, false, Date.now() - start);
+      throw err;
+    }
+  }
+
   async get(key: string): Promise<null | unknown> {
-    const json = await this.redis.get(this.key(key));
+    const json = await this.timed('get', () => this.redis.get(this.key(key)));
     return json ? (JSON.parse(json) as unknown) : null;
   }
 
   async save(key: string, value: unknown, ttl?: number): Promise<void> {
-    await this.redis.set(
-      this.key(key),
-      JSON.stringify(value),
-      'EX',
-      ttl ?? DEFAULT_TTL_SECONDS,
+    await this.timed('save', () =>
+      this.redis.set(
+        this.key(key),
+        JSON.stringify(value),
+        'EX',
+        ttl ?? DEFAULT_TTL_SECONDS,
+      ),
     );
   }
 
   async delete(key: string): Promise<void> {
-    await this.redis.del(this.key(key));
+    await this.timed('delete', () => this.redis.del(this.key(key)));
   }
 
   async take(key: string): Promise<null | unknown> {
-    const json = await this.redis.getdel(this.key(key));
+    const json = await this.timed('take', () =>
+      this.redis.getdel(this.key(key)),
+    );
     return json ? (JSON.parse(json) as unknown) : null;
   }
 

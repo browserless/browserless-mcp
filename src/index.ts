@@ -31,6 +31,11 @@ import {
   shutdownAmplitudeAnalytics,
 } from './lib/amplitude-analytics.js';
 import { initTelemetry } from './lib/metrics.js';
+import {
+  recordRedisError,
+  recordHttpRequest,
+  httpInFlightAdd,
+} from './lib/metrics-recorders.js';
 
 const pkg = JSON.parse(
   readFileSync(
@@ -62,9 +67,10 @@ const amplitudeAnalytics = initializeAmplitudeAnalytics(
 // receives the raw Supabase JWT directly.
 const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
 if (redisClient) {
-  redisClient.on('error', (err: Error) =>
-    console.error('[browserless-mcp] Redis error:', err.message),
-  );
+  redisClient.on('error', (err: Error) => {
+    recordRedisError();
+    console.error('[browserless-mcp] Redis error:', err.message);
+  });
   // Redis is only configured for the hosted httpStream deployment (REDIS_URL is
   // not set in stdio mode), so writing the "connected" line to stdout doesn't
   // interfere with MCP-over-stdio protocol framing.
@@ -261,6 +267,20 @@ if (config.transport === 'httpStream') {
       eventStore: new BoundedEventStore(10_000),
       stateless: false,
     },
+  });
+  // Transport-level request metrics: count every inbound HTTP request by status
+  // + duration, and track in-flight depth. Fully transparent — always calls
+  // next(), always restores the gauge, and the recorders never throw, so it can
+  // neither drop a request nor alter a response.
+  server.getApp().use('*', async (c, next) => {
+    httpInFlightAdd(1);
+    const startedAt = Date.now();
+    try {
+      await next();
+    } finally {
+      httpInFlightAdd(-1);
+      recordHttpRequest(c.res?.status ?? 0, Date.now() - startedAt);
+    }
   });
   // Out-of-band file staging for uploads (the LLM curls a file here and gets a
   // handle, instead of base64-ing it through the conversation). httpStream only.
