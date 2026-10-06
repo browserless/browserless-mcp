@@ -40,6 +40,26 @@ const pkg = JSON.parse(
 
 const config = getConfig();
 
+// Crash safety net: this MCP runs as a single instance behind the LB, so one
+// stray throw or unhandled rejection anywhere (a tool, a dependency, a periodic
+// timer) would otherwise exit the process and take the whole service down for
+// every client until it restarts. Log and keep serving instead; per-request and
+// per-sweep failures are already isolated at their call sites, so this is the
+// last-resort backstop. Trade-off: a genuinely corrupting error is logged rather
+// than fast-failing, which is acceptable here where a full outage is worse.
+const logUnhandled = (kind: string, err: unknown): void => {
+  console.error(
+    `[browserless-mcp] ${kind}:`,
+    err instanceof Error ? (err.stack ?? err.message) : err,
+  );
+};
+process.on('uncaughtException', (err) =>
+  logUnhandled('uncaughtException', err),
+);
+process.on('unhandledRejection', (reason) =>
+  logUnhandled('unhandledRejection', reason),
+);
+
 // Override Supabase's short-lived (~60s) OAuth token TTL so MCP clients don't
 // thrash refresh. Narrowly scoped to the Supabase token endpoint; see
 // installSupabaseTokenTtlPatch in account-resolver.ts for the full rationale.

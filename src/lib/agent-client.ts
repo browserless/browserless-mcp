@@ -469,7 +469,18 @@ let sweepTimer: ReturnType<typeof setInterval> | undefined;
 export const startSweepTimer = (): void => {
   if (sweepTimer) return;
   const ms = parsePositiveMs(process.env.MCP_SWEEP_MS, 60_000);
-  sweepTimer = setInterval(() => sweepSessions(), ms);
+  sweepTimer = setInterval(() => {
+    // A sweep error must never reach the event loop: an unhandled throw in a
+    // timer crashes the whole process. Log and let the next tick retry.
+    try {
+      sweepSessions();
+    } catch (err) {
+      console.error(
+        '[agent-client] sweep failed:',
+        err instanceof Error ? (err.stack ?? err.message) : err,
+      );
+    }
+  }, ms);
   sweepTimer.unref();
 };
 

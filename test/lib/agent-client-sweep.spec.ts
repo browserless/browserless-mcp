@@ -8,6 +8,43 @@ import { makeRespondingServer } from '../helpers/upgrade-server.js';
 describe('agent-client session sweep', () => {
   afterEach(() => sinon.restore());
 
+  it('isolates a throwing sweep so the sweep timer cannot crash the process', async () => {
+    const browser = await makeRespondingServer(() => ({}));
+    const errSpy = sinon.stub(console, 'error');
+    try {
+      const session = await client.getOrCreateSession(
+        'throw-sweep',
+        browser.url,
+        'tok',
+      );
+      // Corrupt the pooled session so the sweep throws mid-iteration (expired
+      // Stripe-Link continuation + missing skillState).
+      const corrupt = session as unknown as {
+        stripeLinkContinuation: { validUntil: number };
+        skillState: unknown;
+      };
+      corrupt.stripeLinkContinuation = { validUntil: Date.now() - 1 };
+      corrupt.skillState = undefined;
+      const clock = sinon.useFakeTimers({
+        toFake: ['setInterval', 'clearInterval'],
+      });
+      client.startSweepTimer();
+      // The interval callback must swallow the error, not let it reach the loop.
+      expect(() => clock.tick(60_000)).to.not.throw();
+      expect(
+        errSpy
+          .getCalls()
+          .some((c) =>
+            String(c.args[0]).includes('[agent-client] sweep failed'),
+          ),
+      ).to.equal(true);
+    } finally {
+      client.stopSweepTimer();
+      sinon.restore();
+      await browser.close();
+    }
+  });
+
   it('proper-closes idle sessions, preserves the 15-minute boundary and cannot delete a replacement', async () => {
     let acknowledge!: () => void;
     const browser = await makeRespondingServer((method) =>

@@ -255,4 +255,29 @@ describe('session-reaper', () => {
     // Every authenticated inbound request refreshes the session's idle clock.
     expect(source).to.include("request.headers?.['mcp-session-id']");
   });
+
+  it('isolates a throwing sweep so the reaper timer cannot crash the process', () => {
+    const clock = sinon.useFakeTimers({
+      toFake: ['setInterval', 'clearInterval'],
+    });
+    const errSpy = sinon.stub(console, 'error');
+    startSessionReaper(() => {
+      throw new Error('boom');
+    });
+    // The interval callback must swallow the error, not let it reach the loop.
+    expect(() => clock.tick(60_000)).to.not.throw();
+    expect(
+      errSpy
+        .getCalls()
+        .some((c) =>
+          String(c.args[0]).includes('[session-reaper] sweep failed'),
+        ),
+    ).to.equal(true);
+  });
+
+  it('index.ts installs process-level crash handlers', () => {
+    const source = readFileSync('src/index.ts', 'utf8');
+    expect(source).to.include("process.on('uncaughtException'");
+    expect(source).to.include("process.on('unhandledRejection'");
+  });
 });

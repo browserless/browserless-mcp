@@ -167,10 +167,18 @@ export const startSessionReaper = (
 ): void => {
   if (reapTimer) return;
   const intervalMs = clampDelay('MCP_SESSION_REAP_MS', DEFAULT_INTERVAL_MS);
-  reapTimer = setInterval(
-    () => reapIdleSessions(getSessions, { ttlMs: resolveTtlMs() }),
-    intervalMs,
-  );
+  reapTimer = setInterval(() => {
+    // A reap error must never reach the event loop: an unhandled throw in a
+    // timer crashes the whole process. Log and let the next tick retry.
+    try {
+      reapIdleSessions(getSessions, { ttlMs: resolveTtlMs() });
+    } catch (err) {
+      console.error(
+        '[session-reaper] sweep failed:',
+        err instanceof Error ? (err.stack ?? err.message) : err,
+      );
+    }
+  }, intervalMs);
   reapTimer.unref();
 };
 
