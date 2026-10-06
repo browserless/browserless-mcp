@@ -159,9 +159,14 @@ const bridgeConsole = (): (() => void) => {
  * Start metrics + logs export to the OTLP collector. Hosted mode only; call
  * inside try/catch. Returns a shutdown fn that flushes the final batch.
  */
+/** Strip trailing slashes so appending `/v1/...` can never double them. */
+export const normalizeOtlpBase = (endpoint: string): string =>
+  endpoint.replace(/\/+$/, '');
+
 export const initTelemetry = (
   opts: TelemetryOptions,
 ): (() => Promise<void>) => {
+  const base = normalizeOtlpBase(opts.endpoint);
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: opts.serviceName,
     [ATTR_SERVICE_VERSION]: opts.serviceVersion,
@@ -172,7 +177,7 @@ export const initTelemetry = (
     readers: [
       new PeriodicExportingMetricReader({
         exporter: new OTLPMetricExporter({
-          url: `${opts.endpoint}/v1/metrics`,
+          url: `${base}/v1/metrics`,
         }),
         exportIntervalMillis: resolveExportIntervalMs(),
       }),
@@ -184,7 +189,7 @@ export const initTelemetry = (
     resource,
     processors: [
       new BatchLogRecordProcessor({
-        exporter: new OTLPLogExporter({ url: `${opts.endpoint}/v1/logs` }),
+        exporter: new OTLPLogExporter({ url: `${base}/v1/logs` }),
       }),
     ],
   });

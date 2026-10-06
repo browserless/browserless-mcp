@@ -1,6 +1,10 @@
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
-import { recordToolRequest, initTelemetry } from '../../src/lib/metrics.js';
+import {
+  recordToolRequest,
+  initTelemetry,
+  normalizeOtlpBase,
+} from '../../src/lib/metrics.js';
 
 describe('metrics (OTLP telemetry)', () => {
   it('recordToolRequest never throws when telemetry is not started (stdio/disabled)', () => {
@@ -10,6 +14,17 @@ describe('metrics (OTLP telemetry)', () => {
     expect(() =>
       recordToolRequest('browserless_agent', false, 0),
     ).to.not.throw();
+  });
+
+  it('normalizeOtlpBase strips trailing slashes so signal paths never double', () => {
+    expect(normalizeOtlpBase('http://host:4318/')).to.equal('http://host:4318');
+    expect(normalizeOtlpBase('http://host:4318//')).to.equal(
+      'http://host:4318',
+    );
+    expect(normalizeOtlpBase('http://host:4318')).to.equal('http://host:4318');
+    expect(normalizeOtlpBase('http://host:4318/v1')).to.equal(
+      'http://host:4318/v1',
+    );
   });
 
   it('bridges console on init, restores it on shutdown, and bounds the shutdown flush', async () => {
