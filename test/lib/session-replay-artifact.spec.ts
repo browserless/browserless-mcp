@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { runInNewContext } from 'node:vm';
 
 import sinon from 'sinon';
 
@@ -67,7 +68,12 @@ describe('buildReplayHtml', () => {
   it('inlines the player itself, not just the events', () => {
     const html = buildReplayHtml(artifact(twoEvents));
 
-    expect(html).to.include('var rrwebPlayer=function()');
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(script).to.be.a('string');
+    const context: { rrwebPlayer?: { default?: unknown } } = {};
+    runInNewContext(script!, context);
+    expect(context.rrwebPlayer?.default).to.be.a('function');
+    expect(squashed(html)).to.include('rrwebPlayer.default');
     expect(html).to.include('.rr-player');
   });
 
