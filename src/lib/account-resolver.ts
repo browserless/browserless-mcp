@@ -25,15 +25,28 @@ const cache = new ResponseCache(CACHE_TTL_MS);
 
 // full-token-hash -> verified user/account identity: caches the Supabase
 // verification so a token isn't re-verified on every request.
-// TRADEOFF: a token revoked/expired at Supabase keeps resolving for up to this
-// TTL before the entry ages out and the next request re-verifies. 5 min is an
-// accepted window (access tokens are short-lived); shorten it if faster
-// revocation propagation is ever needed. Key is a FULL SHA-256 (not truncated)
+// Entries are capped by token expiry. Revocation can still take up to 5 min
+// to propagate before the next request re-verifies.
+// Key is a FULL SHA-256 (not truncated)
 // so distinct tokens can't collide onto the same verified accountId.
 const verifyCache = new ResponseCache(CACHE_TTL_MS);
 
 const fullHash = (s: string): string =>
   createHash('sha256').update(s).digest('hex');
+
+// Unverified claims may only shorten caching after Supabase accepts the token.
+function tokenExpiryMs(accessToken: string): number | undefined {
+  try {
+    const { exp } = JSON.parse(
+      Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'),
+    );
+    return typeof exp === 'number' && Number.isFinite(exp)
+      ? exp * 1000
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Upper bound on any single Supabase call. Without it a slow/unresponsive
 // Supabase would hang the whole auth path (and the request holding it) forever.
@@ -123,13 +136,24 @@ export async function resolveApiKey(
   // throws and is never cached, so a forged token can't poison the cache.
   const verifyKey = fullHash(accessToken);
   let verified = verifyCache.get<VerifiedOwner>(verifyKey);
+  // The shared cache includes its deadline; JWT expiry is exclusive.
+  if (verified && (tokenExpiryMs(accessToken) ?? Infinity) <= Date.now()) {
+    verified = undefined;
+  }
   if (!verified) {
     verified = await verifyAccessToken(
       supabaseUrl,
       serviceRoleKey,
       accessToken,
     );
-    verifyCache.set(verifyKey, verified);
+    const expMs = tokenExpiryMs(accessToken);
+    const ttl =
+      expMs === undefined
+        ? CACHE_TTL_MS
+        : Math.min(CACHE_TTL_MS, expMs - Date.now());
+    if (ttl > 0) {
+      verifyCache.set(verifyKey, verified, ttl);
+    }
   }
   const { accountId, userId, userRole } = verified;
 
@@ -179,44 +203,4 @@ export async function resolveApiKey(
 export function clearResolverCache(): void {
   cache.clear();
   verifyCache.clear();
-}
-
-/**
- * Patch `globalThis.fetch` to extend `expires_in` on Supabase OAuth token
- * responses so clients don't thrash refresh against the ~60s default. Global
- * because FastMCP's OAuthProxy has no fetch hook; matched origin/path-exact.
- */
-export function installSupabaseTokenTtlPatch(
-  supabaseUrl: string,
-  ttlSeconds: number,
-): void {
-  const supabaseOrigin = new URL(supabaseUrl).origin;
-  const TOKEN_PATHNAME = '/auth/v1/oauth/token';
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
-    const response = await originalFetch(...args);
-    const url =
-      typeof args[0] === 'string'
-        ? args[0]
-        : args[0] instanceof URL
-          ? args[0].toString()
-          : (args[0] as Request).url;
-    const reqUrl = new URL(url);
-    if (
-      !response.ok ||
-      reqUrl.origin !== supabaseOrigin ||
-      reqUrl.pathname !== TOKEN_PATHNAME
-    ) {
-      return response;
-    }
-    const body = (await response.json()) as Record<string, unknown>;
-    if (typeof body.expires_in === 'number' && body.expires_in < ttlSeconds) {
-      body.expires_in = ttlSeconds;
-    }
-    return new Response(JSON.stringify(body), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  };
 }

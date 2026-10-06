@@ -17,7 +17,6 @@ import {
   startSessionReaper,
 } from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
-import { installSupabaseTokenTtlPatch } from './lib/account-resolver.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
@@ -39,13 +38,6 @@ const pkg = JSON.parse(
 ) as { version: `${number}.${number}.${number}` };
 
 const config = getConfig();
-
-// Override Supabase's short-lived (~60s) OAuth token TTL so MCP clients don't
-// thrash refresh. Narrowly scoped to the Supabase token endpoint; see
-// installSupabaseTokenTtlPatch in account-resolver.ts for the full rationale.
-if (config.oauthEnabled && config.supabaseUrl) {
-  installSupabaseTokenTtlPatch(config.supabaseUrl, 3600);
-}
 
 const analytics = new AnalyticsHelper(
   config.analyticsEnabled,
