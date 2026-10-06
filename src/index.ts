@@ -132,37 +132,22 @@ const hybridAuthenticate =
         const sid = request.headers?.['mcp-session-id'];
         touchSession(Array.isArray(sid) ? sid[0] : sid);
 
-        // Transport-level MCP request metrics. This is the one supported hook
-        // that actually observes `/mcp` traffic: mcp-proxy calls authenticate on
-        // every POST /mcp and FastMCP memoizes it per request, so this body runs
-        // exactly once per request. (The Hono app from getApp() only sees
-        // non-MCP fall-through routes — OAuth/upload/health/404 — never /mcp, so
-        // instrumenting it missed all real load.) authenticate gets no
-        // ServerResponse, so the only result we can tag is the auth outcome, not
-        // the final HTTP status; per-tool success lives on tool.requests. Count
-        // + time + track in-flight, settling on the request's one-shot 'close'.
-        // Fully transparent — never alters auth and never throws.
+        // Per-request MCP metrics on authenticate() — the one hook that sees
+        // /mcp (memoized once per POST). Spans auth only; record once it settles.
         mcpInFlightAdd(1);
-        const requestStartedAt = Date.now();
-        let outcome: 'authenticated' | 'rejected' = 'authenticated';
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          mcpInFlightAdd(-1);
-          recordMcpRequest(outcome, Date.now() - requestStartedAt);
-        };
-        if (request.closed || request.destroyed) finish();
-        else request.once('close', finish);
-
+        const authStartedAt = Date.now();
         try {
-          return (await resolveBrowserlessRequestAuth(
+          const session = (await resolveBrowserlessRequestAuth(
             request,
             config,
           )) as BrowserlessSession;
+          recordMcpRequest('authenticated', Date.now() - authStartedAt);
+          return session;
         } catch (err) {
-          outcome = 'rejected';
+          recordMcpRequest('rejected', Date.now() - authStartedAt);
           throw err;
+        } finally {
+          mcpInFlightAdd(-1);
         }
       }
     : undefined;

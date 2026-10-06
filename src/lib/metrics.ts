@@ -264,7 +264,7 @@ export const registerRuntimeInstruments = (
   const mcpInFlightGauge = meter.createObservableGauge(
     'browserless.mcp.requests.in_flight',
     {
-      description: 'Inbound MCP requests (POST /mcp) currently in flight',
+      description: 'Inbound MCP requests (POST /mcp) currently authenticating',
     },
   );
   // Abuse / top-talker attribution. accounts.active = distinct accounts (hashed

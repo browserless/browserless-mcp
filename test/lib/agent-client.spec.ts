@@ -114,10 +114,8 @@ describe('agent-client reconnection telemetry', () => {
 });
 
 describe('agent-client upstream success telemetry (A3 regression)', () => {
-  // Regression guard: a JSON-RPC error comes back as a resolved {error} payload,
-  // not a thrown exception. recordUpstreamCall must tag success from the payload
-  // (!response.error), not hardcode true — otherwise NAVIGATION_FAILED et al. are
-  // mislabelled as successful upstream calls.
+  // Regression: a JSON-RPC error resolves as {error} (no throw), so success
+  // must be tagged !response.error, not hardcoded true.
   let provider: MeterProvider;
   let captured: ResourceMetrics[];
 

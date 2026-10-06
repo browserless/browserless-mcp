@@ -154,7 +154,7 @@ describe('skill telemetry contract', () => {
     }
   });
 
-  it('falls back to the shared OTLP base endpoint (+/v1/logs) when only the base is set', async () => {
+  it('falls back to the shared OTLP base endpoint (+/v1/logs) only when OTEL is enabled on httpStream', async () => {
     const received: { path?: string }[] = [];
     const sink = createServer(async (req, res) => {
       for await (const _ of req);
@@ -166,13 +166,30 @@ describe('skill telemetry contract', () => {
     const address = sink.address();
     if (!address || typeof address === 'string')
       throw new Error('Missing test listener');
-    const prevLogs = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
-    const prevBase = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    const prev = {
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:
+        process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+      OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      OTEL_ENABLED: process.env.OTEL_ENABLED,
+      TRANSPORT: process.env.TRANSPORT,
+    };
     delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
     // Trailing slash on purpose: the derived endpoint must normalize it, not
     // produce `//v1/logs`. This mirrors how the deploy env sets only the base.
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${address.port}/`;
     try {
+      // Gated OFF: base set but OTEL disabled / stdio → no post (the fallback
+      // must not broaden where skill-failure details are sent).
+      process.env.OTEL_ENABLED = 'false';
+      process.env.TRANSPORT = 'stdio';
+      await logSkillEvent('skill.retrieval.failed', {
+        domain: completion.domain,
+      });
+      expect(received).to.have.length(0);
+
+      // Gated ON: the OTLP SDK startup conditions hold → derive base + /v1/logs.
+      process.env.OTEL_ENABLED = 'true';
+      process.env.TRANSPORT = 'httpStream';
       await logSkillEvent('skill.retrieval.failed', {
         request_id: completion.request_id,
         domain: completion.domain,
@@ -180,12 +197,9 @@ describe('skill telemetry contract', () => {
       expect(received).to.have.length(1);
       expect(received[0].path).to.equal('/v1/logs');
     } finally {
-      if (prevLogs === undefined)
-        delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
-      else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = prevLogs;
-      if (prevBase === undefined)
-        delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prevBase;
+      for (const [k, v] of Object.entries(prev))
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
       sink.close();
       await once(sink, 'close');
     }

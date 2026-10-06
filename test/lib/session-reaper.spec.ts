@@ -293,10 +293,8 @@ describe('session-reaper', () => {
 });
 
 describe('session-reaper lifetime telemetry (A2 regression)', () => {
-  // Regression guard: safeClose(session) synchronously runs FastMCP's disconnect
-  // handler → forgetSession(id), which deletes firstSeen. The lifetime sample
-  // must be captured from firstSeen BEFORE safeClose; otherwise reaping a real
-  // HTTP session emits no session.lifetime_ms{kind=mcp} (the regression guarded).
+  // Regression: safeClose() → FastMCP disconnect → forgetSession deletes
+  // firstSeen, so bornAt must be read before safeClose or the sample is lost.
   let provider: MeterProvider;
   const captured: ResourceMetrics[] = [];
 
@@ -326,9 +324,8 @@ describe('session-reaper lifetime telemetry (A2 regression)', () => {
       exportIntervalMillis: 2 ** 31 - 1,
     });
     provider = new MeterProvider({ readers: [reader] });
-    // setGlobalMeterProvider is a no-op if one is already registered (e.g. left
-    // by another spec in the same process), which would bind our instruments to
-    // the wrong provider. Clear first so this test is run-order independent.
+    // setGlobalMeterProvider no-ops if one is already registered by another
+    // spec; clear first so this test is run-order independent.
     metrics.disable();
     metrics.setGlobalMeterProvider(provider);
     createSyncInstruments();

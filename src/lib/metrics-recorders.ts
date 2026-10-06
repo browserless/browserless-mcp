@@ -43,9 +43,8 @@ let mcpRequests: Counter | undefined;
 let mcpDuration: Histogram | undefined;
 let gcPause: Histogram | undefined;
 
-// Inbound MCP requests (POST /mcp) currently in flight (point-in-time; read by
-// metrics.ts's observable gauge). Maintained by the authenticate hook via
-// mcpInFlightAdd.
+// Inbound MCP requests (POST /mcp) authenticating now; read by the metrics.ts
+// gauge, maintained by the authenticate hook via mcpInFlightAdd.
 let mcpInFlight = 0;
 
 /** Create the sync instruments once the provider is started (from initTelemetry). */
@@ -84,10 +83,10 @@ export const createSyncInstruments = (): void => {
     },
   );
   mcpRequests = meter.createCounter('browserless.mcp.requests', {
-    description: 'Inbound MCP requests (POST /mcp), by auth outcome',
+    description: 'Inbound MCP requests (POST /mcp), by authentication outcome',
   });
   mcpDuration = meter.createHistogram('browserless.mcp.request.duration_ms', {
-    description: 'Inbound MCP request handling duration (POST /mcp)',
+    description: 'Inbound MCP request authentication duration (POST /mcp)',
     unit: 'ms',
   });
   gcPause = meter.createHistogram('browserless.mcp.gc.pause_ms', {
@@ -183,13 +182,8 @@ export const recordSessionLifetime = (
   }
 };
 
-/**
- * Record one completed inbound MCP request (POST /mcp), observed via FastMCP's
- * authenticate hook — the one supported hook that sees /mcp traffic. `outcome`
- * is the only result that hook can know (whether auth passed), not the final
- * HTTP status; per-tool success/failure is tagged on tool.requests. Safe on any
- * transport; never throws into request handling.
- */
+/** Record an inbound MCP request (POST /mcp) when auth settles, via FastMCP's
+ *  authenticate hook: durationMs = auth latency, outcome = pass/fail. Never throws. */
 export const recordMcpRequest = (
   outcome: 'authenticated' | 'rejected',
   durationMs: number,
