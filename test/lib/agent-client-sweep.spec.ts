@@ -20,6 +20,8 @@ describe('agent-client session sweep', () => {
       // Freshly pooled and idle: counted as active, no command in flight.
       expect(client.activeAgentSessionCount()).to.be.greaterThan(0);
       expect(client.inFlightCommandCount()).to.equal(0);
+      // Creation already resolved, so nothing is mid-creation.
+      expect(client.pendingSessionCount()).to.equal(0);
       // Age past the idle TTL and sweep: the cumulative swept counter advances.
       session.lastUsedAt = Date.now() - 16 * 60 * 1000;
       const closed = once(session.ws, 'close');

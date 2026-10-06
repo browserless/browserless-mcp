@@ -36,6 +36,7 @@ import {
 } from './session-reaper.js';
 import {
   activeAgentSessionCount,
+  pendingSessionCount,
   inFlightCommandCount,
   sweptSessionTotal,
 } from './agent-client.js';
@@ -251,6 +252,13 @@ const registerRuntimeInstruments = (
     'mcp.process.active_resources',
     { description: 'Active libuv resources (handles + requests)' },
   );
+  const uptimeGauge = meter.createObservableGauge(
+    'mcp.process.uptime_seconds',
+    {
+      description: 'Process uptime; a reset toward 0 marks a restart',
+      unit: 's',
+    },
+  );
 
   // "What the server is currently holding" — the session pools the idle reaper
   // and sweep keep bounded. A flat `sessions.tracked` confirms they stay
@@ -268,6 +276,12 @@ const registerRuntimeInstruments = (
   const agentSessions = meter.createObservableGauge(
     'mcp.agent.sessions.active',
     { description: 'Agent browser sessions held in the pool' },
+  );
+  const pendingSessions = meter.createObservableGauge(
+    'mcp.agent.sessions.pending',
+    {
+      description: 'Agent sessions mid-creation (in-flight getOrCreateSession)',
+    },
   );
   const agentCommands = meter.createObservableGauge(
     'mcp.agent.commands.in_flight',
@@ -294,12 +308,16 @@ const registerRuntimeInstruments = (
       const mem = process.memoryUsage();
       obs.observe(memGauge, mem.rss, { type: 'rss' });
       obs.observe(memGauge, mem.heapUsed, { type: 'heap_used' });
+      obs.observe(memGauge, mem.heapTotal, { type: 'heap_total' });
+      obs.observe(memGauge, mem.external, { type: 'external' });
       obs.observe(resourcesGauge, process.getActiveResourcesInfo().length);
+      obs.observe(uptimeGauge, process.uptime());
 
       obs.observe(liveSessions, getLiveSessionCount());
       obs.observe(trackedSessions, trackedSessionCount());
       obs.observe(inFlightExec, inFlightExecCount());
       obs.observe(agentSessions, activeAgentSessionCount());
+      obs.observe(pendingSessions, pendingSessionCount());
       obs.observe(agentCommands, inFlightCommandCount());
       obs.observe(reaped, reapedSessionTotal());
       obs.observe(swept, sweptSessionTotal());
@@ -310,10 +328,12 @@ const registerRuntimeInstruments = (
       eluGauge,
       memGauge,
       resourcesGauge,
+      uptimeGauge,
       liveSessions,
       trackedSessions,
       inFlightExec,
       agentSessions,
+      pendingSessions,
       agentCommands,
       reaped,
       swept,

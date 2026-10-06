@@ -437,6 +437,9 @@ let sweptTotal = 0;
 /** Agent browser sessions currently held in the pool. Telemetry read-only. */
 export const activeAgentSessionCount = (): number => sessions.size;
 
+/** Agent sessions mid-creation (in-flight getOrCreateSession). Telemetry read-only. */
+export const pendingSessionCount = (): number => pending.size;
+
 /** Pooled agent sessions with a command in flight. Telemetry read-only. */
 export const inFlightCommandCount = (): number =>
   [...sessions.values()].filter(hasInFlightCommand).length;
