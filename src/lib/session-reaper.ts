@@ -141,7 +141,7 @@ export const reapIdleSessions = (
     }
     const seen = lastSeen.get(id);
     if (seen === undefined) {
-      lastSeen.set(id, now);
+      touchSession(id, now);
       continue;
     }
     if (now - seen <= ttlMs) continue;

@@ -4,9 +4,19 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { metrics, trace } from '@opentelemetry/api';
 import { logs } from '@opentelemetry/api-logs';
-import { initTelemetry, normalizeOtlpBase } from '../../src/lib/metrics.js';
+import {
+  LoggerProvider,
+  SimpleLogRecordProcessor,
+  InMemoryLogRecordExporter,
+} from '@opentelemetry/sdk-logs';
+import {
+  initTelemetry,
+  normalizeOtlpBase,
+  bridgeConsole,
+} from '../../src/lib/metrics.js';
 import {
   recordToolRequest,
+  noteAccountRequest,
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
 
@@ -25,6 +35,33 @@ describe('metrics (OTLP telemetry)', () => {
     expect(() =>
       recordToolRequest('browserless_agent', false, 0),
     ).to.not.throw();
+  });
+
+  it('does not treat the stderr stream as error severity', async () => {
+    const exporter = new InMemoryLogRecordExporter();
+    const provider = new LoggerProvider({
+      processors: [new SimpleLogRecordProcessor({ exporter })],
+    });
+    logs.setGlobalLoggerProvider(provider);
+    const restore = bridgeConsole();
+    try {
+      console.error('ordinary session diagnostic');
+      console.warn('explicit warning');
+      console.error('operation failed', new Error('fixture failure'));
+      await provider.forceFlush();
+      const records = exporter.getFinishedLogRecords();
+      expect(records.map((r) => r.severityText)).to.deep.equal([
+        'INFO',
+        'WARN',
+        'ERROR',
+      ]);
+      expect(
+        records.every((r) => r.attributes['log.iostream'] === 'stderr'),
+      ).to.equal(true);
+    } finally {
+      restore();
+      await provider.shutdown();
+    }
   });
 
   it('normalizeOtlpBase strips trailing slashes so signal paths never double', () => {
@@ -80,10 +117,12 @@ describe('metrics (OTLP telemetry)', () => {
     const base = `http://127.0.0.1:${address.port}`;
     const previous = {
       OTEL_TRACES_EXPORTER: process.env.OTEL_TRACES_EXPORTER,
+      OTEL_METRIC_EXPORT_INTERVAL: process.env.OTEL_METRIC_EXPORT_INTERVAL,
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:
         process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
     };
     process.env.OTEL_TRACES_EXPORTER = 'otlp';
+    process.env.OTEL_METRIC_EXPORT_INTERVAL = '1000';
     process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = `${base}/v1/traces`;
     let shutdown: (() => Promise<void>) | undefined;
     try {
@@ -96,19 +135,32 @@ describe('metrics (OTLP telemetry)', () => {
       recordToolRequest('browserless_agent', false, 123, 'timeout');
       console.warn('telemetry-warning-fixture');
       trace.getTracer('fixture').startSpan('must-not-export').end();
-      // Runtime delay metrics require at least five 10ms samples.
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Wait for actual exported samples, not a fixed delay on a busy CI host.
+      const deadline = Date.now() + 5000;
+      while (
+        !received.some(
+          (r) =>
+            r.path === '/v1/metrics' &&
+            r.body.includes('nodejs.eventloop.delay.p99'),
+        ) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      noteAccountRequest('shutdown-account-fixture');
       await shutdown();
       shutdown = undefined;
 
-      expect(received.map((r) => r.path)).to.have.members([
+      expect([...new Set(received.map((r) => r.path))]).to.have.members([
         '/v1/metrics',
         '/v1/logs',
       ]);
       expect(
         received.every((r) => r.type === 'application/x-protobuf'),
       ).to.equal(true);
-      const metricBody = received.find((r) => r.path === '/v1/metrics')!.body;
+      const metricBody = Buffer.concat(
+        received.filter((r) => r.path === '/v1/metrics').map((r) => r.body),
+      );
       for (const name of [
         'nodejs.eventloop.utilization',
         'nodejs.eventloop.delay.p99',
@@ -119,6 +171,11 @@ describe('metrics (OTLP telemetry)', () => {
         expect(metricBody.includes(name), `missing ${name}`).to.equal(true);
       }
       expect(metricBody.includes('browserless.mcp.eventloop')).to.equal(false);
+      expect(
+        Buffer.concat(
+          received.filter((r) => r.path === '/v1/logs').map((r) => r.body),
+        ).includes('browserless.mcp.account.window'),
+      ).to.equal(true);
       expect(
         received
           .find((r) => r.path === '/v1/logs')!
@@ -139,6 +196,9 @@ describe('metrics (OTLP telemetry)', () => {
     expect(source).to.include("config.transport === 'httpStream'");
     // Master toggle matches the fleet convention (enterprise/workers).
     expect(source).to.include("process.env.OTEL_ENABLED === 'true'");
+    expect(source).to.include('process.env.OTEL_SDK_DISABLED');
+    expect(source).not.to.include("from './lib/metrics.js'");
+    expect(source).to.include("await import('./lib/metrics.js')");
     expect(source).to.include('initTelemetry(');
     // The init is wrapped in try/catch — a telemetry failure must not abort boot.
     expect(source).to.match(/try\s*\{[\s\S]*?initTelemetry\(/);

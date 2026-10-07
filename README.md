@@ -275,13 +275,27 @@ OTLP HTTP/protobuf; tracing is disabled. `stdio` never starts this SDK.
 NodeSDK manages the providers and standard Node runtime instrumentation emits
 `nodejs.*` and `v8js.*` metrics. Application session, tool, account and Redis
 metrics remain under `browserless.mcp.*`. All duration metrics use seconds
-(`s`), and memory uses bytes (`By`); application callers still supply
+(`s`), memory uses bytes (`By`), and request counters use `{request}`;
+application callers still supply
 milliseconds, converted once by the metric recorders.
+
+`browserless.mcp.auth.duration` and `.auth.in_flight` cover POST authentication,
+not whole request execution. `browserless.mcp.session.cleanup.age` covers tracked
+MCP idle reaps and explicit/idle/cap agent cleanup, not every session close.
+Sweep-discovered MCP age starts at discovery; agent age resets on reconnect.
+`browserless.mcp.accounts.active` counts distinct token hashes per collection
+window. Top-account counts are an INFO log with body event
+`browserless.mcp.account.window`, `active_accounts`, and `top_accounts` (at most
+20 `{hash, count}` entries), not persistent per-account metric series.
+An idle window emits no account log. Stderr text is INFO, `console.warn` is WARN,
+and arguments containing an `Error` are ERROR; stderr records carry
+`log.iostream=stderr`. `OTEL_SDK_DISABLED=true` also disables hosted telemetry.
 
 For dashboards based on the initial telemetry PR: replace custom event-loop
 metrics with `nodejs.eventloop.*`, GC pauses with `v8js.gc.duration`, and active
-resources with `v8js.resource.active`. Drop `_ms` from application duration
-and session lifetime metric names and divide millisecond thresholds by 1000.
+resources with `v8js.resource.active`. Drop `_ms` from tool/upstream/Redis
+duration names, use the auth and cleanup names above, and divide millisecond
+thresholds by 1000. Replace `account.requests` queries with the window logs.
 Duration histogram boundaries are also in seconds, covering sub-second Redis
 operations through two-hour sessions. Amplitude event fields and timeout
 configuration remain in milliseconds.

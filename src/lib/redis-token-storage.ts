@@ -15,13 +15,13 @@ export class RedisTokenStorage implements TokenStorage {
 
   // Time a Redis op for telemetry without altering its result or errors.
   private async timed<T>(op: string, fn: () => Promise<T>): Promise<T> {
-    const start = Date.now();
+    const start = performance.now();
     try {
       const result = await fn();
-      recordRedisOp(op, true, Date.now() - start);
+      recordRedisOp(op, true, performance.now() - start);
       return result;
     } catch (err) {
-      recordRedisOp(op, false, Date.now() - start);
+      recordRedisOp(op, false, performance.now() - start);
       throw err;
     }
   }

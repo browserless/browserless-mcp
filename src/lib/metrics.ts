@@ -68,7 +68,7 @@ export interface TelemetryOptions {
 // stderr diagnostics also reach the collector, without rewriting every call
 // site. Additive: the original console still writes to stderr. Only installed
 // on the httpStream transport, so stdio's stdout protocol is never involved.
-const bridgeConsole = (): (() => void) => {
+export const bridgeConsole = (): (() => void) => {
   // Capture the raw originals (Node's console methods are safe to call
   // detached) so restore returns console to exactly what it was.
   const original = {
@@ -101,12 +101,19 @@ const bridgeConsole = (): (() => void) => {
     (...args: unknown[]): void => {
       write(...args);
       try {
-        logger.emit({ severityNumber, severityText, body: toBody(args) });
+        const isError = args.some((arg) => arg instanceof Error);
+        logger.emit({
+          severityNumber: isError ? SeverityNumber.ERROR : severityNumber,
+          severityText: isError ? 'ERROR' : severityText,
+          attributes: { 'log.iostream': 'stderr' },
+          body: toBody(args),
+        });
       } catch {
         // Never let a log-export failure break logging.
       }
     };
-  console.error = mirror(SeverityNumber.ERROR, 'ERROR', original.error);
+  // MCP uses stderr for informational diagnostics too; the stream is not severity.
+  console.error = mirror(SeverityNumber.INFO, 'INFO', original.error);
   console.warn = mirror(SeverityNumber.WARN, 'WARN', original.warn);
   return () => {
     console.error = original.error;
@@ -132,6 +139,10 @@ export const initTelemetry = (
   });
 
   const runtime = new RuntimeNodeInstrumentation({ enabled: false });
+  const reader = new PeriodicExportingMetricReader({
+    exporter: new OTLPMetricExporter({ url: `${base}/v1/metrics` }),
+    exportIntervalMillis: resolveExportIntervalMs(),
+  });
   const sdk = new NodeSDK({
     resource,
     autoDetectResources: false,
@@ -139,14 +150,7 @@ export const initTelemetry = (
     spanProcessors: [],
     textMapPropagator: null,
     instrumentations: [runtime],
-    metricReaders: [
-      new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({
-          url: `${base}/v1/metrics`,
-        }),
-        exportIntervalMillis: resolveExportIntervalMs(),
-      }),
-    ],
+    metricReaders: [reader],
     logRecordProcessors: [
       new BatchLogRecordProcessor({
         exporter: new OTLPLogExporter({ url: `${base}/v1/logs` }),
@@ -165,7 +169,9 @@ export const initTelemetry = (
       // block process exit (the OTLP export timeout is far longer than any
       // shutdown should wait). Race it against a short, unref'd deadline.
       await Promise.race([
-        sdk.shutdown(),
+        // Collect the final account-window log before NodeSDK shuts down its
+        // logger and meter concurrently.
+        reader.forceFlush().finally(() => sdk.shutdown()),
         new Promise<void>((resolve) => {
           setTimeout(resolve, 2_000).unref();
         }),
@@ -201,26 +207,20 @@ export const registerApplicationInstruments = (
     },
   );
   const mcpInFlightGauge = meter.createObservableGauge(
-    'browserless.mcp.requests.in_flight',
+    'browserless.mcp.auth.in_flight',
     {
       description: 'Inbound MCP requests (POST /mcp) currently authenticating',
+      unit: '{request}',
     },
   );
-  // Abuse / top-talker attribution. accounts.active = distinct accounts (hashed
-  // token) with load this window; account.requests = per-window request count for
-  // the top accounts only (bounded label cardinality).
+  // Keep account hashes out of metric labels: cumulative gauges retain old
+  // series. Export the bounded top-account list as one structured log per window.
+  const logger = logs.getLogger(METER_NAME);
   const activeAccounts = meter.createObservableGauge(
     'browserless.mcp.accounts.active',
     {
       description:
         'Distinct accounts (hashed token) that drove load in the window',
-    },
-  );
-  const accountRequests = meter.createObservableGauge(
-    'browserless.mcp.account.requests',
-    {
-      description:
-        'Requests this window for the top accounts (by hashed token)',
     },
   );
 
@@ -292,15 +292,22 @@ export const registerApplicationInstruments = (
 
       const accounts = collectAccountWindow();
       obs.observe(activeAccounts, accounts.active);
-      for (const a of accounts.top)
-        obs.observe(accountRequests, a.count, { account_hash: a.hash });
+      if (accounts.active > 0)
+        logger.emit({
+          severityNumber: SeverityNumber.INFO,
+          severityText: 'INFO',
+          body: {
+            event: 'browserless.mcp.account.window',
+            active_accounts: accounts.active,
+            top_accounts: accounts.top,
+          },
+        });
     },
     [
       memGauge,
       uptimeGauge,
       mcpInFlightGauge,
       activeAccounts,
-      accountRequests,
       liveSessions,
       trackedSessions,
       inFlightExec,

@@ -30,7 +30,6 @@ import {
   initializeAmplitudeAnalytics,
   shutdownAmplitudeAnalytics,
 } from './lib/amplitude-analytics.js';
-import { initTelemetry } from './lib/metrics.js';
 import {
   recordRedisError,
   recordMcpRequest,
@@ -69,7 +68,7 @@ const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
 if (redisClient) {
   redisClient.on('error', (err: Error) => {
     recordRedisError();
-    console.error('[browserless-mcp] Redis error:', err.message);
+    console.error('[browserless-mcp] Redis error:', err);
   });
   // Redis is only configured for the hosted httpStream deployment (REDIS_URL is
   // not set in stdio mode), so writing the "connected" line to stdout doesn't
@@ -127,24 +126,24 @@ const hybridAuthenticate =
         // Any authenticated inbound request proves the client is alive, so
         // refresh the idle clock here — not only on tool calls. This keeps the
         // reaper from closing a session that is merely between calls or only
-        // listing tools. `initialize` carries no session id yet; `connect`
-        // stamps that case.
+        // listing tools. `initialize` carries no session id yet; the reaper's
+        // first discovery stamps sessions that never send another request.
         const sid = request.headers?.['mcp-session-id'];
         touchSession(Array.isArray(sid) ? sid[0] : sid);
 
         // Per-request MCP metrics on authenticate() — the one hook that sees
         // /mcp (memoized once per POST). Spans auth only; record once it settles.
         mcpInFlightAdd(1);
-        const authStartedAt = Date.now();
+        const authStartedAt = performance.now();
         try {
           const session = (await resolveBrowserlessRequestAuth(
             request,
             config,
           )) as BrowserlessSession;
-          recordMcpRequest('authenticated', Date.now() - authStartedAt);
+          recordMcpRequest('authenticated', performance.now() - authStartedAt);
           return session;
         } catch (err) {
-          recordMcpRequest('rejected', Date.now() - authStartedAt);
+          recordMcpRequest('rejected', performance.now() - authStartedAt);
           throw err;
         } finally {
           mcpInFlightAdd(-1);
@@ -173,9 +172,11 @@ const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 if (
   config.transport === 'httpStream' &&
   process.env.OTEL_ENABLED === 'true' &&
+  process.env.OTEL_SDK_DISABLED?.trim().toLowerCase() !== 'true' &&
   otelEndpoint
 ) {
   try {
+    const { initTelemetry } = await import('./lib/metrics.js');
     telemetryShutdown = initTelemetry({
       endpoint: otelEndpoint,
       serviceName: process.env.OTEL_SERVICE_NAME ?? 'browserless-mcp',
@@ -196,7 +197,7 @@ const complianceInput = classifyComplianceInput(
   process.env.MCP_COMPLIANCE_MODE,
 );
 if (complianceInput === 'unrecognized') {
-  console.error(
+  console.warn(
     `[browserless-mcp] WARNING: MCP_COMPLIANCE_MODE="${process.env.MCP_COMPLIANCE_MODE}" ` +
       'is not a recognized value; defaulting to the compliant (reduced) surface. ' +
       'Set "true" for compliant or "false" for the full surface.',
@@ -221,7 +222,7 @@ server.on('connect', (event) => {
     !(event.session.server instanceof Server)
   ) {
     warnedAboutServerIdentity = true;
-    console.error(
+    console.warn(
       '[browserless-mcp] WARNING: FastMCP session server is not an MCP SDK Server; Amplitude instrumentation may be disabled.',
     );
   }

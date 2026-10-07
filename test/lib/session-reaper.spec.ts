@@ -306,56 +306,68 @@ describe('session-reaper lifetime telemetry (A2 regression)', () => {
     sinon.restore();
   });
 
-  it('records session.lifetime{mcp} in seconds even though close() forgets the session first', async () => {
-    resetSessionReaperForTests();
-    resetSyncInstruments();
-    captured.length = 0;
-    const exporter: PushMetricExporter = {
-      export: (rm, cb) => {
-        captured.push(rm);
-        cb({ code: 0 });
-      },
-      forceFlush: () => Promise.resolve(),
-      shutdown: () => Promise.resolve(),
-      selectAggregationTemporality: () => AggregationTemporality.CUMULATIVE,
-    };
-    const reader = new PeriodicExportingMetricReader({
-      exporter,
-      exportIntervalMillis: 2 ** 31 - 1,
+  for (const discovery of ['connect', 'sweep']) {
+    it(`records session lifetime for ${discovery}-discovered sessions before close forgets them`, async () => {
+      resetSessionReaperForTests();
+      resetSyncInstruments();
+      captured.length = 0;
+      const exporter: PushMetricExporter = {
+        export: (rm, cb) => {
+          captured.push(rm);
+          cb({ code: 0 });
+        },
+        forceFlush: () => Promise.resolve(),
+        shutdown: () => Promise.resolve(),
+        selectAggregationTemporality: () => AggregationTemporality.CUMULATIVE,
+      };
+      const reader = new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 2 ** 31 - 1,
+      });
+      provider = new MeterProvider({ readers: [reader] });
+      // setGlobalMeterProvider no-ops if one is already registered by another
+      // spec; clear first so this test is run-order independent.
+      metrics.disable();
+      metrics.setGlobalMeterProvider(provider);
+      createSyncInstruments();
+
+      const bornAt = 1_000_000;
+      const now = bornAt + TTL + 5;
+      // close() synchronously forgets the session — exactly what FastMCP's
+      // disconnect handler does, deleting firstSeen before the lifetime record.
+      const session = {
+        sessionId: 'sid-1',
+        close: sinon.spy(() => {
+          forgetSession('sid-1');
+          return Promise.resolve();
+        }),
+      };
+      if (discovery === 'connect') touchSession('sid-1', bornAt);
+      else
+        expect(
+          reapIdleSessions(() => [session], { now: bornAt, ttlMs: TTL }),
+        ).to.equal(0);
+      expect(reapIdleSessions(() => [session], { now, ttlMs: TTL })).to.equal(
+        1,
+      );
+      expect(session.close.calledOnce).to.equal(true);
+
+      await reader.forceFlush();
+      const life = captured
+        .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+        .find(
+          (m) => m.descriptor.name === 'browserless.mcp.session.cleanup.age',
+        );
+      const mcpPoint = life?.dataPoints.find(
+        (d) => d.attributes.kind === 'mcp',
+      );
+      expect(mcpPoint, 'no mcp lifetime sample recorded on reap').to.not.equal(
+        undefined,
+      );
+      expect(life?.descriptor.unit).to.equal('s');
+      expect((mcpPoint?.value as { sum?: number })?.sum).to.equal(
+        (now - bornAt) / 1000,
+      );
     });
-    provider = new MeterProvider({ readers: [reader] });
-    // setGlobalMeterProvider no-ops if one is already registered by another
-    // spec; clear first so this test is run-order independent.
-    metrics.disable();
-    metrics.setGlobalMeterProvider(provider);
-    createSyncInstruments();
-
-    const bornAt = 1_000_000;
-    const now = bornAt + TTL + 5;
-    touchSession('sid-1', bornAt);
-    // close() synchronously forgets the session — exactly what FastMCP's
-    // disconnect handler does, deleting firstSeen before the lifetime record.
-    const session = {
-      sessionId: 'sid-1',
-      close: sinon.spy(() => {
-        forgetSession('sid-1');
-        return Promise.resolve();
-      }),
-    };
-    expect(reapIdleSessions(() => [session], { now, ttlMs: TTL })).to.equal(1);
-    expect(session.close.calledOnce).to.equal(true);
-
-    await reader.forceFlush();
-    const life = captured
-      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
-      .find((m) => m.descriptor.name === 'browserless.mcp.session.lifetime');
-    const mcpPoint = life?.dataPoints.find((d) => d.attributes.kind === 'mcp');
-    expect(mcpPoint, 'no mcp lifetime sample recorded on reap').to.not.equal(
-      undefined,
-    );
-    expect(life?.descriptor.unit).to.equal('s');
-    expect((mcpPoint?.value as { sum?: number })?.sum).to.equal(
-      (now - bornAt) / 1000,
-    );
-  });
+  }
 });

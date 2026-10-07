@@ -28,8 +28,7 @@ const DURATION_ADVICE = {
 // secret — so a flooding account is identifiable without exposing its credential.
 // Bounded two ways: it only accumulates while telemetry is active (so stdio never
 // grows it), and the window is cleared every export (so size is one window's
-// distinct accounts), and only the top N are emitted (so label cardinality is
-// capped regardless of how many accounts are active).
+// distinct accounts), and only the top N are emitted in one structured log.
 const TOP_ACCOUNTS = 20;
 // Hard cap on distinct accounts tracked per window. Any non-empty token is
 // accepted before backend validation, so a flood of distinct bogus tokens could
@@ -82,17 +81,22 @@ export const createSyncInstruments = (): void => {
   });
   redisErrors = meter.createCounter('browserless.mcp.redis.errors', {
     description: 'Redis client errors (cumulative)',
+    unit: '{error}',
   });
-  sessionLifetime = meter.createHistogram('browserless.mcp.session.lifetime', {
-    description: 'Session lifetime at close, by kind (mcp | agent)',
-    unit: 's',
-    advice: DURATION_ADVICE,
-  });
+  sessionLifetime = meter.createHistogram(
+    'browserless.mcp.session.cleanup.age',
+    {
+      description:
+        'Age at tracked MCP idle reap or explicit/idle/cap agent cleanup; excludes other close paths, agent age resets on reconnect',
+      unit: 's',
+      advice: DURATION_ADVICE,
+    },
+  );
   mcpRequests = meter.createCounter('browserless.mcp.requests', {
     description: 'Inbound MCP requests (POST /mcp), by authentication outcome',
     unit: '{request}',
   });
-  mcpDuration = meter.createHistogram('browserless.mcp.request.duration', {
+  mcpDuration = meter.createHistogram('browserless.mcp.auth.duration', {
     description: 'Inbound MCP request authentication duration (POST /mcp)',
     unit: 's',
     advice: DURATION_ADVICE,

@@ -12,11 +12,13 @@ describe('agent-client session sweep', () => {
     const browser = await makeRespondingServer(() => ({}));
     try {
       const sweptBefore = client.sweptSessionTotal();
-      const session = await client.getOrCreateSession(
+      const creation = client.getOrCreateSession(
         'telemetry-accessor',
         browser.url,
         'tok',
       );
+      expect(client.pendingSessionCount()).to.equal(1);
+      const session = await creation;
       // Freshly pooled and idle: counted as active, no command in flight.
       expect(client.activeAgentSessionCount()).to.be.greaterThan(0);
       expect(client.inFlightCommandCount()).to.equal(0);

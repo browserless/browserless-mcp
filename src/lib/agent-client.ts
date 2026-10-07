@@ -1553,7 +1553,7 @@ export const closeSession = (
       /* ignore */
     }
     // Record agent lifetime on explicit close too, not only idle/cap eviction;
-    // the sessions-map delete above stops any session being counted twice.
+    // the sessions-map delete below stops any session being counted twice.
     const bornAt = createdAt.get(session);
     if (bornAt !== undefined)
       recordSessionLifetime('agent', Date.now() - bornAt);
