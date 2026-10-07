@@ -12,6 +12,7 @@ import { registerPerformanceTool } from '../../src/tools/performance.js';
 import { registerAccountTool } from '../../src/tools/account.js';
 import { registerUsageTool } from '../../src/tools/usage.js';
 import { registerSessionsTool } from '../../src/tools/sessions.js';
+import { registerLiveURLTool } from '../../src/tools/live-url.js';
 import { registerLogsTool } from '../../src/tools/logs.js';
 import { registerStripeLinkConnectTool } from '../../src/tools/link-connect.js';
 import { registerStripeLinkCheckoutTool } from '../../src/tools/link-checkout.js';
@@ -53,6 +54,7 @@ const registrars = [
   registerUsageTool,
   registerSessionsTool,
   registerLogsTool,
+  registerLiveURLTool,
   registerStripeLinkConnectTool,
   registerStripeLinkCheckoutTool,
 ];

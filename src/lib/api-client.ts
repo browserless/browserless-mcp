@@ -11,6 +11,8 @@ import type {
   GenericApiResult,
   LighthouseDevice,
   ListProfilesRequest,
+  LiveURLCreated,
+  LiveURLState,
   MapRequest,
   MapResponse,
   McpConfig,
@@ -524,6 +526,40 @@ export function createApiClient(
         method: 'GET',
         query: { limit: params?.limit, offset: params?.offset },
         timeout: config.requestTimeout,
+      });
+    },
+
+    async createLiveURL(browserId, options): Promise<LiveURLCreated> {
+      return apiFetch(config, {
+        path: `/browser/${encodeURIComponent(browserId)}/live`,
+        body: compact({ ...options }),
+        timeout: config.requestTimeout,
+        maxRetries: 0,
+      });
+    },
+
+    async getLiveURL(browserId, liveURLId): Promise<LiveURLState> {
+      return apiFetch(config, {
+        path: `/browser/${encodeURIComponent(browserId)}/live/${encodeURIComponent(liveURLId)}`,
+        method: 'GET',
+        timeout: config.requestTimeout,
+      });
+    },
+
+    async closeLiveURL(browserId, liveURLId): Promise<void> {
+      return apiFetch(config, {
+        path: `/browser/${encodeURIComponent(browserId)}/live/${encodeURIComponent(liveURLId)}`,
+        method: 'DELETE',
+        timeout: config.requestTimeout,
+        maxRetries: 0,
+        handleResponse: async (res) => {
+          if (res.status !== 204) {
+            if (!res.ok) await defaultHandleResponse(res);
+            throw new Error(
+              `Expected 204 closing live URL, received ${res.status}`,
+            );
+          }
+        },
       });
     },
 

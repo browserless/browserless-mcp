@@ -99,7 +99,7 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full mode registers exactly the 16 tools (regression guard)', () => {
+  it('full mode registers exactly the 17 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -109,6 +109,7 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_function',
       'browserless_link_checkout',
       'browserless_link_connect',
+      'browserless_live_url',
       'browserless_logs',
       'browserless_map',
       'browserless_performance',

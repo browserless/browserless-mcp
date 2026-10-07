@@ -10,6 +10,7 @@ import { registerFunctionTool } from './function.js';
 import { registerMapTool } from './map.js';
 import { registerCrawlTool } from './crawl.js';
 import { registerProfilesTool } from './profiles.js';
+import { registerLiveURLTool } from './live-url.js';
 import { registerAccountTool } from './account.js';
 import { registerUsageTool } from './usage.js';
 import { registerSessionsTool } from './sessions.js';
@@ -86,6 +87,11 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerCrawlTool(server, config, analytics),
+    },
+    // Live URL lifecycle is available on the full surface only.
+    {
+      surface: 'full',
+      register: () => registerLiveURLTool(server, config, analytics),
     },
     // Full-only: the compliant surface has no profile capability (agent rejects `profile`).
     {
