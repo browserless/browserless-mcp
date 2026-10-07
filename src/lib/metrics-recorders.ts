@@ -15,6 +15,14 @@ import { hashToken } from './utils.js';
 
 export const METER_NAME = 'browserless-mcp';
 
+// Seconds: retain sub-second resolution for Redis/auth and cover long tools/sessions.
+const DURATION_ADVICE = {
+  explicitBucketBoundaries: [
+    0, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
+    180, 600, 1800, 7200,
+  ],
+};
+
 // Per-window per-account load, for abuse / top-talker attribution. Keyed by a
 // one-way SHA-256 hash of the token (hashToken) — never the raw token, which is a
 // secret — so a flooding account is identifiable without exposing its credential.
@@ -41,57 +49,53 @@ let redisErrors: Counter | undefined;
 let sessionLifetime: Histogram | undefined;
 let mcpRequests: Counter | undefined;
 let mcpDuration: Histogram | undefined;
-let gcPause: Histogram | undefined;
 
 // Inbound MCP requests (POST /mcp) authenticating now; read by the metrics.ts
 // gauge, maintained by the authenticate hook via mcpInFlightAdd.
 let mcpInFlight = 0;
 
-/** Create the sync instruments once the provider is started (from initTelemetry). */
+/** Create instruments after startup. Callers pass milliseconds; OTLP exports seconds. */
 export const createSyncInstruments = (): void => {
   const meter = metrics.getMeter(METER_NAME);
   toolRequests = meter.createCounter('browserless.mcp.tool.requests', {
     description: 'MCP tool invocations, by tool and outcome',
+    unit: '{request}',
   });
-  toolDuration = meter.createHistogram('browserless.mcp.tool.duration_ms', {
+  toolDuration = meter.createHistogram('browserless.mcp.tool.duration', {
     description: 'MCP tool invocation duration',
-    unit: 'ms',
+    unit: 's',
+    advice: DURATION_ADVICE,
   });
   upstreamDuration = meter.createHistogram(
-    'browserless.mcp.agent.upstream.duration_ms',
+    'browserless.mcp.agent.upstream.duration',
     {
       description:
         'Agent upstream command round-trip duration (browser runtime)',
-      unit: 'ms',
+      unit: 's',
+      advice: DURATION_ADVICE,
     },
   );
-  redisDuration = meter.createHistogram(
-    'browserless.mcp.redis.op.duration_ms',
-    {
-      description: 'Redis operation duration (OAuth state store)',
-      unit: 'ms',
-    },
-  );
+  redisDuration = meter.createHistogram('browserless.mcp.redis.op.duration', {
+    description: 'Redis operation duration (OAuth state store)',
+    unit: 's',
+    advice: DURATION_ADVICE,
+  });
   redisErrors = meter.createCounter('browserless.mcp.redis.errors', {
     description: 'Redis client errors (cumulative)',
   });
-  sessionLifetime = meter.createHistogram(
-    'browserless.mcp.session.lifetime_ms',
-    {
-      description: 'Session lifetime at close, by kind (mcp | agent)',
-      unit: 'ms',
-    },
-  );
+  sessionLifetime = meter.createHistogram('browserless.mcp.session.lifetime', {
+    description: 'Session lifetime at close, by kind (mcp | agent)',
+    unit: 's',
+    advice: DURATION_ADVICE,
+  });
   mcpRequests = meter.createCounter('browserless.mcp.requests', {
     description: 'Inbound MCP requests (POST /mcp), by authentication outcome',
+    unit: '{request}',
   });
-  mcpDuration = meter.createHistogram('browserless.mcp.request.duration_ms', {
+  mcpDuration = meter.createHistogram('browserless.mcp.request.duration', {
     description: 'Inbound MCP request authentication duration (POST /mcp)',
-    unit: 'ms',
-  });
-  gcPause = meter.createHistogram('browserless.mcp.gc.pause_ms', {
-    description: 'V8 garbage-collection pause duration',
-    unit: 'ms',
+    unit: 's',
+    advice: DURATION_ADVICE,
   });
   accountsEnabled = true;
 };
@@ -106,7 +110,6 @@ export const resetSyncInstruments = (): void => {
   sessionLifetime = undefined;
   mcpRequests = undefined;
   mcpDuration = undefined;
-  gcPause = undefined;
   accountsEnabled = false;
   accountWindow.clear();
 };
@@ -126,7 +129,8 @@ export const recordToolRequest = (
     const attrs: Record<string, string | boolean> = { tool, success };
     if (!success && errorCategory) attrs.error_category = errorCategory;
     toolRequests.add(1, attrs);
-    if (Number.isFinite(durationMs)) toolDuration?.record(durationMs, attrs);
+    if (Number.isFinite(durationMs))
+      toolDuration?.record(durationMs / 1000, attrs);
   } catch {
     // Telemetry must never break a tool call.
   }
@@ -140,7 +144,7 @@ export const recordUpstreamCall = (
 ): void => {
   if (!upstreamDuration || !Number.isFinite(durationMs)) return;
   try {
-    upstreamDuration.record(durationMs, { method, success });
+    upstreamDuration.record(durationMs / 1000, { method, success });
   } catch {
     /* never break the command path */
   }
@@ -154,7 +158,7 @@ export const recordRedisOp = (
 ): void => {
   if (!redisDuration || !Number.isFinite(durationMs)) return;
   try {
-    redisDuration.record(durationMs, { op, success });
+    redisDuration.record(durationMs / 1000, { op, success });
   } catch {
     /* never break the Redis path */
   }
@@ -176,7 +180,7 @@ export const recordSessionLifetime = (
 ): void => {
   if (!sessionLifetime || !Number.isFinite(ageMs) || ageMs < 0) return;
   try {
-    sessionLifetime.record(ageMs, { kind });
+    sessionLifetime.record(ageMs / 1000, { kind });
   } catch {
     /* ignore */
   }
@@ -192,19 +196,9 @@ export const recordMcpRequest = (
   try {
     mcpRequests.add(1, { outcome });
     if (Number.isFinite(durationMs))
-      mcpDuration?.record(durationMs, { outcome });
+      mcpDuration?.record(durationMs / 1000, { outcome });
   } catch {
     /* never break request handling */
-  }
-};
-
-/** Record a V8 GC pause (called by metrics.ts's PerformanceObserver). */
-export const recordGcPause = (durationMs: number): void => {
-  if (!gcPause || !Number.isFinite(durationMs)) return;
-  try {
-    gcPause.record(durationMs);
-  } catch {
-    /* ignore */
   }
 };
 

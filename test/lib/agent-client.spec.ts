@@ -148,8 +148,7 @@ describe('agent-client upstream success telemetry (A3 regression)', () => {
     captured
       .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
       .find(
-        (m) =>
-          m.descriptor.name === 'browserless.mcp.agent.upstream.duration_ms',
+        (m) => m.descriptor.name === 'browserless.mcp.agent.upstream.duration',
       )
       ?.dataPoints.find((d) => d.attributes.method === method);
 
@@ -195,7 +194,7 @@ describe('agent-client upstream success telemetry (A3 regression)', () => {
     }
   });
 
-  it('records session.lifetime_ms{agent} on explicit closeSession (the one-shot path)', async () => {
+  it('records session.lifetime{agent} on explicit closeSession (the one-shot path)', async () => {
     const reader = setupCapture();
     const server = await makeRespondingServer(() => ({}));
     try {
@@ -227,9 +226,7 @@ describe('agent-client upstream success telemetry (A3 regression)', () => {
       await reader.forceFlush();
       const life = captured
         .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
-        .find(
-          (m) => m.descriptor.name === 'browserless.mcp.session.lifetime_ms',
-        );
+        .find((m) => m.descriptor.name === 'browserless.mcp.session.lifetime');
       const pt = life?.dataPoints.find((d) => d.attributes.kind === 'agent');
       expect(pt, 'no agent lifetime recorded on closeSession').to.not.equal(
         undefined,

@@ -18,21 +18,12 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
 } from '@opentelemetry/semantic-conventions';
-import {
-  MeterProvider,
-  PeriodicExportingMetricReader,
-} from '@opentelemetry/sdk-metrics';
+import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runtime-node';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
-import {
-  LoggerProvider,
-  BatchLogRecordProcessor,
-} from '@opentelemetry/sdk-logs';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
-import {
-  monitorEventLoopDelay,
-  performance,
-  PerformanceObserver,
-} from 'node:perf_hooks';
 import {
   trackedSessionCount,
   inFlightExecCount,
@@ -48,7 +39,6 @@ import {
   METER_NAME,
   createSyncInstruments,
   resetSyncInstruments,
-  recordGcPause,
   getMcpInFlight,
   collectAccountWindow,
 } from './metrics-recorders.js';
@@ -73,10 +63,6 @@ export interface TelemetryOptions {
   /** Live FastMCP httpStream session count (server.sessions.length). */
   getLiveSessionCount: () => number;
 }
-
-let provider: MeterProvider | undefined;
-let loggerProvider: LoggerProvider | undefined;
-let restoreConsole: (() => void) | undefined;
 
 // Mirror console.error / console.warn to OTLP logs so the server's existing
 // stderr diagnostics also reach the collector, without rewriting every call
@@ -132,20 +118,6 @@ const bridgeConsole = (): (() => void) => {
 export const normalizeOtlpBase = (endpoint: string): string =>
   endpoint.replace(/\/+$/, '');
 
-// Observe V8 GC pauses as a histogram. Best-effort: if the platform doesn't
-// support the perf_hooks 'gc' entry type, telemetry just omits it.
-const startGcObserver = (): PerformanceObserver | undefined => {
-  try {
-    const obs = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) recordGcPause(entry.duration);
-    });
-    obs.observe({ entryTypes: ['gc'] });
-    return obs;
-  } catch {
-    return undefined;
-  }
-};
-
 /**
  * Start metrics + logs export to the OTLP collector. Hosted mode only; call
  * inside try/catch. Returns a shutdown fn that flushes the final batch.
@@ -159,9 +131,15 @@ export const initTelemetry = (
     [ATTR_SERVICE_VERSION]: opts.serviceVersion,
   });
 
-  provider = new MeterProvider({
+  const runtime = new RuntimeNodeInstrumentation({ enabled: false });
+  const sdk = new NodeSDK({
     resource,
-    readers: [
+    autoDetectResources: false,
+    // Metrics and logs only, regardless of tracing environment defaults.
+    spanProcessors: [],
+    textMapPropagator: null,
+    instrumentations: [runtime],
+    metricReaders: [
       new PeriodicExportingMetricReader({
         exporter: new OTLPMetricExporter({
           url: `${base}/v1/metrics`,
@@ -169,34 +147,25 @@ export const initTelemetry = (
         exportIntervalMillis: resolveExportIntervalMs(),
       }),
     ],
-  });
-  metrics.setGlobalMeterProvider(provider);
-
-  loggerProvider = new LoggerProvider({
-    resource,
-    processors: [
+    logRecordProcessors: [
       new BatchLogRecordProcessor({
         exporter: new OTLPLogExporter({ url: `${base}/v1/logs` }),
       }),
     ],
   });
-  logs.setGlobalLoggerProvider(loggerProvider);
-
-  registerRuntimeInstruments(opts.getLiveSessionCount);
+  sdk.start();
+  registerApplicationInstruments(opts.getLiveSessionCount);
   createSyncInstruments();
-  const gcObserver = startGcObserver();
-  restoreConsole = bridgeConsole();
+  const restoreConsole = bridgeConsole();
 
   return async () => {
-    restoreConsole?.();
-    restoreConsole = undefined;
-    gcObserver?.disconnect();
+    restoreConsole();
     try {
       // Flush the final batch, but never let a flush to an unreachable collector
       // block process exit (the OTLP export timeout is far longer than any
       // shutdown should wait). Race it against a short, unref'd deadline.
       await Promise.race([
-        Promise.all([provider?.shutdown(), loggerProvider?.shutdown()]),
+        sdk.shutdown(),
         new Promise<void>((resolve) => {
           setTimeout(resolve, 2_000).unref();
         }),
@@ -204,55 +173,25 @@ export const initTelemetry = (
     } catch {
       // Best-effort flush — a telemetry failure must not delay shutdown.
     } finally {
-      provider = undefined;
-      loggerProvider = undefined;
+      // NodeSDK shuts down providers, but does not disable instrumentations.
+      runtime.disable();
       resetSyncInstruments();
     }
   };
 };
 
-// Register the observable runtime + session-state instruments against one batch
-// callback, so each export collects every signal in a single pass (and resets
-// the event-loop-delay histogram exactly once per window).
-export const registerRuntimeInstruments = (
+// Application state and process totals not supplied by runtime instrumentation.
+export const registerApplicationInstruments = (
   getLiveSessionCount: () => number,
 ): void => {
   const meter = metrics.getMeter(METER_NAME);
 
-  const loopDelay = monitorEventLoopDelay({ resolution: 20 });
-  loopDelay.enable();
-  let prevElu = performance.eventLoopUtilization();
-
-  const delayP50 = meter.createObservableGauge(
-    'browserless.mcp.eventloop.delay.p50_ms',
-    {
-      description: 'Event-loop delay, 50th percentile, over the export window',
-      unit: 'ms',
-    },
-  );
-  const delayP99 = meter.createObservableGauge(
-    'browserless.mcp.eventloop.delay.p99_ms',
-    {
-      description: 'Event-loop delay, 99th percentile, over the export window',
-      unit: 'ms',
-    },
-  );
-  const eluGauge = meter.createObservableGauge(
-    'browserless.mcp.eventloop.utilization',
-    {
-      description: 'Event-loop utilization (0..1) over the export window',
-    },
-  );
   const memGauge = meter.createObservableGauge(
     'browserless.mcp.process.memory_bytes',
     {
       description: 'Process memory usage',
       unit: 'By',
     },
-  );
-  const resourcesGauge = meter.createObservableGauge(
-    'browserless.mcp.process.active_resources',
-    { description: 'Active libuv resources (handles + requests)' },
   );
   const uptimeGauge = meter.createObservableGauge(
     'browserless.mcp.process.uptime_seconds',
@@ -334,21 +273,11 @@ export const registerRuntimeInstruments = (
 
   meter.addBatchObservableCallback(
     (obs: BatchObservableResult) => {
-      const cur = performance.eventLoopUtilization();
-      const delta = performance.eventLoopUtilization(cur, prevElu);
-      prevElu = cur;
-      obs.observe(eluGauge, delta.utilization);
-
-      obs.observe(delayP50, loopDelay.percentile(50) / 1e6);
-      obs.observe(delayP99, loopDelay.percentile(99) / 1e6);
-      loopDelay.reset();
-
       const mem = process.memoryUsage();
       obs.observe(memGauge, mem.rss, { type: 'rss' });
       obs.observe(memGauge, mem.heapUsed, { type: 'heap_used' });
       obs.observe(memGauge, mem.heapTotal, { type: 'heap_total' });
       obs.observe(memGauge, mem.external, { type: 'external' });
-      obs.observe(resourcesGauge, process.getActiveResourcesInfo().length);
       obs.observe(uptimeGauge, process.uptime());
       obs.observe(mcpInFlightGauge, getMcpInFlight());
 
@@ -367,11 +296,7 @@ export const registerRuntimeInstruments = (
         obs.observe(accountRequests, a.count, { account_hash: a.hash });
     },
     [
-      delayP50,
-      delayP99,
-      eluGauge,
       memGauge,
-      resourcesGauge,
       uptimeGauge,
       mcpInFlightGauge,
       activeAccounts,

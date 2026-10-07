@@ -1,9 +1,23 @@
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { metrics, trace } from '@opentelemetry/api';
+import { logs } from '@opentelemetry/api-logs';
 import { initTelemetry, normalizeOtlpBase } from '../../src/lib/metrics.js';
-import { recordToolRequest } from '../../src/lib/metrics-recorders.js';
+import {
+  recordToolRequest,
+  resetSyncInstruments,
+} from '../../src/lib/metrics-recorders.js';
 
 describe('metrics (OTLP telemetry)', () => {
+  afterEach(() => {
+    metrics.disable();
+    logs.disable();
+    trace.disable();
+    resetSyncInstruments();
+  });
+
   it('recordToolRequest never throws when telemetry is not started (stdio/disabled)', () => {
     expect(() =>
       recordToolRequest('browserless_scrape', true, 123),
@@ -45,6 +59,79 @@ describe('metrics (OTLP telemetry)', () => {
     }
     expect(console.error).to.equal(originalError);
     expect(console.warn).to.equal(originalWarn);
+  });
+
+  it('exports standard runtime metrics, application metrics and logs without enabling traces', async () => {
+    const received: { path?: string; type?: string; body: Buffer }[] = [];
+    const sink = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk);
+      received.push({
+        path: req.url,
+        type: req.headers['content-type'],
+        body: Buffer.concat(chunks),
+      });
+      res.writeHead(200, { 'content-type': 'application/x-protobuf' }).end();
+    });
+    sink.listen(0, '127.0.0.1');
+    await once(sink, 'listening');
+    const address = sink.address();
+    if (!address || typeof address === 'string') throw new Error('No port');
+    const base = `http://127.0.0.1:${address.port}`;
+    const previous = {
+      OTEL_TRACES_EXPORTER: process.env.OTEL_TRACES_EXPORTER,
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:
+        process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    };
+    process.env.OTEL_TRACES_EXPORTER = 'otlp';
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = `${base}/v1/traces`;
+    let shutdown: (() => Promise<void>) | undefined;
+    try {
+      shutdown = initTelemetry({
+        endpoint: `${base}/`,
+        serviceName: 'telemetry-fixture',
+        serviceVersion: '0.0.0',
+        getLiveSessionCount: () => 3,
+      });
+      recordToolRequest('browserless_agent', false, 123, 'timeout');
+      console.warn('telemetry-warning-fixture');
+      trace.getTracer('fixture').startSpan('must-not-export').end();
+      // Runtime delay metrics require at least five 10ms samples.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await shutdown();
+      shutdown = undefined;
+
+      expect(received.map((r) => r.path)).to.have.members([
+        '/v1/metrics',
+        '/v1/logs',
+      ]);
+      expect(
+        received.every((r) => r.type === 'application/x-protobuf'),
+      ).to.equal(true);
+      const metricBody = received.find((r) => r.path === '/v1/metrics')!.body;
+      for (const name of [
+        'nodejs.eventloop.utilization',
+        'nodejs.eventloop.delay.p99',
+        'v8js.memory.heap.used',
+        'browserless.mcp.sessions.live',
+        'browserless.mcp.tool.requests',
+      ]) {
+        expect(metricBody.includes(name), `missing ${name}`).to.equal(true);
+      }
+      expect(metricBody.includes('browserless.mcp.eventloop')).to.equal(false);
+      expect(
+        received
+          .find((r) => r.path === '/v1/logs')!
+          .body.includes('telemetry-warning-fixture'),
+      ).to.equal(true);
+    } finally {
+      await shutdown?.();
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await new Promise<void>((resolve) => sink.close(() => resolve()));
+    }
   });
 
   it('index.ts gates telemetry on OTEL_ENABLED + httpStream, guarded so it cannot crash boot', () => {

@@ -306,7 +306,7 @@ describe('session-reaper lifetime telemetry (A2 regression)', () => {
     sinon.restore();
   });
 
-  it('records session.lifetime_ms{mcp} even though close() forgets the session first', async () => {
+  it('records session.lifetime{mcp} in seconds even though close() forgets the session first', async () => {
     resetSessionReaperForTests();
     resetSyncInstruments();
     captured.length = 0;
@@ -348,11 +348,14 @@ describe('session-reaper lifetime telemetry (A2 regression)', () => {
     await reader.forceFlush();
     const life = captured
       .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
-      .find((m) => m.descriptor.name === 'browserless.mcp.session.lifetime_ms');
+      .find((m) => m.descriptor.name === 'browserless.mcp.session.lifetime');
     const mcpPoint = life?.dataPoints.find((d) => d.attributes.kind === 'mcp');
     expect(mcpPoint, 'no mcp lifetime sample recorded on reap').to.not.equal(
       undefined,
     );
-    expect((mcpPoint?.value as { sum?: number })?.sum).to.equal(now - bornAt);
+    expect(life?.descriptor.unit).to.equal('s');
+    expect((mcpPoint?.value as { sum?: number })?.sum).to.equal(
+      (now - bornAt) / 1000,
+    );
   });
 });
