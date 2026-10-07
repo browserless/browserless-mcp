@@ -1467,6 +1467,31 @@ describe('browserless_agent credential feedback', () => {
     });
   }
 
+  it('rejects invalid single and batch liveURL options before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({}));
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const batch of [false, true]) {
+        for (const params of [{ targetId: '' }, { mode: 'full' }]) {
+          let error: unknown;
+          try {
+            const command = { method: 'liveURL', params };
+            await execute(
+              batch ? { commands: [command] } : command,
+              mockContext,
+            );
+          } catch (caught) {
+            error = caught;
+          }
+          expect(error).to.have.property('code', 'INVALID_PARAMS');
+        }
+      }
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('reports indexed typed errors without echoing credential values', async () => {
     const execute = getAgentExecute('http://127.0.0.1:1');
     let error: unknown;
