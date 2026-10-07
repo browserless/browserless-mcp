@@ -264,6 +264,42 @@ Then point your MCP client at `http://localhost:8080/mcp` using the same header/
 | `AMPLITUDE_API_KEY`          | No       | —                                        | Amplitude project API key. Sends MCP usage analytics — SDK lifecycle events plus our own tool/skill events                                                 |
 | `MCP_COMPLIANCE_MODE`        | No       | unset (full surface)                     | Serve the reduced, directory-compliant surface. Fails closed: any set value except `false`/`0`/`no`/`off` enables it                                       |
 
+### Hosted OpenTelemetry
+
+On `httpStream`, set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT`
+to a trusted collector's base URL. Metrics and stderr logs are exported over
+OTLP HTTP/protobuf; tracing is disabled. `stdio` never starts this SDK.
+`OTEL_METRIC_EXPORT_INTERVAL` controls the export interval in milliseconds
+(default 60000, minimum 1000).
+
+NodeSDK manages the providers and standard Node runtime instrumentation emits
+`nodejs.*` and `v8js.*` metrics. Application session, tool, account and Redis
+metrics remain under `browserless.mcp.*`. All duration metrics use seconds
+(`s`), memory uses bytes (`By`), and request counters use `{request}`;
+application callers still supply
+milliseconds, converted once by the metric recorders.
+
+`browserless.mcp.auth.duration` and `.auth.in_flight` cover POST authentication,
+not whole request execution. `browserless.mcp.session.cleanup.age` covers tracked
+MCP idle reaps and explicit/idle/cap agent cleanup, not every session close.
+Sweep-discovered MCP age starts at discovery; agent age resets on reconnect.
+`browserless.mcp.accounts.active` counts distinct token hashes per collection
+window. Top-account counts are an INFO log with body event
+`browserless.mcp.account.window`, `active_accounts`, and `top_accounts` (at most
+20 `{hash, count}` entries), not persistent per-account metric series.
+An idle window emits no account log. Stderr text is INFO, `console.warn` is WARN,
+and arguments containing an `Error` are ERROR; stderr records carry
+`log.iostream=stderr`. `OTEL_SDK_DISABLED=true` also disables hosted telemetry.
+
+For dashboards based on the initial telemetry PR: replace custom event-loop
+metrics with `nodejs.eventloop.*`, GC pauses with `v8js.gc.duration`, and active
+resources with `v8js.resource.active`. Drop `_ms` from tool/upstream/Redis
+duration names, use the auth and cleanup names above, and divide millisecond
+thresholds by 1000. Replace `account.requests` queries with the window logs.
+Duration histogram boundaries are also in seconds, covering sub-second Redis
+operations through two-hour sessions. Amplitude event fields and timeout
+configuration remain in milliseconds.
+
 ### Skill retrieval diagnostics
 
 `Skill Retrieval Completed` emits once per actual remote skill fetch through

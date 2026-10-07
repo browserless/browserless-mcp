@@ -120,6 +120,7 @@ describe('skill telemetry contract', () => {
 
   it('bounds concurrent exports and disables transport when no endpoint is configured', async () => {
     const previous = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+    const previousBase = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     const fetcher = sinon.stub(globalThis, 'fetch');
     let resolve!: (response: Response) => void;
     fetcher.returns(
@@ -128,7 +129,10 @@ describe('skill telemetry contract', () => {
       }),
     );
     try {
+      // "No endpoint" now means neither the logs-specific var NOR the shared base
+      // (OTEL_EXPORTER_OTLP_ENDPOINT) is set — the base is the fallback source.
       delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+      delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
       await logSkillEvent('skill.retrieval.failed', {});
       expect(fetcher.callCount).to.equal(0);
       process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT =
@@ -144,6 +148,60 @@ describe('skill telemetry contract', () => {
       if (previous === undefined)
         delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
       else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = previous;
+      if (previousBase === undefined)
+        delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previousBase;
+    }
+  });
+
+  it('falls back to the shared OTLP base endpoint (+/v1/logs) only when OTEL is enabled on httpStream', async () => {
+    const received: { path?: string }[] = [];
+    const sink = createServer(async (req, res) => {
+      for await (const _ of req);
+      received.push({ path: req.url });
+      res.writeHead(200).end('{}');
+    });
+    sink.listen(0, '127.0.0.1');
+    await once(sink, 'listening');
+    const address = sink.address();
+    if (!address || typeof address === 'string')
+      throw new Error('Missing test listener');
+    const prev = {
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:
+        process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+      OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      OTEL_ENABLED: process.env.OTEL_ENABLED,
+      TRANSPORT: process.env.TRANSPORT,
+    };
+    delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+    // Trailing slash on purpose: the derived endpoint must normalize it, not
+    // produce `//v1/logs`. This mirrors how the deploy env sets only the base.
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${address.port}/`;
+    try {
+      // Gated OFF: base set but OTEL disabled / stdio → no post (the fallback
+      // must not broaden where skill-failure details are sent).
+      process.env.OTEL_ENABLED = 'false';
+      process.env.TRANSPORT = 'stdio';
+      await logSkillEvent('skill.retrieval.failed', {
+        domain: completion.domain,
+      });
+      expect(received).to.have.length(0);
+
+      // Gated ON: the OTLP SDK startup conditions hold → derive base + /v1/logs.
+      process.env.OTEL_ENABLED = 'true';
+      process.env.TRANSPORT = 'httpStream';
+      await logSkillEvent('skill.retrieval.failed', {
+        request_id: completion.request_id,
+        domain: completion.domain,
+      });
+      expect(received).to.have.length(1);
+      expect(received[0].path).to.equal('/v1/logs');
+    } finally {
+      for (const [k, v] of Object.entries(prev))
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      sink.close();
+      await once(sink, 'close');
     }
   });
 

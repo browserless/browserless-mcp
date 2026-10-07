@@ -8,6 +8,33 @@ import { makeRespondingServer } from '../helpers/upgrade-server.js';
 describe('agent-client session sweep', () => {
   afterEach(() => sinon.restore());
 
+  it('exposes pool size, in-flight commands, and cumulative sweeps for telemetry', async () => {
+    const browser = await makeRespondingServer(() => ({}));
+    try {
+      const sweptBefore = client.sweptSessionTotal();
+      const creation = client.getOrCreateSession(
+        'telemetry-accessor',
+        browser.url,
+        'tok',
+      );
+      expect(client.pendingSessionCount()).to.equal(1);
+      const session = await creation;
+      // Freshly pooled and idle: counted as active, no command in flight.
+      expect(client.activeAgentSessionCount()).to.be.greaterThan(0);
+      expect(client.inFlightCommandCount()).to.equal(0);
+      // Creation already resolved, so nothing is mid-creation.
+      expect(client.pendingSessionCount()).to.equal(0);
+      // Age past the idle TTL and sweep: the cumulative swept counter advances.
+      session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+      const closed = once(session.ws, 'close');
+      client.sweepSessions();
+      await closed;
+      expect(client.sweptSessionTotal()).to.equal(sweptBefore + 1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('proper-closes idle sessions, preserves the 15-minute boundary and cannot delete a replacement', async () => {
     let acknowledge!: () => void;
     const browser = await makeRespondingServer((method) =>

@@ -4,6 +4,10 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
+import {
+  recordUpstreamCall,
+  recordSessionLifetime,
+} from './metrics-recorders.js';
 import type { CreateProfileParams } from '../tools/schemas.js';
 import type {
   ActiveSession,
@@ -415,6 +419,8 @@ const properClose = (
       : Promise.resolve();
   // Stop reuse and repeated eviction while the close response is in flight.
   sessions.delete(key);
+  const bornAt = createdAt.get(session);
+  if (bornAt !== undefined) recordSessionLifetime('agent', Date.now() - bornAt);
   void closing
     .catch(() => {
       /* browser may already be gone */
@@ -430,6 +436,22 @@ const properClose = (
       );
     });
 };
+
+// Cumulative count of pooled agent sessions the sweep has proper-closed.
+let sweptTotal = 0;
+
+/** Agent browser sessions currently held in the pool. Telemetry read-only. */
+export const activeAgentSessionCount = (): number => sessions.size;
+
+/** Agent sessions mid-creation (in-flight getOrCreateSession). Telemetry read-only. */
+export const pendingSessionCount = (): number => pending.size;
+
+/** Pooled agent sessions with a command in flight. Telemetry read-only. */
+export const inFlightCommandCount = (): number =>
+  [...sessions.values()].filter(hasInFlightCommand).length;
+
+/** Cumulative agent sessions swept since start. Source for an observable counter. */
+export const sweptSessionTotal = (): number => sweptTotal;
 
 // Sweep periodically and on getOrCreateSession; the map is bounded.
 export const sweepSessions = (
@@ -447,6 +469,7 @@ export const sweepSessions = (
     }
     if (now - session.lastUsedAt > IDLE_TTL_MS) {
       properClose(key, session, 'idle');
+      sweptTotal++;
     }
   }
   if (sessions.size <= maxSessions) return;
@@ -462,6 +485,7 @@ export const sweepSessions = (
     .slice(0, overage);
   for (const [key, session] of oldest) {
     properClose(key, session, 'cap');
+    sweptTotal++;
   }
 };
 
@@ -1460,13 +1484,22 @@ export const send = async (
 
     session.msgId++;
     session.lastUsedAt = Date.now();
-    const response = await sendMessage(
-      session.ws,
-      { id: session.msgId, method, params },
-      timeoutMs,
-    );
-    session.lastUsedAt = Date.now();
-    return response;
+    const upstreamStart = Date.now();
+    try {
+      const response = await sendMessage(
+        session.ws,
+        { id: session.msgId, method, params },
+        timeoutMs,
+      );
+      // JSON-RPC errors resolve as an {error} payload (no throw), so tag success
+      // from the payload, not just thrown network/timeout failures.
+      recordUpstreamCall(method, !response.error, Date.now() - upstreamStart);
+      session.lastUsedAt = Date.now();
+      return response;
+    } catch (err) {
+      recordUpstreamCall(method, false, Date.now() - upstreamStart);
+      throw err;
+    }
   } finally {
     endCommand(session);
   }
@@ -1519,6 +1552,11 @@ export const closeSession = (
     } catch {
       /* ignore */
     }
+    // Record agent lifetime on explicit close too, not only idle/cap eviction;
+    // the sessions-map delete below stops any session being counted twice.
+    const bornAt = createdAt.get(session);
+    if (bornAt !== undefined)
+      recordSessionLifetime('agent', Date.now() - bornAt);
     sessions.delete(key);
   }
   retainedPersonas.delete(key);

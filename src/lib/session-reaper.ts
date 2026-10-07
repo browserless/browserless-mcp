@@ -26,6 +26,8 @@
 // reaped after the TTL and transparently reconnects; the TTL is deliberately
 // generous so this is rare.
 
+import { recordSessionLifetime } from './metrics-recorders.js';
+
 // 30 minutes of no inbound activity before an abandoned session is reaped.
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 // How often the backstop runs.
@@ -39,13 +41,18 @@ const lastSeen = new Map<string, number>();
 // call holds one request open with no further inbound activity, so without this
 // it could be reaped mid-flight once its idle window elapsed.
 const activeExec = new Map<string, number>();
+// mcp session id -> first time it was seen, for the session-lifetime histogram.
+const firstSeen = new Map<string, number>();
 
 /** Record inbound activity for an mcp session (connect and every tool call). */
 export const touchSession = (
   id: string | undefined,
   now: number = Date.now(),
 ): void => {
-  if (id) lastSeen.set(id, now);
+  if (id) {
+    lastSeen.set(id, now);
+    if (!firstSeen.has(id)) firstSeen.set(id, now);
+  }
 };
 
 /** Forget an mcp session's activity (on disconnect or after it is reaped). */
@@ -53,6 +60,7 @@ export const forgetSession = (id: string | undefined): void => {
   if (id) {
     lastSeen.delete(id);
     activeExec.delete(id);
+    firstSeen.delete(id);
   }
 };
 
@@ -75,6 +83,15 @@ export const endSessionExec = (
 
 /** Number of sessions with tracked activity — diagnostics and tests. */
 export const trackedSessionCount = (): number => lastSeen.size;
+
+// Cumulative count of idle sessions the reaper has closed since process start.
+let reapedTotal = 0;
+
+/** Sessions currently holding an in-flight tool execution. Telemetry read-only. */
+export const inFlightExecCount = (): number => activeExec.size;
+
+/** Cumulative idle sessions reaped since start. Source for an observable counter. */
+export const reapedSessionTotal = (): number => reapedTotal;
 
 /** The subset of FastMCPSession this module needs; keeps the core testable. */
 export interface ReapableSession {
@@ -124,12 +141,17 @@ export const reapIdleSessions = (
     }
     const seen = lastSeen.get(id);
     if (seen === undefined) {
-      lastSeen.set(id, now);
+      touchSession(id, now);
       continue;
     }
     if (now - seen <= ttlMs) continue;
+    // Read bornAt before safeClose: close() synchronously fires FastMCP's
+    // disconnect → forgetSession, deleting firstSeen before we'd read it.
+    const bornAt = firstSeen.get(id);
     safeClose(session);
+    if (bornAt !== undefined) recordSessionLifetime('mcp', now - bornAt);
     lastSeen.delete(id);
+    firstSeen.delete(id);
     closed++;
     console.error(`[session-reaper] closed idle mcp session id=${id}`);
   }
@@ -140,6 +162,8 @@ export const reapIdleSessions = (
   for (const id of lastSeen.keys()) if (!liveIds.has(id)) lastSeen.delete(id);
   for (const id of activeExec.keys())
     if (!liveIds.has(id)) activeExec.delete(id);
+  for (const id of firstSeen.keys()) if (!liveIds.has(id)) firstSeen.delete(id);
+  reapedTotal += closed;
   return closed;
 };
 
@@ -183,4 +207,6 @@ export const resetSessionReaperForTests = (): void => {
   stopSessionReaper();
   lastSeen.clear();
   activeExec.clear();
+  firstSeen.clear();
+  reapedTotal = 0;
 };

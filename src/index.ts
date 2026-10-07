@@ -29,6 +29,11 @@ import {
   initializeAmplitudeAnalytics,
   shutdownAmplitudeAnalytics,
 } from './lib/amplitude-analytics.js';
+import {
+  recordRedisError,
+  recordMcpRequest,
+  mcpInFlightAdd,
+} from './lib/metrics-recorders.js';
 
 const pkg = JSON.parse(
   readFileSync(
@@ -53,9 +58,10 @@ const amplitudeAnalytics = initializeAmplitudeAnalytics(
 // receives the raw Supabase JWT directly.
 const redisClient = config.redisUrl ? new Redis(config.redisUrl) : undefined;
 if (redisClient) {
-  redisClient.on('error', (err: Error) =>
-    console.error('[browserless-mcp] Redis error:', err.message),
-  );
+  redisClient.on('error', (err: Error) => {
+    recordRedisError();
+    console.error('[browserless-mcp] Redis error:', err);
+  });
   // Redis is only configured for the hosted httpStream deployment (REDIS_URL is
   // not set in stdio mode), so writing the "connected" line to stdout doesn't
   // interfere with MCP-over-stdio protocol framing.
@@ -112,14 +118,28 @@ const hybridAuthenticate =
         // Any authenticated inbound request proves the client is alive, so
         // refresh the idle clock here — not only on tool calls. This keeps the
         // reaper from closing a session that is merely between calls or only
-        // listing tools. `initialize` carries no session id yet; `connect`
-        // stamps that case.
+        // listing tools. `initialize` carries no session id yet; the reaper's
+        // first discovery stamps sessions that never send another request.
         const sid = request.headers?.['mcp-session-id'];
         touchSession(Array.isArray(sid) ? sid[0] : sid);
-        return (await resolveBrowserlessRequestAuth(
-          request,
-          config,
-        )) as BrowserlessSession;
+
+        // Per-request MCP metrics on authenticate() — the one hook that sees
+        // /mcp (memoized once per POST). Spans auth only; record once it settles.
+        mcpInFlightAdd(1);
+        const authStartedAt = performance.now();
+        try {
+          const session = (await resolveBrowserlessRequestAuth(
+            request,
+            config,
+          )) as BrowserlessSession;
+          recordMcpRequest('authenticated', performance.now() - authStartedAt);
+          return session;
+        } catch (err) {
+          recordMcpRequest('rejected', performance.now() - authStartedAt);
+          throw err;
+        } finally {
+          mcpInFlightAdd(-1);
+        }
       }
     : undefined;
 
@@ -132,6 +152,36 @@ const server = new FastMCP<BrowserlessSession>({
 
 instrumentFastMcpTools(server, amplitudeAnalytics);
 registerSurface(server, config, analytics);
+
+// Export metrics + logs to an OTLP collector. Gated like the rest of the fleet:
+// the OTEL_ENABLED master toggle must be "true" (the flag enterprise/workers use)
+// AND OTEL_EXPORTER_OTLP_ENDPOINT must point at a collector — and only on the
+// httpStream transport, since stdio keeps stdout a clean JSON-RPC channel
+// (nothing is started there). Best-effort: a telemetry failure must never block
+// or crash the server.
+let telemetryShutdown: (() => Promise<void>) | undefined;
+const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+if (
+  config.transport === 'httpStream' &&
+  process.env.OTEL_ENABLED === 'true' &&
+  process.env.OTEL_SDK_DISABLED?.trim().toLowerCase() !== 'true' &&
+  otelEndpoint
+) {
+  try {
+    const { initTelemetry } = await import('./lib/metrics.js');
+    telemetryShutdown = initTelemetry({
+      endpoint: otelEndpoint,
+      serviceName: process.env.OTEL_SERVICE_NAME ?? 'browserless-mcp',
+      serviceVersion: pkg.version,
+      getLiveSessionCount: () => server.sessions.length,
+    });
+  } catch (err) {
+    console.error(
+      '[browserless-mcp] telemetry init failed:',
+      err instanceof Error ? (err.stack ?? err.message) : err,
+    );
+  }
+}
 // Log the active surface (both transports) so it's visible in the boot logs.
 // Fail-closed value lands on compliant; distinguish "unset" (dropped/wrong-scoped
 // on a directory deploy) from opt-out, and warn on an unrecognized value (typo).
@@ -139,7 +189,7 @@ const complianceInput = classifyComplianceInput(
   process.env.MCP_COMPLIANCE_MODE,
 );
 if (complianceInput === 'unrecognized') {
-  console.error(
+  console.warn(
     `[browserless-mcp] WARNING: MCP_COMPLIANCE_MODE="${process.env.MCP_COMPLIANCE_MODE}" ` +
       'is not a recognized value; defaulting to the compliant (reduced) surface. ' +
       'Set "true" for compliant or "false" for the full surface.',
@@ -164,7 +214,7 @@ server.on('connect', (event) => {
     !(event.session.server instanceof Server)
   ) {
     warnedAboutServerIdentity = true;
-    console.error(
+    console.warn(
       '[browserless-mcp] WARNING: FastMCP session server is not an MCP SDK Server; Amplitude instrumentation may be disabled.',
     );
   }
@@ -174,14 +224,17 @@ server.on('connect', (event) => {
   );
 });
 
-if (amplitudeAnalytics) {
-  let amplitudeShutdown = false;
+if (amplitudeAnalytics || telemetryShutdown) {
+  let shuttingDown = false;
   const shutdown = (exitCode: number): void => {
-    if (amplitudeShutdown) return;
-    amplitudeShutdown = true;
+    if (shuttingDown) return;
+    shuttingDown = true;
     void (async () => {
       try {
-        await shutdownAmplitudeAnalytics(amplitudeAnalytics);
+        if (amplitudeAnalytics)
+          await shutdownAmplitudeAnalytics(amplitudeAnalytics);
+        // Flush the final metric + log batch before exit.
+        if (telemetryShutdown) await telemetryShutdown();
       } finally {
         process.exit(exitCode);
       }

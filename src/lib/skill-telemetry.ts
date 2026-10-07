@@ -56,7 +56,16 @@ export const logSkillEvent = async (
   event: 'skill.retrieval.failed' | 'skill.telemetry.delivery_failed',
   fields: Record<string, string | number>,
 ): Promise<void> => {
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+  // Prefer the explicit logs endpoint; else derive from the shared base, but only
+  // when the OTLP SDK is active (OTEL_ENABLED + httpStream) — not stdio/disabled.
+  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const fallback =
+    base &&
+    process.env.OTEL_ENABLED === 'true' &&
+    process.env.TRANSPORT === 'httpStream'
+      ? `${base.replace(/\/+$/, '')}/v1/logs`
+      : undefined;
+  const endpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? fallback;
   if (!endpoint || inFlight >= 16) return;
   inFlight++;
   try {

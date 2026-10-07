@@ -27,6 +27,7 @@ import {
   beginSessionExec,
   endSessionExec,
 } from './session-reaper.js';
+import { recordToolRequest, noteAccountRequest } from './metrics-recorders.js';
 
 /**
  * Minimal log surface tools use. Tools only call the level methods with a
@@ -216,6 +217,9 @@ export function defineTool<P, R>(
             'For HTTP: pass Authorization: Bearer <token> header.',
         );
       }
+      // Attribute this invocation's load to its account (hashed token) so the
+      // abuse/top-talker metrics can surface flooding without exposing the token.
+      noteAccountRequest(token);
       let apiUrl = config.browserlessApiUrl;
 
       setAmplitudeToolContext(s, token, prompt);
@@ -262,7 +266,18 @@ export function defineTool<P, R>(
       const toolAnalytics: ToolAnalytics = {
         fireToolRequest: (t, tool, props) => {
           fired = true;
-          analytics?.fireToolRequest(t, tool, enrich(props));
+          const enriched = enrich(props);
+          // Mirror the once-per-invocation analytics fire into OTLP metrics,
+          // tagging failures with their category for a breakdown of why tools fail.
+          recordToolRequest(
+            tool,
+            enriched.success,
+            enriched.duration_ms,
+            typeof enriched.error_category === 'string'
+              ? enriched.error_category
+              : undefined,
+          );
+          analytics?.fireToolRequest(t, tool, enriched);
         },
         fireSkill: (t, props) => analytics?.fireSkill(t, props),
         fireSkillRetrieval: (t, event, source) =>

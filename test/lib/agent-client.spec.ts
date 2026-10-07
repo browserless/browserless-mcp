@@ -24,7 +24,20 @@ import {
   makeRejectingServer,
   makeStallingServer,
   makeRespondingServer,
+  AgentErrorFrame,
 } from '../helpers/upgrade-server.js';
+import { metrics } from '@opentelemetry/api';
+import {
+  MeterProvider,
+  PeriodicExportingMetricReader,
+  AggregationTemporality,
+  type PushMetricExporter,
+  type ResourceMetrics,
+} from '@opentelemetry/sdk-metrics';
+import {
+  createSyncInstruments,
+  resetSyncInstruments,
+} from '../../src/lib/metrics-recorders.js';
 
 describe('agent-client repetition identity', () => {
   it('bounds history while retaining recently repeated batches', () => {
@@ -94,6 +107,132 @@ describe('agent-client reconnection telemetry', () => {
       await send(session, 'getCookies', {}, undefined, acquired);
       expect(acquired.calledOnceWithExactly(false, 0)).to.equal(true);
       expect(server.hits()).to.equal(2);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('agent-client upstream success telemetry (A3 regression)', () => {
+  // Regression: a JSON-RPC error resolves as {error} (no throw), so success
+  // must be tagged !response.error, not hardcoded true.
+  let provider: MeterProvider;
+  let captured: ResourceMetrics[];
+
+  const setupCapture = () => {
+    resetSyncInstruments();
+    captured = [];
+    const exporter: PushMetricExporter = {
+      export: (rm, cb) => {
+        captured.push(rm);
+        cb({ code: 0 });
+      },
+      forceFlush: () => Promise.resolve(),
+      shutdown: () => Promise.resolve(),
+      selectAggregationTemporality: () => AggregationTemporality.CUMULATIVE,
+    };
+    const reader = new PeriodicExportingMetricReader({
+      exporter,
+      exportIntervalMillis: 2 ** 31 - 1,
+    });
+    provider = new MeterProvider({ readers: [reader] });
+    // setGlobalMeterProvider no-ops if one is already registered by another spec
+    // in this process; clear first so our instruments bind to this provider.
+    metrics.disable();
+    metrics.setGlobalMeterProvider(provider);
+    createSyncInstruments();
+    return reader;
+  };
+
+  const upstreamPoint = (method: string) =>
+    captured
+      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+      .find(
+        (m) => m.descriptor.name === 'browserless.mcp.agent.upstream.duration',
+      )
+      ?.dataPoints.find((d) => d.attributes.method === method);
+
+  afterEach(async () => {
+    await provider?.shutdown();
+    metrics.disable();
+    resetSyncInstruments();
+    sinon.restore();
+  });
+
+  it('tags success=false when the upstream resolves a JSON-RPC {error} payload', async () => {
+    const reader = setupCapture();
+    const server = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({ code: 'NAVIGATION_FAILED', message: 'blocked' }),
+    );
+    try {
+      const session = await getOrCreateSession('a3-error', server.url, 'tok');
+      const response = await send(session, 'goto', { url: 'https://x.test' });
+      // Behavior is preserved: the error payload is returned, not thrown.
+      expect((response as { error?: unknown }).error).to.not.equal(undefined);
+      await reader.forceFlush();
+      const pt = upstreamPoint('goto');
+      expect(pt, 'no upstream sample for goto').to.not.equal(undefined);
+      expect(pt?.attributes.success).to.equal(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('tags success=true when the upstream resolves a normal result', async () => {
+    const reader = setupCapture();
+    const server = await makeRespondingServer(() => ({ ok: true }));
+    try {
+      const session = await getOrCreateSession('a3-ok', server.url, 'tok');
+      await send(session, 'snapshot', {});
+      await reader.forceFlush();
+      const pt = upstreamPoint('snapshot');
+      expect(pt, 'no upstream sample for snapshot').to.not.equal(undefined);
+      expect(pt?.attributes.success).to.equal(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('records session.cleanup.age{agent} on explicit closeSession (the one-shot path)', async () => {
+    const reader = setupCapture();
+    const server = await makeRespondingServer(() => ({}));
+    try {
+      // Pass an explicit echoedSessionId so the create/close keys match (a bare
+      // create otherwise gets a random `s:<uuid>` handle the close can't name).
+      await getOrCreateSession(
+        'life-1',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'echo-1',
+      );
+      // Explicit close (what the one-shot agent teardown calls) must emit a
+      // lifetime sample — not only idle/cap eviction via properClose.
+      closeSession(
+        'life-1',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'echo-1',
+      );
+      await reader.forceFlush();
+      const life = captured
+        .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+        .find(
+          (m) => m.descriptor.name === 'browserless.mcp.session.cleanup.age',
+        );
+      const pt = life?.dataPoints.find((d) => d.attributes.kind === 'agent');
+      expect(pt, 'no agent lifetime recorded on closeSession').to.not.equal(
+        undefined,
+      );
     } finally {
       await server.close();
     }
