@@ -10,9 +10,13 @@ export class ResponseCache {
 
   constructor(ttlMs: number) {
     this.ttlMs = ttlMs;
+  }
 
-    if (ttlMs > 0) {
-      this.sweepTimer = setInterval(() => this.sweep(), ttlMs * 2);
+  // Start the sweep timer lazily, on the first write: a cache that is never
+  // written (the api-client's per-call fallback) then holds no timer to leak.
+  private ensureTimer(): void {
+    if (this.ttlMs > 0 && !this.sweepTimer) {
+      this.sweepTimer = setInterval(() => this.sweep(), this.ttlMs * 2);
       this.sweepTimer.unref();
     }
   }
@@ -41,6 +45,7 @@ export class ResponseCache {
       value,
       expiresAt: Date.now() + ttlMs,
     });
+    this.ensureTimer();
   }
 
   clear(): void {
