@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.37.0](https://github.com/browserless/browserless-mcp/compare/v1.36.0...v1.37.0) (2026-10-08)
+
+
+### Features
+
+* add REST liveURL management tools AUTO-541 ([#391](https://github.com/browserless/browserless-mcp/issues/391)) ([d0dfac4](https://github.com/browserless/browserless-mcp/commit/d0dfac4a3a08f06355b85b9265b7964a2840751e))
+* export OpenTelemetry metrics and logs over OTLP ([#390](https://github.com/browserless/browserless-mcp/issues/390)) ([2950920](https://github.com/browserless/browserless-mcp/commit/2950920ebe76a1ec303410de3cbd407b131387d9))
+
+
+### Bug Fixes
+
+* derive tool failure reasons from recorded status ([#376](https://github.com/browserless/browserless-mcp/issues/376)) ([94c2e95](https://github.com/browserless/browserless-mcp/commit/94c2e95b4c59779b218a6f6a4b9c4b5fc4937a08))
+* preserve OAuth token lifetimes in responses and cache ([#388](https://github.com/browserless/browserless-mcp/issues/388)) ([bb9fe23](https://github.com/browserless/browserless-mcp/commit/bb9fe2306cc49d5ba41814065ccce23ad56b53c0))
+* start the response-cache sweep timer lazily to stop a per-call timer leak ([#393](https://github.com/browserless/browserless-mcp/issues/393)) ([eb0a332](https://github.com/browserless/browserless-mcp/commit/eb0a332efd0ea79917377bf8e483747dae9f3b71))
+
 ## [1.36.0](https://github.com/browserless/browserless-mcp/compare/v1.35.0...v1.36.0) (2026-10-05)
 
 
