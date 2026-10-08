@@ -745,7 +745,42 @@ export interface StripeLinkCheckoutResponse {
   last4?: string;
 }
 
+export interface LiveURLOptions {
+  interactable?: boolean;
+  timeout?: number;
+  quality?: number;
+  type?: 'jpeg' | 'png';
+  resizable?: boolean;
+  showBrowserInterface?: boolean;
+  instructions?: string;
+}
+
+export interface LiveURLCreated {
+  liveURL: string;
+  liveURLId: string;
+}
+
+export interface LiveURLState {
+  status: 'open' | 'expired' | 'closed';
+  reason:
+    | 'timeout'
+    | 'closed'
+    | 'viewerDisconnected'
+    | 'userDone'
+    | 'userFailed'
+    | null;
+  interactable: boolean;
+  viewerCount: number;
+  expiresAt: number;
+}
+
 export interface ApiClient {
+  createLiveURL(
+    browserId: string,
+    options: LiveURLOptions,
+  ): Promise<LiveURLCreated>;
+  getLiveURL(browserId: string, liveURLId: string): Promise<LiveURLState>;
+  closeLiveURL(browserId: string, liveURLId: string): Promise<void>;
   smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
   download(params: DownloadRequest): Promise<GenericApiResult>;
