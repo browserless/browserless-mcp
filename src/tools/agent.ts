@@ -1336,14 +1336,14 @@ export function registerAgentTools(
               const params = { ...cmd.params };
               if (cmd.method === 'reportSkillOutcome')
                 delete params.outcome_source;
-              await send(
+              const response = await send(
                 agentSession,
                 cmd.method,
                 params,
                 undefined,
                 onSession,
               );
-              if (cmd.method === 'reportOutcome') {
+              if (cmd.method === 'reportOutcome' && !response.error) {
                 verdict = {
                   self_reported_success: params.success as boolean,
                   ...(params.reason

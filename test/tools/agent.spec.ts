@@ -3883,6 +3883,43 @@ describe('browserless_agent reportProfileAuthentication', () => {
 describe('browserless_agent reportOutcome', () => {
   afterEach(() => sinon.restore());
 
+  it('does not record an in-session verdict when the report is rejected', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'reportOutcome'
+        ? new AgentErrorFrame({ message: 'Report unavailable' })
+        : { text: 'page result' },
+    );
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    try {
+      const result = await getAgentExecute(
+        srv.url,
+        'stdio',
+        analytics,
+      )(
+        {
+          commands: [
+            { method: 'text' },
+            {
+              method: 'reportOutcome',
+              params: { success: false, reason: 'other' },
+            },
+            { method: 'close' },
+          ],
+        },
+        mockContext,
+      );
+      expect(JSON.stringify(result)).to.include('page result');
+      expect(fire.lastCall.args[2]).not.to.have.any.keys(
+        'self_reported_success',
+        'outcome_reason',
+        'verdict_delivery',
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('rejects malformed top-level verdicts before forwarding', async () => {
     const calls: string[] = [];
     const srv = await makeRespondingServer((method) => {
