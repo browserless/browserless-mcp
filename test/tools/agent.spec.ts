@@ -47,6 +47,7 @@ import {
   storeDownload,
 } from '../../src/lib/download-store.js';
 import {
+  getActiveSessionByHandle,
   ProfileNotFoundError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
@@ -232,7 +233,7 @@ describe('agent secret-capture preflight', () => {
   it('preserves the compliant close reminder exactly', () => {
     expect(closeReminder(true)).to.equal(
       'This kept-alive browser holds a concurrency slot until closed or reaped when idle. ' +
-        'When the task is done or you are giving up, end your last batch with ' +
+        'When the task is done or you are giving up, and you have seen the final results, end your last batch with ' +
         '`{ "method": "reportOutcome", "params": { "success": <bool> } }`, then send ' +
         '`{ "method": "close" }` as its own call — or, if the user may want to keep ' +
         'browsing, ask them before leaving it open.',
@@ -1857,18 +1858,215 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
-  it('reports one-shot closure even when the batch only reports an outcome', async () => {
+  for (const sessionId of [undefined, 's:finished']) {
+    it(`records a late outcome without connecting (handle=${sessionId})`, async () => {
+      const srv = await makeRespondingServer(() => ({ recorded: true }));
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const fetch = sinon
+        .stub(globalThis, 'fetch')
+        .rejects(new Error('No probe expected'));
+      const commands = [
+        {
+          method: 'reportOutcome',
+          params: { success: true, reason: 'completed' },
+        },
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'other' },
+        },
+        { method: 'close' },
+      ];
+      try {
+        const result = await getAgentExecute(
+          srv.url,
+          'stdio',
+          analytics,
+        )(
+          { sessionId, commands, requiredCapabilities: ['reportOutcome'] },
+          mockContext,
+        );
+        expect(result).to.deep.equal({
+          content: [
+            { type: 'text', text: 'Outcome recorded. No browser was opened.' },
+          ],
+        });
+        expect(srv.hits()).to.equal(0);
+        expect(fetch.called).to.equal(false);
+        expect(fire.callCount).to.equal(1);
+        expect(fire.firstCall.args[2]).to.include({
+          agent_session_handle: sessionId ?? null,
+          self_reported_success: false,
+          outcome_reason: 'other',
+          verdict_delivery: 'late',
+          methods: 'reportOutcome,reportOutcome,close',
+          command_count: 3,
+        });
+        expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+          'test-token',
+        );
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('records a lone outcome without opening a browser', async () => {
     const srv = await makeRespondingServer(() => ({ recorded: true }));
     try {
       const result = await getAgentExecute(srv.url)(
         { commands: [{ method: 'reportOutcome', params: { success: true } }] },
         mockContext,
       );
-      const text = JSON.stringify(result);
-      expect(text).to.include('Browser session closed (one-shot)');
-      expect(text).to.include('keepSessionAlive: true');
-      expect(text).to.include('FIRST call');
-      expect(text).not.to.include('sessionId:');
+      expect(result).to.deep.equal({
+        content: [
+          { type: 'text', text: 'Outcome recorded. No browser was opened.' },
+        ],
+      });
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('delivers only the skill report after recording a late task outcome once', async () => {
+    const methods: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      methods.push(method);
+      return { recorded: true };
+    });
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    try {
+      await getAgentExecute(
+        srv.url,
+        'stdio',
+        analytics,
+      )(
+        {
+          sessionId: 's:finished-skill',
+          commands: [
+            {
+              method: 'reportSkillOutcome',
+              params: { domain: 'example.com', task: 'read', success: true },
+            },
+            {
+              method: 'reportOutcome',
+              params: { success: false, reason: 'timeout' },
+            },
+          ],
+        },
+        mockContext,
+      );
+      expect(srv.hits()).to.equal(1);
+      expect(methods).to.deep.equal(['reportSkillOutcome']);
+      expect(fire.callCount).to.equal(2);
+      expect(fire.firstCall.args[2]).to.include({
+        agent_session_handle: 's:finished-skill',
+        verdict_delivery: 'late',
+        self_reported_success: false,
+        outcome_reason: 'timeout',
+        methods: 'reportSkillOutcome,reportOutcome',
+        command_count: 2,
+      });
+      expect(fire.lastCall.args[2]).not.to.have.any.keys(
+        'verdict_delivery',
+        'self_reported_success',
+        'outcome_reason',
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const state of ['live', 'dropped', 'different-token']) {
+    it(`routes the outcome for a ${state} handle without a new connection`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return method === 'text' ? { text: 'done' } : { downloads: [] };
+      });
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      try {
+        const execute = getAgentExecute(srv.url, 'stdio', analytics);
+        await execute({ method: 'text', keepSessionAlive: true }, mockContext);
+        const handle = fire.lastCall.args[2].agent_session_handle as string;
+        expect(handle).to.match(/^s:/);
+        if (state === 'dropped') {
+          const session = getActiveSessionByHandle(
+            handle,
+            srv.url,
+            'test-token',
+          );
+          const closed = new Promise<void>((resolve) =>
+            session.ws.once('close', () => resolve()),
+          );
+          session.ws.terminate();
+          await closed;
+        }
+        methods.length = 0;
+        await execute(
+          {
+            sessionId: handle,
+            commands: [
+              {
+                method: 'reportOutcome',
+                params: { success: false, reason: 'other' },
+              },
+            ],
+          },
+          state === 'different-token'
+            ? { ...mockContext, session: { token: 'other-token' } }
+            : mockContext,
+        );
+        expect(srv.hits()).to.equal(1);
+        expect(methods).to.deep.equal(
+          state === 'live' ? ['reportOutcome'] : [],
+        );
+        expect(fire.lastCall.args[2]).to.include({
+          agent_session_handle: handle,
+          self_reported_success: false,
+          outcome_reason: 'other',
+          verdict_delivery: state === 'live' ? 'in_session' : 'late',
+        });
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('does not request a second verdict after an in-batch outcome', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'text' ? { text: 'done' } : { downloads: [] },
+    );
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    try {
+      const result = await getAgentExecute(
+        srv.url,
+        'stdio',
+        analytics,
+      )(
+        {
+          commands: [
+            { method: 'text' },
+            { method: 'reportOutcome', params: { success: true } },
+          ],
+        },
+        mockContext,
+      );
+      expect(JSON.stringify(result)).to.include(
+        'Browser session closed (one-shot)',
+      );
+      expect(JSON.stringify(result)).not.to.include(
+        'report whether the task worked',
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        self_reported_success: true,
+        verdict_delivery: 'in_session',
+      });
+      expect(srv.hits()).to.equal(1);
     } finally {
       await srv.close();
     }
@@ -1977,6 +2175,10 @@ describe('browserless_agent one-shot sessions', () => {
           expect(srv.hits()).to.equal(1);
         } else {
           expect(serialized).to.include('Browser session closed (one-shot)');
+          expect(serialized).to.include('report whether the task worked');
+          expect(serialized).to.include(
+            fire.lastCall.args[2].agent_session_handle,
+          );
           expect(serialized).to.include('keepSessionAlive: true');
           expect(serialized).to.include('FIRST call');
           expect(serialized).not.to.include('sessionId:');
@@ -3715,8 +3917,12 @@ describe('browserless_agent reportOutcome', () => {
       return { recorded: true };
     });
     try {
-      await getAgentExecute(srv.url)(
+      const execute = getAgentExecute(srv.url);
+      const opened = await execute({ keepSessionAlive: true }, mockContext);
+      const sessionId = /sessionId: (\S+) /.exec(JSON.stringify(opened))![1];
+      await execute(
         {
+          sessionId,
           method: 'reportOutcome',
           params: { success: false, reason: 'captcha' },
         },
