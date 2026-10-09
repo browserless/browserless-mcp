@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.1](https://github.com/browserless/browserless-mcp/compare/v1.37.0...v1.37.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* download session replays through signed links ([#370](https://github.com/browserless/browserless-mcp/issues/370)) ([81f8cb6](https://github.com/browserless/browserless-mcp/commit/81f8cb61f923db505ec7688d78dc53512012fba4))
+
 ## [1.37.0](https://github.com/browserless/browserless-mcp/compare/v1.36.0...v1.37.0) (2026-10-08)
 
 
