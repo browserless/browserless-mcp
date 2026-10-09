@@ -5,7 +5,6 @@ import { delimiter, resolve } from 'node:path';
 
 export const DEFAULT_API_URL = 'https://production-sfo.browserless.io';
 export const DEFAULT_API_SERVER_URL = 'https://api.browserless.io';
-export const DEFAULT_REPLAY_CDN_URL = 'https://d3uycvholi7jx8.cloudfront.net/';
 
 // Baseline allow-list of redirect URIs for MCP clients that legitimately DCR
 // against the hosted mcp.browserless.io deployment. Extend at runtime via
@@ -69,8 +68,6 @@ export function getConfig(): McpConfig & { uploadDirs: string[] } {
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
     allowedApiUrlHosts: parseCsv(process.env.MCP_ALLOWED_API_URL_HOSTS),
     apiServerUrl: process.env.BROWSERLESS_API_SERVER ?? DEFAULT_API_SERVER_URL,
-    replayCdnUrl:
-      process.env.BROWSERLESS_REPLAY_CDN_URL ?? DEFAULT_REPLAY_CDN_URL,
     transport: (process.env.TRANSPORT as 'stdio' | 'httpStream') ?? 'stdio',
     uploadDirs: [
       downloadsDir(),
