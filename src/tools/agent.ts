@@ -18,6 +18,7 @@ import {
 } from '../lib/download-store.js';
 import {
   buildAgentWsUrl,
+  getActiveSessionByHandle,
   getOrCreateSession,
   send,
   closeSession,
@@ -620,7 +621,7 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
 
 export const closeReminder = (compliant: boolean): string =>
   `This kept-alive browser holds a concurrency slot until closed or reaped when idle. ` +
-  `When the task is done or you are giving up, end your last batch with ` +
+  `When the task is done or you are giving up, and you have seen the final results, end your last batch with ` +
   (compliant
     ? ''
     : '`reportSkillOutcome` (only if you loaded a site recipe; its footer has the exact call), then ') +
@@ -628,9 +629,18 @@ export const closeReminder = (compliant: boolean): string =>
   `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
 
-const ONE_SHOT_CLOSED_NOTICE =
-  'Browser session closed (one-shot). If you still needed this browser, ' +
+const oneShotClosedNotice = (handle: string, reported: boolean): string =>
+  'Browser session closed (one-shot). ' +
+  (reported
+    ? ''
+    : `Once you've checked these results, report whether the task worked: call browserless_agent with \`{ "sessionId": "${handle}", "commands": [{ "method": "reportOutcome", "params": { "success": <bool> } }] }\`. This opens no browser; use this id only for that report. `) +
+  'If you still needed this browser, ' +
   'set `keepSessionAlive: true` on your FIRST call next time.';
+
+const isReportOnly = (commands: Array<{ method: string }>): boolean =>
+  commands.every((c) =>
+    ['reportOutcome', 'reportSkillOutcome', 'close'].includes(c.method),
+  ) && commands.some((c) => c.method === 'reportOutcome');
 
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
@@ -974,6 +984,14 @@ export function registerAgentTools(
       let sessionAgeMs = 0;
       let repeatCount = 0;
       let repeatWarning = '';
+      let agentSessionHandle: string | null = echoedSessionId ?? null;
+      let verdict:
+        | {
+            self_reported_success: boolean;
+            outcome_reason?: string;
+            verdict_delivery: 'late' | 'in_session';
+          }
+        | undefined;
       const onSession = (reused: boolean, ageMs: number) => {
         sessionReused = reused;
         sessionAgeMs = ageMs;
@@ -1001,6 +1019,8 @@ export function registerAgentTools(
           session_reused: sessionReused,
           session_age_ms: sessionAgeMs,
           keep_session_alive: keepAlive,
+          agent_session_handle: agentSessionHandle,
+          ...verdict,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           repeat_count: repeatCount,
@@ -1060,6 +1080,44 @@ export function registerAgentTools(
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
+      }
+
+      if (isReportOnly(commands) && !attachSessionId && !createProfile) {
+        let live = false;
+        if (echoedSessionId) {
+          try {
+            getActiveSessionByHandle(echoedSessionId, apiUrl, token, userId);
+            live = true;
+          } catch {
+            // A missing or disconnected session must not be reopened for a verdict.
+          }
+        }
+        if (!live) {
+          const report = commands
+            .filter((c) => c.method === 'reportOutcome')
+            .at(-1)!;
+          verdict = {
+            self_reported_success: report.params.success as boolean,
+            ...(report.params.reason
+              ? { outcome_reason: report.params.reason as string }
+              : {}),
+            verdict_delivery: 'late',
+          };
+          const remaining = commands.filter(
+            (c) => c.method !== 'reportOutcome',
+          );
+          sendAnalytics(true);
+          if (remaining.every((c) => c.method === 'close')) {
+            return [
+              {
+                type: 'text' as const,
+                text: 'Outcome recorded. No browser was opened.',
+              },
+            ];
+          }
+          verdict = undefined;
+          commands = remaining;
+        }
       }
 
       try {
@@ -1133,6 +1191,7 @@ export function registerAgentTools(
           sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
+        agentSessionHandle = opened.handle;
         sendAnalytics(true);
         const text = createProfile
           ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
@@ -1200,6 +1259,7 @@ export function registerAgentTools(
           return runCommands(true, retryPersona);
         }
         lastSession = agentSession;
+        agentSessionHandle = agentSession.handle;
         const repetition = detectRepetition(agentSession.repeatState, commands);
         repeatCount = repetition.count;
         repeatWarning =
@@ -1276,13 +1336,22 @@ export function registerAgentTools(
               const params = { ...cmd.params };
               if (cmd.method === 'reportSkillOutcome')
                 delete params.outcome_source;
-              await send(
+              const response = await send(
                 agentSession,
                 cmd.method,
                 params,
                 undefined,
                 onSession,
               );
+              if (cmd.method === 'reportOutcome' && !response.error) {
+                verdict = {
+                  self_reported_success: params.success as boolean,
+                  ...(params.reason
+                    ? { outcome_reason: params.reason as string }
+                    : {}),
+                  verdict_delivery: 'in_session',
+                };
+              }
             } catch {
               // noop
             }
@@ -1541,7 +1610,10 @@ export function registerAgentTools(
               text: closedDuringBatch
                 ? 'Browser session closed.'
                 : !keepAlive && !createProfile && !attachSessionId
-                  ? ONE_SHOT_CLOSED_NOTICE
+                  ? oneShotClosedNotice(
+                      agentSession.handle,
+                      commands.some((c) => c.method === 'reportOutcome'),
+                    )
                   : 'Done.',
             },
           ];
@@ -1684,7 +1756,10 @@ export function registerAgentTools(
             ? ''
             : keepAlive || downloadsPending || createProfile || attachSessionId
               ? sessionLine(agentSession, compliant)
-              : ONE_SHOT_CLOSED_NOTICE,
+              : oneShotClosedNotice(
+                  agentSession.handle,
+                  commands.some((c) => c.method === 'reportOutcome'),
+                ),
         ]
           .filter(Boolean)
           .join('\n\n');

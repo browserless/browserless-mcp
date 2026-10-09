@@ -58,10 +58,12 @@ describe('outcome reporting guidance', () => {
         'login_required',
         'timeout',
         'other',
-        'then send `close`',
+        "**Report the outcome after you've seen the results.**",
+        'which opens no browser',
       ]) {
         expect(ending).to.include(text);
       }
+      expect(ending).not.to.include('**Report the outcome, then close.**');
       expect(ending).not.to.include('completed`');
     });
   }
@@ -71,7 +73,7 @@ describe('outcome reporting guidance', () => {
     )[1].split('\n## ')[0];
     expect(ending).to.include('reportSkillOutcome');
     expect(ending.indexOf('reportSkillOutcome')).to.be.lessThan(
-      ending.indexOf('**Report the outcome, then close.**'),
+      ending.indexOf("**Report the outcome after you've seen the results.**"),
     );
     expect(ending).to.include(
       'false if a step in this recipe failed as written',
