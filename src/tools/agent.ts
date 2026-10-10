@@ -835,9 +835,10 @@ export function registerAgentTools(
       // import accepts it; re-validate a provided batch against the full
       // per-command contract here (the method/key guards above own their
       // specific messages). Legacy single-command calls stay loose except for
-      // outcome reports and credential writes.
+      // outcome reports, credential writes, and live streams.
       if (
         params.commands?.length ||
+        params.method === 'liveURL' ||
         params.method === 'reportOutcome' ||
         params.method === 'reportSkillOutcome' ||
         params.method === 'reportProfileAuthentication' ||

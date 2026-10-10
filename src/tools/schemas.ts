@@ -451,6 +451,19 @@ const LiveURLCommandSchema = z.object({
   method: z.literal('liveURL'),
   params: z
     .object({
+      targetId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'Tab to stream, from getTabs; defaults to the active tab. Streaming another tab does not switch to it',
+        ),
+      mode: z
+        .enum(['follow', 'tab'])
+        .optional()
+        .describe(
+          "'tab' stays on one tab (default when targetId is set); 'follow' jumps to new tabs",
+        ),
       timeout: z
         .number()
         .optional()

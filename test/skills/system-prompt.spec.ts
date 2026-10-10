@@ -6,6 +6,14 @@ import {
   COMPLIANT_AGENT_SYSTEM_PROMPT,
 } from '../../src/skills/system-prompt.js';
 
+it('documents liveURL tab selection in both prompt variants', () => {
+  const bullet =
+    '- **liveURL** { targetId?, mode? } — streams the active tab; pass targetId from getTabs to stream another without switching';
+  for (const prompt of [AGENT_SYSTEM_PROMPT, COMPLIANT_AGENT_SYSTEM_PROMPT]) {
+    expect(prompt).to.include(`${bullet}\n- See schema for:`);
+  }
+});
+
 it('guides saved-login reporting only in the full Auth section', () => {
   const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
   for (const text of [
