@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.38.0](https://github.com/browserless/browserless-mcp/compare/v1.37.1...v1.38.0) (2026-10-12)
+
+
+### Features
+
+* get PDF output from smartscrape AUTO-579 ([#398](https://github.com/browserless/browserless-mcp/issues/398)) ([a22118a](https://github.com/browserless/browserless-mcp/commit/a22118a72a306edae0f6039f5c2deb0fec04938b))
+
+
+### Bug Fixes
+
+* enhance performance measure tool to decrease context costs AUTO-570 ([#401](https://github.com/browserless/browserless-mcp/issues/401)) ([42283ac](https://github.com/browserless/browserless-mcp/commit/42283ac1ff69eb0f7dafb455830e2c7f48485fe4))
+* record agent outcomes after one-shot sessions close ([#395](https://github.com/browserless/browserless-mcp/issues/395)) ([239679c](https://github.com/browserless/browserless-mcp/commit/239679c40035e8454c647100f5f42ef2a53feda0))
+* stop long-lived SSE streams from retaining a promise per event ([#400](https://github.com/browserless/browserless-mcp/issues/400)) ([ebc2934](https://github.com/browserless/browserless-mcp/commit/ebc29345f4a4d6ff9bbef5162ad0dc550fbd7eae))
+
 ## [1.37.1](https://github.com/browserless/browserless-mcp/compare/v1.37.0...v1.37.1) (2026-10-09)
 
 
