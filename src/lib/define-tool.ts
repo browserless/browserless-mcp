@@ -122,7 +122,11 @@ export interface ToolDefinition<P, R> {
   /** Main tool logic. Returns the value `format` will render. */
   run: (ctx: ToolRunContext<P>) => Promise<R>;
   /** Render the result into MCP content blocks. May throw UserError. */
-  format: (result: R, params: P) => Content[];
+  format: (
+    result: R,
+    params: P,
+    context: Pick<ToolRunContext<P>, 'token' | 'sessionId'>,
+  ) => Content[] | Promise<Content[]>;
   /**
    * Extra event properties. Read between `run` and `format`, so a `format`
    * that throws on `!response.ok` still reports `ok`/`status_code`.
@@ -346,7 +350,7 @@ export function defineTool<P, R>(
 
         await reportProgress({ progress: 100, total: 100 });
         resultProps = def.analyticsProps?.(params, result) ?? {};
-        const content = def.format(result, params);
+        const content = await def.format(result, params, { token, sessionId });
 
         if (!fired) {
           emit(resultProps);

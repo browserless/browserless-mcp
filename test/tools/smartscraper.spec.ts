@@ -2,6 +2,13 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { readFile } from 'node:fs/promises';
+import {
+  clearSession,
+  downloadOwner,
+  getDownload,
+} from '../../src/lib/download-store.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import {
   registerSmartScraperTool,
   SmartScraperParamsSchema,
@@ -427,37 +434,92 @@ describe('browserless_smartscraper tool', () => {
     expect(img.mimeType).to.equal('image/png');
   });
 
-  it('includes PDF as text content block', async () => {
-    fetchStub.resolves(
-      new Response(
-        JSON.stringify(makeSuccessResponse({ pdf: 'JVBERi0xLjQK' })),
-        {
+  for (const transport of ['stdio', 'httpStream'] as const) {
+    it(`returns downloadable PDF bytes outside context (${transport})`, async () => {
+      const pdf = Buffer.from('%PDF-1.4\n' + 'PDF content\n'.repeat(10000));
+      const base64 = pdf.toString('base64');
+      fetchStub.resolves(
+        new Response(JSON.stringify(makeSuccessResponse({ pdf: base64 })), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
-        },
-      ),
-    );
+        }),
+      );
 
-    const server = new FastMCP({ name: 'test', version: '0.1.0' });
-    const execute = getToolExecute(server);
-
-    const result = await execute(
-      {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const config = {
+        ...mockConfig,
+        transport,
+        cacheTtlMs: 10000,
+        mcpBaseUrl: 'https://mcp.example.com',
+      };
+      const spy = sinon.spy(server, 'addTool');
+      registerSmartScraperTool(server, config);
+      registerDownloadRoute(server, config);
+      const execute = spy.firstCall.args[0].execute;
+      const sessionId = `pdf-test-${transport}`;
+      const context = {
+        ...mockContext,
+        sessionId,
+        session: { token: 'session-token' },
+      };
+      const params = {
         url: 'https://example.com',
         formats: ['markdown', 'pdf'],
-      },
-      mockContext,
-    );
-
-    const content = (result as { content: Content[] }).content;
-    const pdfBlock = content.find(
-      (c: Content) =>
-        c.type === 'text' &&
-        (c as { text: string }).text.includes('PDF Document'),
-    );
-    expect(pdfBlock).to.exist;
-    expect((pdfBlock as { text: string }).text).to.include('JVBERi0xLjQK');
-  });
+      };
+      try {
+        // A cache hit must create a fresh handle, even after the first was consumed.
+        const handles: string[] = [];
+        for (let i = 0; i < 2; i++) {
+          const result = await execute(params, context);
+          const content = (result as { content: Content[] }).content;
+          const text = content
+            .filter((c) => c.type === 'text')
+            .map((c) => c.text)
+            .join('\n');
+          expect(text).to.include('# Hello World');
+          expect(text).to.include('application/pdf');
+          expect(text).not.to.include(base64);
+          expect(text.length).to.be.lessThan(2000);
+          if (transport === 'stdio') {
+            const path = text.match(/- (.+) \(application\/pdf/)![1];
+            handles.push(path);
+            expect(await readFile(path)).to.deep.equal(pdf);
+          } else {
+            const id = text.match(
+              /\/download\/([a-f0-9]+)\?token=session-token/,
+            )![1];
+            handles.push(id);
+            const app = server.getApp();
+            expect(
+              (await app.request(`/download/${id}?token=test-token`)).status,
+            ).to.equal(404);
+            const response = await app.request(
+              `/download/${id}?token=session-token`,
+            );
+            expect(response.status).to.equal(200);
+            expect(response.headers.get('content-type')).to.equal(
+              'application/pdf',
+            );
+            expect(Buffer.from(await response.arrayBuffer())).to.deep.equal(
+              pdf,
+            );
+            expect(
+              (await app.request(`/download/${id}?token=session-token`)).status,
+            ).to.equal(404);
+          }
+        }
+        expect(handles[0]).not.to.equal(handles[1]);
+        expect(fetchStub.calledOnce).to.be.true;
+        clearSession(sessionId);
+        if (transport === 'stdio') {
+          expect(getDownload(handles[1], downloadOwner('session-token'))).to.be
+            .undefined;
+        }
+      } finally {
+        clearSession(sessionId);
+      }
+    });
+  }
 
   it('includes links as text content block', async () => {
     const mockLinks = [
