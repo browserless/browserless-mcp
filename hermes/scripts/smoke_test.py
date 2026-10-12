@@ -105,7 +105,7 @@ finally:
             from urllib.parse import urlencode
 
             async def probe():
-                time.sleep(1.5)
+                await asyncio.sleep(1.5)
                 try:
                     ws = await websockets.connect(ep + "?" + urlencode({"token": mux.upstream.token}), open_timeout=20)
                     await ws.close()

@@ -73,6 +73,8 @@ class Mux:
         self._reset_routing()
         self._server = self._loop = self._thread = None
         self._ready_evt = threading.Event()
+        self._start_lock = threading.Lock()
+        self._abandoned = False
         self._start_error = None
 
     @property
@@ -163,14 +165,23 @@ class Mux:
                 self._ready_evt.set()
                 self._loop.close()
                 return
-            self._ready_evt.set()
-            self._loop.run_forever()
+            with self._start_lock:
+                abandoned = self._abandoned
+                self._ready_evt.set()
+            if abandoned:  # caller timed out and never registered this mux: close the browser it just launched
+                self._loop.run_until_complete(self.stop())
+            else:
+                self._loop.run_forever()
             self._loop.close()
 
         self._thread = threading.Thread(target=run, name="browserless-cdp-mux", daemon=True)
         self._thread.start()
         if not self._ready_evt.wait(timeout):
-            raise RuntimeError("Browserless CDP mux did not start in time")
+            with self._start_lock:
+                self._abandoned = not self._ready_evt.is_set()
+            if self._abandoned:
+                self._stopping = True
+                raise RuntimeError("Browserless CDP mux did not start in time")
         if self._start_error:
             raise self._start_error
         return self.url
