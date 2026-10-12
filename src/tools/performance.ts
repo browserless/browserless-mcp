@@ -5,6 +5,8 @@ import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { isCompliant } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { downloadOwner, storeDownload } from '../lib/download-store.js';
+import { describeReadyDownload } from './agent.js';
 import type {
   McpConfig,
   PerformanceParams,
@@ -88,6 +90,8 @@ export function registerPerformanceTool(
         'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
         'Optionally filter by category, emulate a mobile or desktop device, ' +
         'supply a custom Lighthouse config, or supply performance budgets. ' +
+        'Returns category scores inline and saves the full JSON report outside the conversation. ' +
+        'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
         'Note: audits can take 30s–120s depending on the site.',
       parameters: compliant
         ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
@@ -132,7 +136,7 @@ export function registerPerformanceTool(
         custom_config: !!params.config,
         profile_used: !!params.profile,
       }),
-      format: (response, params) => {
+      format: async (response, params, { token, sessionId }) => {
         const blocks: Content[] = [];
         const data = response.data ?? {};
         const categories = (data.categories ?? {}) as Record<
@@ -155,9 +159,27 @@ export function registerPerformanceTool(
             text: `## Lighthouse Scores\n${summary}`,
           });
         }
+        const record = await storeDownload(
+          'lighthouse-report.json',
+          'application/json',
+          Buffer.from(JSON.stringify(data, null, 2)),
+          downloadOwner(token),
+          sessionId,
+        );
         blocks.push({
           type: 'text' as const,
-          text: JSON.stringify(data, null, 2),
+          text:
+            'Full Lighthouse report saved outside the conversation:\n' +
+            describeReadyDownload(record, {
+              transport: config.transport,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            }) +
+            '\nFiles expire after 15 minutes or when the MCP session ends; save a copy if needed. ' +
+            'For HTTP, download to disk first using the save command above. ' +
+            'Inspect only the fields needed for your task with jq, for example:\n' +
+            'jq \'.audits["first-contentful-paint"] | {score, displayValue, numericValue}\' <saved-report-path>\n' +
+            'Do not read or paste the entire JSON report into the conversation.',
         });
         const meta = [
           '---',
