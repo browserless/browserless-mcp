@@ -7,7 +7,6 @@ pointing at the Hermes home where the plugin is installed:
 --drop-upstream kills the mux's Browserless socket mid-task and checks that the mux reconnects
 and Hermes keeps working on the same page.
 """
-import base64
 import json
 import os
 import subprocess
@@ -20,9 +19,9 @@ DROP = "--drop-upstream" in sys.argv
 # --wait-before-drop N: idle N seconds first, so the drop lands after the initial keepalive window
 WAIT = int(sys.argv[sys.argv.index("--wait-before-drop") + 1]) if "--wait-before-drop" in sys.argv else 0
 TASK = "bl_smoke"
-HTML = ('<!doctype html><title>Browserless smoke</title><button id="b" onclick="alert(`hi`);'
+HTML = ('<button id="b" onclick="alert(`hi`);'
         'document.getElementById(`r`).textContent=`after-alert`">Say hi</button><p id="r">before</p>')
-PAGE = "https://httpbin.org/base64/" + base64.urlsafe_b64encode(HTML.encode()).decode()
+PAGE = "https://example.com/"  # Hermes blocks data: URLs, so the test button is injected into a stable public page
 
 from tools import browser_tool as bt  # noqa: E402
 from tools import browser_tool_session as bts  # noqa: E402
@@ -46,6 +45,7 @@ def https_conns():
 try:
     r = json.loads(bt.browser_navigate(PAGE, task_id=TASK))
     check("navigate", r.get("success"), r.get("error", ""))
+    bt.browser_console(expression=f"document.body.innerHTML = {json.dumps(HTML)}", task_id=TASK)
     sess = bt._active_sessions.get(TASK, {})
     check("served by the browserless plugin (no silent local fallback)",
           sess.get("features", {}).get("browserless") and not sess.get("fallback_from_cloud"),
