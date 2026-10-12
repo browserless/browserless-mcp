@@ -1612,7 +1612,7 @@ export function registerAgentTools(
                 : !keepAlive && !createProfile && !attachSessionId
                   ? oneShotClosedNotice(
                       agentSession.handle,
-                      commands.some((c) => c.method === 'reportOutcome'),
+                      verdict !== undefined,
                     )
                   : 'Done.',
             },
@@ -1756,10 +1756,7 @@ export function registerAgentTools(
             ? ''
             : keepAlive || downloadsPending || createProfile || attachSessionId
               ? sessionLine(agentSession, compliant)
-              : oneShotClosedNotice(
-                  agentSession.handle,
-                  commands.some((c) => c.method === 'reportOutcome'),
-                ),
+              : oneShotClosedNotice(agentSession.handle, verdict !== undefined),
         ]
           .filter(Boolean)
           .join('\n\n');
