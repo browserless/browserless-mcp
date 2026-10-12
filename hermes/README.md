@@ -70,7 +70,7 @@ Set these in `~/.hermes/.env` or the environment.
 For each Hermes browser task the plugin starts one Browserless browser and a small local CDP multiplexer
 (`ws://127.0.0.1:<random port>/devtools/browser/<secret>`). Hermes connects its clients (the agent-browser
 daemon and its CDP supervisor) to that local address, and they all share a single connection to Browserless.
-Your token never leaves the Hermes process.
+Your token is sent only to Browserless; Hermes' own clients never see it.
 
 The plugin keeps the browser alive across brief network drops (it reconnects to the same browser and page),
 starts a fresh browser when your plan's session limit is reached, and closes the browser when the task ends,

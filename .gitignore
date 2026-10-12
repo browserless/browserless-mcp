@@ -4,4 +4,3 @@ coverage/
 .env
 *.tgz
 .DS_Store
-__pycache__/
