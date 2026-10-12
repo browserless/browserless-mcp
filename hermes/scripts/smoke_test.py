@@ -9,6 +9,7 @@ and Hermes keeps working on the same page.
 """
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -37,15 +38,18 @@ def check(name, ok, detail=""):
     print(f"{'PASS' if ok else 'FAIL'}  {name}{('  -- ' + detail) if detail else ''}", flush=True)
 
 
-def upstream_port():
+def upstream_addr():
+    """(Browserless host IPs, port) from BROWSERLESS_BASE_URL, defaulting the port from the scheme."""
     base = urlsplit(os.environ.get("BROWSERLESS_BASE_URL") or "https://production-sfo.browserless.io")
-    return base.port or (443 if base.scheme == "https" else 80)
+    port = base.port or (443 if base.scheme == "https" else 80)
+    return {ai[4][0] for ai in socket.getaddrinfo(base.hostname, port, proto=socket.IPPROTO_TCP)}, port
 
 
-def upstream_conns(port):
+def upstream_conns(ips, port):
     out = subprocess.run(["lsof", "-nP", "-a", "-p", str(os.getpid()), "-iTCP", "-sTCP:ESTABLISHED"],
                          capture_output=True, text=True).stdout
-    return len([l for l in out.splitlines() if "->" in l and l.split("->")[1].split()[0].endswith(f":{port}")])
+    remotes = (line.split("->")[1].split()[0].rsplit(":", 1) for line in out.splitlines() if "->" in line)
+    return sum(1 for host, p in remotes if host.strip("[]") in ips and p == str(port))
 
 
 try:
@@ -98,8 +102,9 @@ try:
         expected = 2 if DROP else 1
         check(f"mux used {expected} upstream connection(s) total", mux.upstream_connects == expected,
               f"upstream_connects={mux.upstream_connects}, downstream clients={mux.stats.get('clients_total')}")
-        port = upstream_port()
-        n = upstream_conns(port)
+        ips, port = upstream_addr()
+        ips.add(mux.up.remote_address[0])  # the reconnect endpoint may resolve to a different address
+        n = upstream_conns(ips, port)
         check(f"exactly one live connection to Browserless port {port} from this process (the mux upstream)",
               n == 1, f"{n}")
 finally:
