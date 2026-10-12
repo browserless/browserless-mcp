@@ -75,7 +75,8 @@ describe('site skills', function () {
     expect(body).to.include(
       '{ "method": "reportSkillOutcome", "params": { "domain": "shop.example", "task": "search", "success": <bool> } }',
     );
-    expect(body).to.include('before reportOutcome');
+    expect(body).to.include('while the browser is still open (before close)');
+    expect(body).not.to.include('before reportOutcome');
     expect(body).to.include(
       'success: false if a step in this recipe failed as written',
     );

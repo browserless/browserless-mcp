@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import http from 'node:http';
 import {
   buildAgentWsUrl,
   closeSession,
@@ -91,6 +92,46 @@ describe('agent-client repetition identity', () => {
 
 describe('agent-client reconnection telemetry', () => {
   afterEach(() => sinon.restore());
+
+  for (const source of [undefined, 'test-client']) {
+    it(`forwards the session handle on initial connection and reconnect (source=${source})`, async () => {
+      const upgrades = sinon.spy(http.Server.prototype, 'emit');
+      const server = await makeRespondingServer(() => ({}));
+      try {
+        const session = await getOrCreateSession(
+          'session-header',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          source,
+        );
+        const closed = new Promise<void>((resolve) =>
+          session.ws.once('close', () => resolve()),
+        );
+        session.ws.terminate();
+        await closed;
+        await send(session, 'getCookies');
+
+        const headers = upgrades
+          .getCalls()
+          .filter((call) => call.args[0] === 'upgrade')
+          .map((call) => (call.args[1] as http.IncomingMessage).headers);
+        expect(headers).to.have.length(2);
+        for (const upgrade of headers) {
+          expect(upgrade['x-browserless-agent-session']).to.equal(
+            session.handle,
+          );
+          expect(upgrade['x-browserless-mcp-source']).to.equal(source);
+        }
+      } finally {
+        await server.close();
+      }
+    });
+  }
 
   it('reports a fresh connection when send reconnects an acquired session', async () => {
     const clock = sinon.useFakeTimers({ now: 1000, toFake: ['Date'] });
