@@ -2,7 +2,8 @@
 
 ``create_session`` launches a Browserless browser and starts a local CDP multiplexer in front of it
 (background thread). Hermes gets the mux URL, so every Hermes CDP client (agent-browser daemon, CDP
-supervisor, ...) shares ONE upstream Browserless connection and the API token never leaves this process.
+supervisor, ...) shares ONE upstream Browserless connection. The API token is sent only to the configured
+BROWSERLESS_BASE_URL and the connection and cleanup URLs it returns; Hermes clients never see it.
 
 Config (env or $HERMES_HOME/.env):
   BROWSERLESS_TOKEN                required
