@@ -1938,13 +1938,14 @@ describe('browserless_agent one-shot sessions', () => {
     const analytics = new AnalyticsHelper(false);
     const fire = sinon.stub(analytics, 'fireToolRequest');
     try {
-      await getAgentExecute(
+      const result = await getAgentExecute(
         srv.url,
         'stdio',
         analytics,
       )(
         {
           sessionId: 's:finished-skill',
+          keepSessionAlive: false,
           commands: [
             {
               method: 'reportSkillOutcome',
@@ -1957,6 +1958,12 @@ describe('browserless_agent one-shot sessions', () => {
           ],
         },
         mockContext,
+      );
+      expect(JSON.stringify(result)).to.include(
+        'Browser session closed (one-shot)',
+      );
+      expect(JSON.stringify(result)).not.to.include(
+        'report whether the task worked',
       );
       expect(srv.hits()).to.equal(1);
       expect(methods).to.deep.equal(['reportSkillOutcome']);

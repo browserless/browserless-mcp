@@ -985,6 +985,7 @@ export function registerAgentTools(
       let repeatCount = 0;
       let repeatWarning = '';
       let agentSessionHandle: string | null = echoedSessionId ?? null;
+      let lateVerdictRecorded = false;
       let verdict:
         | {
             self_reported_success: boolean;
@@ -1107,6 +1108,7 @@ export function registerAgentTools(
             (c) => c.method !== 'reportOutcome',
           );
           sendAnalytics(true);
+          lateVerdictRecorded = true;
           if (remaining.every((c) => c.method === 'close')) {
             return [
               {
@@ -1612,7 +1614,7 @@ export function registerAgentTools(
                 : !keepAlive && !createProfile && !attachSessionId
                   ? oneShotClosedNotice(
                       agentSession.handle,
-                      verdict !== undefined,
+                      lateVerdictRecorded || verdict !== undefined,
                     )
                   : 'Done.',
             },
@@ -1756,7 +1758,10 @@ export function registerAgentTools(
             ? ''
             : keepAlive || downloadsPending || createProfile || attachSessionId
               ? sessionLine(agentSession, compliant)
-              : oneShotClosedNotice(agentSession.handle, verdict !== undefined),
+              : oneShotClosedNotice(
+                  agentSession.handle,
+                  lateVerdictRecorded || verdict !== undefined,
+                ),
         ]
           .filter(Boolean)
           .join('\n\n');
