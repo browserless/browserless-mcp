@@ -56,6 +56,8 @@ import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
   hydrateRemoteSkills,
+  loadSiteSkill,
+  __setRemoteSkillTtlForTesting,
   __resetRemoteSkillsForTesting,
 } from '../../src/skills/sites.js';
 import {
@@ -64,7 +66,12 @@ import {
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
 
-const seedSiteSkill = (host: string, task: string, body: string) =>
+const seedSiteSkill = (
+  host: string,
+  task: string,
+  body: string,
+  version?: number,
+) =>
   hydrateRemoteSkills(
     `https://${host}`,
     'https://api.example.com',
@@ -73,7 +80,7 @@ const seedSiteSkill = (host: string, task: string, body: string) =>
     (async () =>
       ({
         ok: true,
-        json: async () => [{ task, title: task, skill_md: body }],
+        json: async () => [{ task, title: task, skill_md: body, version }],
       }) as unknown as Response) as typeof fetch,
   );
 
@@ -449,6 +456,65 @@ describe('browserless_skill tool', () => {
     expect(inHouse).to.include({ skill_action: 'load', site_skill: false });
     expect(inHouse.host).to.equal(undefined);
     expect(buildSkillEventProps({ id: 'x' }, '').success).to.equal(false);
+  });
+
+  it('emits the footer receipt only for versioned site loads and deduplicates by MCP session', async () => {
+    await seedSiteSkill('example.com', 'search', '# Search', 3);
+    const analytics = new AnalyticsHelper(false);
+    const fireSkill = sinon.stub(analytics, 'fireSkill');
+    const receiptServer = new FastMCP({ name: 'test', version: '0.1.0' });
+    const tools = sinon.spy(receiptServer, 'addTool');
+    registerAgentTools(receiptServer, mockConfig, analytics);
+    const execute = tools
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill')!.args[0].execute;
+    const ids: string[] = [];
+    for (const sessionId of [
+      'private-session',
+      'private-session',
+      'different-session',
+    ]) {
+      const result = await execute(
+        { id: 'example.com/search' },
+        { ...mockContext, sessionId },
+      );
+      const props = fireSkill.lastCall.args[1];
+      expect(props).to.include({
+        domain: 'example.com',
+        task: 'search',
+        loaded_version: 3,
+        success: true,
+      });
+      const text = JSON.stringify(result);
+      expect(props.run_id).to.match(/^[a-f0-9]{64}$/);
+      expect(props.skill_use_id).to.match(/^[a-f0-9]{64}$/);
+      expect(text).to.include(props.run_id).and.include(props.skill_use_id);
+      expect(JSON.stringify(props) + text).not.to.match(
+        /test-token|private-session|different-session/,
+      );
+      ids.push(props.skill_use_id as string);
+    }
+    expect(ids[0]).to.equal(ids[1]);
+    expect(ids[0]).not.to.equal(ids[2]);
+    for (const params of [
+      { id: 'shadow-dom' },
+      { site: 'example.com' },
+      { id: 'example.com/absent' },
+    ]) {
+      try {
+        await execute(params, mockContext);
+      } catch (error) {
+        expect(error).to.be.instanceOf(UserError);
+      }
+      for (const key of [
+        'run_id',
+        'skill_use_id',
+        'loaded_version',
+        'domain',
+        'task',
+      ])
+        expect(fireSkill.lastCall.args[1]).not.to.have.property(key);
+    }
   });
 });
 
@@ -4065,7 +4131,84 @@ describe('browserless_agent reportOutcome', () => {
 });
 
 describe('browserless_agent skill outcome forwarding', () => {
-  afterEach(() => sinon.restore());
+  afterEach(() => {
+    sinon.restore();
+    __resetRemoteSkillsForTesting();
+  });
+
+  it('verifies echoed receipts, preserves loaded versions, and never trusts a client status', async () => {
+    __resetRemoteSkillsForTesting();
+    __setRemoteSkillTtlForTesting(0);
+    await seedSiteSkill('example.com', 'search', '# v1', 1);
+    const receipt = loadSiteSkill('example.com/search', {
+      token: 'test-token',
+      mcpSessionId: 'private-session',
+    })!.receipt!;
+    const other = loadSiteSkill('example.com/search', {
+      token: 'other-token',
+      mcpSessionId: 'private-session',
+    })!.receipt!;
+    await seedSiteSkill('example.com', 'search', '# v2', 2);
+    expect(loadSiteSkill('example.com/search')!.skill.version).to.equal(2);
+    const forwarded: unknown[] = [];
+    const srv = await makeRespondingServer((method, params) => {
+      if (method === 'reportSkillOutcome') forwarded.push(params);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const legacy = { domain: 'example.com', task: 'search', success: true };
+      const tampered = {
+        ...receipt,
+        skill_use_id:
+          receipt.skill_use_id.slice(0, -1) +
+          (receipt.skill_use_id.endsWith('0') ? '1' : '0'),
+      };
+      for (const [fields, matched] of [
+        [receipt, true],
+        [tampered, false],
+        [other, false],
+        [{}, false],
+      ] as const) {
+        await execute(
+          {
+            method: 'reportSkillOutcome',
+            params: {
+              ...legacy,
+              ...fields,
+              attribution_status: 'matched',
+              outcome_source: 'client',
+            },
+          },
+          mockContext,
+        );
+        expect(forwarded.at(-1)).to.deep.equal({
+          ...legacy,
+          ...fields,
+          ...(matched ? { attribution_status: 'matched' } : {}),
+        });
+      }
+      await execute(
+        {
+          commands: [
+            { method: 'reportSkillOutcome', params: { ...legacy, ...receipt } },
+            { method: 'close' },
+          ],
+        },
+        mockContext,
+      );
+      expect(forwarded.at(-1)).to.deep.equal({
+        ...legacy,
+        ...receipt,
+        attribution_status: 'matched',
+      });
+      expect(JSON.stringify(forwarded)).not.to.match(
+        /test-token|other-token|private-session/,
+      );
+    } finally {
+      await srv.close();
+    }
+  });
 
   it('validates top-level skill reports before opening a browser', async () => {
     const calls: string[] = [];

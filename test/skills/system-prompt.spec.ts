@@ -82,6 +82,10 @@ describe('outcome reporting guidance', () => {
     expect(ending).to.include("Cosmetic differences that didn't break a step");
     expect(ending).to.include('failure_reason');
     expect(ending).to.include('site_changed');
+    for (const field of ['run_id', 'skill_use_id', 'loaded_version'])
+      expect(ending).to.include(field);
+    expect(ending).to.include('exactly as shown');
+    expect(ending).to.include('never send `attribution_status`');
     expect(AGENT_SYSTEM_PROMPT.split('## Site recipes')[1]).not.to.include(
       '**Report the outcome (only if',
     );
