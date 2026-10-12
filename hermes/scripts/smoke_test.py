@@ -107,7 +107,8 @@ finally:
             async def probe():
                 await asyncio.sleep(1.5)
                 try:
-                    ws = await websockets.connect(ep + "?" + urlencode({"token": mux.upstream.token}), open_timeout=20)
+                    url = ep + ("&" if "?" in ep else "?") + urlencode({"token": mux.upstream.token})
+                    ws = await websockets.connect(url, open_timeout=20)
                     await ws.close()
                     return "still connectable"
                 except websockets.InvalidStatus as e:

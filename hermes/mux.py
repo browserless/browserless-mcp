@@ -23,6 +23,7 @@ import secrets
 import threading
 import time
 from http import HTTPStatus
+from urllib.parse import urlsplit
 
 import websockets
 from websockets.datastructures import Headers
@@ -30,6 +31,7 @@ from websockets.http11 import Response
 
 TARGET_BROADCAST = {"Target.targetCreated", "Target.targetDestroyed", "Target.targetInfoChanged", "Target.targetCrashed"}
 LOCAL_NOOP = {"Browser.close", "Browser.crash"}
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 RECOVERY_DELAYS = (0, 0.25, 0.5, 1, 2, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5)  # ~57 s total
 INTERNAL = object()  # pending-attach marker for the mux's own attaches
 
@@ -201,6 +203,8 @@ class Mux:
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
 
     def _http(self, conn, request):
+        if urlsplit("//" + (request.headers.get("Host") or "")).hostname not in LOCAL_HOSTS:  # blocks DNS rebinding
+            return conn.respond(HTTPStatus.FORBIDDEN, "forbidden host\n")
         if request.path == "/json/version":
             body = json.dumps({"Browser": "browserless-cdp-mux", "Protocol-Version": "1.3",
                                "webSocketDebuggerUrl": self.url}).encode()
@@ -458,7 +462,12 @@ class Mux:
                 await reply({})
                 return
             if self.upstream_discover:
-                infos = (await self.internal("Target.getTargets"))["result"]["targetInfos"]
+                try:
+                    infos = (await self.internal("Target.getTargets"))["result"]["targetInfos"]
+                except Exception as e:  # noqa: BLE001  (timeout or upstream loss: reply instead of dropping the client)
+                    client.responses += 1
+                    await self._deliver(client, {"id": cmid, "error": {"code": -32000, "message": f"{type(e).__name__}: {e}"}})
+                    return
                 for ti in infos:
                     await self._deliver(client, {"method": "Target.targetCreated", "params": {"targetInfo": ti}})
                 self.stats["discover_synthesized"] += len(infos)
