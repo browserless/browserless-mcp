@@ -36,8 +36,6 @@ try {
   if (err.code === 'MODULE_NOT_FOUND') process.exit(0);
   throw err;
 }
-// Resolve mcp-proxy from fastmcp's own location, whether nested or hoisted.
-const mcpProxyEntry = createRequire(fastmcpEntry).resolve('mcp-proxy');
 
 const patch = ({ name, dist, files, from, to, required = true }) => {
   let changed = 0;
@@ -84,14 +82,25 @@ patch({
 });
 
 // mcp-proxy is pinned only for our own installs (package.json overrides); npm
-// consumers resolve fastmcp's semver range, whose future builds may change this
-// writer. Skip there rather than fail their install — package-integrity tests
-// guard the pinned tree.
-patch({
-  name: 'SSE stream writer',
-  dist: dirname(mcpProxyEntry),
-  files: /\.(mjs|js)$/,
-  from: 'else return reader.read().then(flow, handleStreamError);',
-  to: 'else reader.read().then(flow, handleStreamError);',
-  required: false,
-});
+// consumers resolve fastmcp's semver range, whose future builds may move or
+// change this writer. Skip there rather than fail their install —
+// package-integrity tests guard the pinned tree.
+let mcpProxyEntry;
+try {
+  // Resolve from fastmcp's own location, whether nested or hoisted.
+  mcpProxyEntry = createRequire(fastmcpEntry).resolve('mcp-proxy');
+} catch (err) {
+  process.stderr.write(
+    `[patch-fastmcp] SSE stream writer: mcp-proxy not resolvable (${err.code}); skipped\n`,
+  );
+}
+if (mcpProxyEntry) {
+  patch({
+    name: 'SSE stream writer',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'else return reader.read().then(flow, handleStreamError);',
+    to: 'else reader.read().then(flow, handleStreamError);',
+    required: false,
+  });
+}
