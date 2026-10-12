@@ -35,6 +35,8 @@ Get an API token from your [Browserless account](https://www.browserless.io/acco
 BROWSERLESS_TOKEN=your-token
 ```
 
+`BROWSERLESS_API_TOKEN` and `BROWSERLESS_API_KEY` are no longer read; rename them to `BROWSERLESS_TOKEN`.
+
 ## Try it
 
 ```bash
@@ -123,9 +125,10 @@ Browserless endpoints above and is not stored by the plugin.
 
 ## What this plugin does on your machine
 
-- **Background process:** while a Hermes browser task is running, the plugin runs one background thread with a
-  WebSocket server on `127.0.0.1` (random port). It only accepts connections addressed to a local host name, and
-  only on a random secret path that Hermes is given. It stops when the task's browser session closes.
+- **Background process:** for each active Hermes browser session, the plugin runs a background thread with a
+  WebSocket server on `127.0.0.1` (random port). It rejects requests whose Host header is not a local host name,
+  which blocks DNS rebinding from web pages; other processes on the same machine can still discover and connect to
+  it. It stops when that browser session closes.
 - **Network calls:** only to the Browserless endpoints listed above, using your `BROWSERLESS_TOKEN`.
 - **Credentials:** the token is read through Hermes' secret store (`BROWSERLESS_TOKEN`); the plugin never reads
   other credential files and stores nothing.

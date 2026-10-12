@@ -18,6 +18,6 @@ echo "Copied plugin to $DEST"
 # Use Hermes' built-in agent-browser tools (otherwise Browser Use mode wins when uvx/browser-use is on PATH).
 "$HERMES" config set browser.backend off
 
-if ! grep -qE '^BROWSERLESS_(API_)?TOKEN=' "$HERMES_HOME/.env" 2>/dev/null && [ -z "${BROWSERLESS_TOKEN:-}" ]; then
+if ! grep -qE '^BROWSERLESS_TOKEN=' "$HERMES_HOME/.env" 2>/dev/null && [ -z "${BROWSERLESS_TOKEN:-}" ]; then
   echo "Next: add BROWSERLESS_TOKEN=<your token> to $HERMES_HOME/.env"
 fi

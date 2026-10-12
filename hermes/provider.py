@@ -21,6 +21,7 @@ Config (env or $HERMES_HOME/.env):
 """
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
@@ -54,7 +55,7 @@ def _setting(name: str, default: Optional[str] = None) -> Optional[str]:
     reads the process environment itself when that is safe (never read the environment directly here)."""
     try:
         val = get_secret(name, None)
-    except Exception:  # noqa: BLE001  (fail closed: an unscoped read must not see another profile's values)
+    except Exception:  # noqa: BLE001  (scope errors -> defaults, never os.environ)
         val = None
     return val if val not in ("", None) else default
 
@@ -116,10 +117,10 @@ class BrowserlessBrowserProvider(BrowserProvider):
     def is_available(self) -> bool:
         return bool(_token())
 
-    def _trace(self, msg: str) -> None:
+    def _trace(self, msg: str, log_path: Optional[str] = None) -> None:
         line = redact(msg)
         logger.info(line)
-        path = _setting("BROWSERLESS_MUX_LOG")
+        path = log_path or _setting("BROWSERLESS_MUX_LOG")
         if path:
             with open(path, "a") as f:
                 f.write(f"{time.strftime('%H:%M:%S')} {line}\n")
@@ -144,11 +145,13 @@ class BrowserlessBrowserProvider(BrowserProvider):
         keepalive_ms = _int_setting("BROWSERLESS_KEEPALIVE_MS", 60000)
 
         route, query, features = _launch_options()
+        # Resolved here: the mux thread has no Hermes secret scope, so it can't read settings itself.
+        log = functools.partial(self._trace, log_path=_setting("BROWSERLESS_MUX_LOG"))
         mux = None
         started = time.time()
         if mode in ("auto", "reconnect"):
             mux = Mux(ReconnectUpstream(ws_base, token, timeout_ms, keepalive_ms, launch_query=query, route=route,
-                                        log=self._trace), log=self._trace)
+                                        log=log), log=log)
             try:
                 mux.start_in_thread()
             except ReconnectUnavailable as e:
@@ -160,7 +163,7 @@ class BrowserlessBrowserProvider(BrowserProvider):
             if features["stealth"] or query:
                 self._trace("note: stealth/proxy/ad-block options are not applied in session-API mode")
                 features = {"stealth": False, "proxies": False, "block_ads": False, "solve_captchas": False}
-            mux = Mux(SessionApiUpstream(base, token, timeout_ms, keepalive_ms, log=self._trace), log=self._trace)
+            mux = Mux(SessionApiUpstream(base, token, timeout_ms, keepalive_ms, log=log), log=log)
             mux.start_in_thread()
         elif mux.upstream.route == "/chromium":
             features["stealth"] = False  # stealth route was refused and the plugin fell back
