@@ -9,7 +9,7 @@ type, screenshot, …); the plugin supplies the browser they drive.
 
 ## Installation
 
-Requires Hermes Agent 0.21 or later.
+Requires Hermes Agent 0.21.5 or later.
 
 ```bash
 hermes plugins install browserless/browserless-mcp/hermes --enable
@@ -34,6 +34,8 @@ Get an API token from your [Browserless account](https://www.browserless.io/acco
 ```bash
 BROWSERLESS_TOKEN=your-token
 ```
+
+`BROWSERLESS_API_TOKEN` and `BROWSERLESS_API_KEY` are no longer read; rename them to `BROWSERLESS_TOKEN`.
 
 ## Try it
 
@@ -68,7 +70,7 @@ Set these in `~/.hermes/.env` or the environment.
 For each Hermes browser task the plugin starts one Browserless browser and a small local CDP multiplexer
 (`ws://127.0.0.1:<random port>/devtools/browser/<secret>`). Hermes connects its clients (the agent-browser
 daemon and its CDP supervisor) to that local address, and they all share a single connection to Browserless.
-Your token never leaves the Hermes process.
+Your token is sent only to Browserless; Hermes' own clients never see it.
 
 The plugin keeps the browser alive across brief network drops (it reconnects to the same browser and page),
 starts a fresh browser when your plan's session limit is reached, and closes the browser when the task ends,
@@ -120,6 +122,20 @@ The plugin connects to:
 
 Pages you ask Hermes to visit are loaded by the Browserless browser. The API token is sent only to the
 Browserless endpoints above and is not stored by the plugin.
+
+## What this plugin does on your machine
+
+- **Background process:** for each active Hermes browser session, the plugin runs a background thread with a
+  WebSocket server on `127.0.0.1` (random port). It rejects requests whose Host header is not a local host name,
+  which blocks DNS rebinding from web pages; other processes on the same machine can still discover and connect to
+  it. It stops when that browser session closes.
+- **Network calls:** only to the Browserless endpoints listed above, using your `BROWSERLESS_TOKEN`.
+- **Credentials:** the token is read through Hermes' secret store (`BROWSERLESS_TOKEN`); the plugin never reads
+  other credential files and stores nothing.
+- **Files:** none, unless you set `BROWSERLESS_MUX_LOG`, which writes a connection log (tokens redacted) to that
+  path.
+- **Telemetry:** none.
+- **Shell commands:** none. (`scripts/` holds optional helpers you run yourself.)
 
 ## License
 
