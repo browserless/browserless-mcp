@@ -2,6 +2,13 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { readFile } from 'node:fs/promises';
+import {
+  clearSession,
+  downloadOwner,
+  getDownload,
+} from '../../src/lib/download-store.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import { registerPerformanceTool } from '../../src/tools/performance.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
@@ -36,6 +43,7 @@ const mockContext = {
     warn: sinon.stub(),
   },
   session: undefined,
+  sessionId: 'performance-test',
   client: { version: undefined },
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
@@ -50,12 +58,13 @@ describe('browserless_performance tool', () => {
   });
 
   afterEach(() => {
+    clearSession(mockContext.sessionId);
     sinon.restore();
   });
 
-  function getToolExecute(server: FastMCP) {
+  function getToolExecute(server: FastMCP, config = mockConfig) {
     const addToolSpy = sinon.spy(server, 'addTool');
-    registerPerformanceTool(server, mockConfig);
+    registerPerformanceTool(server, config);
     return addToolSpy.firstCall.args[0].execute;
   }
 
@@ -109,15 +118,104 @@ describe('browserless_performance tool', () => {
     expect(summary.text).to.include('Accessibility: 88/100');
     expect(summary.text).to.include('SEO: 100/100');
 
-    // Second block: full JSON data
-    const jsonBlock = content[1] as { type: string; text: string };
-    expect(jsonBlock.text).to.include('first-contentful-paint');
-    expect(jsonBlock.text).to.include('lighthouseVersion');
+    // Full JSON is available on disk without being included in MCP content.
+    const downloadBlock = content[1] as { type: string; text: string };
+    const path = downloadBlock.text.split('\n')[1].split(' (')[0];
+    const record = getDownload(path, downloadOwner('test-token'))!;
+    expect(record.mimeType).to.equal('application/json');
+    expect(JSON.parse(await readFile(path, 'utf8'))).to.deep.equal(
+      lighthouseData.data,
+    );
+    expect(downloadBlock.text).to.include('jq');
+    expect(downloadBlock.text).to.include(
+      'Do not read or paste the entire JSON',
+    );
+    expect(downloadBlock.text).to.not.include('"audits":');
 
     // Third block: metadata
     const metadata = content[2] as { type: string; text: string };
     expect(metadata.text).to.include('URL: https://example.com/');
     expect(metadata.text).to.include('Lighthouse Version: 13.0.3');
+  });
+
+  it('keeps large audit details out of context while preserving the complete UTF-8 report', async () => {
+    const data = {
+      categories: { performance: { title: 'Performance', score: null } },
+      audits: { details: 'large-audit-payload-✓'.repeat(20_000) },
+    };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content as {
+      text: string;
+    }[];
+    expect(JSON.stringify(result).length).to.be.lessThan(3000);
+    expect(JSON.stringify(result)).to.not.include('large-audit-payload');
+    expect(content[0].text).to.include('Performance: N/A');
+    const path = content[1].text.split('\n')[1].split(' (')[0];
+    expect(JSON.parse(await readFile(path, 'utf8'))).to.deep.equal(data);
+    expect(getDownload(path, downloadOwner('other-token'))).to.be.undefined;
+  });
+
+  it('serves HTTP reports once and only to the invocation token', async () => {
+    const config = {
+      ...mockConfig,
+      transport: 'httpStream' as const,
+      mcpBaseUrl: 'https://mcp.example.com',
+    };
+    const data = { audits: { privateDetails: 'full report' } };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    registerDownloadRoute(server, config);
+    const execute = getToolExecute(server, config);
+    const token = 'session token&value';
+    const result = await execute(
+      { url: 'https://example.com/' },
+      { ...mockContext, session: { token } },
+    );
+    const text = JSON.stringify(result);
+    const id = text.match(/\/download\/([0-9a-f]{32})/)![1];
+    expect(text).to.include(`?token=${encodeURIComponent(token)}`);
+    expect(text).to.not.include('privateDetails');
+    expect(text).to.include('download to disk first');
+    expect(
+      (await server.getApp().request(`/download/${id}?token=test-token`))
+        .status,
+    ).to.equal(404);
+    const response = await server
+      .getApp()
+      .request(`/download/${id}?token=${encodeURIComponent(token)}`);
+    expect(response.status).to.equal(200);
+    expect(response.headers.get('content-type')).to.include('application/json');
+    expect(await response.json()).to.deep.equal(data);
+    expect(
+      (
+        await server
+          .getApp()
+          .request(`/download/${id}?token=${encodeURIComponent(token)}`)
+      ).status,
+    ).to.equal(404);
+  });
+
+  it('removes report handles when the MCP session ends', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' })),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content as {
+      text: string;
+    }[];
+    const path = content[0].text.split('\n')[1].split(' (')[0];
+    expect(getDownload(path, downloadOwner('test-token'))).to.exist;
+    clearSession(mockContext.sessionId);
+    expect(getDownload(path, downloadOwner('test-token'))).to.be.undefined;
   });
 
   it('sends url and config with categories in the request body', async () => {

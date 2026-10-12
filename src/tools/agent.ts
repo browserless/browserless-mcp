@@ -416,7 +416,7 @@ type FormatOpts = {
 // stdio: file is already on the local disk → return its path (reuse as
 // uploadFile { path }). http: return a single-use GET URL + handle; base64
 // never enters context, and fetching consumes the file.
-const describeReadyDownload = (
+export const describeReadyDownload = (
   record: StoredDownload,
   opts: FormatOpts,
 ): string => {
