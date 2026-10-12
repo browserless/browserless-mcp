@@ -39,7 +39,7 @@ try {
 // Resolve mcp-proxy from fastmcp's own location, whether nested or hoisted.
 const mcpProxyEntry = createRequire(fastmcpEntry).resolve('mcp-proxy');
 
-const patch = ({ name, dist, files, from, to }) => {
+const patch = ({ name, dist, files, from, to, required = true }) => {
   let changed = 0;
   let alreadyApplied = false;
   for (const file of readdirSync(dist).filter((f) => files.test(f))) {
@@ -60,13 +60,17 @@ const patch = ({ name, dist, files, from, to }) => {
   } else if (alreadyApplied) {
     // Idempotent: a previous run already replaced `from` with `to`.
     process.stdout.write(`[patch-fastmcp] ${name}: already patched\n`);
-  } else {
+  } else if (required) {
     // Neither the unpatched nor the patched snippet exists anywhere in dist:
     // the dependency's build changed and this patch no longer matches. Fail
     // loudly instead of silently shipping without it.
     throw new Error(
       `[patch-fastmcp] ${name}: target not found in ${dist}; the build may ` +
         'have changed — update scripts/patch-fastmcp.mjs',
+    );
+  } else {
+    process.stderr.write(
+      `[patch-fastmcp] ${name}: target not found in ${dist}; skipped\n`,
     );
   }
 };
@@ -79,10 +83,15 @@ patch({
   to: 'this.#capabilities.tools = { listChanged: true };',
 });
 
+// mcp-proxy is pinned only for our own installs (package.json overrides); npm
+// consumers resolve fastmcp's semver range, whose future builds may change this
+// writer. Skip there rather than fail their install — package-integrity tests
+// guard the pinned tree.
 patch({
   name: 'SSE stream writer',
   dist: dirname(mcpProxyEntry),
   files: /\.(mjs|js)$/,
   from: 'else return reader.read().then(flow, handleStreamError);',
   to: 'else reader.read().then(flow, handleStreamError);',
+  required: false,
 });
