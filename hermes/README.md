@@ -9,7 +9,7 @@ type, screenshot, …); the plugin supplies the browser they drive.
 
 ## Installation
 
-Requires Hermes Agent 0.21 or later.
+Requires Hermes Agent 0.21.5 or later.
 
 ```bash
 hermes plugins install browserless/browserless-mcp/hermes --enable
@@ -120,6 +120,19 @@ The plugin connects to:
 
 Pages you ask Hermes to visit are loaded by the Browserless browser. The API token is sent only to the
 Browserless endpoints above and is not stored by the plugin.
+
+## What this plugin does on your machine
+
+- **Background process:** while a Hermes browser task is running, the plugin runs one background thread with a
+  WebSocket server on `127.0.0.1` (random port). It only accepts connections addressed to a local host name, and
+  only on a random secret path that Hermes is given. It stops when the task's browser session closes.
+- **Network calls:** only to the Browserless endpoints listed above, using your `BROWSERLESS_TOKEN`.
+- **Credentials:** the token is read through Hermes' secret store (`BROWSERLESS_TOKEN`); the plugin never reads
+  other credential files and stores nothing.
+- **Files:** none, unless you set `BROWSERLESS_MUX_LOG`, which writes a connection log (tokens redacted) to that
+  path.
+- **Telemetry:** none.
+- **Shell commands:** none. (`scripts/` holds optional helpers you run yourself.)
 
 ## License
 

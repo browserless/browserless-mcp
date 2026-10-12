@@ -5,7 +5,7 @@
 supervisor, ...) shares ONE upstream Browserless connection and the API token never leaves this process.
 
 Config (env or $HERMES_HOME/.env):
-  BROWSERLESS_TOKEN                required (BROWSERLESS_API_TOKEN / BROWSERLESS_API_KEY also accepted)
+  BROWSERLESS_TOKEN                required
   BROWSERLESS_BASE_URL             default https://production-sfo.browserless.io
   BROWSERLESS_UPSTREAM             auto (default) | reconnect | session
   BROWSERLESS_SESSION_TIMEOUT_MS   max browser lifetime, default 600000
@@ -22,13 +22,13 @@ Config (env or $HERMES_HOME/.env):
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 import uuid
 from typing import Any, Dict, Optional
 
 from agent.browser_provider import BrowserProvider
+from agent.secret_scope import get_secret
 
 from .mux import Mux
 from .upstream import ReconnectUnavailable, ReconnectUpstream, SessionApiUpstream, UpstreamHTTPError, redact
@@ -50,13 +50,12 @@ def _explain(e: Exception) -> str:
 
 
 def _setting(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read the token and settings only through Hermes' secret scope: it honours the active profile and
+    reads the process environment itself when that is safe (never read the environment directly here)."""
     try:
-        from agent.secret_scope import get_secret
         val = get_secret(name, None)
-    except Exception:  # noqa: BLE001  (fail-closed scope errors -> fall back to the process env)
+    except Exception:  # noqa: BLE001  (fail closed: an unscoped read must not see another profile's values)
         val = None
-    if val is None:
-        val = os.environ.get(name, default)
     return val if val not in ("", None) else default
 
 
@@ -91,11 +90,7 @@ def _launch_options() -> tuple:
 
 
 def _token() -> Optional[str]:
-    for name in ("BROWSERLESS_TOKEN", "BROWSERLESS_API_TOKEN", "BROWSERLESS_API_KEY"):
-        val = _setting(name)
-        if val:
-            return val
-    return None
+    return _setting("BROWSERLESS_TOKEN")
 
 
 def _int_setting(name: str, default: int) -> int:
