@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 if not os.environ.get("HERMES_HOME"):
     sys.exit("Set HERMES_HOME first (the Hermes home the plugin is installed in).")
@@ -36,10 +37,15 @@ def check(name, ok, detail=""):
     print(f"{'PASS' if ok else 'FAIL'}  {name}{('  -- ' + detail) if detail else ''}", flush=True)
 
 
-def https_conns():
+def upstream_port():
+    base = urlsplit(os.environ.get("BROWSERLESS_BASE_URL") or "https://production-sfo.browserless.io")
+    return base.port or (443 if base.scheme == "https" else 80)
+
+
+def upstream_conns(port):
     out = subprocess.run(["lsof", "-nP", "-a", "-p", str(os.getpid()), "-iTCP", "-sTCP:ESTABLISHED"],
                          capture_output=True, text=True).stdout
-    return len([l for l in out.splitlines() if "->" in l and l.split("->")[1].split()[0].endswith(":443")])
+    return len([l for l in out.splitlines() if "->" in l and l.split("->")[1].split()[0].endswith(f":{port}")])
 
 
 try:
@@ -92,8 +98,10 @@ try:
         expected = 2 if DROP else 1
         check(f"mux used {expected} upstream connection(s) total", mux.upstream_connects == expected,
               f"upstream_connects={mux.upstream_connects}, downstream clients={mux.stats.get('clients_total')}")
-        n = https_conns()
-        check("exactly one live HTTPS connection from this process (the mux upstream)", n == 1, f"{n}")
+        port = upstream_port()
+        n = upstream_conns(port)
+        check(f"exactly one live connection to Browserless port {port} from this process (the mux upstream)",
+              n == 1, f"{n}")
 finally:
     cleanup_browser(TASK)
     if "mux" in dir() and mux:
