@@ -3,10 +3,18 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
-// fastmcp advertises `tools: {}` and exposes no option to enable
-// `listChanged`, so clients never re-fetch when our tool surface changes.
-// The capability lives in a private field (`#capabilities.tools`) set inside
-// FastMCPSession, so the only lever is editing fastmcp's built dist.
+// Edits built dists that expose no option for the behaviour we need:
+//
+// 1. fastmcp advertises `tools: {}` and exposes no option to enable
+//    `listChanged`, so clients never re-fetch when our tool surface changes.
+//    The capability lives in a private field (`#capabilities.tools`) set inside
+//    FastMCPSession.
+// 2. mcp-proxy, fastmcp's HTTP layer, bundles @hono/node-server, whose stream
+//    writer ends each chunk with `return reader.read().then(flow, ...)`. The
+//    returned promise makes every chunk's promise adopt the next one, so a
+//    response stream that stays open — the SSE stream each MCP session holds,
+//    written on every keepalive ping — retains one promise per event until it
+//    closes. Dropping the `return` pumps the stream the same way, unchained.
 //
 // This runs as postinstall and must find fastmcp wherever the consumer's
 // package manager hoists it — under `npm ci` in a large tree it is NOT under
@@ -14,50 +22,85 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 // and returns the real install path; `patch-package` cannot (it looks under a
 // cwd-relative node_modules and fails when fastmcp is hoisted).
 
-const FROM = 'this.#capabilities.tools = {};';
-const TO = 'this.#capabilities.tools = { listChanged: true };';
-
 const require = createRequire(import.meta.url);
 
-let dist;
+let fastmcpEntry;
 try {
   // fastmcp's "." export resolves to dist/FastMCP.cjs; its sibling chunks hold
   // the FastMCPSession definition we edit.
-  dist = dirname(require.resolve('fastmcp'));
+  fastmcpEntry = require.resolve('fastmcp');
 } catch (err) {
   // fastmcp genuinely absent (e.g. an install that excludes it): nothing to
   // do. Any other resolution failure is a broken install — surface it rather
-  // than silently shipping with tools.listChanged disabled.
+  // than silently shipping unpatched.
   if (err.code === 'MODULE_NOT_FOUND') process.exit(0);
   throw err;
 }
 
-let changed = 0;
-let alreadyEnabled = false;
-for (const file of readdirSync(dist).filter((f) => /\.(cjs|js)$/.test(f))) {
-  const path = join(dist, file);
-  const src = readFileSync(path, 'utf8');
-  if (src.includes(FROM)) {
-    writeFileSync(path, src.replaceAll(FROM, TO));
-    changed++;
-  } else if (src.includes(TO)) {
-    alreadyEnabled = true;
+const patch = ({ name, dist, files, from, to, required = true }) => {
+  let changed = 0;
+  let alreadyApplied = false;
+  for (const file of readdirSync(dist).filter((f) => files.test(f))) {
+    const path = join(dist, file);
+    const src = readFileSync(path, 'utf8');
+    if (src.includes(from)) {
+      writeFileSync(path, src.replaceAll(from, to));
+      changed++;
+    } else if (src.includes(to)) {
+      alreadyApplied = true;
+    }
   }
-}
 
-if (changed) {
-  process.stdout.write(
-    `[patch-fastmcp] enabled tools.listChanged in ${changed} file(s)\n`,
+  if (changed) {
+    process.stdout.write(
+      `[patch-fastmcp] ${name}: patched ${changed} file(s)\n`,
+    );
+  } else if (alreadyApplied) {
+    // Idempotent: a previous run already replaced `from` with `to`.
+    process.stdout.write(`[patch-fastmcp] ${name}: already patched\n`);
+  } else if (required) {
+    // Neither the unpatched nor the patched snippet exists anywhere in dist:
+    // the dependency's build changed and this patch no longer matches. Fail
+    // loudly instead of silently shipping without it.
+    throw new Error(
+      `[patch-fastmcp] ${name}: target not found in ${dist}; the build may ` +
+        'have changed — update scripts/patch-fastmcp.mjs',
+    );
+  } else {
+    process.stderr.write(
+      `[patch-fastmcp] ${name}: target not found in ${dist}; skipped\n`,
+    );
+  }
+};
+
+patch({
+  name: 'tools.listChanged',
+  dist: dirname(fastmcpEntry),
+  files: /\.(cjs|js)$/,
+  from: 'this.#capabilities.tools = {};',
+  to: 'this.#capabilities.tools = { listChanged: true };',
+});
+
+// mcp-proxy is pinned only for our own installs (package.json overrides); npm
+// consumers resolve fastmcp's semver range, whose future builds may move or
+// change this writer. Skip there rather than fail their install —
+// package-integrity tests guard the pinned tree.
+let mcpProxyEntry;
+try {
+  // Resolve from fastmcp's own location, whether nested or hoisted.
+  mcpProxyEntry = createRequire(fastmcpEntry).resolve('mcp-proxy');
+} catch (err) {
+  process.stderr.write(
+    `[patch-fastmcp] SSE stream writer: mcp-proxy not resolvable (${err.code}); skipped\n`,
   );
-} else if (alreadyEnabled) {
-  // Idempotent: a previous run already replaced FROM with TO.
-  process.stdout.write('[patch-fastmcp] tools.listChanged already enabled\n');
-} else {
-  // Neither the unpatched nor the patched snippet exists anywhere in dist:
-  // fastmcp's build layout changed and this patch no longer matches. Fail
-  // loudly instead of leaving tools.listChanged silently disabled.
-  throw new Error(
-    '[patch-fastmcp] tools.listChanged target not found in fastmcp; the ' +
-      'fastmcp build may have changed — update scripts/patch-fastmcp.mjs',
-  );
+}
+if (mcpProxyEntry) {
+  patch({
+    name: 'SSE stream writer',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'else return reader.read().then(flow, handleStreamError);',
+    to: 'else reader.read().then(flow, handleStreamError);',
+    required: false,
+  });
 }
