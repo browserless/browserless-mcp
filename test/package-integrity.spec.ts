@@ -9,21 +9,21 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 const distDir = () =>
   dirname(createRequire(import.meta.url).resolve('fastmcp'));
-const distSources = () =>
-  readdirSync(distDir())
-    .filter((f) => /\.(cjs|js)$/.test(f))
-    .map((f) => readFileSync(join(distDir(), f), 'utf8'));
+const sourcesIn = (dir: string, files: RegExp) =>
+  readdirSync(dir)
+    .filter((f) => files.test(f))
+    .map((f) => readFileSync(join(dir, f), 'utf8'));
+const distSources = () => sourcesIn(distDir(), /\.(cjs|js)$/);
 // mcp-proxy as fastmcp resolves it (nested under fastmcp or hoisted).
-const mcpProxyDistDir = () =>
-  dirname(
-    createRequire(createRequire(import.meta.url).resolve('fastmcp')).resolve(
-      'mcp-proxy',
-    ),
-  );
 const mcpProxySources = () =>
-  readdirSync(mcpProxyDistDir())
-    .filter((f) => /\.(mjs|js)$/.test(f))
-    .map((f) => readFileSync(join(mcpProxyDistDir(), f), 'utf8'));
+  sourcesIn(
+    dirname(
+      createRequire(createRequire(import.meta.url).resolve('fastmcp')).resolve(
+        'mcp-proxy',
+      ),
+    ),
+    /\.(mjs|js)$/,
+  );
 
 // Guards the two packaging failures this postinstall has caused:
 //   #181/1.13.0 — patch-package was a devDependency and patches/ was excluded
