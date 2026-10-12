@@ -1,0 +1,12 @@
+name: browserless
+version: 0.1.0
+description: 'Browserless cloud browser for Hermes: stealth, residential proxies and captcha solving, behind a local CDP multiplexer'
+author: Browserless
+kind: backend
+provides_browser_providers:
+  - browserless
+requires_hermes: '>=0.21'
+requires_env:
+  - BROWSERLESS_TOKEN
+license: SSPL-1.0
+homepage: https://github.com/browserless/browserless-mcp/tree/main/hermes
