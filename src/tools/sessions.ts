@@ -95,6 +95,7 @@ interface OpIntegration {
   kind: string;
   allowedDomains: string[];
   expiresAt: string | null;
+  vaults?: string[] | null;
 }
 
 interface SessionsResult {
@@ -193,17 +194,19 @@ const REPLAYS_QUERY = `
 `;
 
 const INTEGRATIONS_QUERY = `
-  query OnePasswordIntegrations($apiToken: String, $limit: Int, $offset: Int) {
+  query OnePasswordIntegrations($apiToken: String, $limit: Int, $offset: Int, $includeVaults: Boolean) {
     listOnePasswordIntegrations(
       apiToken: $apiToken
       limit: $limit
       offset: $offset
+      includeVaults: $includeVaults
     ) {
       id
       label
       kind
       allowedDomains
       expiresAt
+      vaults
     }
   }
 `;
@@ -285,14 +288,15 @@ const formatIntegrations = (result: SessionsResult): string => {
   const rows = integrations.map(
     (op) =>
       `- \`${op.id}\` — "${op.label}" (${op.kind}); fills: ${op.allowedDomains.length ? op.allowedDomains.join(', ') : 'any https origin'}` +
-      `${op.expiresAt ? `; expires ${op.expiresAt}` : ''}`,
+      `${op.expiresAt ? `; expires ${op.expiresAt}` : ''}` +
+      `; vaults: ${op.vaults == null ? 'unavailable (1Password did not answer)' : op.vaults.length ? op.vaults.join(', ') : 'none visible to this service account'}`,
   );
   return [
     `## 1Password integrations (${integrations.length})`,
     ``,
     ...rows,
     ``,
-    'Pass the `op_int_…` value (not the label) as `integrationId` on the FIRST browserless_agent call and on every call after — a call without it has no vault bound and credential commands return CredentialNotResolved.',
+    'Pass the `op_int_…` id or the label as `integrationId` on the FIRST browserless_agent call and on every call after — a call without it has no vault bound and credential commands return CredentialNotResolved. `saveSecret` needs no `vault` when one vault is listed; name one of the listed titles otherwise.',
   ].join('\n');
 };
 
@@ -487,7 +491,11 @@ export function registerSessionsTool(
         case 'integrations': {
           const data = await accountQuery<{
             listOnePasswordIntegrations: OpIntegration[] | null;
-          }>(config, token, INTEGRATIONS_QUERY, { limit, offset: skip });
+          }>(config, token, INTEGRATIONS_QUERY, {
+            limit,
+            offset: skip,
+            includeVaults: true,
+          });
           return { integrations: data.listOnePasswordIntegrations };
         }
       }

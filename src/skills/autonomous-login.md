@@ -34,6 +34,7 @@ Gate 1 or 2 fails → stop, emit the matching `reason_code`. (Gate 0 isn't a sto
 ## Reach the form
 
 - Password input in snapshot → continue.
+- An `Account` / user-menu toggle (`[202] div button "Account"`) often hides both `Sign in` and `Register` — click it and re-snapshot before guessing URLs.
 - Sign-in link/button → click, wait, re-snapshot. Take the control that _advances_ sign-in for **this** site (`Sign in`, `Log in`, `Sign in to an existing account`, `Continue`) — not a generic nav link that reloads the page you're on, not `Sign up`/`Create account`.
 - **Account / identity chooser** (page offers several ways in — `Sign in with <Site>` next to `Continue with Google`/`Apple`/`Amazon`/`Facebook`/…): take **this site's own** option, matched to `LOGIN_TARGET_URL`'s brand/host. A third-party identity provider only when the credential context names that provider, or it is the _sole_ option. A site's own `Sign in with <Site>` is the native path even beside a third-party one. A chooser is not `FORM_NOT_FOUND`.
 - Email-first → type username, click `Continue`/`Next`, `waitForSelector` on `input[type="password"]` (10000ms), re-snapshot.
@@ -42,7 +43,7 @@ Gate 1 or 2 fails → stop, emit the matching `reason_code`. (Gate 0 isn't a sto
 
 ## Sanity check
 
-Login, not signup/reset: submit reads `Sign in`/`Log in`/`Continue` (not `Sign up`/`Register`/`Reset`) and exactly **one** password field. Else `FORM_NOT_FOUND`.
+Login, not signup/reset: submit reads `Sign in`/`Log in`/`Continue` (not `Sign up`/`Register`/`Reset`) and exactly **one** password field. Else `FORM_NOT_FOUND`. A sign-up form when the task is to create an account → load `autonomous-registration` instead of `FORM_NOT_FOUND`.
 
 ## Field selection (anchor off password)
 
@@ -54,7 +55,7 @@ Anything missing → `FORM_NOT_FOUND` (say what's missing).
 
 ## Submit
 
-One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call.
+One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call. If `loadSecret` filled a field, put `{ method: "clearSecrets" }` between the submit click and the wait — the MCP refuses `waitForNavigation`/`waitForResponse`/`snapshot` after a `loadSecret` until `clearSecrets` or a top-frame `goto`.
 
 ## Verify success (any one, priority order)
 
@@ -89,9 +90,12 @@ None holds:
 
 Triggered by `autocomplete="one-time-code"`, numeric input with `maxlength` ∈ {4,6,8}, or label/`name`/`placeholder` matching `/code|verification|otp|2fa|two[- ]?factor|authenticator/i`.
 
-- Contextually-matched TOTP (Gate-2 rule) → type, submit, re-verify.
-- **No matching TOTP → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the OTP input and cookies/state survive to next turn.** User replies → treat as the TOTP, type + submit + re-verify. User declines / has none → `MFA_INPUT_MISSING`. Never attempt SMS/email/WebAuthn.
-- TOTP rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
+- Contextually-matched TOTP (Gate-2 rule; an `op://…?attribute=otp` ref via `loadSecret`, or a user-supplied code via `type`) → fill, submit, re-verify.
+
+**Emailed code.** If the task names a mailbox item in the bound vault, let the site send the code, focus the code input, then send `{ method: "loadSecret", params: { ref: "mail://<vault>/<item>/otp", selector: "<code input>" } }` — the server polls that mailbox for up to ~45 s and types the newest code; you never see it (vault and item segments are URL-encoded; append `?wait=90000` for slow senders). In the same batch click the submit control, then send `{ method: "clearSecrets" }`, and only then `waitForNavigation` — the preflight rejects waits, snapshots and captures after a `loadSecret` until `clearSecrets` or a top-frame `goto`. `OtpTimeout` → click `Resend` once and retry once. **No mailbox item, or two timeouts → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the code input and cookies survive the round-trip.** User replies → `type` it, submit, re-verify. **Magic link** (no code field) → ask the user to click it, keep the session open, then re-verify. **Phone/SMS or WebAuthn** → never attempt.
+
+- No matching TOTP and no mailbox item → ask the user (the rule above). User declines / has none, or the prompt demands phone/SMS or WebAuthn → `MFA_INPUT_MISSING`.
+- Code rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
 - Second MFA prompt after the first cleared → `UNEXPECTED_STATE`.
 
 ## After a `loadSecret` login — re-enable captures

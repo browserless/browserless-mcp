@@ -1175,7 +1175,7 @@ describe('formatConnectError', () => {
     expect(text).to.include('HTTP 404');
     expect(text).to.include(body);
     expect(text).to.include('browserless_sessions { action: "integrations" }');
-    expect(text).to.include('not its label');
+    expect(text).to.include('or its label');
     expect(text).to.include(
       'FIRST browserless_agent call and on every call after',
     );
@@ -1459,9 +1459,10 @@ describe('browserless_agent credential feedback', () => {
       }
       expect(error).to.be.instanceOf(UserError);
       expect(error).to.have.property('code', 'INVALID_PARAMS');
-      for (const field of ['vault', 'title', 'username', 'password']) {
+      for (const field of ['title', 'username', 'password']) {
         expect((error as Error).message).to.include(`0.params.${field}`);
       }
+      expect((error as Error).message).not.to.include('0.params.vault');
       expect((error as Error).message).not.to.include(
         'reserved or has a typed schema',
       );
@@ -1478,6 +1479,7 @@ describe('browserless_agent credential feedback', () => {
             {
               method: 'saveSecret',
               params: {
+                vault: '',
                 title: 't',
                 username: 'u',
                 password: 'do-not-echo-this-value',

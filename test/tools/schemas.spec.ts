@@ -28,7 +28,6 @@ describe('credential command schema dispatch', () => {
     expect(result.success).to.equal(false);
     if (!result.success) {
       expect(result.error.issues.map((issue) => issue.path)).to.deep.equal([
-        ['params', 'vault'],
         ['params', 'title'],
         ['params', 'username'],
         ['params', 'password'],
@@ -50,6 +49,24 @@ describe('credential command schema dispatch', () => {
       'browserless_sessions { action: "integrations" }',
     );
     expect(description).not.to.include('GET /integrations/onepassword');
+  });
+
+  it('documents id-or-label on integrationId', () => {
+    expect(AgentToolParamsSchema.shape.integrationId.description).to.include(
+      "or the integration's label",
+    );
+  });
+
+  it('documents the mail reference with a vault segment', () => {
+    const loadSecret = TypedAgentCommandSchema.options.find(
+      (option) => option.shape.method.value === 'loadSecret',
+    )! as Extract<
+      (typeof TypedAgentCommandSchema.options)[number],
+      { shape: { method: { value: 'loadSecret' } } }
+    >;
+    expect(loadSecret.shape.params.shape.ref.description).to.include(
+      'mail://<vault>/<item>/otp',
+    );
   });
 });
 
@@ -935,7 +952,6 @@ describe('browserless_agent tool schema (OpenAI hosted-MCP import)', () => {
 
 describe('saveSecret command', () => {
   const requiredParams = {
-    vault: 'Automation',
     title: 'Example login',
     username: 'user@example.com',
     password: 'synthetic-password',
@@ -948,6 +964,7 @@ describe('saveSecret command', () => {
           method: 'saveSecret',
           params: {
             ...requiredParams,
+            vault: 'Automation',
             website: 'https://example.com',
           },
         },
@@ -965,8 +982,33 @@ describe('saveSecret command', () => {
     expect(result.success).to.equal(true);
   });
 
+  it('accepts a saveSecret command without a vault', () => {
+    const result = AgentParamsSchema.safeParse({
+      commands: [{ method: 'saveSecret', params: requiredParams }],
+    });
+    expect(result.success).to.equal(true);
+    if (result.success) {
+      expect(result.data.commands?.[0].params).not.to.have.property('vault');
+    }
+  });
+
+  for (const [name, vault] of [
+    ['empty', ''],
+    ['non-string', 42],
+  ]) {
+    it(`rejects an ${name} vault`, () => {
+      expect(
+        AgentParamsSchema.safeParse({
+          commands: [
+            { method: 'saveSecret', params: { ...requiredParams, vault } },
+          ],
+        }).success,
+      ).to.equal(false);
+    });
+  }
+
   it('rejects missing required fields without falling back to the generic schema', () => {
-    for (const field of ['vault', 'title', 'username', 'password'] as const) {
+    for (const field of ['title', 'username', 'password'] as const) {
       const params: Partial<typeof requiredParams> = { ...requiredParams };
       delete params[field];
       const result = AgentParamsSchema.safeParse({
@@ -977,7 +1019,7 @@ describe('saveSecret command', () => {
   });
 
   it('rejects empty required fields', () => {
-    for (const field of ['vault', 'title', 'username', 'password'] as const) {
+    for (const field of ['title', 'username', 'password'] as const) {
       const result = AgentParamsSchema.safeParse({
         commands: [
           {

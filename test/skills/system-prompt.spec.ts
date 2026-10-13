@@ -4,7 +4,40 @@ import { renderSkill } from '../../src/skills/index.js';
 import {
   AGENT_SYSTEM_PROMPT,
   COMPLIANT_AGENT_SYSTEM_PROMPT,
+  SKILL_TOOL_DESCRIPTION,
 } from '../../src/skills/system-prompt.js';
+
+describe('registration and credential guidance', () => {
+  it('requires the registration skill in the full Auth section', () => {
+    const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
+    expect(auth).to.include('autonomous-registration');
+    expect(auth).to.include('Never log in or register by default');
+  });
+
+  it('advertises credential methods and the complete mailbox reference', () => {
+    const methods = AGENT_SYSTEM_PROMPT.split(
+      '## Methods (non-obvious)',
+    )[1].split('\n## ')[0];
+    for (const text of [
+      '**loadSecret** { ref, selector? }',
+      '**saveSecret** { title, username, password, website?, vault? }',
+      '**clearSecrets** {}',
+      'mail://<vault>/<inbox item>/otp',
+    ]) {
+      expect(methods).to.include(text);
+    }
+  });
+
+  it('advertises save-first registration in both full skill lists', () => {
+    expect(SKILL_TOOL_DESCRIPTION).to.include('**autonomous-registration**');
+    expect(SKILL_TOOL_DESCRIPTION).to.include('save-first-then-loadSecret');
+    const skills = AGENT_SYSTEM_PROMPT.split(
+      '## Skills (auto-injected)',
+    )[1].split('\n## ')[0];
+    expect(skills).to.include('autonomous-registration');
+    expect(skills).to.include('save-first-then-loadSecret');
+  });
+});
 
 it('guides saved-login reporting only in the full Auth section', () => {
   const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
@@ -156,8 +189,15 @@ describe('agent system prompt contextual snapshot guidance', () => {
     expect(AGENT_SYSTEM_PROMPT).to.include('PDF');
   });
 
-  it('does not advertise clearSecrets on the compliant surface', () => {
-    expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include('clearSecrets');
+  it('does not advertise registration or credential commands on the compliant surface', () => {
+    for (const text of [
+      'autonomous-registration',
+      'loadSecret',
+      'saveSecret',
+      'clearSecrets',
+    ]) {
+      expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include(text);
+    }
   });
 });
 
