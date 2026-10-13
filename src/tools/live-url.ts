@@ -3,13 +3,14 @@ import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
 import type { AnalyticsHelper } from '../lib/analytics.js';
 import type {
+  BrowserPages,
   LiveURLCreated,
   LiveURLState,
   McpConfig,
 } from '../@types/types.js';
 
 export const LiveURLParamsSchema = z.object({
-  action: z.enum(['create', 'status', 'close']),
+  action: z.enum(['create', 'status', 'close', 'pages']),
   browserId: z
     .string()
     .trim()
@@ -23,6 +24,26 @@ export const LiveURLParamsSchema = z.object({
     .min(1)
     .optional()
     .describe('Required for status and close.'),
+  targetId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'For create: a targetId from action pages; the link stays on that tab unless mode is follow.',
+    ),
+  mode: z
+    .enum(['follow', 'tab'])
+    .optional()
+    .describe(
+      'For create: tab stays on one tab (default with targetId); follow jumps to new tabs (default without targetId).',
+    ),
+  mint: z
+    .boolean()
+    .optional()
+    .describe(
+      'For pages: also return a view-only liveURL per tab. A tab that already has a link returns it unchanged, with interactable.',
+    ),
   interactable: z.boolean().optional(),
   timeout: z
     .number()
@@ -46,12 +67,14 @@ export function registerLiveURLTool(
 ): void {
   defineTool<
     z.infer<typeof LiveURLParamsSchema>,
-    LiveURLCreated | LiveURLState | { closed: true }
+    LiveURLCreated | LiveURLState | BrowserPages | { closed: true }
   >(server, config, analytics, {
     name: 'browserless_live_url',
     description:
       'Create, inspect, or close a live viewer link for an existing browser through REST, without an agent connection. ' +
-      'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown. ' +
+      'Use pages to list browser tabs; mint=true adds per-tab live links. Reused links may be interactive, while new bulk links are view-only and pinned to their tabs. ' +
+      'Pages returns targetId, url, title, active, and browserContextId. Create accepts targetId to stream a specific tab; mode follow jumps to new tabs, while tab stays on one tab. ' +
+      'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown (hidden with targetId). ' +
       'Status returns status, reason, interactable, viewerCount, and expiresAt (epoch ms). ' +
       'Ended links remain inspectable until their browser closes; closing an ended link returns not found.',
     parameters: LiveURLParamsSchema,
@@ -63,8 +86,9 @@ export function registerLiveURLTool(
       openWorldHint: true,
     },
     run: async ({ client, params }) => {
-      const { action, browserId, liveURLId, ...options } =
+      const { action, browserId, liveURLId, mint, ...options } =
         LiveURLParamsSchema.parse(params);
+      if (action === 'pages') return client.listPages(browserId, mint);
       if (action === 'create') {
         if (
           options.type === 'png' &&
