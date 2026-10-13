@@ -167,9 +167,9 @@ Never retry same failed action without re-snapshot.
 - **waitForSelector** { selector, timeout? } — set 5000-10000ms
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
-- **loadSecret** { ref, selector? } — fills a vault secret server-side (\`op://<vault>/<item>/<field>\`, or \`mail://<vault>/<inbox item>/otp\` for an emailed code); you never see the value; arms the capture gate until \`clearSecrets\` or a top-frame goto
+- **loadSecret** { ref, selector? } — fills a vault secret server-side (\`op://<vault>/<item>/<field>\`, or \`mail://<vault>/<inbox item>/otp\` for an emailed code); you never see the value; arms capture protection. Completed top-frame navigation permits a snapshot; backend captures may still need \`clearSecrets\`
 - **saveSecret** { title, username, password, website?, vault? } → \`{ ok, ref }\` or \`{ ok: false, error, vaults? }\` — needs \`integrationId\` on the FIRST call; omit \`vault\` unless the result lists several
-- **clearSecrets** {} — lowers the capture gate after a \`loadSecret\` fill; required before any wait, snapshot or capture
+- **clearSecrets** {} — lowers capture protection; use only after secret-filled fields are removed, never just after clicking submit. \`waitForNavigation\`/\`waitForResponse\`/\`waitForSelector\` are allowed while armed; response waits do not permit snapshots
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 

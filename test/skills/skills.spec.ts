@@ -122,17 +122,24 @@ describe('skills/registry', () => {
     );
     expect(login).to.include('autonomous-registration');
     expect(login).to.include('user-menu toggle');
-    expect(login).to.include('between the submit click and the wait');
+    expect(login).to.include(
+      'keep the batch as fill → click submit → `waitForNavigation`',
+    );
     expect(login).not.to.include('Never attempt SMS/email/WebAuthn');
   });
 
   it('checks verification before success and keeps confirmation optional', () => {
     const body = renderSkill('autonomous-registration', false);
-    const verify = body.split('## Verify success')[1].split('None holds:')[0];
+    const verify = body
+      .split('## Verify success')[1]
+      .split('## Verification branch')[0];
     expect(verify.indexOf('→ Verification branch')).to.be.at.least(0);
     expect(verify.indexOf('→ Verification branch')).to.be.lessThan(
-      verify.indexOf('URL left the sign-up path'),
+      verify.indexOf('1. Signed-in element'),
     );
+    expect(body).to.include('Never infer authorization from list order');
+    expect(body).to.include('is **not** success on its own');
+    expect(body).to.include('do not `clearSecrets` to peek');
     expect(body).to.include('only when the form has a confirm field');
     expect(body).to.include('`loadSecret` confirm (when present)');
     expect(body).not.to.include('Submit before both password fields');

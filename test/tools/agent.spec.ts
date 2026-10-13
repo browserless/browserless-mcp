@@ -173,6 +173,43 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
+  it('allows a protected navigation wait before a snapshot', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'click' },
+        { method: 'waitForNavigation' },
+        { method: 'snapshot' },
+      ]),
+    ).not.to.throw();
+  });
+
+  it('allows response waits without allowing subsequent page reads', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'waitForResponse' },
+      ]),
+    ).not.to.throw();
+    for (const method of [
+      'snapshot',
+      'html',
+      'text',
+      'evaluate',
+      'screenshot',
+      'liveURL',
+      'cookies',
+    ]) {
+      expect(() =>
+        validateSecretCaptureOrdering([
+          { method: 'loadSecret' },
+          { method: 'waitForResponse' },
+          { method },
+        ]),
+      ).to.throw(`${method} cannot run after loadSecret`);
+    }
+  });
+
   it('allows saveSecret after loadSecret without permitting captures', () => {
     expect(() =>
       validateSecretCaptureOrdering([
@@ -286,6 +323,19 @@ describe('secretVisibleAfter', () => {
     [true, 'goto', { url: 'https://example.com' }, false],
     [true, 'goto', { rejected: true }, true],
     [true, 'goto', null, true],
+    [
+      true,
+      'waitForNavigation',
+      { url: 'https://example.com/', status: 200 },
+      false,
+    ],
+    [true, 'waitForNavigation', { rejected: true }, true],
+    [
+      true,
+      'waitForResponse',
+      { url: 'https://example.com/api', status: 200 },
+      true,
+    ],
     [true, 'click', {}, true],
     [false, 'snapshot', {}, false],
   ] as const) {

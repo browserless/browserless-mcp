@@ -55,7 +55,9 @@ Anything missing → `FORM_NOT_FOUND` (say what's missing).
 
 ## Submit
 
-One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call. If `loadSecret` filled a field, put `{ method: "clearSecrets" }` between the submit click and the wait — the MCP refuses `waitForNavigation`/`waitForResponse`/`snapshot` after a `loadSecret` until `clearSecrets` or a top-frame `goto`.
+One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call. If `loadSecret` filled a field, keep the batch as fill → click submit → `waitForNavigation`: the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; it still refuses `snapshot` and captures until then, so on a timeout (no navigation) `waitForSelector` for a signed-in element first, then send `{ method: "clearSecrets" }` before the first snapshot.
+
+Before clearing after a timeout, require both a newly appeared post-submit marker and removal of every secret-filled field. Use secret-safe `waitForSelector` for `body:not(:has(<filled-field-selector>))` per field (10000ms); hidden fields still carry values, and a pre-existing Account link proves nothing. Any wait fails → do not clear or snapshot; close with `SUBMIT_NO_FEEDBACK`. This rule also applies to TOTP and emailed-code submissions below.
 
 ## Verify success (any one, priority order)
 
@@ -76,7 +78,7 @@ so the restored profile gets no credit). It defaults to the last active-tab
 snapshot; if you used `snapshot { targetId }` to peek at another tab, repeat
 that `targetId` in the report. Send it before any `close`; it is secret-safe,
 so it may follow `clearSecrets` — after a `loadSecret` fill the verifying
-`snapshot` itself can only run after `clearSecrets` (see Submit).
+`snapshot` itself can only run after `clearSecrets` or completed navigation (see Submit).
 Pass `sessionId` on every follow-up call, including reports and `close`;
 the session handle retains the profile, so repeating `profile` is optional.
 
@@ -93,7 +95,7 @@ Triggered by `autocomplete="one-time-code"`, numeric input with `maxlength` ∈ 
 
 - Contextually-matched TOTP (Gate-2 rule; an `op://…?attribute=otp` ref via `loadSecret`, or a user-supplied code via `type`) → fill, submit, re-verify.
 
-**Emailed code.** If the task names a mailbox item in the bound vault, let the site send the code, focus the code input, then send `{ method: "loadSecret", params: { ref: "mail://<vault>/<item>/otp", selector: "<code input>" } }` — the server polls that mailbox for up to ~45 s and types the newest code; you never see it (vault and item segments are URL-encoded; append `?wait=90000` for slow senders). In the same batch click the submit control, then send `{ method: "clearSecrets" }`, and only then `waitForNavigation` — the preflight rejects waits, snapshots and captures after a `loadSecret` until `clearSecrets` or a top-frame `goto`. `OtpTimeout` → click `Resend` once and retry once. **No mailbox item, or two timeouts → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the code input and cookies survive the round-trip.** User replies → `type` it, submit, re-verify. **Magic link** (no code field) → ask the user to click it, keep the session open, then re-verify. **Phone/SMS or WebAuthn** → never attempt.
+**Emailed code.** If the task names a mailbox item in the bound vault, let the site send the code, focus the code input, then send `{ method: "loadSecret", params: { ref: "mail://<vault>/<item>/otp", selector: "<code input>" } }` — the server polls that mailbox for up to ~45 s and types the newest code; you never see it (vault and item segments are URL-encoded; append `?wait=90000` for slow senders). In the same batch click the submit control, then `waitForNavigation` (10000ms) — the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; if it times out, `waitForSelector` (secret-safe) for a signed-in control or confirmation element, then `{ method: "clearSecrets" }` and re-verify; neither appears → treat the code as not accepted and do not `clearSecrets` to peek. `OtpTimeout` → click `Resend` once and retry once. **No mailbox item, or two timeouts → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the code input and cookies survive the round-trip.** User replies → `type` it, submit, re-verify. **Magic link** (no code field) → ask the user to click it, keep the session open, then re-verify. **Phone/SMS or WebAuthn** → never attempt.
 
 - No matching TOTP and no mailbox item → ask the user (the rule above). User declines / has none, or the prompt demands phone/SMS or WebAuthn → `MFA_INPUT_MISSING`.
 - Code rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
@@ -101,7 +103,7 @@ Triggered by `autocomplete="one-time-code"`, numeric input with `maxlength` ∈ 
 
 ## After a `loadSecret` login — re-enable captures
 
-Filled a field with `loadSecret` (1Password `op://` ref)? The session's capture gate is now armed: `screenshot`, PDF, `liveURL`, and page-content reads (`evaluate`/`html`/`text`/`querySelector`/`cookies`) all fail with `CaptureBlockedError` until cleared. A full-page navigation clears it automatically — a single-page app that logs in without navigating does **not**. Once the credential is off screen (success verified above), send `{ method: "clearSecrets" }` before the first capture. Secret values stay masked in the session replay regardless. Plaintext `type` logins don't arm the gate — this step applies only when `loadSecret` filled a field.
+Filled a field with `loadSecret` (1Password `op://` ref or emailed code)? The backend capture gate can remain armed even after navigation: `screenshot`, PDF, `liveURL` and page-content reads (`evaluate`/`html`/`text`/`querySelector`/`cookies`) fail with `CaptureBlockedError`. A completed navigation lets the MCP request a snapshot, whose secret values remain omitted while the backend gate is armed. Confirm every secret-filled field is removed (see Submit), then send `{ method: "clearSecrets" }` before the first capture. Secret values stay masked in the session replay regardless. Plaintext `type` logins don't arm the gate — this step applies only when `loadSecret` filled a field.
 
 ## Final response
 
