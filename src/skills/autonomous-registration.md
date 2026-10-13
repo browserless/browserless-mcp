@@ -51,17 +51,17 @@ Anything missing → `FORM_NOT_FOUND` (say what's missing).
 
 Generate a password that satisfies the visible policy — default 20+ characters with upper, lower, digit and symbol, no quotes or spaces. It goes into exactly one tool call: `saveSecret`. Never put it in `type`, `rationale`, `_prompt`, `evaluate` code, narration, errors or the final response, and never reuse one across sites.
 
-**Write it to the vault first, then fill from the vault.** Once the form is located and Gates 0-2 pass: `{ method: "saveSecret", params: { title: "<site host>", username: "<email>", password: "<the password>", website: "<origin>" } }` → `{ ok: true, ref }`. Omit `vault`; the server picks the only vault the service account sees. `{ ok: false, error: "VaultAmbiguous", vaults: [...] }` → retry once with `vault` set to the matching title (prefer one named after the site or the user, else the first). `VaultNotFound` or `IntegrationNotWritable` → `VAULT_WRITE_FAILED` (nothing was typed, no account exists). `CredentialNotResolved` → Gate 0. Then fill both fields from the vault: `{ method: "loadSecret", params: { ref: "<ref>", selector: "<password>" } }` and `{ method: "loadSecret", params: { ref: "<ref>", selector: "<confirm>" } }` — the site receives exactly the stored value and you never type it. A site that later rejects the password on policy grounds → generate a compliant one, `saveSecret` again with title `"<site host> (2)"`, fill from the new ref and resubmit **once**; name the stale item in `evidence`.
+**Write it to the vault first, then fill from the vault.** Once the form is located and Gates 0-2 pass: `{ method: "saveSecret", params: { title: "<site host>", username: "<email>", password: "<the password>", website: "<origin>" } }` → `{ ok: true, ref }`. Omit `vault`; the server picks the only vault the service account sees. `{ ok: false, error: "VaultAmbiguous", vaults: [...] }` → retry once with `vault` set to the matching title (prefer one named after the site or the user, else the first). `VaultNotFound` or `IntegrationNotWritable` → `VAULT_WRITE_FAILED` (nothing was typed, no account exists). `CredentialNotResolved` → Gate 0. Then fill from the vault: `{ method: "loadSecret", params: { ref: "<ref>", selector: "<password>" } }` and, only when the form has a confirm field, `{ method: "loadSecret", params: { ref: "<ref>", selector: "<confirm>" } }` — the site receives exactly the stored value and you never type it. A site that later rejects the password on policy grounds → generate a compliant one, `saveSecret` again with title `"<site host> (2)"`, fill from the new ref and resubmit **once**; name the stale item in `evidence`.
 
 ## Submit
 
-One batched call: `loadSecret` password → `loadSecret` confirm → required checkboxes → click submit → `{ method: "clearSecrets" }` → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. The `clearSecrets` goes **before** the wait: the preflight rejects waits, snapshots and captures after a `loadSecret` until `clearSecrets` or a top-frame `goto`, and the value being cleared is a password you generated, so clearing right after the click discloses nothing (the replay stays masked). Both time out → verify anyway (page may update in place). Re-snapshot. **Never resubmit blindly** — a second submit can create a duplicate account, trip a rate limit or lock the identifier; resubmit only after a policy rejection with a new password.
+One batched call: `loadSecret` password → `loadSecret` confirm (when present) → required checkboxes → click submit → `{ method: "clearSecrets" }` → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. The `clearSecrets` goes **before** the wait: the preflight rejects waits, snapshots and captures after a `loadSecret` until `clearSecrets` or a top-frame `goto`, and the value being cleared is a password you generated, so clearing right after the click discloses nothing (the replay stays masked). Both time out → verify anyway (page may update in place). Re-snapshot. **Never resubmit blindly** — a second submit can create a duplicate account, trip a rate limit or lock the identifier; resubmit only after a policy rejection with a new password.
 
-## Verify success (any one, priority order)
+## Verify success (check the challenge first, then any one signal)
 
+0. A verification screen ("check your email", "enter the code we sent", a code field, `autocomplete="one-time-code"`) → Verification branch. Check this **before** the signals below: a redirect from the sign-up page to a verify page also leaves the sign-up path and drops the password input, and that is not success yet.
 1. URL left the sign-up path and no password input remains.
 2. Authed element matching `/log out|sign out|my account|welcome|dashboard|avatar/i`.
-3. A verification screen ("check your email", "enter the code we sent", a code field) → Verification branch.
 
 None holds:
 
@@ -98,7 +98,7 @@ Ask-the-user turns aren't terminal — plain prose, stop, no `close`.
 - Invent identities, use disposable inboxes the user didn't supply, or fill name/phone/address from guesses.
 - Tick marketing or newsletter opt-ins.
 - Reuse a password across sites, or put it anywhere but the `saveSecret` call — never in `type`, `rationale`, `_prompt`, `evaluate` code or prose.
-- Submit before both password fields were filled from the vault, or resubmit after an error that isn't a policy rejection.
+- Submit before the password (and confirm field, when present) was filled from the vault, or resubmit after an error that isn't a policy rejection.
 - `evaluate` to set input values — use `type` (non-secret fields) or `loadSecret` (the password) so real keystrokes fire.
 - Use SSO unless the task names the provider.
 - Leak credentials into narration, errors, or non-credential params.

@@ -74,8 +74,9 @@ and `"unknown"` otherwise. A changed URL or missing password input alone is not
 signed-in evidence. Always set `"newLoginActivity": true` (you attempted login,
 so the restored profile gets no credit). It defaults to the last active-tab
 snapshot; if you used `snapshot { targetId }` to peek at another tab, repeat
-that `targetId` in the report. Send it before
-`clearSecrets` and before any `close`; it is secret-safe.
+that `targetId` in the report. Send it before any `close`; it is secret-safe,
+so it may follow `clearSecrets` — after a `loadSecret` fill the verifying
+`snapshot` itself can only run after `clearSecrets` (see Submit).
 Pass `sessionId` on every follow-up call, including reports and `close`;
 the session handle retains the profile, so repeating `profile` is optional.
 

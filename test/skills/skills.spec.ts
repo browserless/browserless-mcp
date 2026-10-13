@@ -125,6 +125,21 @@ describe('skills/registry', () => {
     expect(login).to.include('between the submit click and the wait');
     expect(login).not.to.include('Never attempt SMS/email/WebAuthn');
   });
+
+  it('checks verification before success and keeps confirmation optional', () => {
+    const body = renderSkill('autonomous-registration', false);
+    const verify = body.split('## Verify success')[1].split('None holds:')[0];
+    expect(verify.indexOf('→ Verification branch')).to.be.at.least(0);
+    expect(verify.indexOf('→ Verification branch')).to.be.lessThan(
+      verify.indexOf('URL left the sign-up path'),
+    );
+    expect(body).to.include('only when the form has a confirm field');
+    expect(body).to.include('`loadSecret` confirm (when present)');
+    expect(body).not.to.include('Submit before both password fields');
+    const login = renderSkill('autonomous-login', false);
+    expect(login).to.include('it may follow `clearSecrets`');
+    expect(login).not.to.include('`clearSecrets` and before any `close`');
+  });
 });
 
 describe('skills/isCloudApi', () => {
