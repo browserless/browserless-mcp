@@ -593,7 +593,7 @@ export const buildSkillEventProps = (
     success: !!body,
     ...(loaded?.receipt
       ? {
-          ...loaded.receipt,
+          loaded_version: loaded.receipt.loaded_version,
           domain: loaded.skill.host,
           task: loaded.skill.slug,
         }

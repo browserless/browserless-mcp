@@ -458,7 +458,7 @@ describe('browserless_skill tool', () => {
     expect(buildSkillEventProps({ id: 'x' }, '').success).to.equal(false);
   });
 
-  it('emits the footer receipt only for versioned site loads and deduplicates by MCP session', async () => {
+  it('keeps receipt IDs in the footer only and deduplicates by MCP session', async () => {
     await seedSiteSkill('example.com', 'search', '# Search', 3);
     const analytics = new AnalyticsHelper(false);
     const fireSkill = sinon.stub(analytics, 'fireSkill');
@@ -486,13 +486,13 @@ describe('browserless_skill tool', () => {
         success: true,
       });
       const text = JSON.stringify(result);
-      expect(props.run_id).to.match(/^[a-f0-9]{64}$/);
-      expect(props.skill_use_id).to.match(/^[a-f0-9]{64}$/);
-      expect(text).to.include(props.run_id).and.include(props.skill_use_id);
+      expect(props).not.to.have.property('run_id');
+      expect(props).not.to.have.property('skill_use_id');
+      expect(text).to.match(/\\"run_id\\": \\"[a-f0-9]{64}\\"/);
       expect(JSON.stringify(props) + text).not.to.match(
         /test-token|private-session|different-session/,
       );
-      ids.push(props.skill_use_id as string);
+      ids.push(text.match(/\\"skill_use_id\\": \\"([a-f0-9]{64})\\"/)![1]);
     }
     expect(ids[0]).to.equal(ids[1]);
     expect(ids[0]).not.to.equal(ids[2]);
