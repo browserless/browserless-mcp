@@ -78,7 +78,7 @@
   },
   "dependencies": {
     "@amplitude/analytics-node": "^1.5.68",
-    "@amplitude/mcp-analytics": "^0.4.0",
+    "@amplitude/mcp-analytics": "^0.5.2",
     "@aws-sdk/client-sqs": "^3.1053.0",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "@opentelemetry/api": "1.9.1",
