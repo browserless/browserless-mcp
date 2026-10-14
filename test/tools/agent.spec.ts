@@ -173,6 +173,43 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
+  it('allows a protected navigation wait before a snapshot', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'click' },
+        { method: 'waitForNavigation' },
+        { method: 'snapshot' },
+      ]),
+    ).not.to.throw();
+  });
+
+  it('allows response waits without allowing subsequent page reads', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'waitForResponse' },
+      ]),
+    ).not.to.throw();
+    for (const method of [
+      'snapshot',
+      'html',
+      'text',
+      'evaluate',
+      'screenshot',
+      'liveURL',
+      'cookies',
+    ]) {
+      expect(() =>
+        validateSecretCaptureOrdering([
+          { method: 'loadSecret' },
+          { method: 'waitForResponse' },
+          { method },
+        ]),
+      ).to.throw(`${method} cannot run after loadSecret`);
+    }
+  });
+
   it('allows saveSecret after loadSecret without permitting captures', () => {
     expect(() =>
       validateSecretCaptureOrdering([
@@ -286,6 +323,19 @@ describe('secretVisibleAfter', () => {
     [true, 'goto', { url: 'https://example.com' }, false],
     [true, 'goto', { rejected: true }, true],
     [true, 'goto', null, true],
+    [
+      true,
+      'waitForNavigation',
+      { url: 'https://example.com/', status: 200 },
+      false,
+    ],
+    [true, 'waitForNavigation', { rejected: true }, true],
+    [
+      true,
+      'waitForResponse',
+      { url: 'https://example.com/api', status: 200 },
+      true,
+    ],
     [true, 'click', {}, true],
     [false, 'snapshot', {}, false],
   ] as const) {
@@ -1175,7 +1225,7 @@ describe('formatConnectError', () => {
     expect(text).to.include('HTTP 404');
     expect(text).to.include(body);
     expect(text).to.include('browserless_sessions { action: "integrations" }');
-    expect(text).to.include('not its label');
+    expect(text).to.include('or its label');
     expect(text).to.include(
       'FIRST browserless_agent call and on every call after',
     );
@@ -1459,9 +1509,10 @@ describe('browserless_agent credential feedback', () => {
       }
       expect(error).to.be.instanceOf(UserError);
       expect(error).to.have.property('code', 'INVALID_PARAMS');
-      for (const field of ['vault', 'title', 'username', 'password']) {
+      for (const field of ['title', 'username', 'password']) {
         expect((error as Error).message).to.include(`0.params.${field}`);
       }
+      expect((error as Error).message).not.to.include('0.params.vault');
       expect((error as Error).message).not.to.include(
         'reserved or has a typed schema',
       );
@@ -1478,6 +1529,7 @@ describe('browserless_agent credential feedback', () => {
             {
               method: 'saveSecret',
               params: {
+                vault: '',
                 title: 't',
                 username: 'u',
                 password: 'do-not-echo-this-value',

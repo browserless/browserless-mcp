@@ -115,6 +115,8 @@ const SECRET_SAFE_METHODS = new Set([
   'scroll',
   'waitForSelector',
   'waitForTimeout',
+  // Result carries only url, status and elapsed time.
+  'waitForResponse',
   'uploadFile',
   'saveProfile',
   // Saving registers values for redaction but neither arms nor reads the capture gate.
@@ -125,11 +127,13 @@ const SECRET_SAFE_METHODS = new Set([
   'reportProfileAuthentication',
   'close',
 ]);
+// Commands after which a completed top-frame navigation has replaced the page.
 const TOP_FRAME_NAVIGATION_METHODS = new Set([
   'goto',
   'back',
   'forward',
   'reload',
+  'waitForNavigation',
 ]);
 
 export const validateSecretCaptureOrdering = (

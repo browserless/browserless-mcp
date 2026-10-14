@@ -323,7 +323,8 @@ export type SkillId =
   | 'auth-profile'
   | 'file-transfers'
   | 'agentic-checkout'
-  | 'vision-fallback';
+  | 'vision-fallback'
+  | 'autonomous-registration';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;

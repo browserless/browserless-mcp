@@ -51,7 +51,7 @@ The top-level \`emulationOs\`, \`emulatedDevice\`, \`screen\`, \`deviceScaleFact
 Reach for \`emulationOs\` only when there is evidence of platform fingerprinting: a Cloudflare or similar interstitial that never resolves, a hard block on an otherwise healthy page, or a site known to inspect the operating system. Start with \`emulationOs: "windows"\` unless the task or site requires another OS. Use \`emulatedDevice\` only with Android; desktop \`screen\`, \`deviceScaleFactor\`, and \`deviceSlot\` refine a desktop persona.
 
 ## Auth
-Never log in by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first**, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
+Never log in or register by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first** — or \`{ id: "autonomous-registration" }\` when the task is to create an account / sign up / register —, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
 
 After a \`loadSecret\` login, screenshot, PDF, liveURL, and page-content reads (\`evaluate\`/\`html\`/\`text\`) stay blocked until the credential is cleared. A full-page (main-frame) navigation clears it automatically; a single-page app that logs in without one — or only changes route client-side — does not. Once the credential is no longer on screen, send \`{ method: "clearSecrets" }\` before the first capture. A \`CaptureBlockedError\` after login means this step was skipped.
 
@@ -68,6 +68,7 @@ Before declaring done, restate the user's terminal deliverable in one line and v
 SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
 Load manually via **browserless_skill** if suspected but not injected:
 - \`autonomous-login\` — gates, credential rules, MFA/captcha, final JSON shape (see \`## Auth\` above for when to load)
+- \`autonomous-registration\` — create-account flows: gates, identity and credential-sink rules, save-first-then-loadSecret password handling, emailed-code branch, final JSON shape
 - \`shadow-dom\` — deep selectors, iframe targeting
 - \`cookie-consent\` — vendor-specific dismiss recipes
 - \`modals\` — closing dialogs and alertdialogs
@@ -166,6 +167,9 @@ Never retry same failed action without re-snapshot.
 - **waitForSelector** { selector, timeout? } — set 5000-10000ms
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
+- **loadSecret** { ref, selector? } — fills a vault secret server-side (\`op://<vault>/<item>/<field>\`, or \`mail://<vault>/<inbox item>/otp\` for an emailed code); you never see the value; arms capture protection. Completed top-frame navigation permits a snapshot; backend captures may still need \`clearSecrets\`
+- **saveSecret** { title, username, password, website?, vault? } → \`{ ok, ref }\` or \`{ ok: false, error, vaults? }\` — needs \`integrationId\` on the FIRST call; omit \`vault\` unless the result lists several
+- **clearSecrets** {} — lowers capture protection; use only after secret-filled fields are removed, never just after clicking submit. \`waitForNavigation\`/\`waitForResponse\`/\`waitForSelector\` are allowed while armed; response waits do not permit snapshots
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
@@ -358,5 +362,6 @@ Available in-house skills:
 - **vision-fallback** — click by coordinate when a "< " deep selector still can't surface the element (shadow DOM, nested iframe, canvas)
 - **tabs** — multi-tab workflows, peek-without-switching
 - **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
+- **autonomous-registration** — load before creating an account: when the user asked you to sign up / register, or as soon as a Create-account form appears. Covers the don't-register-by-default posture, identity and credential-sink rules, save-first-then-loadSecret password handling, the emailed-code branch, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
 - **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps`;

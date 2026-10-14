@@ -542,6 +542,7 @@ describe('account-data tools', () => {
               allowedDomains: ['example.com'],
               expiresAt: null,
               lastResolvedAt: null,
+              vaults: ['Automation'],
             },
             {
               id: 'op_2',
@@ -550,6 +551,16 @@ describe('account-data tools', () => {
               allowedDomains: [],
               expiresAt: '2027-01-01T00:00:00.000Z',
               lastResolvedAt: null,
+              vaults: null,
+            },
+            {
+              id: 'op_3',
+              label: 'empty',
+              kind: 'service-account',
+              allowedDomains: [],
+              expiresAt: null,
+              lastResolvedAt: null,
+              vaults: [],
             },
           ],
         }),
@@ -569,9 +580,17 @@ describe('account-data tools', () => {
         '- `op_2` — "open" (service_account); fills: any https origin; expires 2027-01-01T00:00:00.000Z',
       );
       expect(text).not.to.include('domains: none');
+      expect(text).to.include('; vaults: Automation');
+      expect(text).to.include('; vaults: unavailable');
+      expect(text).to.include('; vaults: none visible');
       expect(text).to.include(
-        'Pass the `op_int_…` value (not the label) as `integrationId`',
+        'Pass the `op_int_…` id or the label as `integrationId`',
       );
+      expect(text).not.to.include('(not the label)');
+      const request = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(request.variables.includeVaults).to.equal(true);
+      expect(request.query).to.include('includeVaults: $includeVaults');
+      expect(request.query).to.match(/\n\s+vaults\s*\n/);
     });
   });
 

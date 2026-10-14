@@ -345,9 +345,14 @@ describe('compliance mode — compliant tool surface', () => {
   });
 
   describe('skill tool', () => {
-    it('enum excludes captchas/autonomous-login/auth-profile, keeps others', () => {
+    it('enum excludes authentication and captcha skills, keeps others', () => {
       const skill = captureTools(true).byName.get('browserless_skill')!;
-      for (const id of ['captchas', 'autonomous-login', 'auth-profile']) {
+      for (const id of [
+        'captchas',
+        'autonomous-login',
+        'autonomous-registration',
+        'auth-profile',
+      ]) {
         expect(
           skill.parameters.safeParse({ id }).success,
           `skill ${id} must be rejected`,
