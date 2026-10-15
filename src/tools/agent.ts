@@ -641,6 +641,28 @@ const oneShotClosedNotice = (handle: string, reported: boolean): string =>
   'If you still needed this browser, ' +
   'set `keepSessionAlive: true` on your FIRST call next time.';
 
+// Nudge for profile sessions that loaded a page but never sent the saved-login
+// check; without it the server can only record `missing_report`.
+export const SAVED_LOGIN_REMINDER =
+  'Saved-login check still pending: before any login actions, send ' +
+  '`{ "method": "reportProfileAuthentication", "params": { "checkpointId": "<host>:first-page", ' +
+  '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
+  'as the only command of your next batch (end a batch with `snapshot` first if you have not taken one).';
+
+export const nextProfileAuthPending = (
+  pending: boolean | undefined,
+  hasProfile: boolean,
+  methods: string[],
+): boolean | undefined =>
+  !hasProfile
+    ? undefined
+    : methods.includes('reportProfileAuthentication')
+      ? false
+      : pending === undefined &&
+          methods.some((m) => m === 'goto' || m === 'createTab')
+        ? true
+        : pending;
+
 const isReportOnly = (commands: Array<{ method: string }>): boolean =>
   commands.every((c) =>
     ['reportOutcome', 'reportSkillOutcome', 'close'].includes(c.method),
@@ -1745,8 +1767,16 @@ export function registerAgentTools(
             // malformed URL — nothing to report
           }
         }
+        agentSession.profileAuthPending = nextProfileAuthPending(
+          agentSession.profileAuthPending,
+          !!agentSession.profile,
+          results.map((r) => r.method),
+        );
         const extraText = [
           renderedSkills,
+          agentSession.profileAuthPending && keepAlive && !closedDuringBatch
+            ? SAVED_LOGIN_REMINDER
+            : '',
           siteNotice,
           repeatWarning,
           downloadsPending &&

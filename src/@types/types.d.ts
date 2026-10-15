@@ -263,6 +263,9 @@ export interface ActiveSession {
   lastSnapshotElements?: SnapshotElement[];
   // Active tab the cache above belongs to; a change means re-baseline (new tab).
   lastActiveTargetId?: string | null;
+  // Profile session loaded a page but has not sent reportProfileAuthentication;
+  // false once reported, undefined before any navigation.
+  profileAuthPending?: boolean;
   // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
   // payment data never enter the session cache.
   stripeLinkContinuation?: {

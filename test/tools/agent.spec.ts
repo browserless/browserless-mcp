@@ -20,6 +20,8 @@ import {
   secretVisibleAfter,
   validateSecretCaptureOrdering,
   closeReminder,
+  nextProfileAuthPending,
+  SAVED_LOGIN_REMINDER,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
@@ -3712,6 +3714,40 @@ describe('browserless_agent _prompt capture', () => {
     } finally {
       await srv.close();
     }
+  });
+});
+
+describe('nextProfileAuthPending', () => {
+  it('marks a profile session pending after its first navigation', () => {
+    expect(
+      nextProfileAuthPending(undefined, true, ['goto', 'evaluate']),
+    ).to.equal(true);
+    expect(nextProfileAuthPending(undefined, true, ['createTab'])).to.equal(
+      true,
+    );
+    expect(nextProfileAuthPending(undefined, true, ['evaluate'])).to.equal(
+      undefined,
+    );
+  });
+
+  it('clears once reported and never re-arms on later navigation', () => {
+    expect(
+      nextProfileAuthPending(true, true, ['reportProfileAuthentication']),
+    ).to.equal(false);
+    expect(nextProfileAuthPending(false, true, ['goto'])).to.equal(false);
+    expect(nextProfileAuthPending(true, true, ['click'])).to.equal(true);
+  });
+
+  it('never applies to sessions without a profile', () => {
+    expect(nextProfileAuthPending(undefined, false, ['goto'])).to.equal(
+      undefined,
+    );
+  });
+
+  it('reminds with the report call shape', () => {
+    expect(SAVED_LOGIN_REMINDER)
+      .to.include('reportProfileAuthentication')
+      .and.include('before any login actions');
   });
 });
 
