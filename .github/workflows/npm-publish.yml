@@ -79,9 +79,12 @@ jobs:
       contents: read
     env:
       MCP_PUBLISHER_VERSION: v1.8.1
-      MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+      # SHA-256 of mcp-publisher_linux_amd64.tar.gz for MCP_PUBLISHER_VERSION;
+      # update both together.
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
     steps:
-      - uses: actions/checkout@v7
+      # Pinned to a commit because this job handles the registry signing key.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -89,6 +92,8 @@ jobs:
       # failing every release.
       - name: Check registry key is configured
         id: key
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
         run: |
           if [ -z "$MCP_REGISTRY_PRIVATE_KEY" ]; then
             echo "::warning::MCP_REGISTRY_PRIVATE_KEY is not set; skipping MCP Registry publish."
@@ -100,8 +105,9 @@ jobs:
       - name: Install mcp-publisher
         if: steps.key.outputs.configured == 'true'
         run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
-            | tar xz mcp-publisher
+          curl -fsSL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check --strict
+          tar xzf mcp-publisher.tar.gz mcp-publisher
 
       # The registry validates against npm, which can lag a few seconds behind
       # `npm publish`.
@@ -120,6 +126,8 @@ jobs:
 
       - name: Publish to MCP Registry
         if: steps.key.outputs.configured == 'true'
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
         run: |
           ./mcp-publisher login dns --domain browserless.io --private-key "$MCP_REGISTRY_PRIVATE_KEY"
           ./mcp-publisher publish
