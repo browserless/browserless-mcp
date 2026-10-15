@@ -263,9 +263,8 @@ export interface ActiveSession {
   lastSnapshotElements?: SnapshotElement[];
   // Active tab the cache above belongs to; a change means re-baseline (new tab).
   lastActiveTargetId?: string | null;
-  // Profile session loaded a page but has not sent reportProfileAuthentication;
-  // false once reported, undefined before any navigation.
-  profileAuthPending?: boolean;
+  // Saved-login first-page check state; undefined on sessions without a profile.
+  profileAuth?: ProfileAuthState;
   // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
   // payment data never enter the session cache.
   stripeLinkContinuation?: {
@@ -799,4 +798,9 @@ export interface ApiClient {
     identityToken?: string,
   ): Promise<StripeLinkConnectionResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
+}
+
+export interface ProfileAuthState {
+  pendingHost?: string;
+  reportedHosts: Set<string>;
 }

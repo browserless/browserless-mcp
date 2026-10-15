@@ -20,7 +20,7 @@ import {
   secretVisibleAfter,
   validateSecretCaptureOrdering,
   closeReminder,
-  nextProfileAuthPending,
+  nextProfileAuthState,
   SAVED_LOGIN_REMINDER,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
@@ -3717,31 +3717,52 @@ describe('browserless_agent _prompt capture', () => {
   });
 });
 
-describe('nextProfileAuthPending', () => {
-  it('marks a profile session pending after its first navigation', () => {
-    expect(
-      nextProfileAuthPending(undefined, true, ['goto', 'evaluate']),
-    ).to.equal(true);
-    expect(nextProfileAuthPending(undefined, true, ['createTab'])).to.equal(
-      true,
-    );
-    expect(nextProfileAuthPending(undefined, true, ['evaluate'])).to.equal(
-      undefined,
-    );
+describe('nextProfileAuthState', () => {
+  const goto = (url: string) => ({ method: 'goto', params: { url } });
+  const report = (host: string) => ({
+    method: 'reportProfileAuthentication',
+    params: { checkpointId: `${host}:first-page` },
   });
 
-  it('clears once reported and never re-arms on later navigation', () => {
+  it('arms on the first navigation to a site', () => {
     expect(
-      nextProfileAuthPending(true, true, ['reportProfileAuthentication']),
-    ).to.equal(false);
-    expect(nextProfileAuthPending(false, true, ['goto'])).to.equal(false);
-    expect(nextProfileAuthPending(true, true, ['click'])).to.equal(true);
+      nextProfileAuthState(undefined, true, [goto('https://a.com/x')])
+        ?.pendingHost,
+    ).to.equal('a.com');
+    expect(
+      nextProfileAuthState(undefined, true, [{ method: 'evaluate' }])
+        ?.pendingHost,
+    ).to.equal(undefined);
+  });
+
+  it('clears on report and does not re-arm within a reported site', () => {
+    const reported = nextProfileAuthState(
+      nextProfileAuthState(undefined, true, [goto('https://a.com')]),
+      true,
+      [report('a.com')],
+    );
+    expect(reported?.pendingHost).to.equal(undefined);
+    expect(
+      nextProfileAuthState(reported, true, [goto('https://a.com/next')])
+        ?.pendingHost,
+    ).to.equal(undefined);
+  });
+
+  it('re-arms when a new site is loaded after another was reported', () => {
+    const reported = nextProfileAuthState(undefined, true, [
+      goto('https://a.com'),
+      report('a.com'),
+    ]);
+    expect(
+      nextProfileAuthState(reported, true, [goto('https://b.com')])
+        ?.pendingHost,
+    ).to.equal('b.com');
   });
 
   it('never applies to sessions without a profile', () => {
-    expect(nextProfileAuthPending(undefined, false, ['goto'])).to.equal(
-      undefined,
-    );
+    expect(
+      nextProfileAuthState(undefined, false, [goto('https://a.com')]),
+    ).to.equal(undefined);
   });
 
   it('reminds with the report call shape', () => {

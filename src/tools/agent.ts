@@ -37,6 +37,7 @@ import type {
   PersonaOptions,
   SkillId,
   SnapshotResult,
+  ProfileAuthState,
 } from '../@types/types.js';
 import {
   categorizeThrown,
@@ -649,19 +650,43 @@ export const SAVED_LOGIN_REMINDER =
   '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
   'as the only command of your next batch (end a batch with `snapshot` first if you have not taken one).';
 
-export const nextProfileAuthPending = (
-  pending: boolean | undefined,
+const hostOf = (url: unknown): string | undefined => {
+  try {
+    return typeof url === 'string'
+      ? new URL(url).hostname.toLowerCase() || undefined
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// Tracks the first-page check per site: a navigation to a host that has not
+// been reported arms the reminder; a report clears it and marks the host done.
+export const nextProfileAuthState = (
+  state: ProfileAuthState | undefined,
   hasProfile: boolean,
-  methods: string[],
-): boolean | undefined =>
-  !hasProfile
-    ? undefined
-    : methods.includes('reportProfileAuthentication')
-      ? false
-      : pending === undefined &&
-          methods.some((m) => m === 'goto' || m === 'createTab')
-        ? true
-        : pending;
+  commands: Array<{ method: string; params?: Record<string, unknown> }>,
+): ProfileAuthState | undefined => {
+  if (!hasProfile) return undefined;
+  const next: ProfileAuthState = {
+    pendingHost: state?.pendingHost,
+    reportedHosts: new Set(state?.reportedHosts),
+  };
+  for (const { method, params } of commands) {
+    if (method === 'reportProfileAuthentication') {
+      const checkpointHost = String(params?.checkpointId ?? '')
+        .split(':')[0]
+        ?.toLowerCase();
+      for (const host of [next.pendingHost, checkpointHost])
+        if (host) next.reportedHosts.add(host);
+      next.pendingHost = undefined;
+    } else if (method === 'goto' || method === 'createTab') {
+      const host = hostOf(params?.url);
+      if (host && !next.reportedHosts.has(host)) next.pendingHost = host;
+    }
+  }
+  return next;
+};
 
 const isReportOnly = (commands: Array<{ method: string }>): boolean =>
   commands.every((c) =>
@@ -1767,14 +1792,16 @@ export function registerAgentTools(
             // malformed URL — nothing to report
           }
         }
-        agentSession.profileAuthPending = nextProfileAuthPending(
-          agentSession.profileAuthPending,
+        agentSession.profileAuth = nextProfileAuthState(
+          agentSession.profileAuth,
           !!agentSession.profile,
-          results.map((r) => r.method),
+          results,
         );
         const extraText = [
           renderedSkills,
-          agentSession.profileAuthPending && keepAlive && !closedDuringBatch
+          agentSession.profileAuth?.pendingHost &&
+          keepAlive &&
+          !closedDuringBatch
             ? SAVED_LOGIN_REMINDER
             : '',
           siteNotice,
