@@ -433,7 +433,9 @@ export const describeReadyDownload = (
   }
   const baseUrl = URL.parse(opts.mcpBaseUrl ?? '');
   const base =
-    baseUrl && ['http:', 'https:'].includes(baseUrl.protocol)
+    baseUrl &&
+    ['http:', 'https:'].includes(baseUrl.protocol) &&
+    !/[?#]/.test(baseUrl.href)
       ? baseUrl.href.replace(/\/+$/, '')
       : '<MCP_BASE_URL>';
   const tokenQ = `?token=${
@@ -444,7 +446,7 @@ export const describeReadyDownload = (
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     (base === '<MCP_BASE_URL>'
-      ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server.\n'
+      ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server, without a query or fragment.\n'
       : '') +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
     `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`

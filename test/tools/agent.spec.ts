@@ -962,6 +962,11 @@ describe('describeReadyDownload', () => {
     '/mcp',
     'https://',
     'ftp://mcp.example.com',
+    'https://mcp.example.com/?key=x',
+    'https://mcp.example.com/#section',
+    'https://mcp.example.com/?key=x#section',
+    'https://mcp.example.com/?',
+    'https://mcp.example.com/#',
   ]) {
     it(`requires a replacement base URL for ${JSON.stringify(mcpBaseUrl)}`, () => {
       const text = describeReadyDownload(record, {
