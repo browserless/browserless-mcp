@@ -660,31 +660,49 @@ const hostOf = (url: unknown): string | undefined => {
   }
 };
 
-// Tracks the first-page check per site: a navigation to a host that has not
-// been reported arms the reminder; a report clears it and marks the host done.
+// Tracks the first-page check per site: loading a host that has not been
+// reported arms the reminder; a recorded report clears it for that host.
 export const nextProfileAuthState = (
   state: ProfileAuthState | undefined,
   hasProfile: boolean,
-  commands: Array<{ method: string; params?: Record<string, unknown> }>,
+  commands: Array<{
+    method: string;
+    params?: Record<string, unknown>;
+    result?: unknown;
+  }>,
+  currentUrl?: string,
 ): ProfileAuthState | undefined => {
   if (!hasProfile) return undefined;
   const next: ProfileAuthState = {
     pendingHost: state?.pendingHost,
     reportedHosts: new Set(state?.reportedHosts),
   };
-  for (const { method, params } of commands) {
+  const arm = (host: string | undefined): void => {
+    if (host && !next.reportedHosts.has(host)) next.pendingHost = host;
+  };
+  for (const { method, params, result } of commands) {
     if (method === 'reportProfileAuthentication') {
-      const checkpointHost = String(params?.checkpointId ?? '')
-        .split(':')[0]
-        ?.toLowerCase();
-      for (const host of [next.pendingHost, checkpointHost])
-        if (host) next.reportedHosts.add(host);
-      next.pendingHost = undefined;
+      if ((result as { recorded?: boolean } | undefined)?.recorded !== true)
+        continue;
+      const checkpointHost =
+        String(params?.checkpointId ?? '')
+          .split(':')[0]
+          ?.toLowerCase() || undefined;
+      // Without targetId the report covers the active tab, i.e. the pending page.
+      const coversPending =
+        !params?.targetId || checkpointHost === next.pendingHost;
+      if (checkpointHost) next.reportedHosts.add(checkpointHost);
+      if (coversPending && next.pendingHost) {
+        next.reportedHosts.add(next.pendingHost);
+        next.pendingHost = undefined;
+      }
     } else if (method === 'goto' || method === 'createTab') {
-      const host = hostOf(params?.url);
-      if (host && !next.reportedHosts.has(host)) next.pendingHost = host;
+      arm(hostOf(params?.url));
     }
   }
+  // Catches page loads the batch did not name (link clicks, redirects, or a
+  // navigation in an earlier batch that failed after loading).
+  arm(hostOf(currentUrl));
   return next;
 };
 
@@ -1796,6 +1814,7 @@ export function registerAgentTools(
           agentSession.profileAuth,
           !!agentSession.profile,
           results,
+          currentUrl,
         );
         const extraText = [
           renderedSkills,

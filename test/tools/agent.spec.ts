@@ -3719,20 +3719,38 @@ describe('browserless_agent _prompt capture', () => {
 
 describe('nextProfileAuthState', () => {
   const goto = (url: string) => ({ method: 'goto', params: { url } });
-  const report = (host: string) => ({
+  const report = (
+    host: string,
+    extra: Record<string, unknown> = {},
+    recorded = true,
+  ) => ({
     method: 'reportProfileAuthentication',
-    params: { checkpointId: `${host}:first-page` },
+    params: { checkpointId: `${host}:first-page`, ...extra },
+    result: { recorded },
   });
+  const pending = (s: ReturnType<typeof nextProfileAuthState>) =>
+    s?.pendingHost;
 
   it('arms on the first navigation to a site', () => {
     expect(
-      nextProfileAuthState(undefined, true, [goto('https://a.com/x')])
-        ?.pendingHost,
+      pending(nextProfileAuthState(undefined, true, [goto('https://a.com/x')])),
     ).to.equal('a.com');
     expect(
-      nextProfileAuthState(undefined, true, [{ method: 'evaluate' }])
-        ?.pendingHost,
+      pending(nextProfileAuthState(undefined, true, [{ method: 'evaluate' }])),
     ).to.equal(undefined);
+  });
+
+  it('arms from the page the batch landed on (link clicks, redirects)', () => {
+    expect(
+      pending(
+        nextProfileAuthState(
+          undefined,
+          true,
+          [{ method: 'click' }, { method: 'snapshot' }],
+          'https://b.com/home',
+        ),
+      ),
+    ).to.equal('b.com');
   });
 
   it('clears on report and does not re-arm within a reported site', () => {
@@ -3740,11 +3758,18 @@ describe('nextProfileAuthState', () => {
       nextProfileAuthState(undefined, true, [goto('https://a.com')]),
       true,
       [report('a.com')],
+      'https://a.com',
     );
-    expect(reported?.pendingHost).to.equal(undefined);
+    expect(pending(reported)).to.equal(undefined);
     expect(
-      nextProfileAuthState(reported, true, [goto('https://a.com/next')])
-        ?.pendingHost,
+      pending(
+        nextProfileAuthState(
+          reported,
+          true,
+          [goto('https://a.com/next')],
+          'https://a.com/next',
+        ),
+      ),
     ).to.equal(undefined);
   });
 
@@ -3754,9 +3779,39 @@ describe('nextProfileAuthState', () => {
       report('a.com'),
     ]);
     expect(
-      nextProfileAuthState(reported, true, [goto('https://b.com')])
-        ?.pendingHost,
+      pending(nextProfileAuthState(reported, true, [goto('https://b.com')])),
     ).to.equal('b.com');
+  });
+
+  it('keeps the pending site when a report targets another tab', () => {
+    const state = nextProfileAuthState(undefined, true, [
+      goto('https://a.com'),
+    ]);
+    expect(
+      pending(
+        nextProfileAuthState(state, true, [
+          report('b.com', { targetId: 'T2' }),
+        ]),
+      ),
+    ).to.equal('a.com');
+    expect(
+      pending(
+        nextProfileAuthState(state, true, [
+          report('a.com', { targetId: 'T1' }),
+        ]),
+      ),
+    ).to.equal(undefined);
+  });
+
+  it('ignores reports the server did not record', () => {
+    const state = nextProfileAuthState(undefined, true, [
+      goto('https://a.com'),
+    ]);
+    const after = nextProfileAuthState(state, true, [
+      report('a.com', {}, false),
+    ]);
+    expect(pending(after)).to.equal('a.com');
+    expect(after?.reportedHosts.has('a.com')).to.equal(false);
   });
 
   it('never applies to sessions without a profile', () => {
