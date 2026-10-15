@@ -670,7 +670,8 @@ export const nextProfileAuthState = (
     params?: Record<string, unknown>;
     result?: unknown;
   }>,
-  currentUrl?: string,
+  landedUrl?: string,
+  activeTargetId?: string | null,
 ): ProfileAuthState | undefined => {
   if (!hasProfile) return undefined;
   const next: ProfileAuthState = {
@@ -688,9 +689,12 @@ export const nextProfileAuthState = (
         String(params?.checkpointId ?? '')
           .split(':')[0]
           ?.toLowerCase() || undefined;
-      // Without targetId the report covers the active tab, i.e. the pending page.
+      // A report on the active tab covers the pending page; checkpointId is a
+      // free-form label, so the host match is only a fallback for other tabs.
       const coversPending =
-        !params?.targetId || checkpointHost === next.pendingHost;
+        !params?.targetId ||
+        params.targetId === activeTargetId ||
+        checkpointHost === next.pendingHost;
       if (checkpointHost) next.reportedHosts.add(checkpointHost);
       if (coversPending && next.pendingHost) {
         next.reportedHosts.add(next.pendingHost);
@@ -702,7 +706,7 @@ export const nextProfileAuthState = (
   }
   // Catches page loads the batch did not name (link clicks, redirects, or a
   // navigation in an earlier batch that failed after loading).
-  arm(hostOf(currentUrl));
+  arm(hostOf(landedUrl));
   return next;
 };
 
@@ -1814,7 +1818,9 @@ export function registerAgentTools(
           agentSession.profileAuth,
           !!agentSession.profile,
           results,
-          currentUrl,
+          lastSnapshot?.url ??
+            (lastResult as { url?: string } | undefined)?.url,
+          agentSession.lastActiveTargetId,
         );
         const extraText = [
           renderedSkills,

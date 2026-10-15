@@ -3801,6 +3801,17 @@ describe('nextProfileAuthState', () => {
         ]),
       ),
     ).to.equal(undefined);
+    const labelOnly = {
+      method: 'reportProfileAuthentication',
+      params: { checkpointId: 'first-page', targetId: 'T1' },
+      result: { recorded: true },
+    };
+    expect(
+      pending(nextProfileAuthState(state, true, [labelOnly], undefined, 'T1')),
+    ).to.equal(undefined);
+    expect(
+      pending(nextProfileAuthState(state, true, [labelOnly], undefined, 'T2')),
+    ).to.equal('a.com');
   });
 
   it('ignores reports the server did not record', () => {
