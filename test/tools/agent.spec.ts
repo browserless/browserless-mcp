@@ -7,6 +7,7 @@ import {
   formatAgentCommandLog,
   formatConnectError,
   formatDownloads,
+  describeReadyDownload,
   formatErrorMessage,
   formatRecordingToDisk,
   formatScreenshotContent,
@@ -943,6 +944,51 @@ describe('normalizeUploadCommand', () => {
     }
     expect(threw).to.be.true;
   });
+});
+
+describe('describeReadyDownload', () => {
+  const record = {
+    id: 'download-id',
+    path: '/tmp/replay.html',
+    filename: 'replay.html',
+    mimeType: 'text/html',
+    size: 123,
+    owner: 'owner',
+  };
+
+  for (const mcpBaseUrl of [
+    undefined,
+    '',
+    '/mcp',
+    'https://',
+    'ftp://mcp.example.com',
+  ]) {
+    it(`requires a replacement base URL for ${JSON.stringify(mcpBaseUrl)}`, () => {
+      const text = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl,
+      });
+      expect(text).to.include('Replace <MCP_BASE_URL>');
+      expect(text).to.include('"<MCP_BASE_URL>/download/download-id?token=');
+      expect(text).to.not.include('"/download/');
+    });
+  }
+
+  for (const mcpBaseUrl of [
+    'https://mcp.example.com/',
+    'http://localhost:8080',
+  ]) {
+    it(`uses the absolute base ${mcpBaseUrl}`, () => {
+      const text = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl,
+      });
+      expect(text).to.include(
+        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id?token=`,
+      );
+      expect(text).to.not.include('Replace <MCP_BASE_URL>');
+    });
+  }
 });
 
 describe('formatDownloads (httpStream)', () => {
