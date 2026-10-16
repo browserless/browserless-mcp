@@ -255,6 +255,13 @@ const SKILL_SPECS: SkillSpec[] = [
     triggers: [],
   },
   {
+    // No snapshot signal: load by id, prompted by server instructions
+    // and the profiles empty state, never auto-injected.
+    id: 'local-chrome-sync',
+    path: 'src/skills/local-chrome-sync.md',
+    triggers: [],
+  },
+  {
     id: 'file-transfers',
     path: 'src/skills/file-transfers.md',
     triggers: [

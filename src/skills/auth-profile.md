@@ -85,3 +85,11 @@ the session handle retains the profile, so repeating `profile` is optional.
 6. **Close** the session. Tell the user the profile name and how to use it
    ("future calls can pass `profile: \"github\"`"). Do not echo cookie
    values or any captured state.
+
+## Recipe — syncing a local browser profile (CLI)
+
+When running on the user's own machine, prefer importing their already-signed-in
+local browser over logging in again. Load `local-chrome-sync` and follow its
+consent-gated CLI recipe. Hosted agents without local browser access must use
+the creation recipe instead. After upload, follow the reuse recipe above:
+pass `profile`, inspect the first snapshot, then `reportProfileAuthentication`.

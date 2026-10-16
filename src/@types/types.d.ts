@@ -321,6 +321,7 @@ export type SkillId =
   | 'tabs'
   | 'autonomous-login'
   | 'auth-profile'
+  | 'local-chrome-sync'
   | 'file-transfers'
   | 'agentic-checkout'
   | 'vision-fallback'

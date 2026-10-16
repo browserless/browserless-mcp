@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import { readFileSync } from 'node:fs';
+import { SERVER_INSTRUCTIONS } from '../../src/skills/system-prompt.js';
 import {
   createSkillState,
   detectSkills,
@@ -36,8 +38,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all fourteen skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(14);
+  it('loads all fifteen skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(15);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -51,6 +53,7 @@ describe('skills/registry', () => {
       'autonomous-login',
       'autonomous-registration',
       'auth-profile',
+      'local-chrome-sync',
       'file-transfers',
       'vision-fallback',
       'agentic-checkout',
@@ -61,6 +64,63 @@ describe('skills/registry', () => {
         100,
       );
     }
+  });
+
+  it('loads local Chrome sync manually and links from cloud profile guidance', () => {
+    const skill = skillsRegistry.find((s) => s.id === 'local-chrome-sync');
+    expect(skill).to.exist;
+    expect(skill!.triggers).to.deep.equal([]);
+    expect(renderSkill(skill!.id, false)).to.match(
+      /^--- SKILL: local-chrome-sync \(src\/skills\/local-chrome-sync\.md\) ---/,
+    );
+    expect(renderSkill('auth-profile', false)).to.include('local-chrome-sync');
+  });
+
+  it('keeps credentials out of profile recipes and installation examples', () => {
+    const texts = [
+      SERVER_INSTRUCTIONS,
+      renderSkill('local-chrome-sync', false),
+      renderSkill('auth-profile', false),
+      readFileSync('install.md', 'utf8'),
+    ];
+    for (const text of texts) {
+      for (const pattern of [
+        /token=[A-Za-z0-9._-]{8,}/,
+        /--token\s+[A-Za-z0-9._-]{8,}/,
+        /Bearer\s+[A-Za-z0-9._-]{20,}/,
+        /eyJ[A-Za-z0-9_-]{10,}/,
+      ])
+        expect(text).not.to.match(pattern);
+    }
+  });
+
+  it('keeps all eight import steps ordered and every capture example domain-scoped', () => {
+    const body = renderSkill('local-chrome-sync', false);
+    let previous = -1;
+    for (const heading of [
+      'Check existing profiles.',
+      'Ensure the CLI.',
+      'Resolve the token without exposing it.',
+      'Pick the source profile.',
+      'Consent (required).',
+      'Upload.',
+      'Use it.',
+      'Dead login.',
+    ]) {
+      const index = body.indexOf(`**${heading}**`);
+      expect(index, heading).to.be.greaterThan(previous);
+      previous = index;
+    }
+    for (const line of body
+      .split('\n')
+      .filter((line) =>
+        /browserless profile (upload|refresh) --browser/.test(line),
+      ))
+      expect(line).to.include('--only-domain <host> --only-domain <idp>');
+    expect(body).to.include('**explicit yes**');
+    expect(body).to.include('**verbatim**');
+    expect(body).to.include('reportProfileAuthentication');
+    expect(body).to.include('newLoginActivity');
   });
 
   it('keeps an approval-pending checkout browser open for same-session resume', () => {

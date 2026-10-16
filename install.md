@@ -46,26 +46,58 @@ After writing the file, tell the user to restart Claude Desktop for the change t
 
 ## Claude Code
 
-Preferred (manual JSON — most reliable across CLI versions):
-
-Add to `.claude/settings.json` (project-level) or `~/.claude/settings.json` (global):
+Preferred: add a project server to `.mcp.json` in the project root:
 
 ```json
 {
   "mcpServers": {
     "browserless": {
       "type": "http",
-      "url": "https://mcp.browserless.io/mcp?token=<BROWSERLESS_TOKEN>"
+      "url": "https://mcp.browserless.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BROWSERLESS_TOKEN}"
+      }
     }
   }
 }
 ```
 
-Or via CLI (flag names may vary across versions — use the JSON snippet above if this fails):
+Claude Code expands `${BROWSERLESS_TOKEN}` from the user's shell. Have the user
+set it there, not paste it into chat. The Browserless CLI reads the same variable,
+so local Chrome sync needs no second token. Never print or echo the value.
+
+Alternatively, the user can run this locally (the shell expands the header):
 
 ```bash
-claude mcp add browserless --transport http "https://mcp.browserless.io/mcp?token=<BROWSERLESS_TOKEN>"
+claude mcp add --transport http browserless https://mcp.browserless.io/mcp --header "Authorization: Bearer ${BROWSERLESS_TOKEN}"
 ```
+
+This defaults to local scope; add `--scope user` for all projects. Local and user
+servers are stored in `~/.claude.json`, not Claude Code settings files.
+
+## Local Chrome sync (CLI)
+
+When running on the user's own machine with Node 24+, load the `local-chrome-sync`
+skill for the complete recipe. Hosted agents without local browser access should
+use `auth-profile` instead. Check `browserless_profiles` first to reuse a saved login.
+
+```bash
+npm install -g @browserless.io/cli
+browserless profile terms
+```
+
+Show the disclaimer output verbatim and the proposed domain list, then wait for
+an explicit yes before passing `--accept-terms`. With `BROWSERLESS_TOKEN` already
+in the shell, upload only the consented site (and its identity-provider domains,
+using additional `--only-domain` flags if needed):
+
+```bash
+browserless profile upload --browser chrome --profile Default --name <site> --only-domain <site> --accept-terms --json
+```
+
+Use the uploaded profile by passing `profile: "<site>"` to the MCP tools. Preserve
+the same consented domain filters on retries and refreshes; follow the skill for
+Keychain prompts, bounded recovery and authentication reporting.
 
 ---
 

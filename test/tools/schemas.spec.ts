@@ -7,6 +7,7 @@ import {
   GenericCommandSchema,
   TypedAgentCommandSchema,
   isTypedAgentMethod,
+  profileField,
 } from '../../src/tools/schemas.js';
 import { AgentParamsSchema } from '../../src/tools/agent.js';
 import { FunctionParamsSchema } from '../../src/tools/function.js';
@@ -17,6 +18,10 @@ import {
 } from '../../src/lib/agent-client.js';
 
 describe('credential command schema dispatch', () => {
+  it('points saved profile users at local Chrome sync', () => {
+    expect(profileField('x').description).to.include('local-chrome-sync');
+  });
+
   it('distinguishes typed, unknown and reserved methods', () => {
     expect(isTypedAgentMethod('saveSecret')).to.equal(true);
     expect(isTypedAgentMethod('fooBar')).to.equal(false);

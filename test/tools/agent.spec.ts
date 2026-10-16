@@ -427,6 +427,17 @@ describe('browserless_skill tool', () => {
     expect(text).to.include('deep selector');
   });
 
+  it('advertises and loads local Chrome sync on the full surface', async () => {
+    const tool = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill')!.args[0];
+    expect(tool.description).to.include('local-chrome-sync');
+    const result = await tool.execute({ id: 'local-chrome-sync' }, mockContext);
+    expect(
+      (result.content[0] as Extract<Content, { type: 'text' }>).text,
+    ).to.match(/^--- SKILL: local-chrome-sync/);
+  });
+
   it('requires either an id or a site at the schema level', async () => {
     const skillCall = addToolSpy
       .getCalls()
