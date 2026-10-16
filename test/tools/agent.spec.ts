@@ -1405,6 +1405,15 @@ describe('formatConnectError', () => {
     expect(out).to.include('plan');
   });
 
+  it('renders a busy-session 429 without concurrency wording', () => {
+    const detail = 'Session is already being accessed by another client.';
+    expect(
+      formatConnectError(new UpgradeError(429, 'Too Many Requests', detail)),
+    ).to.equal(
+      `Browser session busy (429): ${detail} The attached browser session is still held by its previous connection. Retry the same call once after a few seconds; do not open a new session.`,
+    );
+  });
+
   it('renders 429 with a concurrency / wait hint', () => {
     const out = formatConnectError(
       new UpgradeError(
@@ -3005,6 +3014,52 @@ describe('browserless_agent integration binding guard', () => {
 
 describe('browserless_agent persona creation guard', () => {
   afterEach(() => sinon.restore());
+
+  it('ignores mismatched attach echoes with one bounded warning per call and one socket', async () => {
+    const server = await makeRespondingServer(() => ({ elements: [] }));
+    const warn = sinon.stub();
+    const context = {
+      ...mockContext,
+      log: { ...mockContext.log, warn },
+      sessionId: 'attach-mismatch-tool',
+      session: { attachSessionId: 'existing-browser' },
+    };
+    try {
+      const execute = getAgentExecute(server.url);
+      await execute({ method: 'snapshot', keepSessionAlive: true }, context);
+      expect(warn.callCount).to.equal(0);
+      const echoes = [
+        'attach:existing-browseX',
+        's:foreign',
+        '',
+        'x'.repeat(1024),
+      ];
+      for (const echo of echoes) {
+        warn.resetHistory();
+        const result = (await execute(
+          { method: 'snapshot', sessionId: echo, keepSessionAlive: true },
+          context,
+        )) as { content: Array<{ text?: string }> };
+        expect(result.content[0].text).to.include(
+          'sessionId: attach:existing-browser',
+        );
+        expect(server.upgradeUrls()).to.have.length(1);
+        expect(warn.calledOnce).to.equal(true);
+        expect(warn.firstCall.args[0]).to.equal(
+          `[agent] attach handle mismatch ignored: echoed=${echo.slice(0, 24)}… canonical=attach:existing-browser`,
+        );
+        expect(warn.firstCall.args[0]).to.not.include('test-token');
+      }
+      warn.resetHistory();
+      await execute(
+        { method: 'snapshot', sessionId: 'attach:existing-browser' },
+        context,
+      );
+      expect(warn.callCount).to.equal(0);
+    } finally {
+      await server.close();
+    }
+  });
 
   it('does not default a persona when attaching an existing browser', async () => {
     const server = await makeRespondingServer(() => ({ elements: [] }));
