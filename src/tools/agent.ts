@@ -37,6 +37,7 @@ import type {
   PersonaOptions,
   SkillId,
   SnapshotResult,
+  ProfileAuthState,
 } from '../@types/types.js';
 import {
   categorizeThrown,
@@ -660,6 +661,74 @@ const oneShotClosedNotice = (handle: string, reported: boolean): string =>
     : `Once you've checked these results, report whether the task worked: call browserless_agent with \`{ "sessionId": "${handle}", "commands": [{ "method": "reportOutcome", "params": { "success": <bool> } }] }\`. This opens no browser; use this id only for that report. `) +
   'If you still needed this browser, ' +
   'set `keepSessionAlive: true` on your FIRST call next time.';
+
+// Nudge for profile sessions that loaded a page but never sent the saved-login
+// check; without it the server can only record `missing_report`.
+export const SAVED_LOGIN_REMINDER =
+  'Saved-login check still pending: before any login actions, send ' +
+  '`{ "method": "reportProfileAuthentication", "params": { "checkpointId": "<host>:first-page", ' +
+  '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
+  'as the only command of your next batch (end a batch with `snapshot` first if you have not taken one).';
+
+const hostOf = (url: unknown): string | undefined => {
+  try {
+    return typeof url === 'string'
+      ? new URL(url).hostname.toLowerCase() || undefined
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// Tracks the first-page check per site: loading a host that has not been
+// reported arms the reminder; a recorded report clears it for that host.
+export const nextProfileAuthState = (
+  state: ProfileAuthState | undefined,
+  hasProfile: boolean,
+  commands: Array<{
+    method: string;
+    params?: Record<string, unknown>;
+    result?: unknown;
+  }>,
+  landedUrl?: string,
+  activeTargetId?: string | null,
+): ProfileAuthState | undefined => {
+  if (!hasProfile) return undefined;
+  const next: ProfileAuthState = {
+    pendingHost: state?.pendingHost,
+    reportedHosts: new Set(state?.reportedHosts),
+  };
+  const arm = (host: string | undefined): void => {
+    if (host && !next.reportedHosts.has(host)) next.pendingHost = host;
+  };
+  for (const { method, params, result } of commands) {
+    if (method === 'reportProfileAuthentication') {
+      if ((result as { recorded?: boolean } | undefined)?.recorded !== true)
+        continue;
+      const checkpointHost =
+        String(params?.checkpointId ?? '')
+          .split(':')[0]
+          ?.toLowerCase() || undefined;
+      // A report on the active tab covers the pending page; checkpointId is a
+      // free-form label, so the host match is only a fallback for other tabs.
+      const coversPending =
+        !params?.targetId ||
+        params.targetId === activeTargetId ||
+        checkpointHost === next.pendingHost;
+      if (checkpointHost) next.reportedHosts.add(checkpointHost);
+      if (coversPending && next.pendingHost) {
+        next.reportedHosts.add(next.pendingHost);
+        next.pendingHost = undefined;
+      }
+    } else if (method === 'goto' || method === 'createTab') {
+      arm(hostOf(params?.url));
+    }
+  }
+  // Catches page loads the batch did not name (link clicks, redirects, or a
+  // navigation in an earlier batch that failed after loading).
+  arm(hostOf(landedUrl));
+  return next;
+};
 
 const isReportOnly = (commands: Array<{ method: string }>): boolean =>
   commands.every((c) =>
@@ -1773,8 +1842,21 @@ export function registerAgentTools(
             // malformed URL — nothing to report
           }
         }
+        agentSession.profileAuth = nextProfileAuthState(
+          agentSession.profileAuth,
+          !!agentSession.profile,
+          results,
+          lastSnapshot?.url ??
+            (lastResult as { url?: string } | undefined)?.url,
+          agentSession.lastActiveTargetId,
+        );
         const extraText = [
           renderedSkills,
+          agentSession.profileAuth?.pendingHost &&
+          keepAlive &&
+          !closedDuringBatch
+            ? SAVED_LOGIN_REMINDER
+            : '',
           siteNotice,
           repeatWarning,
           downloadsPending &&
