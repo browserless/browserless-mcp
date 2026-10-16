@@ -7,7 +7,13 @@ import { registerAccountTool } from '../../src/tools/account.js';
 import { registerUsageTool } from '../../src/tools/usage.js';
 import { registerSessionsTool } from '../../src/tools/sessions.js';
 import { registerLogsTool } from '../../src/tools/logs.js';
-import { replayBrowser } from '../../src/lib/session-replay-artifact.js';
+import {
+  buildReplayHtml,
+  MAX_INLINE_BYTES_REMOTE,
+  replayBrowser,
+} from '../../src/lib/session-replay-artifact.js';
+import { clearSession } from '../../src/lib/download-store.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -490,13 +496,125 @@ describe('account-data tools', () => {
         const text = (result.content[0] as { text: string }).text;
         expect(text).to.include('write the resource to a .html file');
         expect(text).to.include('never rebuild the player');
-        expect(text).to.include('machine running this server');
+        expect(text).to.not.include('browserless-replay-');
         expect(text).to.not.include("open '");
         expect(
           result.content.some(
             (c) => (c as { type: string }).type === 'resource',
           ),
         ).to.equal(true);
+      });
+
+      for (const lifecycle of ['fetch', 'expiry', 'session end']) {
+        it(`downloads oversized hosted replays with owner checks and ${lifecycle}`, async () => {
+          const clock = sinon.useFakeTimers({
+            toFake: ['setTimeout', 'clearTimeout'],
+          });
+          const largeArtifact = {
+            ...artifact,
+            padding: 'x'.repeat(MAX_INLINE_BYTES_REMOTE),
+          };
+          fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
+          fetchStub
+            .onSecondCall()
+            .resolves(new Response(JSON.stringify(largeArtifact)));
+          const config = {
+            ...mockConfig,
+            transport: 'httpStream' as const,
+            mcpBaseUrl: 'https://mcp.example.com',
+          };
+          const server = new FastMCP({ name: 'test', version: '0.1.0' });
+          const spy = sinon.spy(server, 'addTool');
+          registerSessionsTool(server, config);
+          registerDownloadRoute(server, config);
+          const sessionId = `large-replay-${lifecycle}`;
+          try {
+            const result = (await spy.firstCall.args[0].execute(
+              { action: 'replay', sessionId: 'sr_1' },
+              {
+                ...mockContext,
+                sessionId,
+                session: { token: 'caller-token' },
+              } as never,
+            )) as { content: Content[] };
+            const text = textOf(result);
+            expect(result.content).to.have.length(1);
+            expect(text).to.not.include('browserless-replay-');
+            expect(text).to.not.include('opened on that host');
+            expect(text).to.not.include('test-token');
+            expect(text).to.include('15 minutes');
+            const urls =
+              text.match(/https:\/\/mcp\.example\.com\/download\/[^"\s]+/g) ??
+              [];
+            expect(urls).to.have.length(2);
+            const app = server.getApp();
+            for (const url of urls) {
+              const foreign = new URL(url);
+              foreign.searchParams.set('token', 'other-token');
+              expect((await app.request(foreign.href)).status).to.equal(404);
+            }
+            if (lifecycle === 'expiry') await clock.tickAsync(15 * 60 * 1000);
+            if (lifecycle === 'session end') clearSession(sessionId);
+            for (const [index, url] of urls.entries()) {
+              const response = await app.request(url);
+              expect(response.status).to.equal(
+                lifecycle === 'fetch' ? 200 : 404,
+              );
+              if (lifecycle !== 'fetch') continue;
+              expect(response.headers.get('content-type')).to.include(
+                index === 0 ? 'text/html' : 'application/json',
+              );
+              const body = await response.text();
+              const expected = {
+                ...largeArtifact,
+                sessionId: 'sr_1',
+                timestamp: 1700000000,
+              };
+              if (index === 0) expect(body).to.equal(buildReplayHtml(expected));
+              else expect(JSON.parse(body)).to.deep.equal(expected);
+              expect((await app.request(url)).status).to.equal(404);
+            }
+          } finally {
+            clearSession(sessionId);
+          }
+        });
+      }
+
+      it('keeps a hosted player at exactly 4 MiB inline', async () => {
+        const base = {
+          ...artifact,
+          sessionId: 'sr_1',
+          timestamp: 1700000000,
+          padding: '',
+        };
+        const padding = 'x'.repeat(
+          MAX_INLINE_BYTES_REMOTE - Buffer.byteLength(buildReplayHtml(base)),
+        );
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
+        fetchStub
+          .onSecondCall()
+          .resolves(new Response(JSON.stringify({ ...base, padding })));
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerSessionsTool(server, {
+          ...mockConfig,
+          transport: 'httpStream',
+        });
+        const result = (await spy.firstCall.args[0].execute(
+          { action: 'replay', sessionId: 'sr_1' },
+          mockContext as never,
+        )) as { content: Content[] };
+        const resource = result.content.find((c) => c.type === 'resource');
+        expect(resource?.type).to.equal('resource');
+        if (
+          resource?.type === 'resource' &&
+          typeof resource.resource.text === 'string'
+        ) {
+          expect(Buffer.byteLength(resource.resource.text)).to.equal(
+            MAX_INLINE_BYTES_REMOTE,
+          );
+        }
+        expect(textOf(result)).to.not.include('/download/');
       });
 
       it('errors clearly when the replay has no stored artifact', async () => {

@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { basename } from 'node:path';
 
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
@@ -18,6 +19,8 @@ import {
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import { isCompliant } from './compliance.js';
+import { describeReadyDownload } from './agent.js';
+import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import type { McpConfig } from '../@types/types.js';
 
 export const SessionsParamsSchema = z.object({
@@ -300,7 +303,7 @@ const formatIntegrations = (result: SessionsResult): string => {
   ].join('\n');
 };
 
-const formatReplay = (result: SessionsResult): string => {
+const formatReplay = (result: SessionsResult, downloads?: string): string => {
   const r = result.replay;
   if (!r) return 'No replay was downloaded.';
   const { artifact, htmlPath, jsonPath, openedInBrowser, inlined, local } = r;
@@ -315,8 +318,12 @@ const formatReplay = (result: SessionsResult): string => {
     ``,
     `- Site: ${artifact.website ?? 'unknown'}`,
     `- Length: ${seconds}, ${artifact.events.length} events`,
-    `- Player (self-contained, plays offline): ${htmlPath}`,
-    `- Raw rrweb events: ${jsonPath}`,
+    ...(local
+      ? [
+          `- Player (self-contained, plays offline): ${htmlPath}`,
+          `- Raw rrweb events: ${jsonPath}`,
+        ]
+      : []),
     ``,
     `### How to show it`,
     ``,
@@ -342,15 +349,15 @@ const formatReplay = (result: SessionsResult): string => {
             `this page's head and body into it — the style and script ` +
             `elements, then the markup — and drop the doctype, html, head and ` +
             `body tags themselves, since a nested head or body can stop the ` +
-            `player's CSS or scripts from running. The file path above is on ` +
-            `the machine running this server, so it only helps the user if ` +
-            `that is also their own machine.`,
+            `player's CSS or scripts from running.`,
         ]
       : [
-          `The player is ${kb} KB — too large to attach inline, and the path above ` +
-            `is on the machine running this server, not necessarily the user's. ` +
-            `Tell them the replay is ready, give them the path, and say it must be ` +
-            `opened on that host.`,
+          `The player is ${kb} KB — too large to attach inline. ` +
+            `Download the HTML to a local file using the save command below, ` +
+            `then open it in the user's browser or publish it as an artifact. ` +
+            `It is self-contained and plays offline; never rebuild the player.`,
+          downloads ?? '',
+          `Downloads are single-use and expire after 15 minutes or when the MCP session ends.`,
         ];
 
   return [
@@ -368,7 +375,7 @@ const formatReplay = (result: SessionsResult): string => {
 
 const FORMATTERS: Record<
   SessionsParams['action'],
-  (result: SessionsResult) => string
+  (result: SessionsResult, downloads?: string) => string
 > = {
   active: formatActive,
   persistent: formatPersistent,
@@ -476,8 +483,7 @@ export function registerSessionsTool(
               htmlPath,
               jsonPath,
               openedInBrowser,
-              // A local client can open the path, so inlining is pure context
-              // cost; a remote one can only ever see the inline copy.
+              // Remote clients get a download when the inline copy is too large.
               local: config.transport === 'stdio',
               bytes,
               inlined:
@@ -509,14 +515,38 @@ export function registerSessionsTool(
         result?.integrations?.length ??
         0,
     }),
-    format: (result, params) => {
+    format: async (result, params, { token, sessionId }) => {
+      const replay = result?.replay;
+      let downloads: string | undefined;
+      if (replay && !replay.local && !replay.inlined) {
+        // ponytail: handles are process-local; use shared storage before scaling
+        // the hosted MCP deployment beyond one worker.
+        const records = await Promise.all([
+          storeDownload(
+            basename(replay.htmlPath),
+            'text/html',
+            Buffer.from(replay.html),
+            downloadOwner(token),
+            sessionId,
+          ),
+          storeDownload(
+            basename(replay.jsonPath),
+            'application/json',
+            Buffer.from(JSON.stringify(replay.artifact, null, 2)),
+            downloadOwner(token),
+            sessionId,
+          ),
+        ]);
+        downloads = records
+          .map((record) => describeReadyDownload(record, { ...config, token }))
+          .join('\n\n');
+      }
       const blocks: Content[] = [
         {
           type: 'text' as const,
-          text: FORMATTERS[params.action](result ?? {}),
+          text: FORMATTERS[params.action](result ?? {}, downloads),
         },
       ];
-      const replay = result?.replay;
       if (replay?.inlined) {
         blocks.push({
           type: 'resource' as const,
