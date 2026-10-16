@@ -80,12 +80,15 @@ containers without access to that browser must use the creation recipe in
    Retry a corrected upload/refresh once; persistent failure → stop and report
    the error without credentials or captured state. Inspect the JSON result and
    surface any partial-capture/skipped-state warnings; never echo cookie values.
+   Remember the successful result's `name` as `<saved-name>` for reuse and later
+   refreshes. It may differ from `<host>` after a name collision; keep the target
+   URL and domain filters tied to `<host>`, not the saved profile name.
 
 7. **Use it.** Call `browserless_agent`:
 
    ```json
    {
-     "profile": "<host>",
+     "profile": "<saved-name>",
      "keepSessionAlive": true,
      "commands": [
        { "method": "goto", "params": { "url": "https://<host>" } },
@@ -118,9 +121,22 @@ containers without access to that browser must use the creation recipe in
    `unknown`. Follow `auth-profile` for peek/targetId and subsequent reporting.
 
 8. **Dead login.** For `login_required`, ask the user to sign in locally in
-   their real browser, then repeat Step 6 with `profile refresh`, preserving the
-   consented domains and token handling. Or load `autonomous-login` for the
-   cloud-login fallback. Do not silently perform new login activity.
+   their real browser, then repeat Step 6 with `profile refresh --name <saved-name>`,
+   preserving the consented domains and token handling. After a successful
+   refresh, close the old kept-alive session:
+
+   ```json
+   {
+     "sessionId": "<old-sessionId>",
+     "commands": [{ "method": "close" }]
+   }
+   ```
+
+   Repeat Step 7 without `sessionId` to start a fresh session hydrated from the
+   refreshed profile, then inspect its snapshot and report authentication again.
+   Updating a saved profile does not update the old browser's state. Or load
+   `autonomous-login` for the cloud-login fallback. Do not silently perform new
+   login activity.
 
 ## Never
 

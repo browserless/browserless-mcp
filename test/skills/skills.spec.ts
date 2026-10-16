@@ -121,6 +121,17 @@ describe('skills/registry', () => {
     expect(body).to.include('**verbatim**');
     expect(body).to.include('reportProfileAuthentication');
     expect(body).to.include('newLoginActivity');
+    const examples = [...body.matchAll(/```json\n([\s\S]*?)\n\s*```/g)].map(
+      (match) => JSON.parse(match[1]),
+    );
+    const open = examples.find((example) => example.profile);
+    expect(open.profile).to.equal('<saved-name>');
+    expect(open.commands[0].params.url).to.equal('https://<host>');
+    expect(open).not.to.have.property('sessionId');
+    expect(examples).to.deep.include({
+      sessionId: '<old-sessionId>',
+      commands: [{ method: 'close' }],
+    });
   });
 
   it('keeps an approval-pending checkout browser open for same-session resume', () => {
