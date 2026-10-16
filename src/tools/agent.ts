@@ -59,6 +59,9 @@ import {
   renderSiteSkillList,
   siteRecipeNotice,
   hydrateRemoteSkills,
+  verifySkillReceipt,
+  type SiteSkill,
+  type SkillReceipt,
 } from '../skills/sites.js';
 import {
   AgentToolParamsSchema,
@@ -578,6 +581,7 @@ type SkillToolParams = { id?: string; site?: string };
 export const buildSkillEventProps = (
   params: SkillToolParams,
   body: string,
+  loaded?: { skill: SiteSkill; receipt?: SkillReceipt },
 ): Record<string, unknown> => {
   const listingSite = params.site !== undefined;
   const siteSkillLoad = !listingSite && !!params.id?.includes('/');
@@ -591,6 +595,13 @@ export const buildSkillEventProps = (
         ? params.id!.split('/')[0]
         : undefined,
     success: !!body,
+    ...(loaded?.receipt
+      ? {
+          loaded_version: loaded.receipt.loaded_version,
+          domain: loaded.skill.host,
+          task: loaded.skill.slug,
+        }
+      : {}),
   };
 };
 
@@ -696,7 +707,7 @@ export function registerAgentTools(
       destructiveHint: false,
       openWorldHint: false,
     },
-    run: async ({ params, analytics, mcpSource, token, apiUrl }) => {
+    run: async ({ params, analytics, mcpSource, token, apiUrl, sessionId }) => {
       const id = params.id ?? '';
       // Compliant: no `site` recipes; only allowlisted in-house skills. The enum
       // already blocks other ids — this guard is defense-in-depth for a bypass.
@@ -717,13 +728,17 @@ export function registerAgentTools(
             analytics?.fireSkillRetrieval(token, event, mcpSource.source),
         );
       }
+      const loaded =
+        !compliant && params.site === undefined && id.includes('/')
+          ? (loadSiteSkill(id, { token, mcpSessionId: sessionId }) ?? undefined)
+          : undefined;
       const body = compliant
         ? renderSkill(id as SkillId, true)
         : params.site !== undefined
           ? renderSiteSkillList(params.site)
-          : renderSkill(id as SkillId, false) || loadSiteSkill(id) || '';
+          : renderSkill(id as SkillId, false) || loaded?.body || '';
       analytics?.fireSkill(token, {
-        ...buildSkillEventProps(params, body),
+        ...buildSkillEventProps(params, body, loaded),
         api_url: apiUrl,
         ...mcpSource,
       });
@@ -1340,8 +1355,12 @@ export function registerAgentTools(
             try {
               // Provenance is assigned by the server, never by the agent.
               const params = { ...cmd.params };
-              if (cmd.method === 'reportSkillOutcome')
+              if (cmd.method === 'reportSkillOutcome') {
                 delete params.outcome_source;
+                delete params.attribution_status;
+                if (verifySkillReceipt(agentSession.token, params))
+                  params.attribution_status = 'matched';
+              }
               const response = await send(
                 agentSession,
                 cmd.method,
