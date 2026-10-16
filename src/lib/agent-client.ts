@@ -28,6 +28,9 @@ export type {
   AgentError,
 } from '../@types/types.js';
 
+// Matches the `tool` value on MCP Tool Request for this tool.
+const AGENT_TOOL_NAME = 'browserless_agent';
+
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
 // Count of agent commands awaiting a response per session. A command may run
@@ -968,14 +971,15 @@ const connect = (
       record,
       persona,
     );
-    // Forward the origin on the upgrade so the server can attribute captured
-    // skills; reuses the same header the MCP already receives on its inbound.
-    const headers: Record<string, string> = {};
+    // Forward the origin and tool on the upgrade so the server can attribute
+    // captured skills and profile analytics; the source reuses the header the
+    // MCP already receives on its inbound.
+    const headers: Record<string, string> = {
+      'x-browserless-mcp-tool': AGENT_TOOL_NAME,
+    };
     if (source) headers['x-browserless-mcp-source'] = source;
     if (handle) headers['x-browserless-agent-session'] = handle;
-    const ws = new WebSocket(wsUrl, {
-      headers: Object.keys(headers).length ? headers : undefined,
-    });
+    const ws = new WebSocket(wsUrl, { headers });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {

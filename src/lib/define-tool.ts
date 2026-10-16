@@ -318,6 +318,7 @@ export function defineTool<P, R>(
             ...config,
             browserlessToken: token,
             browserlessApiUrl: apiUrl,
+            mcpTool: def.name,
           },
           def.cache,
         );
