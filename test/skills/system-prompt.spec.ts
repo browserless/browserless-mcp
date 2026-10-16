@@ -5,7 +5,22 @@ import {
   AGENT_SYSTEM_PROMPT,
   COMPLIANT_AGENT_SYSTEM_PROMPT,
   SKILL_TOOL_DESCRIPTION,
+  SERVER_INSTRUCTIONS,
+  serverInstructions,
 } from '../../src/skills/system-prompt.js';
+
+describe('profile import discovery', () => {
+  it('provides bounded full-only initialization instructions', () => {
+    const text = serverInstructions(false)!;
+    expect(text).to.equal(SERVER_INSTRUCTIONS);
+    expect(text).to.include('profile-import');
+    expect(text).to.include('browserless_profiles');
+    expect(text.split('\n').filter(Boolean).length).to.be.at.most(10);
+    expect(text.length).to.be.at.most(1200);
+    expect(serverInstructions(true)).to.equal(undefined);
+    expect(SKILL_TOOL_DESCRIPTION).to.include('**profile-import**');
+  });
+});
 
 describe('registration and credential guidance', () => {
   it('requires the registration skill in the full Auth section', () => {

@@ -7,6 +7,7 @@ import type { OAuthProxy } from 'fastmcp/auth';
 import { getConfig, classifyComplianceInput } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
 import { registerSurface } from './tools/register.js';
+import { serverInstructions } from './skills/system-prompt.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
 import { clearSession } from './lib/download-store.js';
@@ -146,6 +147,9 @@ const hybridAuthenticate =
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
   version: pkg.version,
+  ...(serverInstructions(config.complianceMode)
+    ? { instructions: serverInstructions(config.complianceMode) }
+    : {}),
   ...(oauthProvider ? { auth: oauthProvider } : {}),
   authenticate: hybridAuthenticate,
 });
