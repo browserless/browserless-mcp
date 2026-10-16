@@ -64,3 +64,70 @@ jobs:
         run: bash scripts/ci/notify-slack.sh
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASES_WEBHOOK }}
+
+  # Lists the release in the official MCP Registry (registry.modelcontextprotocol.io)
+  # as io.browserless/mcp. The registry stores metadata only: it reads server.json
+  # (versions bumped by release-please) and checks that the npm package's
+  # `mcpName` matches, so this must run after the npm publish above.
+  #
+  # Auth is DNS-based: a TXT record on browserless.io holds the public key and the
+  # MCP_REGISTRY_PRIVATE_KEY secret holds the Ed25519 private key (hex).
+  publish-mcp-registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+      # SHA-256 of mcp-publisher_linux_amd64.tar.gz for MCP_PUBLISHER_VERSION;
+      # update both together.
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      # Pinned to a commit because this job handles the registry signing key.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Until the DNS record and secret exist, skip with a warning rather than
+      # failing every release.
+      - name: Check registry key is configured
+        id: key
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: |
+          if [ -z "$MCP_REGISTRY_PRIVATE_KEY" ]; then
+            echo "::warning::MCP_REGISTRY_PRIVATE_KEY is not set; skipping MCP Registry publish."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install mcp-publisher
+        if: steps.key.outputs.configured == 'true'
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check --strict
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+
+      # The registry validates against npm, which can lag a few seconds behind
+      # `npm publish`.
+      - name: Wait for npm package
+        if: steps.key.outputs.configured == 'true'
+        run: |
+          VERSION="${TAG#v}"
+          for i in $(seq 1 30); do
+            if [ "$(npm view "@browserless.io/mcp@${VERSION}" mcpName 2>/dev/null)" = "io.browserless/mcp" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::@browserless.io/mcp@${VERSION} with mcpName not visible on npm after 5 minutes"
+          exit 1
+
+      - name: Publish to MCP Registry
+        if: steps.key.outputs.configured == 'true'
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: |
+          ./mcp-publisher login dns --domain browserless.io --private-key "$MCP_REGISTRY_PRIVATE_KEY"
+          ./mcp-publisher publish
