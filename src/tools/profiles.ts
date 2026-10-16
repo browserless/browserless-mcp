@@ -56,7 +56,7 @@ export function registerProfilesTool(
         return [
           {
             type: 'text' as const,
-            text: "No saved profiles for this token. Create one by running an authenticated session with `createProfile` (see the auth-profile skill), or, when you are running on the user's own machine, import their local Chrome/Brave/Edge sign-ins with the Browserless CLI (load the `local-chrome-sync` skill).",
+            text: "No saved profiles for this token. Create one by running an authenticated session with `createProfile` (see the auth-profile skill), or, when you are running on the user's own machine, import their local Chrome/Brave/Edge sign-ins with the Browserless CLI (load the `profile-import` skill).",
           },
         ];
       }

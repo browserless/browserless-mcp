@@ -89,7 +89,7 @@ the session handle retains the profile, so repeating `profile` is optional.
 ## Recipe — syncing a local browser profile (CLI)
 
 When running on the user's own machine, prefer importing their already-signed-in
-local browser over logging in again. Load `local-chrome-sync` and follow its
+local browser over logging in again. Load `profile-import` and follow its
 consent-gated CLI recipe. Hosted agents without local browser access must use
 the creation recipe instead. After upload, follow the reuse recipe above:
 pass `profile`, inspect the first snapshot, then `reportProfileAuthentication`.

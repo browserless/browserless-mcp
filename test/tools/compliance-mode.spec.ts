@@ -352,7 +352,7 @@ describe('compliance mode — compliant tool surface', () => {
         'autonomous-login',
         'autonomous-registration',
         'auth-profile',
-        'local-chrome-sync',
+        'profile-import',
       ]) {
         expect(
           skill.parameters.safeParse({ id }).success,

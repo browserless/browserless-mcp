@@ -18,8 +18,8 @@ import {
 } from '../../src/lib/agent-client.js';
 
 describe('credential command schema dispatch', () => {
-  it('points saved profile users at local Chrome sync', () => {
-    expect(profileField('x').description).to.include('local-chrome-sync');
+  it('points saved profile users at profile import', () => {
+    expect(profileField('x').description).to.include('profile-import');
   });
 
   it('distinguishes typed, unknown and reserved methods', () => {

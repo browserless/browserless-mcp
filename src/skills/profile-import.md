@@ -1,4 +1,4 @@
-# Local Chrome Sync (CLI)
+# Profile Import (CLI)
 
 Import the user's own signed-in Chrome/Brave/Edge/Chromium with the Browserless
 CLI (`@browserless.io/cli`, Node 24+). This requires running on the user's own

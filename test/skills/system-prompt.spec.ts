@@ -9,16 +9,16 @@ import {
   serverInstructions,
 } from '../../src/skills/system-prompt.js';
 
-describe('local Chrome sync discovery', () => {
+describe('profile import discovery', () => {
   it('provides bounded full-only initialization instructions', () => {
     const text = serverInstructions(false)!;
     expect(text).to.equal(SERVER_INSTRUCTIONS);
-    expect(text).to.include('local-chrome-sync');
+    expect(text).to.include('profile-import');
     expect(text).to.include('browserless_profiles');
     expect(text.split('\n').filter(Boolean).length).to.be.at.most(10);
     expect(text.length).to.be.at.most(1200);
     expect(serverInstructions(true)).to.equal(undefined);
-    expect(SKILL_TOOL_DESCRIPTION).to.include('**local-chrome-sync**');
+    expect(SKILL_TOOL_DESCRIPTION).to.include('**profile-import**');
   });
 });
 

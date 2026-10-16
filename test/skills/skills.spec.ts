@@ -53,7 +53,7 @@ describe('skills/registry', () => {
       'autonomous-login',
       'autonomous-registration',
       'auth-profile',
-      'local-chrome-sync',
+      'profile-import',
       'file-transfers',
       'vision-fallback',
       'agentic-checkout',
@@ -66,20 +66,20 @@ describe('skills/registry', () => {
     }
   });
 
-  it('loads local Chrome sync manually and links from cloud profile guidance', () => {
-    const skill = skillsRegistry.find((s) => s.id === 'local-chrome-sync');
+  it('loads profile import manually and links from cloud profile guidance', () => {
+    const skill = skillsRegistry.find((s) => s.id === 'profile-import');
     expect(skill).to.exist;
     expect(skill!.triggers).to.deep.equal([]);
     expect(renderSkill(skill!.id, false)).to.match(
-      /^--- SKILL: local-chrome-sync \(src\/skills\/local-chrome-sync\.md\) ---/,
+      /^--- SKILL: profile-import \(src\/skills\/profile-import\.md\) ---/,
     );
-    expect(renderSkill('auth-profile', false)).to.include('local-chrome-sync');
+    expect(renderSkill('auth-profile', false)).to.include('profile-import');
   });
 
   it('keeps credentials out of profile recipes and installation examples', () => {
     const texts = [
       SERVER_INSTRUCTIONS,
-      renderSkill('local-chrome-sync', false),
+      renderSkill('profile-import', false),
       renderSkill('auth-profile', false),
       readFileSync('install.md', 'utf8'),
     ];
@@ -95,7 +95,7 @@ describe('skills/registry', () => {
   });
 
   it('keeps all eight import steps ordered and every capture example domain-scoped', () => {
-    const body = renderSkill('local-chrome-sync', false);
+    const body = renderSkill('profile-import', false);
     let previous = -1;
     for (const heading of [
       'Check existing profiles.',

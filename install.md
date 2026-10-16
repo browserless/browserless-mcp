@@ -75,9 +75,9 @@ claude mcp add --transport http browserless https://mcp.browserless.io/mcp --hea
 This defaults to local scope; add `--scope user` for all projects. Local and user
 servers are stored in `~/.claude.json`, not Claude Code settings files.
 
-## Local Chrome sync (CLI)
+## Profile import (CLI)
 
-When running on the user's own machine with Node 24+, load the `local-chrome-sync`
+When running on the user's own machine with Node 24+, load the `profile-import`
 skill for the complete recipe. Hosted agents without local browser access should
 use `auth-profile` instead. Check `browserless_profiles` first to reuse a saved login.
 

@@ -1,7 +1,7 @@
 export const SERVER_INSTRUCTIONS = `Browserless MCP: cloud browsers for scraping, automation and agent tasks.
 Interactive work: browserless_agent (snapshot before you act); recipes and skills: browserless_skill.
 Signed-in sites: call browserless_profiles first and pass an existing profile's name as \`profile\`.
-No profile for that site and you are running on the user's own machine (Claude Code, Codex, a terminal)? Load the \`local-chrome-sync\` skill: it imports the user's already-signed-in Chrome/Brave/Edge profile with the Browserless CLI after showing them the disclaimer and getting an explicit yes.
+No profile for that site and you are running on the user's own machine (Claude Code, Codex, a terminal)? Load the \`profile-import\` skill: it imports the user's already-signed-in Chrome/Brave/Edge profile with the Browserless CLI after showing them the disclaimer and getting an explicit yes.
 Never send the user to the Browserless dashboard for something these tools can finish, and never print or echo an API token.`;
 
 export const serverInstructions = (compliant: boolean): string | undefined =>
@@ -374,4 +374,4 @@ Available in-house skills:
 - **autonomous-registration** — load before creating an account: when the user asked you to sign up / register, or as soon as a Create-account form appears. Covers the don't-register-by-default posture, identity and credential-sink rules, save-first-then-loadSecret password handling, the emailed-code branch, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
 - **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps
-- **local-chrome-sync** — import the user's local Chrome/Brave/Edge sign-ins as a profile with the Browserless CLI (consent-gated; only when running on the user's machine)`;
+- **profile-import** — import the user's local Chrome/Brave/Edge sign-ins as a profile with the Browserless CLI (consent-gated; only when running on the user's machine)`;

@@ -43,7 +43,7 @@ export function profileField(whenLoaded: string, extra = '') {
   const description =
     `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
     "The profile's cookies, localStorage, and IndexedDB are restored into the session before the request runs. " +
-    "The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session, or import the user's local browser sign-ins with the Browserless CLI (load the `local-chrome-sync` skill)." +
+    "The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session, or import the user's local browser sign-ins with the Browserless CLI (load the `profile-import` skill)." +
     extra;
   return nulSafeString('profile').optional().describe(description);
 }
