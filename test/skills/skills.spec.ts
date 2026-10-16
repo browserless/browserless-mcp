@@ -121,6 +121,11 @@ describe('skills/registry', () => {
     expect(body).to.include('**verbatim**');
     expect(body).to.include('reportProfileAuthentication');
     expect(body).to.include('newLoginActivity');
+    expect(body).to.include('confirm the exact saved profile name');
+    const refresh = body
+      .split('\n')
+      .find((line) => line.includes('browserless profile refresh --browser'));
+    expect(refresh).to.include('--name <saved-name>');
     const examples = [...body.matchAll(/```json\n([\s\S]*?)\n\s*```/g)].map(
       (match) => JSON.parse(match[1]),
     );

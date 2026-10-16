@@ -8,8 +8,11 @@ containers without access to that browser must use the creation recipe in
 
 ## Recipe
 
-1. **Check existing profiles.** Call `browserless_profiles`. If a profile
-   matching the target host exists, use it and stop this import recipe.
+1. **Check existing profiles.** Call `browserless_profiles`. The listing gives
+   saved names and counts, not host or origin metadata. Have the user
+   confirm the exact saved profile name for the target host before reusing it
+   and stopping this import recipe; do not infer a match from the name alone.
+   Otherwise continue the import recipe.
 
 2. **Ensure the CLI.** Run `browserless --version`. If missing, run
    `npm install -g @browserless.io/cli`. If `browserless profile terms` exits 1
@@ -74,9 +77,11 @@ containers without access to that browser must use the creation recipe in
    | 5 (server)                                                           | Name exists: choose another name, or refresh with the command below. 2 MB cap: add `--auto-fit --keep-domain <host>` without dropping any `--only-domain`. Other server errors: surface them and stop. |
 
    ```bash
-   browserless profile refresh --browser <b> --profile <p> --name <host> --only-domain <host> --only-domain <idp> --accept-terms --json
+   browserless profile refresh --browser <b> --profile <p> --name <saved-name> --only-domain <host> --only-domain <idp> --accept-terms --json
    ```
 
+   For a name collision, `<saved-name>` is the existing cloud profile name the
+   user confirms they want to refresh; never infer it from the target host.
    Retry a corrected upload/refresh once; persistent failure → stop and report
    the error without credentials or captured state. Inspect the JSON result and
    surface any partial-capture/skipped-state warnings; never echo cookie values.
