@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createInstance } from '@amplitude/analytics-node';
 import {
   AmplitudeMCPAnalytics,
   getCurrentContext,
@@ -67,12 +68,27 @@ const installConnectHook = (analytics: AmplitudeMCPAnalytics): void => {
 export const initializeAmplitudeAnalytics = (
   apiKey: string | undefined,
   serverVersion: string,
-  factory: AmplitudeFactory = (key, version) =>
-    new AmplitudeMCPAnalytics({
-      apiKey: key,
+  factory: AmplitudeFactory = (key, version) => {
+    const amplitude = createInstance();
+    // SDK diagnostics can include credentials and event payloads. Keep only
+    // their severity, and use stderr so stdio's JSON-RPC channel stays clean.
+    const loggerProvider = {
+      enable: () => {},
+      disable: () => {},
+      debug: () => {},
+      log: () => {},
+      info: () => {},
+      warn: () => console.warn('[browserless-mcp] Amplitude SDK warning'),
+      error: () =>
+        console.error(new Error('[browserless-mcp] Amplitude SDK error')),
+    };
+    amplitude.init(key, { loggerProvider });
+    return new AmplitudeMCPAnalytics({
+      amplitude: { ...amplitude, configuration: { loggerProvider } },
       serverName: 'browserless-mcp',
       serverVersion: version,
-    }),
+    });
+  },
 ): AmplitudeMCPAnalytics | undefined => {
   if (!apiKey) return undefined;
 

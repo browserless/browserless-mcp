@@ -1,4 +1,7 @@
 import { expect } from 'chai';
+import http from 'node:http';
+import https from 'node:https';
+import type { AddressInfo } from 'node:net';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
 import { createToolContext, runWithContext } from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -45,6 +48,64 @@ describe('Amplitude MCP analytics', () => {
 
     expect(analytics).to.equal(undefined);
     expect(constructed).to.equal(false);
+  });
+
+  it('keeps SDK delivery diagnostics free of credentials', async () => {
+    const key = 'Basic synthetic-analytics-credential';
+    const receiver = http.createServer((_req, res) => {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ code: 400, error: `Invalid API key: ${key}` }));
+    });
+    await new Promise<void>((resolve) =>
+      receiver.listen(0, '127.0.0.1', resolve),
+    );
+    const port = (receiver.address() as AddressInfo).port;
+    // Route the real SDK transport to a local receiver, never to Amplitude.
+    const request = sinon
+      .stub(https, 'request')
+      .callsFake(((
+        options: http.RequestOptions,
+        callback: (res: http.IncomingMessage) => void,
+      ) =>
+        http.request(
+          { ...options, hostname: '127.0.0.1', port, protocol: 'http:' },
+          callback,
+        )) as typeof https.request);
+    const stderr = sinon.stub(console, 'error');
+    const warnings = sinon.stub(console, 'warn');
+    const stdout = sinon.stub(console, 'log');
+    try {
+      const analytics = initializeAmplitudeAnalytics(key, '1.0.0');
+      expect(analytics).not.to.equal(undefined);
+      analytics!.trackToolEvent(
+        createToolContext(
+          {
+            server: { name: 'test', version: '1.0.0' },
+            transport: 'stdio',
+            identity: { userId: 'synthetic-user', resolvedFrom: 'explicit' },
+          },
+          { name: 'test_tool' },
+        ),
+        'test event',
+      );
+      // Let the SDK finish initialization and enqueue the event before flushing.
+      await new Promise(setImmediate);
+      await shutdownAmplitudeAnalytics(analytics);
+      expect(request.called).to.equal(true);
+      const output = [...stderr.args, ...warnings.args, ...stdout.args]
+        .flat()
+        .join(' ');
+      expect(output).not.to.contain(key);
+      expect(output).not.to.contain('synthetic-analytics-credential');
+      expect(output).to.contain('Amplitude');
+      expect(stdout.called).to.equal(false);
+    } finally {
+      request.restore();
+      stderr.restore();
+      warnings.restore();
+      stdout.restore();
+      await new Promise<void>((resolve) => receiver.close(() => resolve()));
+    }
   });
 
   it('uses account ids or hashed tokens as identity', () => {
