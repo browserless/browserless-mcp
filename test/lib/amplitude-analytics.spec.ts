@@ -2,12 +2,14 @@ import { expect } from 'chai';
 import http from 'node:http';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
+import { Types } from '@amplitude/analytics-node';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
 import { createToolContext, runWithContext } from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { FastMCP } from 'fastmcp';
 import sinon from 'sinon';
 import {
+  createAmplitudeLogger,
   getAmplitudeIdentity,
   initializeAmplitudeAnalytics,
   instrumentFastMcpTools,
@@ -48,6 +50,46 @@ describe('Amplitude MCP analytics', () => {
 
     expect(analytics).to.equal(undefined);
     expect(constructed).to.equal(false);
+  });
+
+  it('honors SDK logger levels, disabling, and re-enabling without payloads', () => {
+    const sandbox = sinon.createSandbox();
+    const errors = sandbox.stub(console, 'error');
+    const warnings = sandbox.stub(console, 'warn');
+    const stdout = sandbox.stub(console, 'log');
+    const logger = createAmplitudeLogger();
+    const emit = () => {
+      logger.error('synthetic-private-payload');
+      logger.warn('synthetic-private-payload');
+      logger.log('synthetic-private-payload');
+      logger.debug('synthetic-private-payload');
+      logger.info();
+    };
+    try {
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([0, 0]);
+      logger.enable(Types.LogLevel.Error);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([1, 0]);
+      logger.enable(Types.LogLevel.Warn);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([2, 1]);
+      logger.disable();
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([2, 1]);
+      logger.enable(Types.LogLevel.Warn);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([3, 2]);
+      logger.enable(Types.LogLevel.None);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([3, 2]);
+      expect(stdout.called).to.equal(false);
+      expect(
+        [...errors.args, ...warnings.args].flat().join(' '),
+      ).not.to.contain('synthetic-private-payload');
+    } finally {
+      sandbox.restore();
+    }
   });
 
   it('keeps SDK delivery diagnostics free of credentials', async () => {
