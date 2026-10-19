@@ -983,6 +983,35 @@ describe('normalizeUploadCommand', () => {
     );
   });
 
+  for (const mimeType of [undefined, 'application/custom', '']) {
+    it(`inherits stored MIME only when absent (${String(mimeType)})`, async () => {
+      const record = await storeDownload(
+        'mime.csv',
+        'text/csv',
+        Buffer.from('a'),
+        downloadOwner('mime-token'),
+        'mime-test',
+      );
+      try {
+        const file: Record<string, unknown> = {
+          handle: downloadUri(record.id),
+          ...(mimeType !== undefined ? { mimeType } : {}),
+        };
+        await normalizeUploadCommand(
+          { method: 'uploadFile', params: { files: [file] } },
+          'httpStream',
+          undefined,
+          'mime-token',
+        );
+        expect(file.mimeType).to.equal(
+          mimeType === undefined ? 'text/csv' : mimeType,
+        );
+      } finally {
+        clearSession('mime-test');
+      }
+    });
+  }
+
   it('rejects a download handle owned by another token', async () => {
     const record = await storeDownload(
       'private.bin',
