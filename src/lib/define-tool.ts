@@ -104,6 +104,7 @@ export interface ToolDefinition<P, R> {
   description: string;
   parameters: ZodType<P>;
   annotations?: ToolAnnotations;
+  _meta?: Record<string, unknown>;
   /** Defaults also included when validation fails before run(). */
   analyticsDefaults?: Record<string, unknown>;
   /**
@@ -191,6 +192,7 @@ export function defineTool<P, R>(
     description: def.description,
     parameters,
     annotations: def.annotations,
+    ...(def._meta ? { _meta: def._meta } : {}),
     execute: async (
       args,
       { reportProgress, session, sessionId, log, client: mcpClient },

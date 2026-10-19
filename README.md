@@ -39,6 +39,26 @@ No local install — see [Configuration](#configuration) for per-client snippets
 | `browserless_sessions`     | Inspect the account's sessions — browsers running now, persistent sessions on dedicated workers, recorded session replays, and 1Password credential integrations. Also downloads a replay as a fully self-contained rrweb player page (`action: "replay"`) that needs no network to render: opened in your browser when the server runs locally, otherwise attached as an inline HTML resource when small enough to send.                                   |
 | `browserless_logs`         | Read Browserless's own record of recent requests: what was attempted, whether it failed, why it stopped, how long it took and what it cost. The tool for diagnosing a run that failed on the Browserless side. Available window is plan-dependent.                                                                                                                                                                                                          |
 
+### Native file staging (disabled by default)
+
+The full HTTP surface advertises `browserless_stage_file` with the native
+`openai/fileParams` file descriptor. It is absent from stdio and the compliant
+surface. **Native downloads are currently disabled:** the production hostname
+allowlist is empty, so every staging request fails before DNS or network access.
+Tool inputs and environment variables cannot enable it.
+
+The implementation accepts `file.download_url` and `file.file_id`, with optional
+`file.mime_type` and `file.file_name`. Once trusted hosts are verified and enabled
+in code, successful staging returns only `{ handle, filename, mimeType, size }`.
+Pass the handle to `browserless_agent`'s `uploadFile`; handles belong to the
+authenticated token, remain reusable for 15 minutes, and are not tied to an MCP
+transport. Stored MIME is inherited unless the upload supplies an override.
+
+Controlled tests do not establish native ChatGPT attachment acceptance. Live
+attachment acceptance and handle resolution across deployed replicas remain
+unverified; the file store is process-local. Existing multipart `/upload` and
+inline-content uploads are unchanged.
+
 ## Skills
 
 The server ships with a built-in library of **Skills** — on-demand recipes the agent can load to handle tricky page mechanics. Skills auto-inject into `browserless_agent` responses when their triggers fire (e.g. the agent hits a cookie banner), and can also be loaded manually via the `browserless_skill` tool.

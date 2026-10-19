@@ -336,6 +336,7 @@ export const normalizeUploadCommand = async (
       }
       buf = await readFile(record.path);
       defaultName = record.filename;
+      if (f.mimeType === undefined) f.mimeType = record.mimeType;
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
