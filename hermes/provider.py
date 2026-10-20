@@ -208,7 +208,7 @@ class BrowserlessBrowserProvider(BrowserProvider):
     def get_setup_schema(self) -> Optional[Dict[str, Any]]:
         return {
             "name": self.display_name,
-            "badge": "paid",
+            "badge": "free",
             "tag": "Cloud browser (stealth, proxies, captcha solving)",
             "env_vars": [{"key": "BROWSERLESS_TOKEN", "prompt": "Browserless API token",
                           "url": "https://www.browserless.io/account"}],

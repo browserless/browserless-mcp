@@ -9,7 +9,7 @@ type, screenshot, …); the plugin supplies the browser they drive.
 
 ## Installation
 
-Requires Hermes Agent 0.21.5 or later.
+Requires Hermes Agent 0.21.6 or later.
 
 ```bash
 hermes plugins install browserless/browserless-mcp/hermes --enable
@@ -34,8 +34,6 @@ Get an API token from your [Browserless account](https://www.browserless.io/acco
 ```bash
 BROWSERLESS_TOKEN=your-token
 ```
-
-`BROWSERLESS_API_TOKEN` and `BROWSERLESS_API_KEY` are no longer read; rename them to `BROWSERLESS_TOKEN`.
 
 ## Try it
 
@@ -139,4 +137,4 @@ Browserless endpoints above and is not stored by the plugin.
 
 ## License
 
-SSPL-1.0, like the rest of this repository.
+MIT. See [LICENSE](LICENSE).
