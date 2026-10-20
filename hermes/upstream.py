@@ -43,9 +43,10 @@ def plan_max_timeout(body):
     return int(m.group(1).replace(",", "")) if m else None
 
 
-async def _ws_connect(url):
+async def _ws_connect(url, user_agent=None):
+    kwargs = {"user_agent_header": user_agent} if user_agent else {}
     try:
-        return await websockets.connect(url, max_size=None, ping_interval=None, open_timeout=30)
+        return await websockets.connect(url, max_size=None, ping_interval=None, open_timeout=30, **kwargs)
     except websockets.InvalidStatus as e:
         status = e.response.status_code
         body = redact(e.response.body[:300].decode(errors="replace").strip())
@@ -62,8 +63,9 @@ def _with_token(url, token):
 
 class ReconnectUpstream:
     def __init__(self, ws_base, token, session_timeout_ms, keepalive_ms, launch_query=None, route="/chromium",
-                 log=print):
+                 client=None, log=print):
         self.ws_base = ws_base.rstrip("/")
+        self.user_agent = (client or {}).get("user_agent")  # connection User-Agent, see the provider's _client_tag()
         self.route = route
         self.token = token
         self.session_timeout_ms = session_timeout_ms
@@ -76,11 +78,11 @@ class ReconnectUpstream:
 
     async def connect(self):
         if self.endpoint is not None:
-            return await _ws_connect(_with_token(self.endpoint, self.token))
+            return await _ws_connect(_with_token(self.endpoint, self.token), self.user_agent)
         for _ in range(3):
             q = {"token": self.token, "timeout": self.session_timeout_ms, **self.launch_query}
             try:
-                return await _ws_connect(f"{self.ws_base}{self.route}?{urlencode(q)}")
+                return await _ws_connect(f"{self.ws_base}{self.route}?{urlencode(q)}", self.user_agent)
             except (UpstreamHTTPError, UpstreamGone) as e:
                 status = getattr(e, "status", 404)
                 if self.route != "/chromium" and (status == 404 or "stealth" in str(e).lower()):
@@ -150,8 +152,10 @@ class ReconnectUpstream:
 
 
 class SessionApiUpstream:
-    def __init__(self, http_base, token, session_timeout_ms, keepalive_ms, log=print):
+    def __init__(self, http_base, token, session_timeout_ms, keepalive_ms, client=None, log=print):
         self.http_base = http_base.rstrip("/")
+        self.user_agent = (client or {}).get("user_agent")
+        self.headers = {"User-Agent": self.user_agent} if self.user_agent else {}
         self.token = token
         self.session_timeout_ms = session_timeout_ms
         self.keepalive_ms = keepalive_ms
@@ -164,7 +168,9 @@ class SessionApiUpstream:
         if self.info is None:
             for _ in range(2):
                 r = await asyncio.to_thread(
-                    requests.post, f"{self.http_base}/session", params={"token": self.token},
+                    requests.post, f"{self.http_base}/session",
+                    params={"token": self.token},
+                    headers=self.headers,
                     json={"ttl": self.session_timeout_ms, "processKeepAlive": self.keepalive_ms}, timeout=30)
                 cap = plan_max_timeout(r.text) if r.status_code == 400 else None
                 if cap and cap < self.session_timeout_ms:
@@ -177,7 +183,7 @@ class SessionApiUpstream:
             self.info = r.json()
             self.log(f"upstream: session API session {self.info['id'][:12]}… created")
         url = self.info["connect"]
-        return await _ws_connect(url if "token=" in url else _with_token(url, self.token))
+        return await _ws_connect(url if "token=" in url else _with_token(url, self.token), self.user_agent)
 
     async def after_connect(self, mux):
         return None
@@ -190,5 +196,5 @@ class SessionApiUpstream:
             return
         stop = self.info["stop"]
         stop = stop if "token=" in stop else _with_token(stop, self.token)
-        r = await asyncio.to_thread(requests.delete, stop + "&force=true", timeout=15)
+        r = await asyncio.to_thread(requests.delete, stop + "&force=true", headers=self.headers, timeout=15)
         self.log(f"upstream: DELETE session -> HTTP {r.status_code}")
