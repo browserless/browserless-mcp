@@ -998,6 +998,15 @@ export function registerAgentTools(
         );
       }
       const echoedSessionId = params.sessionId;
+      if (
+        attachSessionId &&
+        typeof params.sessionId === 'string' &&
+        params.sessionId !== `attach:${attachSessionId}`
+      ) {
+        log.warn(
+          `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+        );
+      }
       const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.

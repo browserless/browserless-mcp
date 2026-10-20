@@ -533,6 +533,7 @@ export const proxyFingerprint = (proxy?: ProxyOptions): string => {
 
 // Remote clients mint a fresh MCP session per turn and after every 401, so the
 // MCP session id alone can't pin a browser — an echoed handle survives churn.
+// Attached browsers are keyed by the header id, never by an echoed handle.
 export const sessionHandle = (
   mcpSessionId: string | undefined,
   token: string,
@@ -556,7 +557,9 @@ export const getSessionKey = (
   `t:${hashToken(token)}` +
   KEY_SEP +
   'conv#' +
-  sessionHandle(mcpSessionId, token, echoedSessionId) +
+  (attachSessionId
+    ? `attach:${attachSessionId}`
+    : sessionHandle(mcpSessionId, token, echoedSessionId)) +
   // A returned handle identifies proxy and profile state, so neither is folded
   // into the key for an echoed handle; integration bindings remain contractual
   // scope and must be repeated on every call.
@@ -1149,9 +1152,9 @@ export const getOrCreateSession = async (
   }
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
   // conversation shares the MCP session id, so the guess collided them onto one page.
-  const handle =
-    echoedSessionId ??
-    (attachSessionId ? `attach:${attachSessionId}` : `s:${randomUUID()}`);
+  const handle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : (echoedSessionId ?? `s:${randomUUID()}`);
   const key = getSessionKey(
     mcpSessionId,
     token,
