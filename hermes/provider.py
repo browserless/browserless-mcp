@@ -18,7 +18,7 @@ Config (env or $HERMES_HOME/.env):
   BROWSERLESS_BLOCK_ADS            false (default) | true
   BROWSERLESS_SOLVE_CAPTCHAS       false (default) | true  -- Browserless auto-solves captchas it detects
   BROWSERLESS_EXTRA_QUERY          extra launch params appended as-is, e.g. "humanlike=true"
-  BROWSERLESS_SOURCE_TAG           true (default) | false  -- identify requests as coming from this plugin
+  BROWSERLESS_SOURCE_TAG           true (default) | false  -- identify this plugin in its connection User-Agent
   BROWSERLESS_MUX_LOG              optional file path for a mux trace (token redacted)
 """
 from __future__ import annotations
@@ -103,11 +103,11 @@ def _plugin_version() -> str:
 
 
 def _client_tag() -> Dict[str, str]:
-    """How requests identify this plugin to Browserless (`source=hermes` and a plugin user agent), so
-    Browserless can count Hermes usage. Disclosed in the README; BROWSERLESS_SOURCE_TAG=false turns it off."""
+    """User-Agent for the plugin's own connections to Browserless (not the browser's user agent, which sites
+    see), so Browserless can count Hermes usage. Disclosed in the README; BROWSERLESS_SOURCE_TAG=false turns it off."""
     if not _bool_setting("BROWSERLESS_SOURCE_TAG", True):
         return {}
-    return {"source": "hermes", "user_agent": f"browserless-hermes-plugin/{_plugin_version()}"}
+    return {"user_agent": f"browserless-hermes-plugin/{_plugin_version()}"}
 
 
 def _token() -> Optional[str]:

@@ -65,8 +65,7 @@ class ReconnectUpstream:
     def __init__(self, ws_base, token, session_timeout_ms, keepalive_ms, launch_query=None, route="/chromium",
                  client=None, log=print):
         self.ws_base = ws_base.rstrip("/")
-        self.source = (client or {}).get("source")  # attribution tag, see the provider's _client_tag()
-        self.user_agent = (client or {}).get("user_agent")
+        self.user_agent = (client or {}).get("user_agent")  # connection User-Agent, see the provider's _client_tag()
         self.route = route
         self.token = token
         self.session_timeout_ms = session_timeout_ms
@@ -81,8 +80,7 @@ class ReconnectUpstream:
         if self.endpoint is not None:
             return await _ws_connect(_with_token(self.endpoint, self.token), self.user_agent)
         for _ in range(3):
-            q = {"token": self.token, "timeout": self.session_timeout_ms,
-                 **({"source": self.source} if self.source else {}), **self.launch_query}
+            q = {"token": self.token, "timeout": self.session_timeout_ms, **self.launch_query}
             try:
                 return await _ws_connect(f"{self.ws_base}{self.route}?{urlencode(q)}", self.user_agent)
             except (UpstreamHTTPError, UpstreamGone) as e:
@@ -156,7 +154,6 @@ class ReconnectUpstream:
 class SessionApiUpstream:
     def __init__(self, http_base, token, session_timeout_ms, keepalive_ms, client=None, log=print):
         self.http_base = http_base.rstrip("/")
-        self.source = (client or {}).get("source")
         self.user_agent = (client or {}).get("user_agent")
         self.headers = {"User-Agent": self.user_agent} if self.user_agent else {}
         self.token = token
@@ -172,7 +169,7 @@ class SessionApiUpstream:
             for _ in range(2):
                 r = await asyncio.to_thread(
                     requests.post, f"{self.http_base}/session",
-                    params={"token": self.token, **({"source": self.source} if self.source else {})},
+                    params={"token": self.token},
                     headers=self.headers,
                     json={"ttl": self.session_timeout_ms, "processKeepAlive": self.keepalive_ms}, timeout=30)
                 cap = plan_max_timeout(r.text) if r.status_code == 400 else None

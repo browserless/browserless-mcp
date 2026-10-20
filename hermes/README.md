@@ -47,22 +47,22 @@ hermes -t browser -z 'Open https://news.ycombinator.com and tell me the top 3 st
 
 Set these in `~/.hermes/.env` or the environment.
 
-| Variable                         | Default                                 | Meaning                                                                              |
-| -------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
-| `BROWSERLESS_TOKEN`              | — (required)                            | Browserless API token                                                                |
-| `BROWSERLESS_BASE_URL`           | `https://production-sfo.browserless.io` | Region endpoint, e.g. `https://production-lon.browserless.io`                        |
-| `BROWSERLESS_STEALTH`            | `true`                                  | Stealth browser: hides `navigator.webdriver` and the "HeadlessChrome" user agent     |
-| `BROWSERLESS_PROXY`              | unset                                   | `residential` routes traffic through a residential IP (uses more plan units)         |
-| `BROWSERLESS_PROXY_COUNTRY`      | unset                                   | Proxy exit country, e.g. `us`, `gb`, `de`                                            |
-| `BROWSERLESS_PROXY_STICKY`       | `true`                                  | Keep the same proxy IP for the whole session                                         |
-| `BROWSERLESS_SOLVE_CAPTCHAS`     | `false`                                 | Browserless detects and solves captchas (reCAPTCHA, Cloudflare, …) automatically     |
-| `BROWSERLESS_BLOCK_ADS`          | `false`                                 | Block ads and trackers                                                               |
-| `BROWSERLESS_EXTRA_QUERY`        | unset                                   | Extra launch parameters appended as-is, e.g. `humanlike=true`                        |
-| `BROWSERLESS_SESSION_TIMEOUT_MS` | `600000`                                | Max browser lifetime; lowered automatically to your plan's maximum                   |
-| `BROWSERLESS_KEEPALIVE_MS`       | `60000`                                 | How long the browser survives a dropped connection                                   |
-| `BROWSERLESS_UPSTREAM`           | `auto`                                  | `auto` (reconnect, falling back to the session API), `reconnect`, or `session`       |
-| `BROWSERLESS_MUX_LOG`            | unset                                   | File path for a connection log (tokens redacted), useful for troubleshooting         |
-| `BROWSERLESS_SOURCE_TAG`         | `true`                                  | Identify requests as coming from this plugin (`source=hermes`); `false` turns it off |
+| Variable                         | Default                                 | Meaning                                                                                                                      |
+| -------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `BROWSERLESS_TOKEN`              | — (required)                            | Browserless API token                                                                                                        |
+| `BROWSERLESS_BASE_URL`           | `https://production-sfo.browserless.io` | Region endpoint, e.g. `https://production-lon.browserless.io`                                                                |
+| `BROWSERLESS_STEALTH`            | `true`                                  | Stealth browser: hides `navigator.webdriver` and the "HeadlessChrome" user agent                                             |
+| `BROWSERLESS_PROXY`              | unset                                   | `residential` routes traffic through a residential IP (uses more plan units)                                                 |
+| `BROWSERLESS_PROXY_COUNTRY`      | unset                                   | Proxy exit country, e.g. `us`, `gb`, `de`                                                                                    |
+| `BROWSERLESS_PROXY_STICKY`       | `true`                                  | Keep the same proxy IP for the whole session                                                                                 |
+| `BROWSERLESS_SOLVE_CAPTCHAS`     | `false`                                 | Browserless detects and solves captchas (reCAPTCHA, Cloudflare, …) automatically                                             |
+| `BROWSERLESS_BLOCK_ADS`          | `false`                                 | Block ads and trackers                                                                                                       |
+| `BROWSERLESS_EXTRA_QUERY`        | unset                                   | Extra launch parameters appended as-is, e.g. `humanlike=true`                                                                |
+| `BROWSERLESS_SESSION_TIMEOUT_MS` | `600000`                                | Max browser lifetime; lowered automatically to your plan's maximum                                                           |
+| `BROWSERLESS_KEEPALIVE_MS`       | `60000`                                 | How long the browser survives a dropped connection                                                                           |
+| `BROWSERLESS_UPSTREAM`           | `auto`                                  | `auto` (reconnect, falling back to the session API), `reconnect`, or `session`                                               |
+| `BROWSERLESS_MUX_LOG`            | unset                                   | File path for a connection log (tokens redacted), useful for troubleshooting                                                 |
+| `BROWSERLESS_SOURCE_TAG`         | `true`                                  | Identify the plugin's connections to Browserless by User-Agent (`browserless-hermes-plugin/<version>`); `false` turns it off |
 
 ## How it works
 
@@ -120,9 +120,9 @@ The plugin connects to:
 - `127.0.0.1` (random port): the local multiplexer that Hermes connects to
 
 Pages you ask Hermes to visit are loaded by the Browserless browser. The API token is sent only to the
-Browserless endpoints above and is not stored by the plugin. Requests to Browserless identify the plugin with a
-`source=hermes` parameter and a `browserless-hermes-plugin/<version>` user agent, so Browserless can count
-Hermes usage; no other data is sent. Set `BROWSERLESS_SOURCE_TAG=false` to turn this off.
+Browserless endpoints above and is not stored by the plugin. The plugin's own connections to Browserless use a
+`browserless-hermes-plugin/<version>` User-Agent so Browserless can count Hermes usage; no other data is sent, and
+this doesn't change the browser's user agent that websites see. Set `BROWSERLESS_SOURCE_TAG=false` to turn it off.
 
 ## What this plugin does on your machine
 
@@ -130,8 +130,9 @@ Hermes usage; no other data is sent. Set `BROWSERLESS_SOURCE_TAG=false` to turn 
   WebSocket server on `127.0.0.1` (random port). It rejects requests whose Host header is not a local host name,
   which blocks DNS rebinding from web pages; other processes on the same machine can still discover and connect to
   it. It stops when that browser session closes.
-- **Network calls:** only to the Browserless endpoints listed above, using your `BROWSERLESS_TOKEN`, tagged
-  `source=hermes` (see above; `BROWSERLESS_SOURCE_TAG=false` turns the tag off).
+- **Network calls:** only to the Browserless endpoints listed above, using your `BROWSERLESS_TOKEN`, with a
+  `browserless-hermes-plugin/<version>` connection User-Agent (see above; `BROWSERLESS_SOURCE_TAG=false` turns it
+  off).
 - **Credentials:** the token is read through Hermes' secret store (`BROWSERLESS_TOKEN`); the plugin never reads
   other credential files and stores nothing.
 - **Files:** none, unless you set `BROWSERLESS_MUX_LOG`, which writes a connection log (tokens redacted) to that
