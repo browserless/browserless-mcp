@@ -414,6 +414,41 @@ events mean unavailable instrumentation, not an `unknown` failure. There is no
 historical backfill. Verify representative received events after deployment
 before treating these properties as available in production.
 
+## Live URL instructions
+
+`browserless_live_url` creates viewer links over REST for an existing browser.
+Set `action: "create"`, `browserId`, and `interactable: true` for a human handoff:
+
+```json
+{
+  "action": "create",
+  "browserId": "running-browser-id",
+  "interactable": true,
+  "instructions": {
+    "layout": "panel",
+    "format": "markdown",
+    "title": "Complete sign in",
+    "summary": "Enter your **verification code**.",
+    "steps": ["Open your inbox", "Enter the code"],
+    "currentStep": 2
+  },
+  "doneLabel": "Continue",
+  "failLabel": "Need help",
+  "requesterName": "Support"
+}
+```
+
+Plain string instructions still work. With a string, use top-level
+`instructionsTitle`, `steps`, `currentStep`, and `instructionsFormat`.
+With an object, put these values inside `instructions` as `title`, `steps`,
+`currentStep`, and `format`. Button labels and requester name stay top-level.
+Titles allow 80 characters; up to 10 non-empty steps allow 300 characters each;
+button labels allow 40 characters; requester names allow 60 characters.
+`currentStep` is one-based and must refer to a supplied step. Summary text is
+trimmed and capped at 2048 characters by the server. Steps-only cards are
+supported. Markdown links must use HTTP or HTTPS. The server validates
+cross-field constraints; deployments must support rich REST instructions.
+
 ## MCP Resources
 
 | Resource URI             | Description                     |
