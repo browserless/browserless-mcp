@@ -81,6 +81,13 @@ describe('browserless_live_url', () => {
       resizable: false,
       showBrowserInterface: false,
       instructions: 'Verify.',
+      instructionsTitle: 'Verification',
+      steps: ['Enter code'],
+      currentStep: 1,
+      doneLabel: 'Continue',
+      failLabel: 'Help',
+      requesterName: 'Support',
+      instructionsFormat: 'markdown' as const,
     };
     const result = await tool().execute(
       { action: 'create', ...params, ...options },
@@ -91,6 +98,79 @@ describe('browserless_live_url', () => {
     expect(init.method).to.equal('POST');
     expect(JSON.parse(init.body)).to.deep.equal(options);
     expect(JSON.parse((result as any).content[0].text)).to.deep.equal(response);
+  });
+
+  it('forwards structured cards and steps-only cards', async () => {
+    for (const instructions of [
+      {
+        layout: 'panel' as const,
+        format: 'markdown' as const,
+        title: 'Verify',
+        summary: '**Sign in**',
+        steps: ['Enter code'],
+        currentStep: 1,
+      },
+      { steps: ['Enter code'] },
+    ]) {
+      fetchStub.resolves(jsonResponse({ liveURL: 'url', liveURLId: 'id' }));
+      await tool().execute(
+        {
+          action: 'create',
+          browserId: params.browserId,
+          instructions,
+          doneLabel: 'Continue',
+        },
+        mockContext,
+      );
+      expect(JSON.parse(fetchStub.lastCall.args[1].body)).to.deep.equal({
+        instructions,
+        doneLabel: 'Continue',
+      });
+    }
+  });
+
+  it('validates rich card limits for both input forms', () => {
+    const valid = {
+      instructions: 'x',
+      instructionsTitle: 'x'.repeat(80),
+      steps: Array(10).fill('x'.repeat(300)),
+      currentStep: 10,
+      doneLabel: 'x'.repeat(40),
+      failLabel: 'x'.repeat(40),
+      requesterName: 'x'.repeat(60),
+      instructionsFormat: 'markdown',
+    };
+    expect(
+      LiveURLParamsSchema.safeParse({ action: 'create', ...params, ...valid })
+        .success,
+    ).to.equal(true);
+    for (const options of [
+      { instructionsTitle: 'x'.repeat(81) },
+      { steps: Array(11).fill('x') },
+      { steps: ['x'.repeat(301)] },
+      { steps: [' '] },
+      { currentStep: 0 },
+      { currentStep: 1.5 },
+      { doneLabel: 'x'.repeat(41) },
+      { failLabel: 'x'.repeat(41) },
+      { requesterName: 'x'.repeat(61) },
+      { instructionsFormat: 'html' },
+      { instructions: { title: 'x'.repeat(81) } },
+      { instructions: { steps: ['x'.repeat(301)] } },
+      { instructions: { steps: [''] } },
+      { instructions: { currentStep: 0 } },
+      { instructions: { layout: 'other' } },
+      { instructions: { format: 'html' } },
+    ]) {
+      expect(
+        LiveURLParamsSchema.safeParse({
+          action: 'create',
+          ...params,
+          ...options,
+        }).success,
+        JSON.stringify(options),
+      ).to.equal(false);
+    }
   });
 
   it('leaves defaults to server', async () => {
