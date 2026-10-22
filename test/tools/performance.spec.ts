@@ -73,7 +73,7 @@ describe('browserless_performance tool', () => {
     expect(() => registerPerformanceTool(server, mockConfig)).to.not.throw();
   });
 
-  it('returns Lighthouse scores on successful audit', async () => {
+  it('returns Lighthouse scores and lab metrics on successful audit', async () => {
     const lighthouseData = {
       data: {
         lighthouseVersion: '13.0.3',
@@ -89,6 +89,12 @@ describe('browserless_performance tool', () => {
             score: 1,
             displayValue: '0.8 s',
           },
+          'largest-contentful-paint': { displayValue: '1.2 s' },
+          'total-blocking-time': { numericValue: 0 },
+          'cumulative-layout-shift': { numericValue: 0 },
+          'speed-index': { displayValue: '0.9 s' },
+          'server-response-time': { displayValue: 'Root document took 120 ms' },
+          'total-byte-weight': { displayValue: 'Total size was 150 KiB' },
         },
       },
       type: 'json',
@@ -118,8 +124,23 @@ describe('browserless_performance tool', () => {
     expect(summary.text).to.include('Accessibility: 88/100');
     expect(summary.text).to.include('SEO: 100/100');
 
+    const metrics = content[1] as { text: string };
+    expect(metrics.text).to.include('Lighthouse Lab Metrics');
+    for (const line of [
+      'FCP: 0.8 s',
+      'LCP: 1.2 s',
+      'TBT: 0 ms',
+      'CLS: 0',
+      'Speed Index: 0.9 s',
+      'Initial server response time: Root document took 120 ms',
+      'Total transfer size: Total size was 150 KiB',
+    ]) {
+      expect(metrics.text).to.include(line);
+    }
+    expect(metrics.text).to.include('INP is not measured');
+
     // Full JSON is available on disk without being included in MCP content.
-    const downloadBlock = content[1] as { type: string; text: string };
+    const downloadBlock = content[2] as { type: string; text: string };
     const path = downloadBlock.text.split('\n')[1].split(' (')[0];
     const record = getDownload(path, downloadOwner('test-token'))!;
     expect(record.mimeType).to.equal('application/json');
@@ -132,8 +153,8 @@ describe('browserless_performance tool', () => {
     );
     expect(downloadBlock.text).to.not.include('"audits":');
 
-    // Third block: metadata
-    const metadata = content[2] as { type: string; text: string };
+    // Final block: metadata
+    const metadata = content[3] as { type: string; text: string };
     expect(metadata.text).to.include('URL: https://example.com/');
     expect(metadata.text).to.include('Lighthouse Version: 13.0.3');
   });
@@ -155,9 +176,82 @@ describe('browserless_performance tool', () => {
     expect(JSON.stringify(result).length).to.be.lessThan(3000);
     expect(JSON.stringify(result)).to.not.include('large-audit-payload');
     expect(content[0].text).to.include('Performance: N/A');
-    const path = content[1].text.split('\n')[1].split(' (')[0];
+    const path = content[2].text.split('\n')[1].split(' (')[0];
     expect(JSON.parse(await readFile(path, 'utf8'))).to.deep.equal(data);
     expect(getDownload(path, downloadOwner('other-token'))).to.be.undefined;
+  });
+
+  it('marks missing, failed, and non-finite metrics unavailable', async () => {
+    const data = {
+      categories: { performance: { score: null } },
+      audits: {
+        'first-contentful-paint': {
+          scoreDisplayMode: 'error',
+          displayValue: 'Misleading timing',
+        },
+        'largest-contentful-paint': {
+          scoreDisplayMode: 'notApplicable',
+          numericValue: 0,
+        },
+        'total-blocking-time': { numericValue: null },
+        'cumulative-layout-shift': { displayValue: '' },
+        'speed-index': { numericValue: 1200 },
+        'total-byte-weight': { numericValue: 1024 },
+      },
+    };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    const text = JSON.stringify(result);
+    for (const label of [
+      'FCP',
+      'LCP',
+      'TBT',
+      'CLS',
+      'Initial server response time',
+    ]) {
+      expect(text).to.include(`${label}: Unavailable`);
+    }
+    expect(text).to.include('Speed Index: 1200 ms');
+    expect(text).to.include('Total transfer size: 1024 bytes');
+    expect(text).to.not.include('Misleading timing');
+  });
+
+  it('does not add lab metrics when performance audits are excluded', async () => {
+    const data = {
+      categories: { seo: { title: 'SEO', score: 1 } },
+      audits: {},
+    };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/', categories: ['seo'] },
+      mockContext,
+    );
+    expect(JSON.stringify(result)).to.include('SEO: 100/100');
+    expect(JSON.stringify(result)).to.not.include('Lighthouse Lab Metrics');
+  });
+
+  it('includes metrics from custom audits without category scores', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({
+          data: {
+            audits: { 'first-contentful-paint': { displayValue: '1 s' } },
+          },
+          type: 'json',
+        }),
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    expect(JSON.stringify(result)).to.include('FCP: 1 s');
   });
 
   it('serves HTTP reports once and only to the invocation token', async () => {
