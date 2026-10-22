@@ -1513,6 +1513,8 @@ export const send = async (
   }
 };
 
+export class SessionCloseConflictError extends Error {}
+
 export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
@@ -1542,14 +1544,14 @@ export const closeSession = (
   if (session) {
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     if (stripeLinkOperations.has(session)) {
-      throw new Error(
+      throw new SessionCloseConflictError(
         'A Stripe Link checkout operation is in progress in this browser. Wait for it to finish before closing the browser.',
       );
     }
     clearExpiredStripeLinkContinuation(session);
     if (session.stripeLinkContinuation) {
       const action = session.stripeLinkContinuation.allowedNextAction;
-      throw new Error(
+      throw new SessionCloseConflictError(
         action === 'resume'
           ? 'A Stripe Link checkout is pending in this browser. Resume or cancel it before closing the browser.'
           : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',

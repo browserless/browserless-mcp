@@ -10,22 +10,16 @@ import { registerSurface } from './tools/register.js';
 import { serverInstructions } from './skills/system-prompt.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
+import { registerCloseRoute } from './resources/close-route.js';
 import { clearSession } from './lib/download-store.js';
-import {
-  closeSession,
-  dropMcpSession,
-  startSweepTimer,
-} from './lib/agent-client.js';
+import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
 import {
   touchSession,
   forgetSession,
   startSessionReaper,
 } from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
-import {
-  guardRouteAuth,
-  resolveBrowserlessRequestAuth,
-} from './lib/http-auth.js';
+import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
@@ -329,25 +323,7 @@ if (config.transport === 'httpStream') {
   // instead of pulling bytes through the conversation). httpStream only.
   registerDownloadRoute(server, config);
 
-  // Close a kept-alive agent browser by handle
-  server.getApp().delete('/agent/session/:handle', async (c) => {
-    const auth = await guardRouteAuth(c, config);
-    if (auth instanceof Response) return auth;
-    closeSession(
-      undefined,
-      auth.token,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      c.req.param('handle'),
-      undefined,
-      undefined,
-      undefined,
-      auth.userId,
-    );
-    return c.json({ ok: true });
-  });
+  registerCloseRoute(server, config);
   console.error(
     `[browserless-mcp] HTTP Streamable server listening on port ${config.port}`,
   );
