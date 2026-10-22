@@ -1540,6 +1540,14 @@ export const closeSession = (
     allowedDomains,
     userId,
   );
+  closeSessionByKey(key, onSession);
+};
+
+/** Close the exact cached key, including profile, attach, and integration scope. */
+const closeSessionByKey = (
+  key: string,
+  onSession?: (reused: boolean, ageMs: number) => void,
+): void => {
   const session = sessions.get(key);
   if (session) {
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
@@ -1572,6 +1580,28 @@ export const closeSession = (
   retainedPersonas.delete(key);
   retainedProxies.delete(key);
   retainedProfiles.delete(key);
+};
+
+/** Handles are token/user scoped but can identify more than one integration binding. */
+export const closeSessionByHandle = (
+  handle: string,
+  token: string,
+  userId?: string,
+): boolean => {
+  const matches = [...sessions.entries()].filter(
+    ([, session]) =>
+      session.handle === handle &&
+      session.token === token &&
+      session.userId === userId,
+  );
+  if (matches.length > 1) {
+    throw new SessionCloseConflictError(
+      'Multiple browser sessions match this handle. Close the session with its original scope using browserless_agent.',
+    );
+  }
+  if (!matches.length) return false;
+  closeSessionByKey(matches[0][0]);
+  return true;
 };
 
 /**

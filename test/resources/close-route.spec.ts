@@ -1,10 +1,12 @@
 import { expect } from 'chai';
 import { FastMCP } from 'fastmcp';
+import Sinon from 'sinon';
 import type { McpConfig } from '../../src/@types/types.js';
 import { registerCloseRoute } from '../../src/resources/close-route.js';
 import {
   acquireStripeLinkSessionOperation,
   getOrCreateSession,
+  closeSessionByHandle,
 } from '../../src/lib/agent-client.js';
 import { makeAcceptingServer } from '../helpers/upgrade-server.js';
 
@@ -20,7 +22,7 @@ const app = () => {
 };
 
 describe('remote session close route', () => {
-  it('requires authentication, isolates tokens, and closes idempotently', async () => {
+  it('requires authentication, isolates tokens, and reports absent sessions', async () => {
     const upstream = await makeAcceptingServer();
     try {
       const session = await getOrCreateSession('mcp', upstream.url, 'owner');
@@ -32,7 +34,7 @@ describe('remote session close route', () => {
       expect(
         (await route.request(`${url}?token=other`, { method: 'DELETE' }))
           .status,
-      ).to.equal(200);
+      ).to.equal(404);
       expect(session.ws.readyState).to.equal(1);
       for (let i = 0; i < 2; i++) {
         expect(
@@ -42,8 +44,100 @@ describe('remote session close route', () => {
               headers: { Authorization: 'Bearer owner' },
             })
           ).status,
-        ).to.equal(200);
+        ).to.equal(i === 0 ? 200 : 404);
       }
+      expect(session.ws.readyState).not.to.equal(1);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  for (const scope of ['attach', 'profile', 'integration'] as const) {
+    it(`closes the exact cached key for a ${scope} session`, async () => {
+      const upstream = await makeAcceptingServer();
+      const args: Parameters<typeof getOrCreateSession> = [
+        'mcp',
+        upstream.url,
+        'owner',
+      ];
+      if (scope === 'attach') args[6] = 'attached-session';
+      if (scope === 'profile') {
+        args[5] = { name: 'creation-profile' };
+        Sinon.stub(globalThis, 'fetch').resolves(
+          new Response(JSON.stringify({ id: 'created-session' })),
+        );
+      }
+      if (scope === 'integration') {
+        args[10] = 'integration-id';
+        args[11] = ['example.com'];
+      }
+      try {
+        const session = await getOrCreateSession(...args);
+        const response = await app().request(
+          `/agent/session/${encodeURIComponent(session.handle)}?token=owner`,
+          { method: 'DELETE' },
+        );
+        expect(response.status).to.equal(200);
+        expect(session.ws.readyState).not.to.equal(1);
+        expect(closeSessionByHandle(session.handle, 'owner')).to.equal(false);
+      } finally {
+        Sinon.restore();
+        await upstream.close();
+      }
+    });
+  }
+
+  it('refuses an ambiguous handle without closing either integration binding', async () => {
+    const upstream = await makeAcceptingServer();
+    const open = (integration: string) =>
+      getOrCreateSession(
+        'mcp',
+        upstream.url,
+        'owner',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        's:shared',
+        integration,
+      );
+    try {
+      const first = await open('first-integration');
+      const second = await open('second-integration');
+      const response = await app().request(
+        '/agent/session/s%3Ashared?token=owner',
+        { method: 'DELETE' },
+      );
+      expect(response.status).to.equal(409);
+      const body = (await response.json()) as { error: string };
+      expect(body.error).to.include('Multiple browser sessions');
+      expect(first.ws.readyState).to.equal(1);
+      expect(second.ws.readyState).to.equal(1);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it('isolates OAuth users sharing an account token', async () => {
+    const upstream = await makeAcceptingServer();
+    const args: Parameters<typeof getOrCreateSession> = [
+      'mcp',
+      upstream.url,
+      'owner',
+    ];
+    args[17] = 'user-one';
+    try {
+      const session = await getOrCreateSession(...args);
+      expect(closeSessionByHandle(session.handle, 'owner')).to.equal(false);
+      expect(
+        closeSessionByHandle(session.handle, 'owner', 'user-two'),
+      ).to.equal(false);
+      expect(session.ws.readyState).to.equal(1);
+      expect(
+        closeSessionByHandle(session.handle, 'owner', 'user-one'),
+      ).to.equal(true);
       expect(session.ws.readyState).not.to.equal(1);
     } finally {
       await upstream.close();
