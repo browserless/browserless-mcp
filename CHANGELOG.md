@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.40.0](https://github.com/browserless/browserless-mcp/compare/v1.39.0...v1.40.0) (2026-10-23)
+
+
+### Features
+
+* accept the rich instructions card over liveurl AUTO-612 ([#438](https://github.com/browserless/browserless-mcp/issues/438)) ([5802ff0](https://github.com/browserless/browserless-mcp/commit/5802ff0d5181bdd64987cbfddf26ccc03bf0c09a))
+* add disabled native file staging ([#425](https://github.com/browserless/browserless-mcp/issues/425)) ([6df8c2f](https://github.com/browserless/browserless-mcp/commit/6df8c2f8633b13f00095561db59020ebd2545275))
+* allow to close kept-alive sessions remotely AUTO-637 ([#440](https://github.com/browserless/browserless-mcp/issues/440)) ([5f598e4](https://github.com/browserless/browserless-mcp/commit/5f598e4a84df13d2e46b595d0bfb204c4c112834))
+
+
+### Bug Fixes
+
+* add web core vitals for performance tool AUTO-620 ([#439](https://github.com/browserless/browserless-mcp/issues/439)) ([4320816](https://github.com/browserless/browserless-mcp/commit/4320816216736263ac7c2846af67e995d1626eae))
+* ensure created liveURLs are longer lasting by default AUTO-591 ([#441](https://github.com/browserless/browserless-mcp/issues/441)) ([0fa4307](https://github.com/browserless/browserless-mcp/commit/0fa43074d5079588cf67cd0a5012b512d6a43ede))
+* keep analytics SDK diagnostics payload-free ([#424](https://github.com/browserless/browserless-mcp/issues/424)) ([bc52901](https://github.com/browserless/browserless-mcp/commit/bc52901a2b84c983c5dc3dd5c304984b8d99d39b))
+* keep attached browser sessions bound to their canonical handle ([#423](https://github.com/browserless/browserless-mcp/issues/423)) ([554eb20](https://github.com/browserless/browserless-mcp/commit/554eb20b9321709e3b15beef3b0a47873eeb2d2d))
+
 ## [1.39.0](https://github.com/browserless/browserless-mcp/compare/v1.38.0...v1.39.0) (2026-10-16)
 
 
