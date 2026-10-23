@@ -648,7 +648,7 @@ export const SAVED_LOGIN_REMINDER =
   'Saved-login check still pending: before any login actions, send ' +
   '`{ "method": "reportProfileAuthentication", "params": { "checkpointId": "<host>:first-page", ' +
   '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
-  'as the only command of your next batch (end a batch with `snapshot` first if you have not taken one).';
+  'as the first command of your next batch, then continue the task (end a batch with `snapshot` first if you have not taken one).';
 
 const hostOf = (url: unknown): string | undefined => {
   try {

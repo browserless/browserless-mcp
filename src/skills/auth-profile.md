@@ -15,7 +15,8 @@ exists.
 
 After the first batch that loads a page on the site — whether you read it with
 `snapshot`, `text`, `evaluate`, or `screenshot` — send
-`reportProfileAuthentication` as the only command of the next batch, before any login actions
+`reportProfileAuthentication` as the first command of the next batch, before any login actions;
+the rest of that batch can continue the task, but not with `close`
 (params: `checkpointId` = `"<host>:first-page"`, `outcome`, `newLoginActivity: false`).
 If login activity already occurred on this site, use `newLoginActivity: true` instead.
 It defaults to the last active-tab snapshot, so if you have not taken one yet,
