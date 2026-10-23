@@ -180,6 +180,7 @@ Never retry same failed action without re-snapshot.
 - **saveSecret** { title, username, password, website?, vault? } → \`{ ok, ref }\` or \`{ ok: false, error, vaults? }\` — needs \`integrationId\` on the FIRST call; omit \`vault\` unless the result lists several
 - **clearSecrets** {} — lowers capture protection; use only after secret-filled fields are removed, never just after clicking submit. \`waitForNavigation\`/\`waitForResponse\`/\`waitForSelector\` are allowed while armed; response waits do not permit snapshots
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
+- **liveURL** { targetId?, mode? } — streams the active tab; pass targetId from getTabs to stream another without switching
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 `;
@@ -300,6 +301,7 @@ Never retry the same failed action without re-snapshot.
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
+- **liveURL** { targetId?, mode? } — streams the active tab; pass targetId from getTabs to stream another without switching
 - See schema for: screenshot, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 Provide \`commands\` as a sequential batch; only the final result is returned.`;
