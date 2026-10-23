@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createInstance, Types } from '@amplitude/analytics-node';
 import {
   AmplitudeMCPAnalytics,
   getCurrentContext,
@@ -64,15 +65,45 @@ const installConnectHook = (analytics: AmplitudeMCPAnalytics): void => {
   hookInstalled = true;
 };
 
+export const createAmplitudeLogger = (): Types.ILogger & { info(): void } => {
+  let level = Types.LogLevel.None;
+  return {
+    enable: (logLevel = Types.LogLevel.Warn) => {
+      level = logLevel;
+    },
+    disable: () => {
+      level = Types.LogLevel.None;
+    },
+    // Verbose payload diagnostics remain suppressed, regardless of log level.
+    debug: () => {},
+    log: () => {},
+    info: () => {},
+    warn: () => {
+      if (level >= Types.LogLevel.Warn)
+        console.warn('[browserless-mcp] Amplitude SDK warning');
+    },
+    error: () => {
+      if (level >= Types.LogLevel.Error)
+        console.error(new Error('[browserless-mcp] Amplitude SDK error'));
+    },
+  };
+};
+
 export const initializeAmplitudeAnalytics = (
   apiKey: string | undefined,
   serverVersion: string,
-  factory: AmplitudeFactory = (key, version) =>
-    new AmplitudeMCPAnalytics({
-      apiKey: key,
+  factory: AmplitudeFactory = (key, version) => {
+    const amplitude = createInstance();
+    // SDK diagnostics can include credentials and event payloads. Keep only
+    // their severity, and use stderr so stdio's JSON-RPC channel stays clean.
+    const loggerProvider = createAmplitudeLogger();
+    amplitude.init(key, { loggerProvider });
+    return new AmplitudeMCPAnalytics({
+      amplitude: { ...amplitude, configuration: { loggerProvider } },
       serverName: 'browserless-mcp',
       serverVersion: version,
-    }),
+    });
+  },
 ): AmplitudeMCPAnalytics | undefined => {
   if (!apiKey) return undefined;
 

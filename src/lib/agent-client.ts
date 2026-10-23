@@ -533,6 +533,7 @@ export const proxyFingerprint = (proxy?: ProxyOptions): string => {
 
 // Remote clients mint a fresh MCP session per turn and after every 401, so the
 // MCP session id alone can't pin a browser — an echoed handle survives churn.
+// Attached browsers are keyed by the header id, never by an echoed handle.
 export const sessionHandle = (
   mcpSessionId: string | undefined,
   token: string,
@@ -556,7 +557,9 @@ export const getSessionKey = (
   `t:${hashToken(token)}` +
   KEY_SEP +
   'conv#' +
-  sessionHandle(mcpSessionId, token, echoedSessionId) +
+  (attachSessionId
+    ? `attach:${attachSessionId}`
+    : sessionHandle(mcpSessionId, token, echoedSessionId)) +
   // A returned handle identifies proxy and profile state, so neither is folded
   // into the key for an echoed handle; integration bindings remain contractual
   // scope and must be repeated on every call.
@@ -951,6 +954,7 @@ const connect = (
   humanlike?: boolean,
   record?: boolean,
   persona?: PersonaOptions,
+  handle?: string,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -969,10 +973,12 @@ const connect = (
     );
     // Forward the origin on the upgrade so the server can attribute captured
     // skills; reuses the same header the MCP already receives on its inbound.
-    const ws = new WebSocket(
-      wsUrl,
-      source ? { headers: { 'x-browserless-mcp-source': source } } : undefined,
-    );
+    const headers: Record<string, string> = {};
+    if (source) headers['x-browserless-mcp-source'] = source;
+    if (handle) headers['x-browserless-agent-session'] = handle;
+    const ws = new WebSocket(wsUrl, {
+      headers: Object.keys(headers).length ? headers : undefined,
+    });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -1146,9 +1152,9 @@ export const getOrCreateSession = async (
   }
   // Reusing on a bare call guessed "same task" — but every concurrent task in a
   // conversation shares the MCP session id, so the guess collided them onto one page.
-  const handle =
-    echoedSessionId ??
-    (attachSessionId ? `attach:${attachSessionId}` : `s:${randomUUID()}`);
+  const handle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : (echoedSessionId ?? `s:${randomUUID()}`);
   const key = getSessionKey(
     mcpSessionId,
     token,
@@ -1345,6 +1351,7 @@ export const getOrCreateSession = async (
       humanlike,
       record,
       createProfile ? undefined : effectivePersona,
+      handle,
     );
     const session: ActiveSession = {
       ws,
@@ -1458,6 +1465,7 @@ export const send = async (
           session.humanlike,
           session.record,
           session.creationSessionId ? undefined : session.persona,
+          session.handle,
         ).finally(() => {
           session.reconnecting = undefined;
         });

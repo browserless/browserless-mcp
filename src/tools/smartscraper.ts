@@ -5,6 +5,7 @@ import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { ResponseCache } from '../lib/cache.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { formatDownloads } from './agent.js';
 import type {
   McpConfig,
   SmartScrapeResult,
@@ -33,7 +34,7 @@ export const SmartScraperParamsSchema = z
       .optional()
       .default(['markdown'])
       .describe(
-        'Output formats to include: "markdown", "html", "rawText", "screenshot", "pdf", "links". rawText is DOM text with script, style, and noscript elements removed and whitespace collapsed, or extracted text for PDF targets. Defaults to ["markdown"].',
+        'Output formats to include: "markdown", "html", "rawText", "screenshot", "pdf", "links". PDFs are saved outside the conversation and returned as a local path (stdio) or a single-use download URL (HTTP). rawText is DOM text with script, style, and noscript elements removed and whitespace collapsed, or extracted text for PDF targets. Defaults to ["markdown"].',
       ),
     timeout: z
       .number()
@@ -166,7 +167,7 @@ export function registerSmartScraperTool(
         params.includeTags?.length || params.excludeTags?.length
       ),
     }),
-    format: (response, params) => {
+    format: async (response, params, { token, sessionId }) => {
       if (!response.ok) {
         throw new UserError(
           `Scraping failed: ${response.message ?? 'Unknown error'} ` +
@@ -237,10 +238,25 @@ export function registerSmartScraperTool(
         });
       }
       if (response.pdf) {
-        blocks.push({
-          type: 'text' as const,
-          text: `[PDF Document - base64 encoded, ${response.pdf.length} characters]\n${response.pdf}`,
-        });
+        blocks.push(
+          ...(await formatDownloads(
+            [
+              {
+                filename: 'document.pdf',
+                mimeType: 'application/pdf',
+                data: response.pdf,
+              },
+            ],
+            '',
+            '',
+            {
+              transport: config.transport,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+              sessionId,
+            },
+          )),
+        );
       }
       if (response.links && response.links.length > 0) {
         blocks.push({

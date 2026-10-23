@@ -1,10 +1,15 @@
 import { expect } from 'chai';
+import http from 'node:http';
+import https from 'node:https';
+import type { AddressInfo } from 'node:net';
+import { Types } from '@amplitude/analytics-node';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
 import { createToolContext, runWithContext } from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { FastMCP } from 'fastmcp';
 import sinon from 'sinon';
 import {
+  createAmplitudeLogger,
   getAmplitudeIdentity,
   initializeAmplitudeAnalytics,
   instrumentFastMcpTools,
@@ -45,6 +50,104 @@ describe('Amplitude MCP analytics', () => {
 
     expect(analytics).to.equal(undefined);
     expect(constructed).to.equal(false);
+  });
+
+  it('honors SDK logger levels, disabling, and re-enabling without payloads', () => {
+    const sandbox = sinon.createSandbox();
+    const errors = sandbox.stub(console, 'error');
+    const warnings = sandbox.stub(console, 'warn');
+    const stdout = sandbox.stub(console, 'log');
+    const logger = createAmplitudeLogger();
+    const emit = () => {
+      logger.error('synthetic-private-payload');
+      logger.warn('synthetic-private-payload');
+      logger.log('synthetic-private-payload');
+      logger.debug('synthetic-private-payload');
+      logger.info();
+    };
+    try {
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([0, 0]);
+      logger.enable(Types.LogLevel.Error);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([1, 0]);
+      logger.enable(Types.LogLevel.Warn);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([2, 1]);
+      logger.disable();
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([2, 1]);
+      logger.enable(Types.LogLevel.Warn);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([3, 2]);
+      logger.enable(Types.LogLevel.None);
+      emit();
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([3, 2]);
+      expect(stdout.called).to.equal(false);
+      expect(
+        [...errors.args, ...warnings.args].flat().join(' '),
+      ).not.to.contain('synthetic-private-payload');
+    } finally {
+      sandbox.restore();
+    }
+  });
+
+  it('keeps SDK delivery diagnostics free of credentials', async () => {
+    const key = 'Basic synthetic-analytics-credential';
+    const receiver = http.createServer((_req, res) => {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ code: 400, error: `Invalid API key: ${key}` }));
+    });
+    await new Promise<void>((resolve) =>
+      receiver.listen(0, '127.0.0.1', resolve),
+    );
+    const port = (receiver.address() as AddressInfo).port;
+    // Route the real SDK transport to a local receiver, never to Amplitude.
+    const request = sinon
+      .stub(https, 'request')
+      .callsFake(((
+        options: http.RequestOptions,
+        callback: (res: http.IncomingMessage) => void,
+      ) =>
+        http.request(
+          { ...options, hostname: '127.0.0.1', port, protocol: 'http:' },
+          callback,
+        )) as typeof https.request);
+    const stderr = sinon.stub(console, 'error');
+    const warnings = sinon.stub(console, 'warn');
+    const stdout = sinon.stub(console, 'log');
+    try {
+      const analytics = initializeAmplitudeAnalytics(key, '1.0.0');
+      expect(analytics).not.to.equal(undefined);
+      analytics!.trackToolEvent(
+        createToolContext(
+          {
+            server: { name: 'test', version: '1.0.0' },
+            transport: 'stdio',
+            identity: { userId: 'synthetic-user', resolvedFrom: 'explicit' },
+          },
+          { name: 'test_tool' },
+        ),
+        'test event',
+      );
+      // Let the SDK finish initialization and enqueue the event before flushing.
+      await new Promise(setImmediate);
+      await shutdownAmplitudeAnalytics(analytics);
+      expect(request.called).to.equal(true);
+      const output = [...stderr.args, ...warnings.args, ...stdout.args]
+        .flat()
+        .join(' ');
+      expect(output).not.to.contain(key);
+      expect(output).not.to.contain('synthetic-analytics-credential');
+      expect(output).to.contain('Amplitude');
+      expect(stdout.called).to.equal(false);
+    } finally {
+      request.restore();
+      stderr.restore();
+      warnings.restore();
+      stdout.restore();
+      await new Promise<void>((resolve) => receiver.close(() => resolve()));
+    }
   });
 
   it('uses account ids or hashed tokens as identity', () => {

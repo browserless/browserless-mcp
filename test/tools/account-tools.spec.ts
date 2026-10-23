@@ -7,14 +7,19 @@ import { registerAccountTool } from '../../src/tools/account.js';
 import { registerUsageTool } from '../../src/tools/usage.js';
 import { registerSessionsTool } from '../../src/tools/sessions.js';
 import { registerLogsTool } from '../../src/tools/logs.js';
-import { replayBrowser } from '../../src/lib/session-replay-artifact.js';
+import {
+  buildReplayHtml,
+  MAX_INLINE_BYTES_REMOTE,
+  replayBrowser,
+} from '../../src/lib/session-replay-artifact.js';
+import { clearSession } from '../../src/lib/download-store.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://runtime.example.com',
   apiServerUrl: 'https://account.example.com',
-  replayCdnUrl: 'https://replay.example.com/',
   transport: 'stdio',
   port: 8080,
   requestTimeout: 30000,
@@ -374,21 +379,14 @@ describe('account-data tools', () => {
     });
 
     describe("action 'replay'", () => {
-      const listResponse = (path: string | null) => ({
-        sessionReplayList: {
-          data: [
-            {
-              sessionId: 'sr_1',
-              website: 'https://example.com',
-              duration: 12000,
-              eventCount: 42,
-              timestamp: 1700000000,
-              path: path,
-            },
-          ],
-          totalCount: 1,
-          page: 1,
-          totalPages: 1,
+      const SIGNED_URL =
+        'https://replays.example/abc/sr_1.json?X-Amz-Signature=sig';
+      const replayResponse = (url: string | null) => ({
+        sessionReplayBySessionId: {
+          sessionId: 'sr_1',
+          website: 'https://example.com',
+          timestamp: 1700000000,
+          url,
         },
       });
 
@@ -412,8 +410,8 @@ describe('account-data tools', () => {
         }
       });
 
-      it('fetches the artifact from the replay CDN and attaches a player resource', async () => {
-        fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
+      it('fetches the artifact from the signed link and attaches a player resource', async () => {
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
         fetchStub.onSecondCall().resolves(
           new Response(JSON.stringify(artifact), {
             status: 200,
@@ -426,9 +424,13 @@ describe('account-data tools', () => {
           mockContext,
         )) as { content: Content[] };
 
-        // Second call is the CDN, not the account API.
-        expect(fetchStub.secondCall.args[0]).to.include('replay.example.com');
-        expect(fetchStub.secondCall.args[0]).to.include('abc/sr_1.json');
+        // First call asks the account API for this replay's signed link;
+        // the second downloads exactly that link.
+        expect(requestBody(fetchStub).query).to.include(
+          'sessionReplayBySessionId',
+        );
+        expect(requestBody(fetchStub).variables.sessionId).to.equal('sr_1');
+        expect(String(fetchStub.secondCall.args[0])).to.equal(SIGNED_URL);
 
         const resource = result.content.find(
           (c) => (c as { type: string }).type === 'resource',
@@ -446,7 +448,7 @@ describe('account-data tools', () => {
       // The model must be steered to a command, not to reading the artifact:
       // it previously jq'd a 460 KB player file into the context window.
       const primeReplay = () => {
-        fetchStub.onFirstCall().resolves(gql(listResponse('abc/sr_1.json')));
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
         fetchStub.onSecondCall().resolves(
           new Response(JSON.stringify(artifact), {
             status: 200,
@@ -494,7 +496,7 @@ describe('account-data tools', () => {
         const text = (result.content[0] as { text: string }).text;
         expect(text).to.include('write the resource to a .html file');
         expect(text).to.include('never rebuild the player');
-        expect(text).to.include('machine running this server');
+        expect(text).to.not.include('browserless-replay-');
         expect(text).to.not.include("open '");
         expect(
           result.content.some(
@@ -503,8 +505,120 @@ describe('account-data tools', () => {
         ).to.equal(true);
       });
 
+      for (const lifecycle of ['fetch', 'expiry', 'session end']) {
+        it(`downloads oversized hosted replays with owner checks and ${lifecycle}`, async () => {
+          const clock = sinon.useFakeTimers({
+            toFake: ['setTimeout', 'clearTimeout'],
+          });
+          const largeArtifact = {
+            ...artifact,
+            padding: 'x'.repeat(MAX_INLINE_BYTES_REMOTE),
+          };
+          fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
+          fetchStub
+            .onSecondCall()
+            .resolves(new Response(JSON.stringify(largeArtifact)));
+          const config = {
+            ...mockConfig,
+            transport: 'httpStream' as const,
+            mcpBaseUrl: 'https://mcp.example.com',
+          };
+          const server = new FastMCP({ name: 'test', version: '0.1.0' });
+          const spy = sinon.spy(server, 'addTool');
+          registerSessionsTool(server, config);
+          registerDownloadRoute(server, config);
+          const sessionId = `large-replay-${lifecycle}`;
+          try {
+            const result = (await spy.firstCall.args[0].execute(
+              { action: 'replay', sessionId: 'sr_1' },
+              {
+                ...mockContext,
+                sessionId,
+                session: { token: 'caller-token' },
+              } as never,
+            )) as { content: Content[] };
+            const text = textOf(result);
+            expect(result.content).to.have.length(1);
+            expect(text).to.not.include('browserless-replay-');
+            expect(text).to.not.include('opened on that host');
+            expect(text).to.not.include('test-token');
+            expect(text).to.include('15 minutes');
+            const urls =
+              text.match(/https:\/\/mcp\.example\.com\/download\/[^"\s]+/g) ??
+              [];
+            expect(urls).to.have.length(2);
+            const app = server.getApp();
+            for (const url of urls) {
+              const foreign = new URL(url);
+              foreign.searchParams.set('token', 'other-token');
+              expect((await app.request(foreign.href)).status).to.equal(404);
+            }
+            if (lifecycle === 'expiry') await clock.tickAsync(15 * 60 * 1000);
+            if (lifecycle === 'session end') clearSession(sessionId);
+            for (const [index, url] of urls.entries()) {
+              const response = await app.request(url);
+              expect(response.status).to.equal(
+                lifecycle === 'fetch' ? 200 : 404,
+              );
+              if (lifecycle !== 'fetch') continue;
+              expect(response.headers.get('content-type')).to.include(
+                index === 0 ? 'text/html' : 'application/json',
+              );
+              const body = await response.text();
+              const expected = {
+                ...largeArtifact,
+                sessionId: 'sr_1',
+                timestamp: 1700000000,
+              };
+              if (index === 0) expect(body).to.equal(buildReplayHtml(expected));
+              else expect(JSON.parse(body)).to.deep.equal(expected);
+              expect((await app.request(url)).status).to.equal(404);
+            }
+          } finally {
+            clearSession(sessionId);
+          }
+        });
+      }
+
+      it('keeps a hosted player at exactly 4 MiB inline', async () => {
+        const base = {
+          ...artifact,
+          sessionId: 'sr_1',
+          timestamp: 1700000000,
+          padding: '',
+        };
+        const padding = 'x'.repeat(
+          MAX_INLINE_BYTES_REMOTE - Buffer.byteLength(buildReplayHtml(base)),
+        );
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
+        fetchStub
+          .onSecondCall()
+          .resolves(new Response(JSON.stringify({ ...base, padding })));
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerSessionsTool(server, {
+          ...mockConfig,
+          transport: 'httpStream',
+        });
+        const result = (await spy.firstCall.args[0].execute(
+          { action: 'replay', sessionId: 'sr_1' },
+          mockContext as never,
+        )) as { content: Content[] };
+        const resource = result.content.find((c) => c.type === 'resource');
+        expect(resource?.type).to.equal('resource');
+        if (
+          resource?.type === 'resource' &&
+          typeof resource.resource.text === 'string'
+        ) {
+          expect(Buffer.byteLength(resource.resource.text)).to.equal(
+            MAX_INLINE_BYTES_REMOTE,
+          );
+        }
+        expect(textOf(result)).to.not.include('/download/');
+      });
+
       it('errors clearly when the replay has no stored artifact', async () => {
-        fetchStub.onFirstCall().resolves(gql(listResponse(null)));
+        fetchStub.onFirstCall().resolves(gql(replayResponse(null)));
 
         try {
           await executeFor(registerSessionsTool)(
@@ -517,10 +631,10 @@ describe('account-data tools', () => {
         }
       });
 
-      it('rejects a path that escapes the configured CDN origin', async () => {
+      it('rejects a replay link that is not http(s)', async () => {
         fetchStub
           .onFirstCall()
-          .resolves(gql(listResponse('https://evil.example.com/steal.json')));
+          .resolves(gql(replayResponse('file:///etc/passwd')));
 
         try {
           await executeFor(registerSessionsTool)(
@@ -529,8 +643,9 @@ describe('account-data tools', () => {
           );
           expect.fail('expected a UserError');
         } catch (error) {
-          expect((error as Error).message).to.include('CDN origin');
+          expect((error as Error).message).to.include('invalid replay link');
         }
+        expect(fetchStub.callCount).to.equal(1);
       });
     });
 
@@ -545,6 +660,7 @@ describe('account-data tools', () => {
               allowedDomains: ['example.com'],
               expiresAt: null,
               lastResolvedAt: null,
+              vaults: ['Automation'],
             },
             {
               id: 'op_2',
@@ -553,6 +669,16 @@ describe('account-data tools', () => {
               allowedDomains: [],
               expiresAt: '2027-01-01T00:00:00.000Z',
               lastResolvedAt: null,
+              vaults: null,
+            },
+            {
+              id: 'op_3',
+              label: 'empty',
+              kind: 'service-account',
+              allowedDomains: [],
+              expiresAt: null,
+              lastResolvedAt: null,
+              vaults: [],
             },
           ],
         }),
@@ -572,9 +698,17 @@ describe('account-data tools', () => {
         '- `op_2` — "open" (service_account); fills: any https origin; expires 2027-01-01T00:00:00.000Z',
       );
       expect(text).not.to.include('domains: none');
+      expect(text).to.include('; vaults: Automation');
+      expect(text).to.include('; vaults: unavailable');
+      expect(text).to.include('; vaults: none visible');
       expect(text).to.include(
-        'Pass the `op_int_…` value (not the label) as `integrationId`',
+        'Pass the `op_int_…` id or the label as `integrationId`',
       );
+      expect(text).not.to.include('(not the label)');
+      const request = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(request.variables.includeVaults).to.equal(true);
+      expect(request.query).to.include('includeVaults: $includeVaults');
+      expect(request.query).to.match(/\n\s+vaults\s*\n/);
     });
   });
 

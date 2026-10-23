@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import { readFileSync } from 'node:fs';
+import { SERVER_INSTRUCTIONS } from '../../src/skills/system-prompt.js';
 import {
   createSkillState,
   detectSkills,
@@ -36,8 +38,8 @@ const CLOUD = 'https://production.browserless.io';
 const SELF_HOSTED = 'https://browserless.example.com';
 
 describe('skills/registry', () => {
-  it('loads all thirteen skill bodies', () => {
-    expect(skillsRegistry).to.have.lengthOf(13);
+  it('loads all fifteen skill bodies', () => {
+    expect(skillsRegistry).to.have.lengthOf(15);
     const ids = skillsRegistry.map((s) => s.id);
     expect(ids).to.have.members([
       'shadow-dom',
@@ -49,7 +51,9 @@ describe('skills/registry', () => {
       'screenshots',
       'tabs',
       'autonomous-login',
+      'autonomous-registration',
       'auth-profile',
+      'profile-import',
       'file-transfers',
       'vision-fallback',
       'agentic-checkout',
@@ -60,6 +64,79 @@ describe('skills/registry', () => {
         100,
       );
     }
+  });
+
+  it('loads profile import manually and links from cloud profile guidance', () => {
+    const skill = skillsRegistry.find((s) => s.id === 'profile-import');
+    expect(skill).to.exist;
+    expect(skill!.triggers).to.deep.equal([]);
+    expect(renderSkill(skill!.id, false)).to.match(
+      /^--- SKILL: profile-import \(src\/skills\/profile-import\.md\) ---/,
+    );
+    expect(renderSkill('auth-profile', false)).to.include('profile-import');
+  });
+
+  it('keeps credentials out of profile recipes and installation examples', () => {
+    const texts = [
+      SERVER_INSTRUCTIONS,
+      renderSkill('profile-import', false),
+      renderSkill('auth-profile', false),
+      readFileSync('install.md', 'utf8'),
+    ];
+    for (const text of texts) {
+      for (const pattern of [
+        /token=[A-Za-z0-9._-]{8,}/,
+        /--token\s+[A-Za-z0-9._-]{8,}/,
+        /Bearer\s+[A-Za-z0-9._-]{20,}/,
+        /eyJ[A-Za-z0-9_-]{10,}/,
+      ])
+        expect(text).not.to.match(pattern);
+    }
+  });
+
+  it('keeps all eight import steps ordered and every capture example domain-scoped', () => {
+    const body = renderSkill('profile-import', false);
+    let previous = -1;
+    for (const heading of [
+      'Check existing profiles.',
+      'Ensure the CLI.',
+      'Resolve the token without exposing it.',
+      'Pick the source profile.',
+      'Consent (required).',
+      'Upload.',
+      'Use it.',
+      'Dead login.',
+    ]) {
+      const index = body.indexOf(`**${heading}**`);
+      expect(index, heading).to.be.greaterThan(previous);
+      previous = index;
+    }
+    for (const line of body
+      .split('\n')
+      .filter((line) =>
+        /browserless profile (upload|refresh) --browser/.test(line),
+      ))
+      expect(line).to.include('--only-domain <host> --only-domain <idp>');
+    expect(body).to.include('**explicit yes**');
+    expect(body).to.include('**verbatim**');
+    expect(body).to.include('reportProfileAuthentication');
+    expect(body).to.include('newLoginActivity');
+    expect(body).to.include('confirm the exact saved profile name');
+    const refresh = body
+      .split('\n')
+      .find((line) => line.includes('browserless profile refresh --browser'));
+    expect(refresh).to.include('--name <saved-name>');
+    const examples = [...body.matchAll(/```json\n([\s\S]*?)\n\s*```/g)].map(
+      (match) => JSON.parse(match[1]),
+    );
+    const open = examples.find((example) => example.profile);
+    expect(open.profile).to.equal('<saved-name>');
+    expect(open.commands[0].params.url).to.equal('https://<host>');
+    expect(open).not.to.have.property('sessionId');
+    expect(examples).to.deep.include({
+      sessionId: '<old-sessionId>',
+      commands: [{ method: 'close' }],
+    });
   });
 
   it('keeps an approval-pending checkout browser open for same-session resume', () => {
@@ -83,6 +160,68 @@ describe('skills/registry', () => {
     const out = renderSkills(['shadow-dom', 'modals'], false);
     expect(out).to.include('SKILL: shadow-dom');
     expect(out).to.include('SKILL: modals');
+  });
+
+  it('shares the emailed-code paragraph byte-for-byte with autonomous-login', () => {
+    const registration = skillsRegistry.find(
+      (s) => s.path === 'src/skills/autonomous-registration.md',
+    );
+    expect(registration, 'registration skill').not.to.equal(undefined);
+    const body = registration!.body;
+    const start = body.indexOf('**Emailed code.**');
+    expect(start).to.be.at.least(0);
+    const paragraph = body.slice(start, body.indexOf('\n\n', start));
+    expect(paragraph.length).to.be.greaterThan(300);
+    expect(paragraph).to.include('mail://<vault>/<item>/otp');
+    expect(paragraph).to.include('clearSecrets');
+    const login = skillsRegistry.find((s) => s.id === 'autonomous-login')!.body;
+    expect(login).to.include(paragraph);
+    for (const heading of [
+      '## Gate 0',
+      '## Gate 1',
+      '## Gate 2',
+      '## Reach the form',
+      '## Sanity check',
+      '## Field selection',
+      '## Submit',
+      '## Verify success',
+      '## After a `loadSecret` fill',
+      '## Final response',
+      "## Don't",
+      '## Password and vault write',
+      '## Verification branch',
+    ]) {
+      expect(body).to.include(heading);
+    }
+    expect(renderSkill(registration!.id, false)).to.match(
+      /^--- SKILL: autonomous-registration \(src\/skills\/autonomous-registration\.md\) ---/,
+    );
+    expect(login).to.include('autonomous-registration');
+    expect(login).to.include('user-menu toggle');
+    expect(login).to.include(
+      'keep the batch as fill → click submit → `waitForNavigation`',
+    );
+    expect(login).not.to.include('Never attempt SMS/email/WebAuthn');
+  });
+
+  it('checks verification before success and keeps confirmation optional', () => {
+    const body = renderSkill('autonomous-registration', false);
+    const verify = body
+      .split('## Verify success')[1]
+      .split('## Verification branch')[0];
+    expect(verify.indexOf('→ Verification branch')).to.be.at.least(0);
+    expect(verify.indexOf('→ Verification branch')).to.be.lessThan(
+      verify.indexOf('1. Signed-in element'),
+    );
+    expect(body).to.include('Never infer authorization from list order');
+    expect(body).to.include('is **not** success on its own');
+    expect(body).to.include('do not `clearSecrets` to peek');
+    expect(body).to.include('only when the form has a confirm field');
+    expect(body).to.include('`loadSecret` confirm (when present)');
+    expect(body).not.to.include('Submit before both password fields');
+    const login = renderSkill('autonomous-login', false);
+    expect(login).to.include('it may follow `clearSecrets`');
+    expect(login).not.to.include('`clearSecrets` and before any `close`');
   });
 });
 
@@ -547,6 +686,109 @@ describe('skills/detectSkills - autonomous-login', () => {
 
     state.cmdIndex = 100;
     expect(detectSkills(ctx, state)).to.not.include('autonomous-login');
+  });
+});
+
+describe('skills/detectSkills - autonomous-registration', () => {
+  for (const path of [
+    '/customer/account/create/',
+    '/signup?ref=x',
+    '/sign-up/',
+    '/register',
+  ]) {
+    it(`fires on ${path}`, () => {
+      expect(
+        detectSkills(
+          { snapshot: snapshot([], `https://shop.example${path}`) },
+          createSkillState(),
+        ),
+      ).to.include('autonomous-registration');
+    });
+  }
+
+  for (const path of ['/registered-products', '/joinery']) {
+    it(`does not fire on ${path}`, () => {
+      expect(
+        detectSkills(
+          { snapshot: snapshot([], `https://shop.example${path}`) },
+          createSkillState(),
+        ),
+      ).not.to.include('autonomous-registration');
+    });
+  }
+
+  it('leaves a login form to autonomous-login', () => {
+    const ids = detectSkills(
+      {
+        snapshot: snapshot(
+          [el({ tag: 'input', type: 'password' }), el({ name: 'Sign in' })],
+          'https://shop.example/login',
+        ),
+      },
+      createSkillState(),
+    );
+    expect(ids).not.to.include('autonomous-registration');
+    expect(ids).to.include('autonomous-login');
+  });
+
+  for (const [role, name] of [
+    ['button', 'Create account'],
+    ['button', 'Create an account'],
+    ['link', 'Sign up'],
+    ['button', 'Register'],
+  ]) {
+    it(`fires on a ${name} ${role}`, () => {
+      expect(
+        detectSkills(
+          { snapshot: snapshot([el({ role, name })]) },
+          createSkillState(),
+        ),
+      ).to.include('autonomous-registration');
+    });
+  }
+
+  for (const [role, name] of [
+    ['button', 'Sign in'],
+    ['link', 'Join'],
+    ['button', 'Registered users'],
+  ]) {
+    it(`does not fire on a ${name} ${role}`, () => {
+      expect(
+        detectSkills(
+          { snapshot: snapshot([el({ role, name })]) },
+          createSkillState(),
+        ),
+      ).not.to.include('autonomous-registration');
+    });
+  }
+
+  it('fires on saveSecret without a snapshot', () => {
+    expect(
+      detectSkills(
+        { cmd: { method: 'saveSecret', params: {} } },
+        createSkillState(),
+      ),
+    ).to.include('autonomous-registration');
+  });
+
+  it('does not fire on loadSecret', () => {
+    expect(
+      detectSkills(
+        { cmd: { method: 'loadSecret', params: {} } },
+        createSkillState(),
+      ),
+    ).not.to.include('autonomous-registration');
+  });
+
+  it('fires only once per session (no refireAfter)', () => {
+    const state = createSkillState();
+    const ctx = { cmd: { method: 'saveSecret', params: {} } };
+    state.cmdIndex = 1;
+    const ids = detectSkills(ctx, state);
+    expect(ids).to.include('autonomous-registration');
+    markFired(state, ids);
+    state.cmdIndex = 100;
+    expect(detectSkills(ctx, state)).not.to.include('autonomous-registration');
   });
 });
 

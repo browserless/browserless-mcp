@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { basename } from 'node:path';
 
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
@@ -18,7 +19,8 @@ import {
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import { isCompliant } from './compliance.js';
-import { DEFAULT_REPLAY_CDN_URL } from '../config.js';
+import { describeReadyDownload } from './agent.js';
+import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import type { McpConfig } from '../@types/types.js';
 
 export const SessionsParamsSchema = z.object({
@@ -88,8 +90,6 @@ interface ReplayEntry {
   duration: number | null;
   eventCount: number | null;
   timestamp: number | null;
-  // Only selected for the download path; the list never renders it.
-  path?: string | null;
 }
 
 interface OpIntegration {
@@ -98,6 +98,7 @@ interface OpIntegration {
   kind: string;
   allowedDomains: string[];
   expiresAt: string | null;
+  vaults?: string[] | null;
 }
 
 interface SessionsResult {
@@ -154,6 +155,19 @@ const PERSISTENT_QUERY = `
   }
 `;
 
+// Replay storage is private: the server issues a short-lived signed `url`
+// only to the replay's owner, so it is requested per download, not listed.
+const REPLAY_QUERY = `
+  query SessionReplay($apiToken: String!, $sessionId: String!) {
+    sessionReplayBySessionId(apiToken: $apiToken, sessionId: $sessionId) {
+      sessionId
+      website
+      timestamp
+      url
+    }
+  }
+`;
+
 // `apiKey` is deliberately not selected — it is token material.
 const REPLAYS_QUERY = `
   query SessionReplays(
@@ -174,7 +188,6 @@ const REPLAYS_QUERY = `
         duration
         eventCount
         timestamp
-        path
       }
       totalCount
       page
@@ -184,17 +197,19 @@ const REPLAYS_QUERY = `
 `;
 
 const INTEGRATIONS_QUERY = `
-  query OnePasswordIntegrations($apiToken: String, $limit: Int, $offset: Int) {
+  query OnePasswordIntegrations($apiToken: String, $limit: Int, $offset: Int, $includeVaults: Boolean) {
     listOnePasswordIntegrations(
       apiToken: $apiToken
       limit: $limit
       offset: $offset
+      includeVaults: $includeVaults
     ) {
       id
       label
       kind
       allowedDomains
       expiresAt
+      vaults
     }
   }
 `;
@@ -276,18 +291,19 @@ const formatIntegrations = (result: SessionsResult): string => {
   const rows = integrations.map(
     (op) =>
       `- \`${op.id}\` — "${op.label}" (${op.kind}); fills: ${op.allowedDomains.length ? op.allowedDomains.join(', ') : 'any https origin'}` +
-      `${op.expiresAt ? `; expires ${op.expiresAt}` : ''}`,
+      `${op.expiresAt ? `; expires ${op.expiresAt}` : ''}` +
+      `; vaults: ${op.vaults == null ? 'unavailable (1Password did not answer)' : op.vaults.length ? op.vaults.join(', ') : 'none visible to this service account'}`,
   );
   return [
     `## 1Password integrations (${integrations.length})`,
     ``,
     ...rows,
     ``,
-    'Pass the `op_int_…` value (not the label) as `integrationId` on the FIRST browserless_agent call and on every call after — a call without it has no vault bound and credential commands return CredentialNotResolved.',
+    'Pass the `op_int_…` id or the label as `integrationId` on the FIRST browserless_agent call and on every call after — a call without it has no vault bound and credential commands return CredentialNotResolved. `saveSecret` needs no `vault` when one vault is listed; name one of the listed titles otherwise.',
   ].join('\n');
 };
 
-const formatReplay = (result: SessionsResult): string => {
+const formatReplay = (result: SessionsResult, downloads?: string): string => {
   const r = result.replay;
   if (!r) return 'No replay was downloaded.';
   const { artifact, htmlPath, jsonPath, openedInBrowser, inlined, local } = r;
@@ -302,8 +318,12 @@ const formatReplay = (result: SessionsResult): string => {
     ``,
     `- Site: ${artifact.website ?? 'unknown'}`,
     `- Length: ${seconds}, ${artifact.events.length} events`,
-    `- Player (self-contained, plays offline): ${htmlPath}`,
-    `- Raw rrweb events: ${jsonPath}`,
+    ...(local
+      ? [
+          `- Player (self-contained, plays offline): ${htmlPath}`,
+          `- Raw rrweb events: ${jsonPath}`,
+        ]
+      : []),
     ``,
     `### How to show it`,
     ``,
@@ -329,15 +349,15 @@ const formatReplay = (result: SessionsResult): string => {
             `this page's head and body into it — the style and script ` +
             `elements, then the markup — and drop the doctype, html, head and ` +
             `body tags themselves, since a nested head or body can stop the ` +
-            `player's CSS or scripts from running. The file path above is on ` +
-            `the machine running this server, so it only helps the user if ` +
-            `that is also their own machine.`,
+            `player's CSS or scripts from running.`,
         ]
       : [
-          `The player is ${kb} KB — too large to attach inline, and the path above ` +
-            `is on the machine running this server, not necessarily the user's. ` +
-            `Tell them the replay is ready, give them the path, and say it must be ` +
-            `opened on that host.`,
+          `The player is ${kb} KB — too large to attach inline. ` +
+            `Download the HTML to a local file using the save command below, ` +
+            `then open it in the user's browser or publish it as an artifact. ` +
+            `It is self-contained and plays offline; never rebuild the player.`,
+          downloads ?? '',
+          `Downloads are single-use and expire after 15 minutes or when the MCP session ends.`,
         ];
 
   return [
@@ -355,7 +375,7 @@ const formatReplay = (result: SessionsResult): string => {
 
 const FORMATTERS: Record<
   SessionsParams['action'],
-  (result: SessionsResult) => string
+  (result: SessionsResult, downloads?: string) => string
 > = {
   active: formatActive,
   persistent: formatPersistent,
@@ -419,25 +439,21 @@ export function registerSessionsTool(
               'A sessionId is required to download a replay. List them with action "replays" first.',
             );
           }
-          // Search by id rather than paging the whole list to find one row.
-          const data = await accountQuery<{
-            sessionReplayList: SessionsResult['replays'];
-          }>(config, token, REPLAYS_QUERY, {
-            search: params.sessionId,
-            pageSize: 50,
-          });
-          const entry = (data.sessionReplayList?.data ?? []).find(
-            (row) => row.sessionId === params.sessionId,
-          );
-          if (!entry?.path) {
+          const { sessionReplayBySessionId: entry } = await accountQuery<{
+            sessionReplayBySessionId: {
+              website?: string | null;
+              timestamp?: number | null;
+              url?: string | null;
+            } | null;
+          }>(config, token, REPLAY_QUERY, { sessionId: params.sessionId });
+          if (!entry?.url) {
             throw new UserError(
               `No replay found for session "${params.sessionId}". It may have been deleted or expired.`,
             );
           }
 
           const artifact = await fetchReplayArtifact(
-            config.replayCdnUrl ?? DEFAULT_REPLAY_CDN_URL,
-            entry.path,
+            entry.url,
             {
               sessionId: params.sessionId,
               website: entry.website ?? undefined,
@@ -467,8 +483,7 @@ export function registerSessionsTool(
               htmlPath,
               jsonPath,
               openedInBrowser,
-              // A local client can open the path, so inlining is pure context
-              // cost; a remote one can only ever see the inline copy.
+              // Remote clients get a download when the inline copy is too large.
               local: config.transport === 'stdio',
               bytes,
               inlined:
@@ -482,7 +497,11 @@ export function registerSessionsTool(
         case 'integrations': {
           const data = await accountQuery<{
             listOnePasswordIntegrations: OpIntegration[] | null;
-          }>(config, token, INTEGRATIONS_QUERY, { limit, offset: skip });
+          }>(config, token, INTEGRATIONS_QUERY, {
+            limit,
+            offset: skip,
+            includeVaults: true,
+          });
           return { integrations: data.listOnePasswordIntegrations };
         }
       }
@@ -496,14 +515,38 @@ export function registerSessionsTool(
         result?.integrations?.length ??
         0,
     }),
-    format: (result, params) => {
+    format: async (result, params, { token, sessionId }) => {
+      const replay = result?.replay;
+      let downloads: string | undefined;
+      if (replay && !replay.local && !replay.inlined) {
+        // ponytail: handles are process-local; use shared storage before scaling
+        // the hosted MCP deployment beyond one worker.
+        const records = await Promise.all([
+          storeDownload(
+            basename(replay.htmlPath),
+            'text/html',
+            Buffer.from(replay.html),
+            downloadOwner(token),
+            sessionId,
+          ),
+          storeDownload(
+            basename(replay.jsonPath),
+            'application/json',
+            Buffer.from(JSON.stringify(replay.artifact, null, 2)),
+            downloadOwner(token),
+            sessionId,
+          ),
+        ]);
+        downloads = records
+          .map((record) => describeReadyDownload(record, { ...config, token }))
+          .join('\n\n');
+      }
       const blocks: Content[] = [
         {
           type: 'text' as const,
-          text: FORMATTERS[params.action](result ?? {}),
+          text: FORMATTERS[params.action](result ?? {}, downloads),
         },
       ];
-      const replay = result?.replay;
       if (replay?.inlined) {
         blocks.push({
           type: 'resource' as const,

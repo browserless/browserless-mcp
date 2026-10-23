@@ -138,5 +138,6 @@ describe('browserless_profiles tool', () => {
       text: string;
     };
     expect(text.text).to.include('No saved profiles');
+    expect(text.text).to.include('profile-import');
   });
 });

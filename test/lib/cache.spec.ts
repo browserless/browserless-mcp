@@ -114,4 +114,26 @@ describe('ResponseCache', () => {
     expect(cache.size).to.equal(1);
     cache.dispose();
   });
+
+  it('does not schedule a sweep timer until the first write (the leak fix)', () => {
+    const before = clock.countTimers();
+    // Constructed but never written: the per-call fallback cache the api-client
+    // builds for every non-caching tool. It must register NO timer, so it is
+    // GC'd with its client instead of leaking one timer + cache per tool call.
+    const cache = new ResponseCache(60000);
+    expect(
+      clock.countTimers(),
+      'constructor must not schedule a timer',
+    ).to.equal(before);
+    cache.set('k', 'v');
+    expect(clock.countTimers(), 'first write starts one sweep timer').to.equal(
+      before + 1,
+    );
+    cache.set('k2', 'v2');
+    expect(clock.countTimers(), 'later writes reuse the one timer').to.equal(
+      before + 1,
+    );
+    cache.dispose();
+    expect(clock.countTimers(), 'dispose clears the timer').to.equal(before);
+  });
 });

@@ -34,6 +34,7 @@ Gate 1 or 2 fails → stop, emit the matching `reason_code`. (Gate 0 isn't a sto
 ## Reach the form
 
 - Password input in snapshot → continue.
+- An `Account` / user-menu toggle (`[202] div button "Account"`) often hides both `Sign in` and `Register` — click it and re-snapshot before guessing URLs.
 - Sign-in link/button → click, wait, re-snapshot. Take the control that _advances_ sign-in for **this** site (`Sign in`, `Log in`, `Sign in to an existing account`, `Continue`) — not a generic nav link that reloads the page you're on, not `Sign up`/`Create account`.
 - **Account / identity chooser** (page offers several ways in — `Sign in with <Site>` next to `Continue with Google`/`Apple`/`Amazon`/`Facebook`/…): take **this site's own** option, matched to `LOGIN_TARGET_URL`'s brand/host. A third-party identity provider only when the credential context names that provider, or it is the _sole_ option. A site's own `Sign in with <Site>` is the native path even beside a third-party one. A chooser is not `FORM_NOT_FOUND`.
 - Email-first → type username, click `Continue`/`Next`, `waitForSelector` on `input[type="password"]` (10000ms), re-snapshot.
@@ -42,7 +43,7 @@ Gate 1 or 2 fails → stop, emit the matching `reason_code`. (Gate 0 isn't a sto
 
 ## Sanity check
 
-Login, not signup/reset: submit reads `Sign in`/`Log in`/`Continue` (not `Sign up`/`Register`/`Reset`) and exactly **one** password field. Else `FORM_NOT_FOUND`.
+Login, not signup/reset: submit reads `Sign in`/`Log in`/`Continue` (not `Sign up`/`Register`/`Reset`) and exactly **one** password field. Else `FORM_NOT_FOUND`. A sign-up form when the task is to create an account → load `autonomous-registration` instead of `FORM_NOT_FOUND`.
 
 ## Field selection (anchor off password)
 
@@ -54,7 +55,9 @@ Anything missing → `FORM_NOT_FOUND` (say what's missing).
 
 ## Submit
 
-One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call.
+One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call. If `loadSecret` filled a field, keep the batch as fill → click submit → `waitForNavigation`: the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; it still refuses `snapshot` and captures until then, so on a timeout (no navigation) `waitForSelector` for a signed-in element first, then send `{ method: "clearSecrets" }` before the first snapshot.
+
+Before clearing after a timeout, require both a newly appeared post-submit marker and removal of every secret-filled field. Use secret-safe `waitForSelector` for `body:not(:has(<filled-field-selector>))` per field (10000ms); hidden fields still carry values, and a pre-existing Account link proves nothing. Any wait fails → do not clear or snapshot; close with `SUBMIT_NO_FEEDBACK`. This rule also applies to TOTP and emailed-code submissions below.
 
 ## Verify success (any one, priority order)
 
@@ -73,8 +76,9 @@ and `"unknown"` otherwise. A changed URL or missing password input alone is not
 signed-in evidence. Always set `"newLoginActivity": true` (you attempted login,
 so the restored profile gets no credit). It defaults to the last active-tab
 snapshot; if you used `snapshot { targetId }` to peek at another tab, repeat
-that `targetId` in the report. Send it before
-`clearSecrets` and before any `close`; it is secret-safe.
+that `targetId` in the report. Send it before any `close`; it is secret-safe,
+so it may follow `clearSecrets` — after a `loadSecret` fill the verifying
+`snapshot` itself can only run after `clearSecrets` or completed navigation (see Submit).
 Pass `sessionId` on every follow-up call, including reports and `close`;
 the session handle retains the profile, so repeating `profile` is optional.
 
@@ -89,14 +93,17 @@ None holds:
 
 Triggered by `autocomplete="one-time-code"`, numeric input with `maxlength` ∈ {4,6,8}, or label/`name`/`placeholder` matching `/code|verification|otp|2fa|two[- ]?factor|authenticator/i`.
 
-- Contextually-matched TOTP (Gate-2 rule) → type, submit, re-verify.
-- **No matching TOTP → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the OTP input and cookies/state survive to next turn.** User replies → treat as the TOTP, type + submit + re-verify. User declines / has none → `MFA_INPUT_MISSING`. Never attempt SMS/email/WebAuthn.
-- TOTP rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
+- Contextually-matched TOTP (Gate-2 rule; an `op://…?attribute=otp` ref via `loadSecret`, or a user-supplied code via `type`) → fill, submit, re-verify.
+
+**Emailed code.** If the task names a mailbox item in the bound vault, let the site send the code, focus the code input, then send `{ method: "loadSecret", params: { ref: "mail://<vault>/<item>/otp", selector: "<code input>" } }` — the server polls that mailbox for up to ~45 s and types the newest code; you never see it (vault and item segments are URL-encoded; append `?wait=90000` for slow senders). In the same batch click the submit control, then `waitForNavigation` (10000ms) — the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; if it times out, `waitForSelector` (secret-safe) for a signed-in control or confirmation element, then `{ method: "clearSecrets" }` and re-verify; neither appears → treat the code as not accepted and do not `clearSecrets` to peek. `OtpTimeout` → click `Resend` once and retry once. **No mailbox item, or two timeouts → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the code input and cookies survive the round-trip.** User replies → `type` it, submit, re-verify. **Magic link** (no code field) → ask the user to click it, keep the session open, then re-verify. **Phone/SMS or WebAuthn** → never attempt.
+
+- No matching TOTP and no mailbox item → ask the user (the rule above). User declines / has none, or the prompt demands phone/SMS or WebAuthn → `MFA_INPUT_MISSING`.
+- Code rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
 - Second MFA prompt after the first cleared → `UNEXPECTED_STATE`.
 
 ## After a `loadSecret` login — re-enable captures
 
-Filled a field with `loadSecret` (1Password `op://` ref)? The session's capture gate is now armed: `screenshot`, PDF, `liveURL`, and page-content reads (`evaluate`/`html`/`text`/`querySelector`/`cookies`) all fail with `CaptureBlockedError` until cleared. A full-page navigation clears it automatically — a single-page app that logs in without navigating does **not**. Once the credential is off screen (success verified above), send `{ method: "clearSecrets" }` before the first capture. Secret values stay masked in the session replay regardless. Plaintext `type` logins don't arm the gate — this step applies only when `loadSecret` filled a field.
+Filled a field with `loadSecret` (1Password `op://` ref or emailed code)? The backend capture gate can remain armed even after navigation: `screenshot`, PDF, `liveURL` and page-content reads (`evaluate`/`html`/`text`/`querySelector`/`cookies`) fail with `CaptureBlockedError`. A completed navigation lets the MCP request a snapshot, whose secret values remain omitted while the backend gate is armed. Confirm every secret-filled field is removed (see Submit), then send `{ method: "clearSecrets" }` before the first capture. Secret values stay masked in the session replay regardless. Plaintext `type` logins don't arm the gate — this step applies only when `loadSecret` filled a field.
 
 ## Final response
 

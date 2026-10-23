@@ -43,7 +43,7 @@ export function profileField(whenLoaded: string, extra = '') {
   const description =
     `Optional name of an authentication profile to hydrate into the browser ${whenLoaded}. ` +
     "The profile's cookies, localStorage, and IndexedDB are restored into the session before the request runs. " +
-    'The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session first.' +
+    "The profile must already exist for the API token in use — create one with Browserless.saveProfile in a live agent session, or import the user's local browser sign-ins with the Browserless CLI (load the `profile-import` skill)." +
     extra;
   return nulSafeString('profile').optional().describe(description);
 }
@@ -251,7 +251,7 @@ const LoadSecretCommandSchema = z.object({
           'The secret value is resolved server-side and typed into the field — ' +
           'you never see it. Use this for ALL passwords and usernames from a ' +
           'secrets vault; never put a secret value in `type`. Also accepts a ' +
-          'mail://<item>/otp reference that resolves the newest emailed one-time ' +
+          'mail://<vault>/<item>/otp reference that resolves the newest emailed one-time ' +
           'code server-side (value never surfaced); trigger the send, then call ' +
           'loadSecret promptly.',
       ),
@@ -280,7 +280,14 @@ const ClearSecretsCommandSchema = z.object({
 const SaveSecretCommandSchema = z.object({
   method: z.literal('saveSecret'),
   params: z.object({
-    vault: z.string().min(1).describe('Name of the connected vault to save to'),
+    vault: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Vault title. Omit when the service account sees exactly one vault; on a ' +
+          'VaultAmbiguous result pick one of its vaults titles and retry.',
+      ),
     title: z.string().min(1).describe('Title for the saved login item'),
     username: z.string().min(1).describe('Username for the new login'),
     password: z
@@ -1147,7 +1154,7 @@ const agentParamsObject = z.object({
       'Optional 1Password integration id (e.g. "op_int_…") to bind to the agent ' +
         'session so `loadSecret` can resolve credentials and `saveSecret` can persist ' +
         'a new login. Get it from browserless_sessions { action: "integrations" } — ' +
-        'pass the op_int_… id, not the label. Bind it on the FIRST call and on EVERY call in a multi-call ' +
+        "pass either the `op_int_…` id or the integration's label (both resolve, like `profile`). Bind it on the FIRST call and on EVERY call in a multi-call " +
         'flow (like `profile`): a call that omits it runs with no vault bound and ' +
         'credential commands return CredentialNotResolved; adding it later opens a different browser. `saveSecret` requires a ' +
         'write-enabled connection. Pair with `allowedDomains` to permit filling on ' +

@@ -10,6 +10,7 @@ import { registerFunctionTool } from './function.js';
 import { registerMapTool } from './map.js';
 import { registerCrawlTool } from './crawl.js';
 import { registerProfilesTool } from './profiles.js';
+import { registerLiveURLTool } from './live-url.js';
 import { registerAccountTool } from './account.js';
 import { registerUsageTool } from './usage.js';
 import { registerSessionsTool } from './sessions.js';
@@ -21,6 +22,7 @@ import { registerApiDocsResource } from '../resources/api-docs.js';
 import { registerStatusResource } from '../resources/status.js';
 import { registerScrapeUrlPrompt } from '../prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../prompts/extract-content.js';
+import { registerStageFileTool } from './stage-file.js';
 
 // Registers the whole surface (tools/resources/prompts) so the compliance gate
 // covers all a reviewer lists. Each item declares 'both'|'full' — no positional
@@ -36,6 +38,13 @@ export function registerSurface(
     surface: Surface;
     register: () => void;
   }> = [
+    {
+      surface: 'full',
+      register: () => {
+        if (config.transport === 'httpStream')
+          registerStageFileTool(server, config, analytics);
+      },
+    },
     {
       surface: 'both',
       register: () => registerExportTool(server, config, analytics),
@@ -86,6 +95,11 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerCrawlTool(server, config, analytics),
+    },
+    // Live URL lifecycle is available on the full surface only.
+    {
+      surface: 'full',
+      register: () => registerLiveURLTool(server, config, analytics),
     },
     // Full-only: the compliant surface has no profile capability (agent rejects `profile`).
     {

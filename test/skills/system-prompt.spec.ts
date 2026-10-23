@@ -4,6 +4,9 @@ import { renderSkill } from '../../src/skills/index.js';
 import {
   AGENT_SYSTEM_PROMPT,
   COMPLIANT_AGENT_SYSTEM_PROMPT,
+  SKILL_TOOL_DESCRIPTION,
+  SERVER_INSTRUCTIONS,
+  serverInstructions,
 } from '../../src/skills/system-prompt.js';
 
 it('documents liveURL tab selection in both prompt variants', () => {
@@ -12,6 +15,51 @@ it('documents liveURL tab selection in both prompt variants', () => {
   for (const prompt of [AGENT_SYSTEM_PROMPT, COMPLIANT_AGENT_SYSTEM_PROMPT]) {
     expect(prompt).to.include(`${bullet}\n- See schema for:`);
   }
+});
+
+describe('profile import discovery', () => {
+  it('provides bounded full-only initialization instructions', () => {
+    const text = serverInstructions(false)!;
+    expect(text).to.equal(SERVER_INSTRUCTIONS);
+    expect(text).to.include('profile-import');
+    expect(text).to.include('browserless_profiles');
+    expect(text.split('\n').filter(Boolean).length).to.be.at.most(10);
+    expect(text.length).to.be.at.most(1200);
+    expect(serverInstructions(true)).to.equal(undefined);
+    expect(SKILL_TOOL_DESCRIPTION).to.include('**profile-import**');
+  });
+});
+
+describe('registration and credential guidance', () => {
+  it('requires the registration skill in the full Auth section', () => {
+    const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
+    expect(auth).to.include('autonomous-registration');
+    expect(auth).to.include('Never log in or register by default');
+  });
+
+  it('advertises credential methods and the complete mailbox reference', () => {
+    const methods = AGENT_SYSTEM_PROMPT.split(
+      '## Methods (non-obvious)',
+    )[1].split('\n## ')[0];
+    for (const text of [
+      '**loadSecret** { ref, selector? }',
+      '**saveSecret** { title, username, password, website?, vault? }',
+      '**clearSecrets** {}',
+      'mail://<vault>/<inbox item>/otp',
+    ]) {
+      expect(methods).to.include(text);
+    }
+  });
+
+  it('advertises save-first registration in both full skill lists', () => {
+    expect(SKILL_TOOL_DESCRIPTION).to.include('**autonomous-registration**');
+    expect(SKILL_TOOL_DESCRIPTION).to.include('save-first-then-loadSecret');
+    const skills = AGENT_SYSTEM_PROMPT.split(
+      '## Skills (auto-injected)',
+    )[1].split('\n## ')[0];
+    expect(skills).to.include('autonomous-registration');
+    expect(skills).to.include('save-first-then-loadSecret');
+  });
 });
 
 it('guides saved-login reporting only in the full Auth section', () => {
@@ -66,10 +114,12 @@ describe('outcome reporting guidance', () => {
         'login_required',
         'timeout',
         'other',
-        'then send `close`',
+        "**Report the outcome after you've seen the results.**",
+        'which opens no browser',
       ]) {
         expect(ending).to.include(text);
       }
+      expect(ending).not.to.include('**Report the outcome, then close.**');
       expect(ending).not.to.include('completed`');
     });
   }
@@ -79,7 +129,7 @@ describe('outcome reporting guidance', () => {
     )[1].split('\n## ')[0];
     expect(ending).to.include('reportSkillOutcome');
     expect(ending.indexOf('reportSkillOutcome')).to.be.lessThan(
-      ending.indexOf('**Report the outcome, then close.**'),
+      ending.indexOf("**Report the outcome after you've seen the results.**"),
     );
     expect(ending).to.include(
       'false if a step in this recipe failed as written',
@@ -88,6 +138,10 @@ describe('outcome reporting guidance', () => {
     expect(ending).to.include("Cosmetic differences that didn't break a step");
     expect(ending).to.include('failure_reason');
     expect(ending).to.include('site_changed');
+    for (const field of ['run_id', 'skill_use_id', 'loaded_version'])
+      expect(ending).to.include(field);
+    expect(ending).to.include('exactly as shown');
+    expect(ending).to.include('never send `attribution_status`');
     expect(AGENT_SYSTEM_PROMPT.split('## Site recipes')[1]).not.to.include(
       '**Report the outcome (only if',
     );
@@ -162,8 +216,15 @@ describe('agent system prompt contextual snapshot guidance', () => {
     expect(AGENT_SYSTEM_PROMPT).to.include('PDF');
   });
 
-  it('does not advertise clearSecrets on the compliant surface', () => {
-    expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include('clearSecrets');
+  it('does not advertise registration or credential commands on the compliant surface', () => {
+    for (const text of [
+      'autonomous-registration',
+      'loadSecret',
+      'saveSecret',
+      'clearSecrets',
+    ]) {
+      expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include(text);
+    }
   });
 });
 

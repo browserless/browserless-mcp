@@ -88,8 +88,6 @@ export interface McpConfig {
   // Account API host — a DIFFERENT host from `browserlessApiUrl` (a browser
   // runtime). Never derive one from the other, nor let per-session URLs override.
   apiServerUrl?: string;
-  // Origin serving session-replay artifacts; replay paths are checked against it.
-  replayCdnUrl?: string;
   transport: 'stdio' | 'httpStream';
   port: number;
   requestTimeout: number;
@@ -323,9 +321,11 @@ export type SkillId =
   | 'tabs'
   | 'autonomous-login'
   | 'auth-profile'
+  | 'profile-import'
   | 'file-transfers'
   | 'agentic-checkout'
-  | 'vision-fallback';
+  | 'vision-fallback'
+  | 'autonomous-registration';
 
 export interface DetectContext {
   snapshot?: SnapshotResult;
@@ -745,7 +745,58 @@ export interface StripeLinkCheckoutResponse {
   last4?: string;
 }
 
+export interface LiveURLOptions {
+  interactable?: boolean;
+  timeout?: number;
+  quality?: number;
+  type?: 'jpeg' | 'png';
+  resizable?: boolean;
+  showBrowserInterface?: boolean;
+  instructions?:
+    | string
+    | {
+        layout?: 'modal' | 'panel';
+        format?: 'text' | 'markdown';
+        title?: string;
+        summary?: string;
+        steps?: string[];
+        currentStep?: number;
+      };
+  instructionsTitle?: string;
+  steps?: string[];
+  currentStep?: number;
+  doneLabel?: string;
+  failLabel?: string;
+  requesterName?: string;
+  instructionsFormat?: 'text' | 'markdown';
+}
+
+export interface LiveURLCreated {
+  liveURL: string;
+  liveURLId: string;
+}
+
+export interface LiveURLState {
+  status: 'open' | 'expired' | 'closed';
+  reason:
+    | 'timeout'
+    | 'closed'
+    | 'viewerDisconnected'
+    | 'userDone'
+    | 'userFailed'
+    | null;
+  interactable: boolean;
+  viewerCount: number;
+  expiresAt: number;
+}
+
 export interface ApiClient {
+  createLiveURL(
+    browserId: string,
+    options: LiveURLOptions,
+  ): Promise<LiveURLCreated>;
+  getLiveURL(browserId: string, liveURLId: string): Promise<LiveURLState>;
+  closeLiveURL(browserId: string, liveURLId: string): Promise<void>;
   smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult>;
   runFunction(params: FunctionRequest): Promise<GenericApiResult>;
   download(params: DownloadRequest): Promise<GenericApiResult>;

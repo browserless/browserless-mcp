@@ -7,6 +7,7 @@ import {
   formatAgentCommandLog,
   formatConnectError,
   formatDownloads,
+  describeReadyDownload,
   formatErrorMessage,
   formatRecordingToDisk,
   formatScreenshotContent,
@@ -47,6 +48,7 @@ import {
   storeDownload,
 } from '../../src/lib/download-store.js';
 import {
+  getActiveSessionByHandle,
   ProfileNotFoundError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
@@ -55,6 +57,8 @@ import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
   hydrateRemoteSkills,
+  loadSiteSkill,
+  __setRemoteSkillTtlForTesting,
   __resetRemoteSkillsForTesting,
 } from '../../src/skills/sites.js';
 import {
@@ -63,7 +67,12 @@ import {
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
 
-const seedSiteSkill = (host: string, task: string, body: string) =>
+const seedSiteSkill = (
+  host: string,
+  task: string,
+  body: string,
+  version?: number,
+) =>
   hydrateRemoteSkills(
     `https://${host}`,
     'https://api.example.com',
@@ -72,7 +81,7 @@ const seedSiteSkill = (host: string, task: string, body: string) =>
     (async () =>
       ({
         ok: true,
-        json: async () => [{ task, title: task, skill_md: body }],
+        json: async () => [{ task, title: task, skill_md: body, version }],
       }) as unknown as Response) as typeof fetch,
   );
 
@@ -172,6 +181,43 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
+  it('allows a protected navigation wait before a snapshot', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'click' },
+        { method: 'waitForNavigation' },
+        { method: 'snapshot' },
+      ]),
+    ).not.to.throw();
+  });
+
+  it('allows response waits without allowing subsequent page reads', () => {
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'waitForResponse' },
+      ]),
+    ).not.to.throw();
+    for (const method of [
+      'snapshot',
+      'html',
+      'text',
+      'evaluate',
+      'screenshot',
+      'liveURL',
+      'cookies',
+    ]) {
+      expect(() =>
+        validateSecretCaptureOrdering([
+          { method: 'loadSecret' },
+          { method: 'waitForResponse' },
+          { method },
+        ]),
+      ).to.throw(`${method} cannot run after loadSecret`);
+    }
+  });
+
   it('allows saveSecret after loadSecret without permitting captures', () => {
     expect(() =>
       validateSecretCaptureOrdering([
@@ -232,7 +278,7 @@ describe('agent secret-capture preflight', () => {
   it('preserves the compliant close reminder exactly', () => {
     expect(closeReminder(true)).to.equal(
       'This kept-alive browser holds a concurrency slot until closed or reaped when idle. ' +
-        'When the task is done or you are giving up, end your last batch with ' +
+        'When the task is done or you are giving up, and you have seen the final results, end your last batch with ' +
         '`{ "method": "reportOutcome", "params": { "success": <bool> } }`, then send ' +
         '`{ "method": "close" }` as its own call — or, if the user may want to keep ' +
         'browsing, ask them before leaving it open.',
@@ -285,6 +331,19 @@ describe('secretVisibleAfter', () => {
     [true, 'goto', { url: 'https://example.com' }, false],
     [true, 'goto', { rejected: true }, true],
     [true, 'goto', null, true],
+    [
+      true,
+      'waitForNavigation',
+      { url: 'https://example.com/', status: 200 },
+      false,
+    ],
+    [true, 'waitForNavigation', { rejected: true }, true],
+    [
+      true,
+      'waitForResponse',
+      { url: 'https://example.com/api', status: 200 },
+      true,
+    ],
     [true, 'click', {}, true],
     [false, 'snapshot', {}, false],
   ] as const) {
@@ -376,6 +435,17 @@ describe('browserless_skill tool', () => {
     expect(text).to.include('deep selector');
   });
 
+  it('advertises and loads profile import on the full surface', async () => {
+    const tool = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill')!.args[0];
+    expect(tool.description).to.include('profile-import');
+    const result = await tool.execute({ id: 'profile-import' }, mockContext);
+    expect(
+      (result.content[0] as Extract<Content, { type: 'text' }>).text,
+    ).to.match(/^--- SKILL: profile-import/);
+  });
+
   it('requires either an id or a site at the schema level', async () => {
     const skillCall = addToolSpy
       .getCalls()
@@ -448,6 +518,65 @@ describe('browserless_skill tool', () => {
     expect(inHouse).to.include({ skill_action: 'load', site_skill: false });
     expect(inHouse.host).to.equal(undefined);
     expect(buildSkillEventProps({ id: 'x' }, '').success).to.equal(false);
+  });
+
+  it('keeps receipt IDs in the footer only and deduplicates by MCP session', async () => {
+    await seedSiteSkill('example.com', 'search', '# Search', 3);
+    const analytics = new AnalyticsHelper(false);
+    const fireSkill = sinon.stub(analytics, 'fireSkill');
+    const receiptServer = new FastMCP({ name: 'test', version: '0.1.0' });
+    const tools = sinon.spy(receiptServer, 'addTool');
+    registerAgentTools(receiptServer, mockConfig, analytics);
+    const execute = tools
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill')!.args[0].execute;
+    const ids: string[] = [];
+    for (const sessionId of [
+      'private-session',
+      'private-session',
+      'different-session',
+    ]) {
+      const result = await execute(
+        { id: 'example.com/search' },
+        { ...mockContext, sessionId },
+      );
+      const props = fireSkill.lastCall.args[1];
+      expect(props).to.include({
+        domain: 'example.com',
+        task: 'search',
+        loaded_version: 3,
+        success: true,
+      });
+      const text = JSON.stringify(result);
+      expect(props).not.to.have.property('run_id');
+      expect(props).not.to.have.property('skill_use_id');
+      expect(text).to.match(/\\"run_id\\": \\"[a-f0-9]{64}\\"/);
+      expect(JSON.stringify(props) + text).not.to.match(
+        /test-token|private-session|different-session/,
+      );
+      ids.push(text.match(/\\"skill_use_id\\": \\"([a-f0-9]{64})\\"/)![1]);
+    }
+    expect(ids[0]).to.equal(ids[1]);
+    expect(ids[0]).not.to.equal(ids[2]);
+    for (const params of [
+      { id: 'shadow-dom' },
+      { site: 'example.com' },
+      { id: 'example.com/absent' },
+    ]) {
+      try {
+        await execute(params, mockContext);
+      } catch (error) {
+        expect(error).to.be.instanceOf(UserError);
+      }
+      for (const key of [
+        'run_id',
+        'skill_use_id',
+        'loaded_version',
+        'domain',
+        'task',
+      ])
+        expect(fireSkill.lastCall.args[1]).not.to.have.property(key);
+    }
   });
 });
 
@@ -854,6 +983,35 @@ describe('normalizeUploadCommand', () => {
     );
   });
 
+  for (const mimeType of [undefined, 'application/custom', '']) {
+    it(`inherits stored MIME only when absent (${String(mimeType)})`, async () => {
+      const record = await storeDownload(
+        'mime.csv',
+        'text/csv',
+        Buffer.from('a'),
+        downloadOwner('mime-token'),
+        'mime-test',
+      );
+      try {
+        const file: Record<string, unknown> = {
+          handle: downloadUri(record.id),
+          ...(mimeType !== undefined ? { mimeType } : {}),
+        };
+        await normalizeUploadCommand(
+          { method: 'uploadFile', params: { files: [file] } },
+          'httpStream',
+          undefined,
+          'mime-token',
+        );
+        expect(file.mimeType).to.equal(
+          mimeType === undefined ? 'text/csv' : mimeType,
+        );
+      } finally {
+        clearSession('mime-test');
+      }
+    });
+  }
+
   it('rejects a download handle owned by another token', async () => {
     const record = await storeDownload(
       'private.bin',
@@ -892,6 +1050,56 @@ describe('normalizeUploadCommand', () => {
     }
     expect(threw).to.be.true;
   });
+});
+
+describe('describeReadyDownload', () => {
+  const record = {
+    id: 'download-id',
+    path: '/tmp/replay.html',
+    filename: 'replay.html',
+    mimeType: 'text/html',
+    size: 123,
+    owner: 'owner',
+  };
+
+  for (const mcpBaseUrl of [
+    undefined,
+    '',
+    '/mcp',
+    'https://',
+    'ftp://mcp.example.com',
+    'https://mcp.example.com/?key=x',
+    'https://mcp.example.com/#section',
+    'https://mcp.example.com/?key=x#section',
+    'https://mcp.example.com/?',
+    'https://mcp.example.com/#',
+  ]) {
+    it(`requires a replacement base URL for ${JSON.stringify(mcpBaseUrl)}`, () => {
+      const text = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl,
+      });
+      expect(text).to.include('Replace <MCP_BASE_URL>');
+      expect(text).to.include('"<MCP_BASE_URL>/download/download-id?token=');
+      expect(text).to.not.include('"/download/');
+    });
+  }
+
+  for (const mcpBaseUrl of [
+    'https://mcp.example.com/',
+    'http://localhost:8080',
+  ]) {
+    it(`uses the absolute base ${mcpBaseUrl}`, () => {
+      const text = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl,
+      });
+      expect(text).to.include(
+        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id?token=`,
+      );
+      expect(text).to.not.include('Replace <MCP_BASE_URL>');
+    });
+  }
 });
 
 describe('formatDownloads (httpStream)', () => {
@@ -1174,7 +1382,7 @@ describe('formatConnectError', () => {
     expect(text).to.include('HTTP 404');
     expect(text).to.include(body);
     expect(text).to.include('browserless_sessions { action: "integrations" }');
-    expect(text).to.include('not its label');
+    expect(text).to.include('or its label');
     expect(text).to.include(
       'FIRST browserless_agent call and on every call after',
     );
@@ -1224,6 +1432,15 @@ describe('formatConnectError', () => {
     );
     expect(out).to.match(/^Forbidden \(403\)/);
     expect(out).to.include('plan');
+  });
+
+  it('renders a busy-session 429 without concurrency wording', () => {
+    const detail = 'Session is already being accessed by another client.';
+    expect(
+      formatConnectError(new UpgradeError(429, 'Too Many Requests', detail)),
+    ).to.equal(
+      `Browser session busy (429): ${detail} The attached browser session is still held by its previous connection. Retry the same call once after a few seconds; do not open a new session.`,
+    );
   });
 
   it('renders 429 with a concurrency / wait hint', () => {
@@ -1458,9 +1675,10 @@ describe('browserless_agent credential feedback', () => {
       }
       expect(error).to.be.instanceOf(UserError);
       expect(error).to.have.property('code', 'INVALID_PARAMS');
-      for (const field of ['vault', 'title', 'username', 'password']) {
+      for (const field of ['title', 'username', 'password']) {
         expect((error as Error).message).to.include(`0.params.${field}`);
       }
+      expect((error as Error).message).not.to.include('0.params.vault');
       expect((error as Error).message).not.to.include(
         'reserved or has a typed schema',
       );
@@ -1502,6 +1720,7 @@ describe('browserless_agent credential feedback', () => {
             {
               method: 'saveSecret',
               params: {
+                vault: '',
                 title: 't',
                 username: 'u',
                 password: 'do-not-echo-this-value',
@@ -1882,18 +2101,222 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
-  it('reports one-shot closure even when the batch only reports an outcome', async () => {
+  for (const sessionId of [undefined, 's:finished']) {
+    it(`records a late outcome without connecting (handle=${sessionId})`, async () => {
+      const srv = await makeRespondingServer(() => ({ recorded: true }));
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const fetch = sinon
+        .stub(globalThis, 'fetch')
+        .rejects(new Error('No probe expected'));
+      const commands = [
+        {
+          method: 'reportOutcome',
+          params: { success: true, reason: 'completed' },
+        },
+        {
+          method: 'reportOutcome',
+          params: { success: false, reason: 'other' },
+        },
+        { method: 'close' },
+      ];
+      try {
+        const result = await getAgentExecute(
+          srv.url,
+          'stdio',
+          analytics,
+        )(
+          { sessionId, commands, requiredCapabilities: ['reportOutcome'] },
+          mockContext,
+        );
+        expect(result).to.deep.equal({
+          content: [
+            { type: 'text', text: 'Outcome recorded. No browser was opened.' },
+          ],
+        });
+        expect(srv.hits()).to.equal(0);
+        expect(fetch.called).to.equal(false);
+        expect(fire.callCount).to.equal(1);
+        expect(fire.firstCall.args[2]).to.include({
+          agent_session_handle: sessionId ?? null,
+          self_reported_success: false,
+          outcome_reason: 'other',
+          verdict_delivery: 'late',
+          methods: 'reportOutcome,reportOutcome,close',
+          command_count: 3,
+        });
+        expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+          'test-token',
+        );
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('records a lone outcome without opening a browser', async () => {
     const srv = await makeRespondingServer(() => ({ recorded: true }));
     try {
       const result = await getAgentExecute(srv.url)(
         { commands: [{ method: 'reportOutcome', params: { success: true } }] },
         mockContext,
       );
-      const text = JSON.stringify(result);
-      expect(text).to.include('Browser session closed (one-shot)');
-      expect(text).to.include('keepSessionAlive: true');
-      expect(text).to.include('FIRST call');
-      expect(text).not.to.include('sessionId:');
+      expect(result).to.deep.equal({
+        content: [
+          { type: 'text', text: 'Outcome recorded. No browser was opened.' },
+        ],
+      });
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('delivers only the skill report after recording a late task outcome once', async () => {
+    const methods: string[] = [];
+    const srv = await makeRespondingServer((method) => {
+      methods.push(method);
+      return { recorded: true };
+    });
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    try {
+      const result = await getAgentExecute(
+        srv.url,
+        'stdio',
+        analytics,
+      )(
+        {
+          sessionId: 's:finished-skill',
+          keepSessionAlive: false,
+          commands: [
+            {
+              method: 'reportSkillOutcome',
+              params: { domain: 'example.com', task: 'read', success: true },
+            },
+            {
+              method: 'reportOutcome',
+              params: { success: false, reason: 'timeout' },
+            },
+          ],
+        },
+        mockContext,
+      );
+      expect(JSON.stringify(result)).to.include(
+        'Browser session closed (one-shot)',
+      );
+      expect(JSON.stringify(result)).not.to.include(
+        'report whether the task worked',
+      );
+      expect(srv.hits()).to.equal(1);
+      expect(methods).to.deep.equal(['reportSkillOutcome']);
+      expect(fire.callCount).to.equal(2);
+      expect(fire.firstCall.args[2]).to.include({
+        agent_session_handle: 's:finished-skill',
+        verdict_delivery: 'late',
+        self_reported_success: false,
+        outcome_reason: 'timeout',
+        methods: 'reportSkillOutcome,reportOutcome',
+        command_count: 2,
+      });
+      expect(fire.lastCall.args[2]).not.to.have.any.keys(
+        'verdict_delivery',
+        'self_reported_success',
+        'outcome_reason',
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const state of ['live', 'dropped', 'different-token']) {
+    it(`routes the outcome for a ${state} handle without a new connection`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return method === 'text' ? { text: 'done' } : { downloads: [] };
+      });
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      try {
+        const execute = getAgentExecute(srv.url, 'stdio', analytics);
+        await execute({ method: 'text', keepSessionAlive: true }, mockContext);
+        const handle = fire.lastCall.args[2].agent_session_handle as string;
+        expect(handle).to.match(/^s:/);
+        if (state === 'dropped') {
+          const session = getActiveSessionByHandle(
+            handle,
+            srv.url,
+            'test-token',
+          );
+          const closed = new Promise<void>((resolve) =>
+            session.ws.once('close', () => resolve()),
+          );
+          session.ws.terminate();
+          await closed;
+        }
+        methods.length = 0;
+        await execute(
+          {
+            sessionId: handle,
+            commands: [
+              {
+                method: 'reportOutcome',
+                params: { success: false, reason: 'other' },
+              },
+            ],
+          },
+          state === 'different-token'
+            ? { ...mockContext, session: { token: 'other-token' } }
+            : mockContext,
+        );
+        expect(srv.hits()).to.equal(1);
+        expect(methods).to.deep.equal(
+          state === 'live' ? ['reportOutcome'] : [],
+        );
+        expect(fire.lastCall.args[2]).to.include({
+          agent_session_handle: handle,
+          self_reported_success: false,
+          outcome_reason: 'other',
+          verdict_delivery: state === 'live' ? 'in_session' : 'late',
+        });
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('does not request a second verdict after an in-batch outcome', async () => {
+    const srv = await makeRespondingServer((method) =>
+      method === 'text' ? { text: 'done' } : { downloads: [] },
+    );
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    try {
+      const result = await getAgentExecute(
+        srv.url,
+        'stdio',
+        analytics,
+      )(
+        {
+          commands: [
+            { method: 'text' },
+            { method: 'reportOutcome', params: { success: true } },
+          ],
+        },
+        mockContext,
+      );
+      expect(JSON.stringify(result)).to.include(
+        'Browser session closed (one-shot)',
+      );
+      expect(JSON.stringify(result)).not.to.include(
+        'report whether the task worked',
+      );
+      expect(fire.lastCall.args[2]).to.include({
+        self_reported_success: true,
+        verdict_delivery: 'in_session',
+      });
+      expect(srv.hits()).to.equal(1);
     } finally {
       await srv.close();
     }
@@ -2002,6 +2425,10 @@ describe('browserless_agent one-shot sessions', () => {
           expect(srv.hits()).to.equal(1);
         } else {
           expect(serialized).to.include('Browser session closed (one-shot)');
+          expect(serialized).to.include('report whether the task worked');
+          expect(serialized).to.include(
+            fire.lastCall.args[2].agent_session_handle,
+          );
           expect(serialized).to.include('keepSessionAlive: true');
           expect(serialized).to.include('FIRST call');
           expect(serialized).not.to.include('sessionId:');
@@ -2641,6 +3068,52 @@ describe('browserless_agent integration binding guard', () => {
 
 describe('browserless_agent persona creation guard', () => {
   afterEach(() => sinon.restore());
+
+  it('ignores mismatched attach echoes with one bounded warning per call and one socket', async () => {
+    const server = await makeRespondingServer(() => ({ elements: [] }));
+    const warn = sinon.stub();
+    const context = {
+      ...mockContext,
+      log: { ...mockContext.log, warn },
+      sessionId: 'attach-mismatch-tool',
+      session: { attachSessionId: 'existing-browser' },
+    };
+    try {
+      const execute = getAgentExecute(server.url);
+      await execute({ method: 'snapshot', keepSessionAlive: true }, context);
+      expect(warn.callCount).to.equal(0);
+      const echoes = [
+        'attach:existing-browseX',
+        's:foreign',
+        '',
+        'x'.repeat(1024),
+      ];
+      for (const echo of echoes) {
+        warn.resetHistory();
+        const result = (await execute(
+          { method: 'snapshot', sessionId: echo, keepSessionAlive: true },
+          context,
+        )) as { content: Array<{ text?: string }> };
+        expect(result.content[0].text).to.include(
+          'sessionId: attach:existing-browser',
+        );
+        expect(server.upgradeUrls()).to.have.length(1);
+        expect(warn.calledOnce).to.equal(true);
+        expect(warn.firstCall.args[0]).to.equal(
+          `[agent] attach handle mismatch ignored: echoed=${echo.slice(0, 24)}… canonical=attach:existing-browser`,
+        );
+        expect(warn.firstCall.args[0]).to.not.include('test-token');
+      }
+      warn.resetHistory();
+      await execute(
+        { method: 'snapshot', sessionId: 'attach:existing-browser' },
+        context,
+      );
+      expect(warn.callCount).to.equal(0);
+    } finally {
+      await server.close();
+    }
+  });
 
   it('does not default a persona when attaching an existing browser', async () => {
     const server = await makeRespondingServer(() => ({ elements: [] }));
@@ -3706,6 +4179,75 @@ describe('browserless_agent reportProfileAuthentication', () => {
 describe('browserless_agent reportOutcome', () => {
   afterEach(() => sinon.restore());
 
+  for (const pageResult of [false, true]) {
+    for (const delivery of ['accepted', 'rejected', 'send failure']) {
+      it(`retains late-report guidance unless delivered (${delivery}, page=${pageResult})`, async () => {
+        const srv = await makeRespondingServer((method) =>
+          method === 'reportOutcome' && delivery === 'rejected'
+            ? new AgentErrorFrame({ message: 'Report unavailable' })
+            : { text: 'page result' },
+        );
+        const analytics = new AnalyticsHelper(false);
+        const fire = sinon.stub(analytics, 'fireToolRequest');
+        try {
+          const execute = getAgentExecute(srv.url, 'stdio', analytics);
+          await execute({ keepSessionAlive: true }, mockContext);
+          const handle = fire.lastCall.args[2].agent_session_handle as string;
+          if (delivery === 'send failure') {
+            const session = getActiveSessionByHandle(
+              handle,
+              srv.url,
+              'test-token',
+            );
+            sinon
+              .stub(session.ws, 'send')
+              .callThrough()
+              .withArgs(
+                sinon.match(
+                  (data: string) => JSON.parse(data).method === 'reportOutcome',
+                ),
+              )
+              .throws(new Error('send failed'));
+          }
+          const result = await execute(
+            {
+              sessionId: handle,
+              keepSessionAlive: false,
+              commands: [
+                ...(pageResult ? [{ method: 'text' }] : []),
+                {
+                  method: 'reportOutcome',
+                  params: { success: false, reason: 'other' },
+                },
+              ],
+            },
+            mockContext,
+          );
+          const text = JSON.stringify(result);
+          if (pageResult) expect(text).to.include('page result');
+          expect(text).to.include('Browser session closed (one-shot)');
+          if (delivery === 'accepted') {
+            expect(text).not.to.include('report whether the task worked');
+            expect(text).not.to.include(handle);
+            expect(fire.lastCall.args[2]).to.include({
+              verdict_delivery: 'in_session',
+            });
+          } else {
+            expect(text).to.include(handle);
+            expect(text).to.include('report whether the task worked');
+            expect(fire.lastCall.args[2]).not.to.have.any.keys(
+              'self_reported_success',
+              'outcome_reason',
+              'verdict_delivery',
+            );
+          }
+        } finally {
+          await srv.close();
+        }
+      });
+    }
+  }
+
   it('rejects malformed top-level verdicts before forwarding', async () => {
     const calls: string[] = [];
     const srv = await makeRespondingServer((method) => {
@@ -3740,8 +4282,12 @@ describe('browserless_agent reportOutcome', () => {
       return { recorded: true };
     });
     try {
-      await getAgentExecute(srv.url)(
+      const execute = getAgentExecute(srv.url);
+      const opened = await execute({ keepSessionAlive: true }, mockContext);
+      const sessionId = /sessionId: (\S+) /.exec(JSON.stringify(opened))![1];
+      await execute(
         {
+          sessionId,
           method: 'reportOutcome',
           params: { success: false, reason: 'captcha' },
         },
@@ -3808,7 +4354,84 @@ describe('browserless_agent reportOutcome', () => {
 });
 
 describe('browserless_agent skill outcome forwarding', () => {
-  afterEach(() => sinon.restore());
+  afterEach(() => {
+    sinon.restore();
+    __resetRemoteSkillsForTesting();
+  });
+
+  it('verifies echoed receipts, preserves loaded versions, and never trusts a client status', async () => {
+    __resetRemoteSkillsForTesting();
+    __setRemoteSkillTtlForTesting(0);
+    await seedSiteSkill('example.com', 'search', '# v1', 1);
+    const receipt = loadSiteSkill('example.com/search', {
+      token: 'test-token',
+      mcpSessionId: 'private-session',
+    })!.receipt!;
+    const other = loadSiteSkill('example.com/search', {
+      token: 'other-token',
+      mcpSessionId: 'private-session',
+    })!.receipt!;
+    await seedSiteSkill('example.com', 'search', '# v2', 2);
+    expect(loadSiteSkill('example.com/search')!.skill.version).to.equal(2);
+    const forwarded: unknown[] = [];
+    const srv = await makeRespondingServer((method, params) => {
+      if (method === 'reportSkillOutcome') forwarded.push(params);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const legacy = { domain: 'example.com', task: 'search', success: true };
+      const tampered = {
+        ...receipt,
+        skill_use_id:
+          receipt.skill_use_id.slice(0, -1) +
+          (receipt.skill_use_id.endsWith('0') ? '1' : '0'),
+      };
+      for (const [fields, matched] of [
+        [receipt, true],
+        [tampered, false],
+        [other, false],
+        [{}, false],
+      ] as const) {
+        await execute(
+          {
+            method: 'reportSkillOutcome',
+            params: {
+              ...legacy,
+              ...fields,
+              attribution_status: 'matched',
+              outcome_source: 'client',
+            },
+          },
+          mockContext,
+        );
+        expect(forwarded.at(-1)).to.deep.equal({
+          ...legacy,
+          ...fields,
+          ...(matched ? { attribution_status: 'matched' } : {}),
+        });
+      }
+      await execute(
+        {
+          commands: [
+            { method: 'reportSkillOutcome', params: { ...legacy, ...receipt } },
+            { method: 'close' },
+          ],
+        },
+        mockContext,
+      );
+      expect(forwarded.at(-1)).to.deep.equal({
+        ...legacy,
+        ...receipt,
+        attribution_status: 'matched',
+      });
+      expect(JSON.stringify(forwarded)).not.to.match(
+        /test-token|other-token|private-session/,
+      );
+    } finally {
+      await srv.close();
+    }
+  });
 
   it('validates top-level skill reports before opening a browser', async () => {
     const calls: string[] = [];
