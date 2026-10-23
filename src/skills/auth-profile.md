@@ -13,11 +13,14 @@ passing its `name` as `profile` to the tool you're running — no new login
 needed. Only fall through to the creation recipe below when no suitable profile
 exists.
 
-After the batch that ends with your first `snapshot` on the site, send
-`reportProfileAuthentication` as the only command of the next batch, before any login actions
+After the first batch that loads a page on the site — whether you read it with
+`snapshot`, `text`, `evaluate`, or `screenshot` — send
+`reportProfileAuthentication` as the first command of the next batch, before any login actions;
+the rest of that batch can continue the task, but not with `close`
 (params: `checkpointId` = `"<host>:first-page"`, `outcome`, `newLoginActivity: false`).
 If login activity already occurred on this site, use `newLoginActivity: true` instead.
-It defaults to the last active-tab snapshot; if you used `snapshot { targetId }`
+It defaults to the last active-tab snapshot, so if you have not taken one yet,
+end that first page-load batch with `snapshot`. If you used `snapshot { targetId }`
 to peek at another tab, repeat that `targetId` in the report.
 `authenticated` only if a signed-in element is visible; `login_required` if you
 see a sign-in form or wall; `challenge` for a captcha or verification wall;

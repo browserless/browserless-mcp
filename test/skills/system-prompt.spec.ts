@@ -63,7 +63,7 @@ it('guides saved-login reporting only in the full Auth section', () => {
     'login_required',
     'challenge',
     'unknown',
-    'last command',
+    'FIRST command',
     'Never send it on sessions without',
     'session handle retains the profile',
     'before any login actions',
