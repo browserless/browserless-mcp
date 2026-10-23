@@ -220,6 +220,78 @@ describe('browserless_read_page', () => {
     });
   }
 
+  for (const format of ['links', 'elements']) {
+    it(`resolves ${format} against matching frame URLs with a page fallback`, async () => {
+      const ws = await makeRespondingServer((method) =>
+        method === 'snapshot'
+          ? {
+              url,
+              frames: [
+                { frameId: 'same', url: 'http://h/docs/' },
+                { frameId: 'cross', url: 'https://help.example.org/manual/' },
+              ],
+              elements: [
+                { role: 'link', name: 'Same', href: 'faq', frameId: 'same' },
+                { role: 'link', name: 'Cross', href: 'faq', frameId: 'cross' },
+                {
+                  role: 'link',
+                  name: 'Fallback',
+                  href: 'faq',
+                  frameId: 'missing',
+                },
+              ].map((el, ref) => ({ ...el, ref, tag: 'a', selector: 'a' })),
+            }
+          : { url, status: 200 },
+      );
+      try {
+        const reply: any = await capture(ws.url).execute(
+          { url, format },
+          context,
+        );
+        const text = reply.content[0].text;
+        for (const address of [
+          'http://h/docs/faq',
+          'https://help.example.org/manual/faq',
+          'http://h/faq',
+        ])
+          expect(text).to.contain(address);
+        expect(text).not.to.match(/frameId|frame#/);
+      } finally {
+        await ws.close();
+      }
+    });
+
+    it(`warns only at the snapshot cap for ${format}`, async () => {
+      let count = 499;
+      const ws = await makeRespondingServer((method) =>
+        method === 'snapshot'
+          ? {
+              url,
+              elements: Array.from({ length: count }, (_, ref) => ({
+                ref,
+                tag: 'a',
+                selector: 'a',
+                role: 'link',
+                name: 'Repeated',
+                href: '/same',
+              })),
+            }
+          : { url, status: 200 },
+      );
+      try {
+        const tool = capture(ws.url);
+        const below: any = await tool.execute({ url, format }, context);
+        expect(below.content[0].text).not.to.contain('may be incomplete');
+        count = 500;
+        const capped: any = await tool.execute({ url, format }, context);
+        expect(capped.content[0].text).to.contain('may be incomplete');
+        expect(capped.content[0].text).to.contain('500');
+      } finally {
+        await ws.close();
+      }
+    });
+  }
+
   it('enforces strict inputs and selector compatibility before opening a browser', async () => {
     const ws = await makeRespondingServer(() => ({}));
     try {
