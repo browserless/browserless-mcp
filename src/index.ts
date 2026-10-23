@@ -7,6 +7,7 @@ import type { OAuthProxy } from 'fastmcp/auth';
 import { getConfig, classifyComplianceInput } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
 import { registerSurface } from './tools/register.js';
+import { announceToolListOnConnect, isCompliant } from './tools/compliance.js';
 import { serverInstructions } from './skills/system-prompt.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
@@ -145,6 +146,11 @@ const hybridAuthenticate =
       }
     : undefined;
 
+// The patched FastMCP reads this flag when constructing session capabilities.
+(
+  globalThis as { __browserlessMcpStaticTools?: boolean }
+).__browserlessMcpStaticTools = isCompliant(config);
+
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
   version: pkg.version,
@@ -223,10 +229,8 @@ server.on('connect', (event) => {
       '[browserless-mcp] WARNING: FastMCP session server is not an MCP SDK Server; Amplitude instrumentation may be disabled.',
     );
   }
-  // force the client to refresh its tool list on connect
-  void event.session.triggerListChangedNotification(
-    'notifications/tools/list_changed',
-  );
+  // Only the full surface asks clients to refresh the tool list on connect.
+  announceToolListOnConnect(event.session, config);
 });
 
 if (amplitudeAnalytics || telemetryShutdown) {

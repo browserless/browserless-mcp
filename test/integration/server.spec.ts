@@ -53,6 +53,81 @@ const mockConfig: McpConfig = {
 describe('MCP Server Integration', () => {
   let server: FastMCP;
 
+  for (const compliant of [true, false]) {
+    it(`advertises the ${compliant ? 'connector' : 'full'} HTTP surface at startup`, async () => {
+      const port = await freePort();
+      const base = `http://127.0.0.1:${port}`;
+      const child = spawn(process.execPath, ['build/src/index.js'], {
+        env: {
+          ...process.env,
+          TRANSPORT: 'httpStream',
+          PORT: String(port),
+          MCP_COMPLIANCE_MODE: String(compliant),
+          OAUTH_ENABLED: 'false',
+          REDIS_URL: '',
+          AMPLITUDE_API_KEY: '',
+          ANALYTICS_ENABLED: 'false',
+          OTEL_ENABLED: 'false',
+          BROWSERLESS_TOKEN: '',
+        },
+        stdio: 'ignore',
+      });
+      const exited = once(child, 'exit');
+      const client = new Client({ name: 'surface-test', version: '0.0.0' });
+      try {
+        let ready = false;
+        for (let i = 0; i < 100; i++) {
+          try {
+            ready = (await fetch(`${base}/health`)).ok;
+          } catch {
+            /* starting */
+          }
+          if (ready || child.exitCode !== null) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(ready, 'surface server starts').to.equal(true);
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+            requestInit: {
+              headers: { Authorization: `Bearer ${'a'.repeat(24)}` },
+            },
+          }),
+        );
+        const caps = client.getServerCapabilities();
+        if (compliant) {
+          expect(caps?.tools).to.deep.equal({});
+          expect(caps).not.to.have.property('resources');
+          expect(caps).not.to.have.property('prompts');
+        } else {
+          expect(caps?.tools).to.deep.include({ listChanged: true });
+        }
+        const names = (await client.listTools()).tools
+          .map((tool) => tool.name)
+          .sort();
+        const connectorNames = [
+          'browserless_export',
+          'browserless_map',
+          'browserless_performance',
+          'browserless_read_page',
+          'browserless_search',
+        ];
+        if (compliant) {
+          expect(names).to.deep.equal(connectorNames);
+        } else {
+          expect(names).to.have.length(19);
+          expect(names).to.include.members([
+            ...connectorNames,
+            'browserless_stage_file',
+          ]);
+        }
+      } finally {
+        await client.close().catch(() => {});
+        child.kill('SIGTERM');
+        await exited;
+      }
+    });
+  }
+
   it('preserves OAuth registration bodies and limits only POSTs per address', async () => {
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
