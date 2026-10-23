@@ -39,20 +39,41 @@ No local install — see [Configuration](#configuration) for per-client snippets
 | `browserless_sessions`     | Inspect the account's sessions — browsers running now, persistent sessions on dedicated workers, recorded session replays, and 1Password credential integrations. Also downloads a replay as a fully self-contained rrweb player page (`action: "replay"`) that needs no network to render: opened in your browser when the server runs locally, otherwise attached as an inline HTML resource when small enough to send.                                   |
 | `browserless_logs`         | Read Browserless's own record of recent requests: what was attempted, whether it failed, why it stopped, how long it took and what it cost. The tool for diagnosing a run that failed on the Browserless side. Available window is plan-dependent.                                                                                                                                                                                                          |
 
+### Native file staging (disabled by default)
+
+The full HTTP surface advertises `browserless_stage_file` with the native
+`openai/fileParams` file descriptor. It is absent from stdio and the compliant
+surface. **Native downloads are currently disabled:** the production hostname
+allowlist is empty, so every staging request fails before DNS or network access.
+Tool inputs and environment variables cannot enable it.
+
+The implementation accepts `file.download_url` and `file.file_id`, with optional
+`file.mime_type` and `file.file_name`. Once trusted hosts are verified and enabled
+in code, successful staging returns only `{ handle, filename, mimeType, size }`.
+Pass the handle to `browserless_agent`'s `uploadFile`; handles belong to the
+authenticated token, remain reusable for 15 minutes, and are not tied to an MCP
+transport. Stored MIME is inherited unless the upload supplies an override.
+
+Controlled tests do not establish native ChatGPT attachment acceptance. Live
+attachment acceptance and handle resolution across deployed replicas remain
+unverified; the file store is process-local. Existing multipart `/upload` and
+inline-content uploads are unchanged.
+
 ## Skills
 
 The server ships with a built-in library of **Skills** — on-demand recipes the agent can load to handle tricky page mechanics. Skills auto-inject into `browserless_agent` responses when their triggers fire (e.g. the agent hits a cookie banner), and can also be loaded manually via the `browserless_skill` tool.
 
-| Skill             | Source                                                         | Purpose                                                                           |
-| ----------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `shadow-dom`      | [src/skills/shadow-dom.md](src/skills/shadow-dom.md)           | Deep selectors and iframe targeting through shadow roots.                         |
-| `cookie-consent`  | [src/skills/cookie-consent.md](src/skills/cookie-consent.md)   | Vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, TrustArc, etc.).    |
-| `modals`          | [src/skills/modals.md](src/skills/modals.md)                   | Closing dialogs, alertdialogs, and overlay close-button heuristics.               |
-| `captchas`        | [src/skills/captchas.md](src/skills/captchas.md)               | Using the `solve` command, response semantics, and escalation paths (Cloud only). |
-| `dynamic-content` | [src/skills/dynamic-content.md](src/skills/dynamic-content.md) | Choosing the right `wait*` method for async/AJAX/SPA content.                     |
-| `snapshot-misses` | [src/skills/snapshot-misses.md](src/skills/snapshot-misses.md) | Handling truncated/empty snapshots and image-rendered content.                    |
-| `screenshots`     | [src/skills/screenshots.md](src/skills/screenshots.md)         | When to screenshot vs. snapshot, scope and format choices.                        |
-| `tabs`            | [src/skills/tabs.md](src/skills/tabs.md)                       | Multi-tab workflows and peek-without-switching via `targetId`.                    |
+| Skill             | Source                                                         | Purpose                                                                                                                      |
+| ----------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `shadow-dom`      | [src/skills/shadow-dom.md](src/skills/shadow-dom.md)           | Deep selectors and iframe targeting through shadow roots.                                                                    |
+| `cookie-consent`  | [src/skills/cookie-consent.md](src/skills/cookie-consent.md)   | Vendor-specific dismiss recipes (OneTrust, Cookiebot, Didomi, TrustArc, etc.).                                               |
+| `modals`          | [src/skills/modals.md](src/skills/modals.md)                   | Closing dialogs, alertdialogs, and overlay close-button heuristics.                                                          |
+| `captchas`        | [src/skills/captchas.md](src/skills/captchas.md)               | Using the `solve` command, response semantics, and escalation paths (Cloud only).                                            |
+| `profile-import`  | [src/skills/profile-import.md](src/skills/profile-import.md)   | Import the user's local Chrome/Brave/Edge sign-ins as a profile with the Browserless CLI (consent-gated, full surface only). |
+| `dynamic-content` | [src/skills/dynamic-content.md](src/skills/dynamic-content.md) | Choosing the right `wait*` method for async/AJAX/SPA content.                                                                |
+| `snapshot-misses` | [src/skills/snapshot-misses.md](src/skills/snapshot-misses.md) | Handling truncated/empty snapshots and image-rendered content.                                                               |
+| `screenshots`     | [src/skills/screenshots.md](src/skills/screenshots.md)         | When to screenshot vs. snapshot, scope and format choices.                                                                   |
+| `tabs`            | [src/skills/tabs.md](src/skills/tabs.md)                       | Multi-tab workflows and peek-without-switching via `targetId`.                                                               |
 
 Load a skill explicitly:
 
@@ -392,6 +413,41 @@ group by `error_status_origin → error_status_code`. Missing fields in older
 events mean unavailable instrumentation, not an `unknown` failure. There is no
 historical backfill. Verify representative received events after deployment
 before treating these properties as available in production.
+
+## Live URL instructions
+
+`browserless_live_url` creates viewer links over REST for an existing browser.
+Set `action: "create"`, `browserId`, and `interactable: true` for a human handoff:
+
+```json
+{
+  "action": "create",
+  "browserId": "running-browser-id",
+  "interactable": true,
+  "instructions": {
+    "layout": "panel",
+    "format": "markdown",
+    "title": "Complete sign in",
+    "summary": "Enter your **verification code**.",
+    "steps": ["Open your inbox", "Enter the code"],
+    "currentStep": 2
+  },
+  "doneLabel": "Continue",
+  "failLabel": "Need help",
+  "requesterName": "Support"
+}
+```
+
+Plain string instructions still work. With a string, use top-level
+`instructionsTitle`, `steps`, `currentStep`, and `instructionsFormat`.
+With an object, put these values inside `instructions` as `title`, `steps`,
+`currentStep`, and `format`. Button labels and requester name stay top-level.
+Titles allow 80 characters; up to 10 non-empty steps allow 300 characters each;
+button labels allow 40 characters; requester names allow 60 characters.
+`currentStep` is one-based and must refer to a supplied step. Summary text is
+trimmed and capped at 2048 characters by the server. Steps-only cards are
+supported. Markdown links must use HTTP or HTTPS. The server validates
+cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 

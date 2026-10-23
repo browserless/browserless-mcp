@@ -321,6 +321,7 @@ export type SkillId =
   | 'tabs'
   | 'autonomous-login'
   | 'auth-profile'
+  | 'profile-import'
   | 'file-transfers'
   | 'agentic-checkout'
   | 'vision-fallback'
@@ -753,7 +754,23 @@ export interface LiveURLOptions {
   type?: 'jpeg' | 'png';
   resizable?: boolean;
   showBrowserInterface?: boolean;
-  instructions?: string;
+  instructions?:
+    | string
+    | {
+        layout?: 'modal' | 'panel';
+        format?: 'text' | 'markdown';
+        title?: string;
+        summary?: string;
+        steps?: string[];
+        currentStep?: number;
+      };
+  instructionsTitle?: string;
+  steps?: string[];
+  currentStep?: number;
+  doneLabel?: string;
+  failLabel?: string;
+  requesterName?: string;
+  instructionsFormat?: 'text' | 'markdown';
 }
 
 export interface LiveURLCreated {

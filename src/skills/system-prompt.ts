@@ -1,3 +1,12 @@
+export const SERVER_INSTRUCTIONS = `Browserless MCP: cloud browsers for scraping, automation and agent tasks.
+Interactive work: browserless_agent (snapshot before you act); recipes and skills: browserless_skill.
+Signed-in sites: call browserless_profiles first and pass an existing profile's name as \`profile\`.
+No profile for that site and you are running on the user's own machine (Claude Code, Codex, a terminal)? Load the \`profile-import\` skill: it imports the user's already-signed-in Chrome/Brave/Edge profile with the Browserless CLI after showing them the disclaimer and getting an explicit yes.
+Never send the user to the Browserless dashboard for something these tools can finish, and never print or echo an API token.`;
+
+export const serverInstructions = (compliant: boolean): string | undefined =>
+  compliant ? undefined : SERVER_INSTRUCTIONS;
+
 export const SELF_CHECK_DIRECTIVE = `
 
 ## Repetition self-check
@@ -22,7 +31,7 @@ export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in 
 After a \`keepSessionAlive: true\` call, pass the returned \`sessionId\` back on every later call — it stays alive, no need to repeat the flag. Set \`keepSessionAlive: false\` to force-close even when continuing. Profile creation and attached sessions manage their lifetimes separately.
 
 An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
-**Report the outcome (only if you loaded a site recipe).** Near the end of the run, send \`{ method: "reportSkillOutcome", params: { domain: "<host>", task: "<slug>", success: <bool> } }\` inside \`commands\` — where \`domain\`/\`task\` are the loaded recipe's \`<host>\`/\`<slug>\` and \`success\` is false if a step in this recipe failed as written, even if you finished another way. Cosmetic differences that didn't break a step are still \`success: true\`. This refines shared recipes and retires ones that stop working. Send it once, and only when you loaded a recipe — never for a self-planned run. Send it before \`reportOutcome\` and any \`close\` (close ends the run and anything after it is dropped).
+**Report the outcome (only if you loaded a site recipe).** Near the end of the run, send \`{ method: "reportSkillOutcome", params: { domain: "<host>", task: "<slug>", success: <bool> } }\` inside \`commands\` — where \`domain\`/\`task\` are the loaded recipe's \`<host>\`/\`<slug>\` and \`success\` is false if a step in this recipe failed as written, even if you finished another way. Cosmetic differences that didn't break a step are still \`success: true\`. This refines shared recipes and retires ones that stop working. Send it once, and only when you loaded a recipe — never for a self-planned run. Send it before \`reportOutcome\` and any \`close\` (close ends the run and anything after it is dropped). When the loaded recipe's footer shows \`run_id\`, \`skill_use_id\` and \`loaded_version\`, include all three exactly as shown; never invent or alter them, and never send \`attribution_status\`.
 On failure, add one bounded \`failure_reason\`: \`authentication_required\` (login needed), \`site_changed\` (a URL or element no longer matches), \`blocked\` (access denied or challenge), \`timeout\` (operation timed out), \`missing_data\` (required output absent), \`incorrect_result\` (output present but wrong), or \`unknown\` (cause unclear). For example: \`{ method: "reportSkillOutcome", params: { domain: "example.com", task: "search", success: false, failure_reason: "missing_data" } }\`. On success, omit \`failure_reason\`; success with a failure reason is invalid. Boolean-only legacy reports remain valid; failures default to \`unknown\`. These are agent-reported results, not independent validation. Never supply \`outcome_source\`: the server assigns provenance. Do not put URLs, secrets, prompts, copied content, or free-form explanations in outcome fields.
 
 - **Report the outcome after you've seen the results.** Once the task is done or you are giving up, and you have seen the final results, send \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` once per task (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Kept-alive session: include it in the batch before \`close\`, or send it alone before \`close\`. One-shot call: send it as its own call with the \`sessionId\` the one-shot reply gives you, which opens no browser.
@@ -364,4 +373,5 @@ Available in-house skills:
 - **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
 - **autonomous-registration** — load before creating an account: when the user asked you to sign up / register, or as soon as a Create-account form appears. Covers the don't-register-by-default posture, identity and credential-sink rules, save-first-then-loadSecret password handling, the emailed-code branch, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
-- **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps`;
+- **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps
+- **profile-import** — import the user's local Chrome/Brave/Edge sign-ins as a profile with the Browserless CLI (consent-gated; only when running on the user's machine)`;

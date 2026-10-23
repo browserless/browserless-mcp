@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.39.0](https://github.com/browserless/browserless-mcp/compare/v1.38.0...v1.39.0) (2026-10-16)
+
+
+### Features
+
+* add autonomous registration and vault discovery guidance ([#404](https://github.com/browserless/browserless-mcp/issues/404)) ([0a88c51](https://github.com/browserless/browserless-mcp/commit/0a88c51f058d8560c0bcbaefe915cb03ad7efb1a))
+* attribute skill outcomes to the loaded recipe version ([#403](https://github.com/browserless/browserless-mcp/issues/403)) ([dfea5ff](https://github.com/browserless/browserless-mcp/commit/dfea5ff6dfa119c24a691e9fa3b9413ba1a49e9c))
+* guide local profile imports through consent ([#422](https://github.com/browserless/browserless-mcp/issues/422)) ([df547b7](https://github.com/browserless/browserless-mcp/commit/df547b790d721e14ada9d11c7e180f89c30a10ea))
+* list the server in the official MCP Registry as io.browserless/mcp ([#418](https://github.com/browserless/browserless-mcp/issues/418)) ([231b903](https://github.com/browserless/browserless-mcp/commit/231b903184a9b9ad59fc02dcf1b1684ecd970aed))
+
+
+### Bug Fixes
+
+* ensure replays can be downloaded in full without limiting context AUTO-607 ([#419](https://github.com/browserless/browserless-mcp/issues/419)) ([05516d6](https://github.com/browserless/browserless-mcp/commit/05516d64b56ef3b57999546bd8c67a7124d69642))
+
 ## [1.38.0](https://github.com/browserless/browserless-mcp/compare/v1.37.1...v1.38.0) (2026-10-12)
 
 

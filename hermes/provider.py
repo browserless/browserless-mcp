@@ -18,15 +18,18 @@ Config (env or $HERMES_HOME/.env):
   BROWSERLESS_BLOCK_ADS            false (default) | true
   BROWSERLESS_SOLVE_CAPTCHAS       false (default) | true  -- Browserless auto-solves captchas it detects
   BROWSERLESS_EXTRA_QUERY          extra launch params appended as-is, e.g. "humanlike=true"
+  BROWSERLESS_SOURCE_TAG           true (default) | false  -- identify this plugin in its connection User-Agent
   BROWSERLESS_MUX_LOG              optional file path for a mux trace (token redacted)
 """
 from __future__ import annotations
 
 import functools
 import logging
+import re
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from agent.browser_provider import BrowserProvider
@@ -91,6 +94,22 @@ def _launch_options() -> tuple:
     return ("/chromium/stealth" if stealth else "/chromium"), query, features
 
 
+def _plugin_version() -> str:
+    try:
+        text = (Path(__file__).parent / "plugin.yaml").read_text()
+        return re.search(r"^version:\s*['\"]?([^'\"\s]+)", text, re.M).group(1)
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _client_tag() -> Dict[str, str]:
+    """User-Agent for the plugin's own connections to Browserless (not the browser's user agent, which sites
+    see), so Browserless can count Hermes usage. Disclosed in the README; BROWSERLESS_SOURCE_TAG=false turns it off."""
+    if not _bool_setting("BROWSERLESS_SOURCE_TAG", True):
+        return {}
+    return {"user_agent": f"browserless-hermes-plugin/{_plugin_version()}"}
+
+
 def _token() -> Optional[str]:
     return _setting("BROWSERLESS_TOKEN")
 
@@ -146,13 +165,14 @@ class BrowserlessBrowserProvider(BrowserProvider):
         keepalive_ms = _int_setting("BROWSERLESS_KEEPALIVE_MS", 60000)
 
         route, query, features = _launch_options()
+        client = _client_tag()
         # Resolved here: the mux thread has no Hermes secret scope, so it can't read settings itself.
         log = functools.partial(self._trace, log_path=_setting("BROWSERLESS_MUX_LOG"))
         mux = None
         started = time.time()
         if mode in ("auto", "reconnect"):
             mux = Mux(ReconnectUpstream(ws_base, token, timeout_ms, keepalive_ms, launch_query=query, route=route,
-                                        log=log), log=log)
+                                        client=client, log=log), log=log)
             try:
                 mux.start_in_thread()
             except ReconnectUnavailable as e:
@@ -164,7 +184,7 @@ class BrowserlessBrowserProvider(BrowserProvider):
             if features["stealth"] or query:
                 self._trace("note: stealth/proxy/ad-block options are not applied in session-API mode")
                 features = {"stealth": False, "proxies": False, "block_ads": False, "solve_captchas": False}
-            mux = Mux(SessionApiUpstream(base, token, timeout_ms, keepalive_ms, log=log), log=log)
+            mux = Mux(SessionApiUpstream(base, token, timeout_ms, keepalive_ms, client=client, log=log), log=log)
             mux.start_in_thread()
         elif mux.upstream.route == "/chromium":
             features["stealth"] = False  # stealth route was refused and the plugin fell back
@@ -208,7 +228,7 @@ class BrowserlessBrowserProvider(BrowserProvider):
     def get_setup_schema(self) -> Optional[Dict[str, Any]]:
         return {
             "name": self.display_name,
-            "badge": "paid",
+            "badge": "free",
             "tag": "Cloud browser (stealth, proxies, captcha solving)",
             "env_vars": [{"key": "BROWSERLESS_TOKEN", "prompt": "Browserless API token",
                           "url": "https://www.browserless.io/account"}],

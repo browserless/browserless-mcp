@@ -1,6 +1,66 @@
-import { randomUUID } from 'node:crypto';
+import {
+  createHmac,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import type { McpConfig } from '../@types/types.js';
 import { assertAllowedApiUrl } from '../lib/api-url-guard.js';
+
+const RUN_NONCE = randomBytes(16).toString('hex');
+
+export const skillRunId = (
+  token: string,
+  mcpSessionId: string | undefined,
+): string =>
+  createHmac('sha256', token)
+    .update(JSON.stringify(['skill-run-v1', mcpSessionId ?? RUN_NONCE]))
+    .digest('hex');
+
+export const skillUseId = (
+  token: string,
+  runId: string,
+  domain: string,
+  task: string,
+  version: number,
+): string =>
+  createHmac('sha256', token)
+    .update(JSON.stringify(['skill-use-v1', runId, domain, task, version]))
+    .digest('hex');
+
+export interface SkillReceipt {
+  run_id: string;
+  skill_use_id: string;
+  loaded_version: number;
+}
+
+export const verifySkillReceipt = (
+  token: string,
+  params: Record<string, unknown>,
+): boolean => {
+  const { run_id, skill_use_id, loaded_version, domain, task } = params;
+  if (
+    !token ||
+    typeof run_id !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(run_id) ||
+    typeof skill_use_id !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(skill_use_id) ||
+    typeof loaded_version !== 'number' ||
+    !Number.isSafeInteger(loaded_version) ||
+    loaded_version < 1 ||
+    typeof domain !== 'string' ||
+    domain.length === 0 ||
+    domain.length > 253 ||
+    typeof task !== 'string' ||
+    task.length === 0 ||
+    task.length > 128
+  )
+    return false;
+  return timingSafeEqual(
+    Buffer.from(skillUseId(token, run_id, domain, task, loaded_version), 'hex'),
+    Buffer.from(skill_use_id, 'hex'),
+  );
+};
 
 export interface SiteSkill {
   id: string; // `${host}/${slug}` — the loadable id
@@ -9,6 +69,7 @@ export interface SiteSkill {
   title: string;
   description: string;
   body: string; // in-memory SKILL.md fetched from the enterprise skill bucket
+  version?: number;
 }
 
 // Skills are served by the enterprise API, not bundled; the manifest fills in
@@ -67,18 +128,43 @@ export const siteRecipeNotice = (
   ].join('\n');
 };
 
-export const loadSiteSkill = (id: string): string | null => {
+export const loadSiteSkill = (
+  id: string,
+  attribution?: { token: string; mcpSessionId: string | undefined },
+): { body: string; skill: SiteSkill; receipt?: SkillReceipt } | null => {
   const skill = byId.get(id.toLowerCase());
   if (!skill) return null;
-  return [
+  let receipt: SkillReceipt | undefined;
+  if (attribution?.token && skill.version !== undefined) {
+    const run_id = skillRunId(attribution.token, attribution.mcpSessionId);
+    receipt = {
+      run_id,
+      skill_use_id: skillUseId(
+        attribution.token,
+        run_id,
+        skill.host,
+        skill.slug,
+        skill.version,
+      ),
+      loaded_version: skill.version,
+    };
+  }
+  const receiptParams = receipt
+    ? `, "run_id": "${receipt.run_id}", "skill_use_id": "${receipt.skill_use_id}", "loaded_version": ${receipt.loaded_version}`
+    : '';
+  const body = [
     `--- SITE SKILL: ${skill.id} ---`,
     skill.body.trimEnd(),
-    `When you finish, put { "method": "reportSkillOutcome", "params": { "domain": "${skill.host}", "task": "${skill.slug}", "success": <bool> } } ` +
+    `When you finish, put { "method": "reportSkillOutcome", "params": { "domain": "${skill.host}", "task": "${skill.slug}", "success": <bool>${receiptParams} } } ` +
       `in your last commands batch while the browser is still open (before close). Send success: false if a step in this recipe failed as written, ` +
       `even if you finished another way; use failure_reason: "site_changed" when a URL or element no longer matches. ` +
-      `Cosmetic differences that didn't break a step are still success: true.`,
+      `Cosmetic differences that didn't break a step are still success: true.` +
+      (receipt
+        ? ' Copy run_id, skill_use_id and loaded_version exactly as shown; never invent them.'
+        : ''),
     '--- END SITE SKILL ---',
   ].join('\n');
+  return { body, skill, ...(receipt ? { receipt } : {}) };
 };
 
 // Skill cache values
@@ -96,6 +182,7 @@ interface RemoteSkill {
   task?: string;
   title?: string;
   skill_md?: string;
+  version?: unknown;
 }
 
 export type SkillRetrieval = {
@@ -124,7 +211,7 @@ const mergeRemoteSkills = (key: string, remote: RemoteSkill[]): void => {
     byId.delete(prev.id.toLowerCase());
 
   const entries: SiteSkill[] = [];
-  for (const { task, title, skill_md } of remote) {
+  for (const { task, title, skill_md, version } of remote) {
     if (!task || !skill_md) continue;
     const entry: SiteSkill = {
       id: `${key}/${task}`,
@@ -133,6 +220,12 @@ const mergeRemoteSkills = (key: string, remote: RemoteSkill[]): void => {
       title: title || task,
       description: '',
       body: skill_md,
+      version:
+        typeof version === 'number' &&
+        Number.isSafeInteger(version) &&
+        version >= 1
+          ? version
+          : undefined,
     };
     entries.push(entry);
     byId.set(entry.id.toLowerCase(), entry);

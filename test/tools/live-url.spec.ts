@@ -84,6 +84,13 @@ describe('browserless_live_url', () => {
       instructions: 'Verify.',
       targetId: 'tab-123',
       mode: 'tab' as const,
+      instructionsTitle: 'Verification',
+      steps: ['Enter code'],
+      currentStep: 1,
+      doneLabel: 'Continue',
+      failLabel: 'Help',
+      requesterName: 'Support',
+      instructionsFormat: 'markdown' as const,
     };
     const result = await tool().execute(
       { action: 'create', ...params, ...options, mint: true },
@@ -94,6 +101,79 @@ describe('browserless_live_url', () => {
     expect(init.method).to.equal('POST');
     expect(JSON.parse(init.body)).to.deep.equal(options);
     expect(JSON.parse((result as any).content[0].text)).to.deep.equal(response);
+  });
+
+  it('forwards structured cards and steps-only cards', async () => {
+    for (const instructions of [
+      {
+        layout: 'panel' as const,
+        format: 'markdown' as const,
+        title: 'Verify',
+        summary: '**Sign in**',
+        steps: ['Enter code'],
+        currentStep: 1,
+      },
+      { steps: ['Enter code'] },
+    ]) {
+      fetchStub.resolves(jsonResponse({ liveURL: 'url', liveURLId: 'id' }));
+      await tool().execute(
+        {
+          action: 'create',
+          browserId: params.browserId,
+          instructions,
+          doneLabel: 'Continue',
+        },
+        mockContext,
+      );
+      expect(JSON.parse(fetchStub.lastCall.args[1].body)).to.deep.equal({
+        instructions,
+        doneLabel: 'Continue',
+      });
+    }
+  });
+
+  it('validates rich card limits for both input forms', () => {
+    const valid = {
+      instructions: 'x',
+      instructionsTitle: 'x'.repeat(80),
+      steps: Array(10).fill('x'.repeat(300)),
+      currentStep: 10,
+      doneLabel: 'x'.repeat(40),
+      failLabel: 'x'.repeat(40),
+      requesterName: 'x'.repeat(60),
+      instructionsFormat: 'markdown',
+    };
+    expect(
+      LiveURLParamsSchema.safeParse({ action: 'create', ...params, ...valid })
+        .success,
+    ).to.equal(true);
+    for (const options of [
+      { instructionsTitle: 'x'.repeat(81) },
+      { steps: Array(11).fill('x') },
+      { steps: ['x'.repeat(301)] },
+      { steps: [' '] },
+      { currentStep: 0 },
+      { currentStep: 1.5 },
+      { doneLabel: 'x'.repeat(41) },
+      { failLabel: 'x'.repeat(41) },
+      { requesterName: 'x'.repeat(61) },
+      { instructionsFormat: 'html' },
+      { instructions: { title: 'x'.repeat(81) } },
+      { instructions: { steps: ['x'.repeat(301)] } },
+      { instructions: { steps: [''] } },
+      { instructions: { currentStep: 0 } },
+      { instructions: { layout: 'other' } },
+      { instructions: { format: 'html' } },
+    ]) {
+      expect(
+        LiveURLParamsSchema.safeParse({
+          action: 'create',
+          ...params,
+          ...options,
+        }).success,
+        JSON.stringify(options),
+      ).to.equal(false);
+    }
   });
 
   it('leaves defaults to server', async () => {
@@ -189,20 +269,16 @@ describe('browserless_live_url', () => {
     ).to.include({ targetId: 'tab', mode: 'follow' });
   });
 
-  it('keeps the JSON schema flat with primitive properties', () => {
+  it('keeps tab options as top-level primitive JSON schema properties', () => {
     const schema = z.toJSONSchema(LiveURLParamsSchema) as {
       properties: Record<string, { type: string; enum?: string[] }>;
     };
-    expect(JSON.stringify(schema)).not.to.match(
-      /"(?:anyOf|oneOf|allOf|\$ref)"/,
-    );
-    for (const property of Object.values(schema.properties!)) {
-      expect(property.type).to.be.oneOf([
-        'string',
-        'number',
-        'integer',
-        'boolean',
-      ]);
+    for (const name of ['action', 'targetId', 'mode', 'mint']) {
+      const property = schema.properties[name];
+      expect(JSON.stringify(property)).not.to.match(
+        /"(?:anyOf|oneOf|allOf|\$ref)"/,
+      );
+      expect(property.type).to.equal(name === 'mint' ? 'boolean' : 'string');
     }
     expect(schema.properties!.mode.enum).to.deep.equal(['follow', 'tab']);
     expect(schema.properties!.action.enum).to.include('pages');

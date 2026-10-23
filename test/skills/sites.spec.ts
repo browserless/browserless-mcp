@@ -1,6 +1,9 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import {
+  skillRunId,
+  skillUseId,
+  verifySkillReceipt,
   listSiteSkillsForHost,
   loadSiteSkill,
   renderSiteSkillList,
@@ -41,6 +44,143 @@ const seedShop = () =>
 describe('site skills', function () {
   beforeEach(() => __resetRemoteSkillsForTesting());
 
+  it('signs the fixed receipt contract', function () {
+    expect(
+      skillUseId(
+        'test-token',
+        '96dcba170838442b7e86da88167b5c9a02cbbf5b4630bd8b5aad494a607b4890',
+        'x.com',
+        'search',
+        1,
+      ),
+    ).to.equal(
+      '42bb6fae7df9e171bd636e2358da9cdcec56ea8dd18503d4b99d6597a99b3c8d',
+    );
+  });
+
+  it('isolates run identities by customer and session with a stable stdio fallback', function () {
+    const id = skillRunId('private-token', 'private-session');
+    expect(id).to.match(/^[a-f0-9]{64}$/);
+    expect(id).to.equal(skillRunId('private-token', 'private-session'));
+    expect(id).not.to.equal(skillRunId('another-token', 'private-session'));
+    expect(id).not.to.equal(skillRunId('private-token', 'another-session'));
+    expect(skillRunId('private-token', undefined)).to.equal(
+      skillRunId('private-token', undefined),
+    );
+  });
+
+  it('verifies only complete, bounded and authentic receipts', function () {
+    const verify = verifySkillReceipt;
+    const params: Record<string, unknown> = {
+      domain: 'x.com',
+      task: 'search',
+      loaded_version: 1,
+      run_id:
+        '96dcba170838442b7e86da88167b5c9a02cbbf5b4630bd8b5aad494a607b4890',
+      skill_use_id:
+        '42bb6fae7df9e171bd636e2358da9cdcec56ea8dd18503d4b99d6597a99b3c8d',
+    };
+    expect(verify('test-token', params)).to.equal(true);
+    for (const token of ['other-token', ''])
+      expect(verify(token, params)).to.equal(false);
+    for (const [key, value] of [
+      ['loaded_version', 2],
+      ['loaded_version', 0],
+      ['loaded_version', 1.5],
+      ['loaded_version', Number.MAX_SAFE_INTEGER + 1],
+      ['loaded_version', '1'],
+      ['domain', 'y.com'],
+      ['domain', ''],
+      ['domain', 'x'.repeat(254)],
+      ['domain', 1],
+      ['task', 'browse'],
+      ['task', ''],
+      ['task', 'x'.repeat(129)],
+      ['task', null],
+      ['run_id', String(params.run_id).toUpperCase()],
+      ['run_id', 'a'.repeat(63)],
+      ['run_id', 1],
+      ['skill_use_id', String(params.skill_use_id).toUpperCase()],
+      ['skill_use_id', 'a'.repeat(63)],
+      ['skill_use_id', null],
+      ...Object.keys(params).map((key) => [key, undefined]),
+    ])
+      expect(
+        verify('test-token', { ...params, [key as string]: value }),
+        String(key),
+      ).to.equal(false);
+  });
+
+  it('keeps a valid loaded version without rejecting legacy recipe payloads', async function () {
+    for (const version of [3, 0, 1.5, '3', null, undefined]) {
+      __resetRemoteSkillsForTesting();
+      await hydrateRemoteSkills(
+        'https://shop.example',
+        'https://api.test',
+        'tok',
+        apiUrlConfig,
+        fakeFetch([{ task: 'search', skill_md: SKILL_BODY, version }]),
+      );
+      expect(listSiteSkillsForHost('shop.example')).to.have.length(1);
+      expect(listSiteSkillsForHost('shop.example')[0]).to.have.property(
+        'version',
+        version === 3 ? 3 : undefined,
+      );
+      const legacy = [
+        '--- SITE SKILL: shop.example/search ---',
+        SKILL_BODY,
+        'When you finish, put { "method": "reportSkillOutcome", "params": { "domain": "shop.example", "task": "search", "success": <bool> } } ' +
+          'in your last commands batch while the browser is still open (before close). Send success: false if a step in this recipe failed as written, ' +
+          'even if you finished another way; use failure_reason: "site_changed" when a URL or element no longer matches. ' +
+          "Cosmetic differences that didn't break a step are still success: true.",
+        '--- END SITE SKILL ---',
+      ].join('\n');
+      const unattributed = loadSiteSkill('shop.example/search')!;
+      expect(unattributed.body).to.equal(legacy);
+      expect(unattributed).not.to.have.property('receipt');
+      for (const token of ['', 'private-token']) {
+        if (version === 3 && token) continue;
+        const loaded = loadSiteSkill('shop.example/search', {
+          token,
+          mcpSessionId: 'private-session',
+        })!;
+        expect(loaded.body).to.equal(legacy);
+        expect(loaded).not.to.have.property('receipt');
+      }
+    }
+  });
+
+  it('returns a versioned receipt in the loaded recipe footer without exposing credentials', async function () {
+    await hydrateRemoteSkills(
+      'https://shop.example',
+      'https://api.test',
+      'tok',
+      apiUrlConfig,
+      fakeFetch([{ task: 'search', skill_md: SKILL_BODY, version: 3 }]),
+    );
+    const loaded = loadSiteSkill('shop.example/search', {
+      token: 'private-token',
+      mcpSessionId: 'private-session',
+    })!;
+    expect(loaded).to.have.property('receipt');
+    expect(loaded.receipt!.loaded_version).to.equal(3);
+    expect(
+      verifySkillReceipt('private-token', {
+        ...loaded.receipt,
+        domain: 'shop.example',
+        task: 'search',
+      }),
+    ).to.equal(true);
+    for (const [key, value] of Object.entries(loaded.receipt!))
+      expect(loaded.body).to.include(`"${key}": ${JSON.stringify(value)}`);
+    expect(loaded.body).to.include(
+      'Copy run_id, skill_use_id and loaded_version exactly as shown; never invent them.',
+    );
+    expect(JSON.stringify(loaded)).not.to.match(
+      /private-token|private-session/,
+    );
+  });
+
   it('has no skills for a host until it is hydrated', function () {
     expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
     expect(renderSiteSkillList('shop.example')).to.equal('');
@@ -69,7 +209,7 @@ describe('site skills', function () {
 
   it('loads a full skill body by id', async function () {
     await seedShop();
-    const body = loadSiteSkill('shop.example/search');
+    const body = loadSiteSkill('shop.example/search')?.body;
     expect(body).to.include('SITE SKILL:');
     expect(body).to.include(SKILL_BODY);
     expect(body).to.include(
@@ -269,13 +409,17 @@ describe('site skills', function () {
           throw new Error('telemetry unavailable');
         },
       );
-      expect(loadSiteSkill('shop.example/search')).to.include('# Shop Search');
+      expect(loadSiteSkill('shop.example/search')?.body).to.include(
+        '# Shop Search',
+      );
     });
 
     it('merges remote skills into the manifest for a new host', async function () {
       expect(listSiteSkillsForHost('shop.example')).to.deep.equal([]);
       await seedShop();
-      expect(loadSiteSkill('shop.example/search')).to.include('# Shop Search');
+      expect(loadSiteSkill('shop.example/search')?.body).to.include(
+        '# Shop Search',
+      );
     });
 
     it('fetches at most once per host', async function () {
@@ -437,7 +581,9 @@ describe('site skills', function () {
     it('drops recipes deleted or renamed upstream on refetch', async function () {
       __setRemoteSkillTtlForTesting(0);
       await seedShop();
-      expect(loadSiteSkill('shop.example/search')).to.include('# Shop Search');
+      expect(loadSiteSkill('shop.example/search')?.body).to.include(
+        '# Shop Search',
+      );
 
       await hydrateRemoteSkills(
         'https://shop.example/x',

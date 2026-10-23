@@ -9,6 +9,10 @@ import type {
   McpConfig,
 } from '../@types/types.js';
 
+const stepsSchema = z.array(z.string().trim().min(1).max(300)).max(10);
+const currentStepSchema = z.number().int().min(1).max(10);
+const instructionsFormatSchema = z.enum(['text', 'markdown']);
+
 export const LiveURLParamsSchema = z.object({
   action: z.enum(['create', 'status', 'close', 'pages']),
   browserId: z
@@ -57,7 +61,26 @@ export const LiveURLParamsSchema = z.object({
   type: z.enum(['jpeg', 'png']).optional(),
   resizable: z.boolean().optional(),
   showBrowserInterface: z.boolean().optional(),
-  instructions: z.string().optional(),
+  instructions: z
+    .union([
+      z.string(),
+      z.object({
+        layout: z.enum(['modal', 'panel']).optional(),
+        format: instructionsFormatSchema.optional(),
+        title: z.string().trim().max(80).optional(),
+        summary: z.string().optional(),
+        steps: stepsSchema.optional(),
+        currentStep: currentStepSchema.optional(),
+      }),
+    ])
+    .optional(),
+  instructionsTitle: z.string().trim().max(80).optional(),
+  steps: stepsSchema.optional(),
+  currentStep: currentStepSchema.optional(),
+  doneLabel: z.string().trim().max(40).optional(),
+  failLabel: z.string().trim().max(40).optional(),
+  requesterName: z.string().trim().max(60).optional(),
+  instructionsFormat: instructionsFormatSchema.optional(),
 });
 
 export function registerLiveURLTool(
@@ -75,6 +98,9 @@ export function registerLiveURLTool(
       'Use pages to list browser tabs; mint=true adds per-tab live links. Reused links may be interactive, while new bulk links are view-only and pinned to their tabs. ' +
       'Pages returns targetId, url, title, active, and browserContextId. Create accepts targetId to stream a specific tab; mode follow jumps to new tabs, while tab stays on one tab. ' +
       'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown (hidden with targetId). ' +
+      'Instructions accept a string or an object with layout, format, title, summary, steps, and currentStep. ' +
+      'For string instructions use instructionsTitle, steps, currentStep, and instructionsFormat beside instructions. ' +
+      'doneLabel, failLabel, and requesterName are always top-level options. ' +
       'Status returns status, reason, interactable, viewerCount, and expiresAt (epoch ms). ' +
       'Ended links remain inspectable until their browser closes; closing an ended link returns not found.',
     parameters: LiveURLParamsSchema,

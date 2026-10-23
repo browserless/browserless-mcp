@@ -28,8 +28,8 @@ const fillSlot = (html: string, slot: string, markup: string): string => {
 let cachedPlayerCss: string | undefined;
 let cachedPlayerJs: string | undefined;
 
-// A local client can just open the file, so inlining only burns context. A remote
-// one cannot reach the path at all, making the inline copy the only way to show it.
+// Local clients can open the file directly. Remote clients need an inline copy
+// or an authenticated download when the player exceeds the inline limit.
 export const MAX_INLINE_BYTES_LOCAL = 256 * 1024;
 export const MAX_INLINE_BYTES_REMOTE = 4 * 1024 * 1024;
 

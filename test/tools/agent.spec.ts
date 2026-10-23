@@ -7,6 +7,7 @@ import {
   formatAgentCommandLog,
   formatConnectError,
   formatDownloads,
+  describeReadyDownload,
   formatErrorMessage,
   formatRecordingToDisk,
   formatScreenshotContent,
@@ -56,6 +57,8 @@ import type { SnapshotResult } from '../../src/@types/types.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import {
   hydrateRemoteSkills,
+  loadSiteSkill,
+  __setRemoteSkillTtlForTesting,
   __resetRemoteSkillsForTesting,
 } from '../../src/skills/sites.js';
 import {
@@ -64,7 +67,12 @@ import {
   makeRespondingServer,
 } from '../helpers/upgrade-server.js';
 
-const seedSiteSkill = (host: string, task: string, body: string) =>
+const seedSiteSkill = (
+  host: string,
+  task: string,
+  body: string,
+  version?: number,
+) =>
   hydrateRemoteSkills(
     `https://${host}`,
     'https://api.example.com',
@@ -73,7 +81,7 @@ const seedSiteSkill = (host: string, task: string, body: string) =>
     (async () =>
       ({
         ok: true,
-        json: async () => [{ task, title: task, skill_md: body }],
+        json: async () => [{ task, title: task, skill_md: body, version }],
       }) as unknown as Response) as typeof fetch,
   );
 
@@ -427,6 +435,17 @@ describe('browserless_skill tool', () => {
     expect(text).to.include('deep selector');
   });
 
+  it('advertises and loads profile import on the full surface', async () => {
+    const tool = addToolSpy
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill')!.args[0];
+    expect(tool.description).to.include('profile-import');
+    const result = await tool.execute({ id: 'profile-import' }, mockContext);
+    expect(
+      (result.content[0] as Extract<Content, { type: 'text' }>).text,
+    ).to.match(/^--- SKILL: profile-import/);
+  });
+
   it('requires either an id or a site at the schema level', async () => {
     const skillCall = addToolSpy
       .getCalls()
@@ -499,6 +518,65 @@ describe('browserless_skill tool', () => {
     expect(inHouse).to.include({ skill_action: 'load', site_skill: false });
     expect(inHouse.host).to.equal(undefined);
     expect(buildSkillEventProps({ id: 'x' }, '').success).to.equal(false);
+  });
+
+  it('keeps receipt IDs in the footer only and deduplicates by MCP session', async () => {
+    await seedSiteSkill('example.com', 'search', '# Search', 3);
+    const analytics = new AnalyticsHelper(false);
+    const fireSkill = sinon.stub(analytics, 'fireSkill');
+    const receiptServer = new FastMCP({ name: 'test', version: '0.1.0' });
+    const tools = sinon.spy(receiptServer, 'addTool');
+    registerAgentTools(receiptServer, mockConfig, analytics);
+    const execute = tools
+      .getCalls()
+      .find((c) => c.args[0].name === 'browserless_skill')!.args[0].execute;
+    const ids: string[] = [];
+    for (const sessionId of [
+      'private-session',
+      'private-session',
+      'different-session',
+    ]) {
+      const result = await execute(
+        { id: 'example.com/search' },
+        { ...mockContext, sessionId },
+      );
+      const props = fireSkill.lastCall.args[1];
+      expect(props).to.include({
+        domain: 'example.com',
+        task: 'search',
+        loaded_version: 3,
+        success: true,
+      });
+      const text = JSON.stringify(result);
+      expect(props).not.to.have.property('run_id');
+      expect(props).not.to.have.property('skill_use_id');
+      expect(text).to.match(/\\"run_id\\": \\"[a-f0-9]{64}\\"/);
+      expect(JSON.stringify(props) + text).not.to.match(
+        /test-token|private-session|different-session/,
+      );
+      ids.push(text.match(/\\"skill_use_id\\": \\"([a-f0-9]{64})\\"/)![1]);
+    }
+    expect(ids[0]).to.equal(ids[1]);
+    expect(ids[0]).not.to.equal(ids[2]);
+    for (const params of [
+      { id: 'shadow-dom' },
+      { site: 'example.com' },
+      { id: 'example.com/absent' },
+    ]) {
+      try {
+        await execute(params, mockContext);
+      } catch (error) {
+        expect(error).to.be.instanceOf(UserError);
+      }
+      for (const key of [
+        'run_id',
+        'skill_use_id',
+        'loaded_version',
+        'domain',
+        'task',
+      ])
+        expect(fireSkill.lastCall.args[1]).not.to.have.property(key);
+    }
   });
 });
 
@@ -905,6 +983,35 @@ describe('normalizeUploadCommand', () => {
     );
   });
 
+  for (const mimeType of [undefined, 'application/custom', '']) {
+    it(`inherits stored MIME only when absent (${String(mimeType)})`, async () => {
+      const record = await storeDownload(
+        'mime.csv',
+        'text/csv',
+        Buffer.from('a'),
+        downloadOwner('mime-token'),
+        'mime-test',
+      );
+      try {
+        const file: Record<string, unknown> = {
+          handle: downloadUri(record.id),
+          ...(mimeType !== undefined ? { mimeType } : {}),
+        };
+        await normalizeUploadCommand(
+          { method: 'uploadFile', params: { files: [file] } },
+          'httpStream',
+          undefined,
+          'mime-token',
+        );
+        expect(file.mimeType).to.equal(
+          mimeType === undefined ? 'text/csv' : mimeType,
+        );
+      } finally {
+        clearSession('mime-test');
+      }
+    });
+  }
+
   it('rejects a download handle owned by another token', async () => {
     const record = await storeDownload(
       'private.bin',
@@ -943,6 +1050,56 @@ describe('normalizeUploadCommand', () => {
     }
     expect(threw).to.be.true;
   });
+});
+
+describe('describeReadyDownload', () => {
+  const record = {
+    id: 'download-id',
+    path: '/tmp/replay.html',
+    filename: 'replay.html',
+    mimeType: 'text/html',
+    size: 123,
+    owner: 'owner',
+  };
+
+  for (const mcpBaseUrl of [
+    undefined,
+    '',
+    '/mcp',
+    'https://',
+    'ftp://mcp.example.com',
+    'https://mcp.example.com/?key=x',
+    'https://mcp.example.com/#section',
+    'https://mcp.example.com/?key=x#section',
+    'https://mcp.example.com/?',
+    'https://mcp.example.com/#',
+  ]) {
+    it(`requires a replacement base URL for ${JSON.stringify(mcpBaseUrl)}`, () => {
+      const text = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl,
+      });
+      expect(text).to.include('Replace <MCP_BASE_URL>');
+      expect(text).to.include('"<MCP_BASE_URL>/download/download-id?token=');
+      expect(text).to.not.include('"/download/');
+    });
+  }
+
+  for (const mcpBaseUrl of [
+    'https://mcp.example.com/',
+    'http://localhost:8080',
+  ]) {
+    it(`uses the absolute base ${mcpBaseUrl}`, () => {
+      const text = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl,
+      });
+      expect(text).to.include(
+        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id?token=`,
+      );
+      expect(text).to.not.include('Replace <MCP_BASE_URL>');
+    });
+  }
 });
 
 describe('formatDownloads (httpStream)', () => {
@@ -1275,6 +1432,15 @@ describe('formatConnectError', () => {
     );
     expect(out).to.match(/^Forbidden \(403\)/);
     expect(out).to.include('plan');
+  });
+
+  it('renders a busy-session 429 without concurrency wording', () => {
+    const detail = 'Session is already being accessed by another client.';
+    expect(
+      formatConnectError(new UpgradeError(429, 'Too Many Requests', detail)),
+    ).to.equal(
+      `Browser session busy (429): ${detail} The attached browser session is still held by its previous connection. Retry the same call once after a few seconds; do not open a new session.`,
+    );
   });
 
   it('renders 429 with a concurrency / wait hint', () => {
@@ -2878,6 +3044,52 @@ describe('browserless_agent integration binding guard', () => {
 describe('browserless_agent persona creation guard', () => {
   afterEach(() => sinon.restore());
 
+  it('ignores mismatched attach echoes with one bounded warning per call and one socket', async () => {
+    const server = await makeRespondingServer(() => ({ elements: [] }));
+    const warn = sinon.stub();
+    const context = {
+      ...mockContext,
+      log: { ...mockContext.log, warn },
+      sessionId: 'attach-mismatch-tool',
+      session: { attachSessionId: 'existing-browser' },
+    };
+    try {
+      const execute = getAgentExecute(server.url);
+      await execute({ method: 'snapshot', keepSessionAlive: true }, context);
+      expect(warn.callCount).to.equal(0);
+      const echoes = [
+        'attach:existing-browseX',
+        's:foreign',
+        '',
+        'x'.repeat(1024),
+      ];
+      for (const echo of echoes) {
+        warn.resetHistory();
+        const result = (await execute(
+          { method: 'snapshot', sessionId: echo, keepSessionAlive: true },
+          context,
+        )) as { content: Array<{ text?: string }> };
+        expect(result.content[0].text).to.include(
+          'sessionId: attach:existing-browser',
+        );
+        expect(server.upgradeUrls()).to.have.length(1);
+        expect(warn.calledOnce).to.equal(true);
+        expect(warn.firstCall.args[0]).to.equal(
+          `[agent] attach handle mismatch ignored: echoed=${echo.slice(0, 24)}… canonical=attach:existing-browser`,
+        );
+        expect(warn.firstCall.args[0]).to.not.include('test-token');
+      }
+      warn.resetHistory();
+      await execute(
+        { method: 'snapshot', sessionId: 'attach:existing-browser' },
+        context,
+      );
+      expect(warn.callCount).to.equal(0);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('does not default a persona when attaching an existing browser', async () => {
     const server = await makeRespondingServer(() => ({ elements: [] }));
     try {
@@ -4117,7 +4329,84 @@ describe('browserless_agent reportOutcome', () => {
 });
 
 describe('browserless_agent skill outcome forwarding', () => {
-  afterEach(() => sinon.restore());
+  afterEach(() => {
+    sinon.restore();
+    __resetRemoteSkillsForTesting();
+  });
+
+  it('verifies echoed receipts, preserves loaded versions, and never trusts a client status', async () => {
+    __resetRemoteSkillsForTesting();
+    __setRemoteSkillTtlForTesting(0);
+    await seedSiteSkill('example.com', 'search', '# v1', 1);
+    const receipt = loadSiteSkill('example.com/search', {
+      token: 'test-token',
+      mcpSessionId: 'private-session',
+    })!.receipt!;
+    const other = loadSiteSkill('example.com/search', {
+      token: 'other-token',
+      mcpSessionId: 'private-session',
+    })!.receipt!;
+    await seedSiteSkill('example.com', 'search', '# v2', 2);
+    expect(loadSiteSkill('example.com/search')!.skill.version).to.equal(2);
+    const forwarded: unknown[] = [];
+    const srv = await makeRespondingServer((method, params) => {
+      if (method === 'reportSkillOutcome') forwarded.push(params);
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const legacy = { domain: 'example.com', task: 'search', success: true };
+      const tampered = {
+        ...receipt,
+        skill_use_id:
+          receipt.skill_use_id.slice(0, -1) +
+          (receipt.skill_use_id.endsWith('0') ? '1' : '0'),
+      };
+      for (const [fields, matched] of [
+        [receipt, true],
+        [tampered, false],
+        [other, false],
+        [{}, false],
+      ] as const) {
+        await execute(
+          {
+            method: 'reportSkillOutcome',
+            params: {
+              ...legacy,
+              ...fields,
+              attribution_status: 'matched',
+              outcome_source: 'client',
+            },
+          },
+          mockContext,
+        );
+        expect(forwarded.at(-1)).to.deep.equal({
+          ...legacy,
+          ...fields,
+          ...(matched ? { attribution_status: 'matched' } : {}),
+        });
+      }
+      await execute(
+        {
+          commands: [
+            { method: 'reportSkillOutcome', params: { ...legacy, ...receipt } },
+            { method: 'close' },
+          ],
+        },
+        mockContext,
+      );
+      expect(forwarded.at(-1)).to.deep.equal({
+        ...legacy,
+        ...receipt,
+        attribution_status: 'matched',
+      });
+      expect(JSON.stringify(forwarded)).not.to.match(
+        /test-token|other-token|private-session/,
+      );
+    } finally {
+      await srv.close();
+    }
+  });
 
   it('validates top-level skill reports before opening a browser', async () => {
     const calls: string[] = [];

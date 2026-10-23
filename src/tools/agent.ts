@@ -59,6 +59,9 @@ import {
   renderSiteSkillList,
   siteRecipeNotice,
   hydrateRemoteSkills,
+  verifySkillReceipt,
+  type SiteSkill,
+  type SkillReceipt,
 } from '../skills/sites.js';
 import {
   AgentToolParamsSchema,
@@ -333,6 +336,7 @@ export const normalizeUploadCommand = async (
       }
       buf = await readFile(record.path);
       defaultName = record.filename;
+      if (f.mimeType === undefined) f.mimeType = record.mimeType;
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
@@ -431,7 +435,13 @@ export const describeReadyDownload = (
       `reuse as uploadFile { path: "${record.path}" }`
     );
   }
-  const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
+  const baseUrl = URL.parse(opts.mcpBaseUrl ?? '');
+  const base =
+    baseUrl &&
+    ['http:', 'https:'].includes(baseUrl.protocol) &&
+    !/[?#]/.test(baseUrl.href)
+      ? baseUrl.href.replace(/\/+$/, '')
+      : '<MCP_BASE_URL>';
   const tokenQ = `?token=${
     opts.token === undefined
       ? '<YOUR_BROWSERLESS_TOKEN>'
@@ -439,6 +449,9 @@ export const describeReadyDownload = (
   }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
+    (base === '<MCP_BASE_URL>'
+      ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server, without a query or fragment.\n'
+      : '') +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
     `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
   );
@@ -578,6 +591,7 @@ type SkillToolParams = { id?: string; site?: string };
 export const buildSkillEventProps = (
   params: SkillToolParams,
   body: string,
+  loaded?: { skill: SiteSkill; receipt?: SkillReceipt },
 ): Record<string, unknown> => {
   const listingSite = params.site !== undefined;
   const siteSkillLoad = !listingSite && !!params.id?.includes('/');
@@ -591,6 +605,13 @@ export const buildSkillEventProps = (
         ? params.id!.split('/')[0]
         : undefined,
     success: !!body,
+    ...(loaded?.receipt
+      ? {
+          loaded_version: loaded.receipt.loaded_version,
+          domain: loaded.skill.host,
+          task: loaded.skill.slug,
+        }
+      : {}),
   };
 };
 
@@ -696,7 +717,7 @@ export function registerAgentTools(
       destructiveHint: false,
       openWorldHint: false,
     },
-    run: async ({ params, analytics, mcpSource, token, apiUrl }) => {
+    run: async ({ params, analytics, mcpSource, token, apiUrl, sessionId }) => {
       const id = params.id ?? '';
       // Compliant: no `site` recipes; only allowlisted in-house skills. The enum
       // already blocks other ids — this guard is defense-in-depth for a bypass.
@@ -717,13 +738,17 @@ export function registerAgentTools(
             analytics?.fireSkillRetrieval(token, event, mcpSource.source),
         );
       }
+      const loaded =
+        !compliant && params.site === undefined && id.includes('/')
+          ? (loadSiteSkill(id, { token, mcpSessionId: sessionId }) ?? undefined)
+          : undefined;
       const body = compliant
         ? renderSkill(id as SkillId, true)
         : params.site !== undefined
           ? renderSiteSkillList(params.site)
-          : renderSkill(id as SkillId, false) || loadSiteSkill(id) || '';
+          : renderSkill(id as SkillId, false) || loaded?.body || '';
       analytics?.fireSkill(token, {
-        ...buildSkillEventProps(params, body),
+        ...buildSkillEventProps(params, body, loaded),
         api_url: apiUrl,
         ...mcpSource,
       });
@@ -973,6 +998,15 @@ export function registerAgentTools(
         );
       }
       const echoedSessionId = params.sessionId;
+      if (
+        attachSessionId &&
+        typeof params.sessionId === 'string' &&
+        params.sessionId !== `attach:${attachSessionId}`
+      ) {
+        log.warn(
+          `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+        );
+      }
       const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.
@@ -1340,8 +1374,12 @@ export function registerAgentTools(
             try {
               // Provenance is assigned by the server, never by the agent.
               const params = { ...cmd.params };
-              if (cmd.method === 'reportSkillOutcome')
+              if (cmd.method === 'reportSkillOutcome') {
                 delete params.outcome_source;
+                delete params.attribution_status;
+                if (verifySkillReceipt(agentSession.token, params))
+                  params.attribution_status = 'matched';
+              }
               const response = await send(
                 agentSession,
                 cmd.method,

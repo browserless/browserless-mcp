@@ -90,7 +90,11 @@ export function registerPerformanceTool(
         'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
         'Optionally filter by category, emulate a mobile or desktop device, ' +
         'supply a custom Lighthouse config, or supply performance budgets. ' +
-        'Returns category scores inline and saves the full JSON report outside the conversation. ' +
+        'Returns category scores and available Lighthouse lab metrics inline: ' +
+        'FCP, LCP, TBT, CLS, Speed Index, initial server response time, and total transfer size. ' +
+        'Use these metrics to answer page-speed questions without writing timing scripts. ' +
+        'INP is not measured by this navigation audit; TBT is a responsiveness proxy. ' +
+        'Saves the full JSON report outside the conversation. ' +
         'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
         'Note: audits can take 30s–120s depending on the site.',
       parameters: compliant
@@ -157,6 +161,49 @@ export function registerPerformanceTool(
           blocks.push({
             type: 'text' as const,
             text: `## Lighthouse Scores\n${summary}`,
+          });
+        }
+        const audits = (data.audits ?? {}) as Record<
+          string,
+          {
+            displayValue?: string;
+            numericValue?: number;
+            scoreDisplayMode?: string;
+          }
+        >;
+        const metrics = [
+          ['first-contentful-paint', 'FCP', 'ms'],
+          ['largest-contentful-paint', 'LCP', 'ms'],
+          ['total-blocking-time', 'TBT', 'ms'],
+          ['cumulative-layout-shift', 'CLS', ''],
+          ['speed-index', 'Speed Index', 'ms'],
+          ['server-response-time', 'Initial server response time', 'ms'],
+          ['total-byte-weight', 'Total transfer size', 'bytes'],
+        ];
+        if (categories.performance || metrics.some(([id]) => audits[id])) {
+          const summary = metrics.map(([id, label, unit]) => {
+            const audit = audits[id];
+            let value = 'Unavailable';
+            if (
+              audit &&
+              !['error', 'notApplicable'].includes(audit.scoreDisplayMode ?? '')
+            ) {
+              if (audit.displayValue) {
+                value = audit.displayValue;
+              } else if (
+                typeof audit.numericValue === 'number' &&
+                Number.isFinite(audit.numericValue)
+              ) {
+                value = `${audit.numericValue}${unit ? ` ${unit}` : ''}`;
+              }
+            }
+            return `- ${label}: ${value}`;
+          });
+          blocks.push({
+            type: 'text',
+            text:
+              `## Lighthouse Lab Metrics\n${summary.join('\n')}\n` +
+              'INP is not measured by this navigation audit; TBT is a responsiveness proxy.',
           });
         }
         const record = await storeDownload(
