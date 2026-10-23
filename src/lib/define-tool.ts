@@ -177,7 +177,9 @@ export function assertHttpScheme(url: string): void {
 export const ACCOUNT_LIMIT_MESSAGE =
   "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time).";
 export const isAccountLimitMessage = (message: string): boolean =>
-  /browserless\.io\/account|upgrade (?:your|the|to a paid) plan/i.test(message);
+  /browserless\.io\/account|upgrade (?:your|the|to a paid) plan/i.test(
+    message.replace(/^Couldn't read the page at https?:\/\/\S+: /, ''),
+  );
 
 export function defineTool<P, R>(
   server: FastMCP,

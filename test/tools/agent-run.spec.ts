@@ -51,8 +51,10 @@ describe('shared agent command engine', () => {
   it('exposes raw results without follow-up text or automatic downloads', async () => {
     expect(agent).to.have.property('runAgentCommands').that.is.a('function');
     const methods: string[] = [];
-    const ws = await makeRespondingServer((method) => {
+    const outbound: unknown[] = [];
+    const ws = await makeRespondingServer((method, params) => {
       methods.push(method);
+      outbound.push(params);
       return method === 'goto'
         ? { url: 'https://example.com', status: 200 }
         : { text: 'page text', time: 7 };
@@ -68,6 +70,7 @@ describe('shared agent command engine', () => {
       const result = await run(
         {
           client: createApiClient(config),
+          prompt: 'Read the public page',
           params: {
             commands: [
               { method: 'goto', params: { url: 'https://example.com' } },
@@ -100,6 +103,7 @@ describe('shared agent command engine', () => {
         /sessionId|reportOutcome|SKILL|REPETITION/,
       );
       expect(methods).to.deep.equal(['goto', 'text']);
+      expect(outbound).to.deep.equal([{ url: 'https://example.com' }, {}]);
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(ws.closedConnections()).to.equal(1);
     } finally {
