@@ -78,8 +78,32 @@ describe('createApiClient', () => {
       expect(body).to.deep.equal({
         url: 'https://example.com',
         formats: ['markdown'],
+        onlyMainContent: false,
       });
     });
+
+    for (const onlyMainContent of [true, false]) {
+      it(`forwards explicit onlyMainContent: ${onlyMainContent}`, async () => {
+        fetchStub.resolves(
+          new Response(JSON.stringify(mockSuccessResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+        const client = createApiClient(mockConfig);
+        await client.smartScrape({
+          url: 'https://example.com',
+          onlyMainContent,
+        });
+
+        expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.equal({
+          url: 'https://example.com',
+          formats: ['markdown'],
+          onlyMainContent,
+        });
+      });
+    }
 
     it('preserves the exact request URL for an allowed API override', async () => {
       fetchStub.resolves(
