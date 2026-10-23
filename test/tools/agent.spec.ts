@@ -3386,6 +3386,74 @@ describe('browserless_agent retry-guard (runCommands)', () => {
   });
 });
 
+describe('browserless_agent live URL handoff', () => {
+  afterEach(() => sinon.restore());
+
+  for (const complianceMode of [false, true]) {
+    for (const batched of [false, true]) {
+      it(`defaults live URL timeout and preserves instructions (compliant=${complianceMode}, batch=${batched})`, async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        const srv = await makeRespondingServer((method, params) => {
+          if (method === 'liveURL') {
+            sent.push(params as Record<string, unknown>);
+            return {
+              liveURLId: 'handoff',
+              liveURL: 'https://example.com/live',
+            };
+          }
+          return {};
+        });
+        try {
+          const execute = getAgentExecute(
+            srv.url,
+            'stdio',
+            undefined,
+            complianceMode,
+          );
+          const instructions = {
+            title: 'Sign in',
+            steps: ['Sign in to your account', 'Click Done'],
+          };
+          for (const params of [
+            undefined,
+            {},
+            { instructions },
+            { timeout: 120_000, instructions: 'Sign in, then click Done.' },
+            { timeout: 600_000, instructions },
+          ]) {
+            const command = { method: 'liveURL', params };
+            const result = await execute(
+              {
+                ...(batched ? { commands: [command] } : command),
+                keepSessionAlive: true,
+              },
+              mockContext,
+            );
+            expect(sent.at(-1)).to.deep.equal({
+              ...params,
+              timeout: params?.timeout ?? 300_000,
+            });
+            expect(JSON.stringify(result)).not.to.include('closed (one-shot)');
+            const handle = /sessionId: (\S+) /.exec(JSON.stringify(result))![1];
+            const upgrades = srv.hits();
+            await execute(
+              { method: 'getTabs', sessionId: handle },
+              mockContext,
+            );
+            expect(
+              srv.hits(),
+              'handoff browser remains connected after the tool reply',
+            ).to.equal(upgrades);
+            await execute({ method: 'close', sessionId: handle }, mockContext);
+          }
+        } finally {
+          await srv.close();
+        }
+      });
+    }
+  }
+});
+
 describe('browserless_agent _prompt capture', () => {
   afterEach(() => sinon.restore());
 
