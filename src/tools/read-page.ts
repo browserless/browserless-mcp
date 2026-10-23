@@ -90,7 +90,10 @@ export const formatReadPage = (
     const seen = new Set<string>();
     const lines: string[] = [];
     for (const element of snapshot?.elements ?? []) {
-      const href = absoluteHttpUrl(element.href, finalUrl);
+      const frameUrl = snapshot?.frames?.find(
+        (frame) => frame.frameId === element.frameId,
+      )?.url;
+      const href = absoluteHttpUrl(element.href, frameUrl || finalUrl);
       if (format === 'links') {
         if (element.role !== 'link' || !href || seen.has(href)) continue;
         seen.add(href);
@@ -108,6 +111,9 @@ export const formatReadPage = (
         );
       }
     }
+    if ((snapshot?.elements.length ?? 0) >= 500)
+      note =
+        '\n[This list may be incomplete: the page snapshot reached its 500-element limit.]';
     body =
       lines.join('\n') ||
       (format === 'links'
