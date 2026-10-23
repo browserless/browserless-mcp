@@ -463,7 +463,7 @@ export function createApiClient(
         body: compact({
           url: params.url,
           formats,
-          onlyMainContent: params.onlyMainContent || undefined,
+          onlyMainContent: params.onlyMainContent ?? false,
           includeTags: params.includeTags,
           excludeTags: params.excludeTags,
           headers: params.headers,
