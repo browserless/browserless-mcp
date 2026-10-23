@@ -1505,7 +1505,7 @@ export const runAgentCommands = async (
       }
       // Cascade the self-reported prompt once per session so the server can
       // author a first-party skill from the run (server keeps the first).
-      if (prompt && !promptSent) {
+      if (options.extras && prompt && !promptSent) {
         outboundParams = { ...outboundParams, _prompt: prompt };
         promptSent = true;
       }

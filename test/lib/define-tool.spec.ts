@@ -114,6 +114,8 @@ describe('defineTool analytics', () => {
     'Use a smaller timeout, or upgrade your plan for a longer session.',
     'Concurrency limit reached (429): upgrade the plan, then start over.',
     "Couldn't read the page: the browser could not start (HTTP 401): please upgrade your plan",
+    "Couldn't read the page at https://browserless.io/account: the browser connection was lost",
+    "Couldn't read the page at https://browserless.io/account: please upgrade your plan",
     'Export failed (status 404): nope',
     'Map failed: URLs targeting private/internal networks are not allowed',
   ])
@@ -132,7 +134,8 @@ describe('defineTool analytics', () => {
           const error = await rejects(execute({}, mockContext as never));
           const limited =
             !message.startsWith('Export failed') &&
-            !message.startsWith('Map failed');
+            !message.startsWith('Map failed') &&
+            !message.endsWith('the browser connection was lost');
           expect(error.message).to.equal(
             complianceMode && limited
               ? "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time)."
