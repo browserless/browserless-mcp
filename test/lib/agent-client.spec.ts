@@ -164,6 +164,9 @@ describe('agent-client reconnection telemetry', () => {
             session.handle,
           );
           expect(upgrade['x-browserless-mcp-source']).to.equal(source);
+          expect(upgrade['x-browserless-mcp-tool']).to.equal(
+            'browserless_agent',
+          );
         }
       } finally {
         await server.close();
