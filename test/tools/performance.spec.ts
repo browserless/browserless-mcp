@@ -73,6 +73,52 @@ describe('browserless_performance tool', () => {
     expect(() => registerPerformanceTool(server, mockConfig)).to.not.throw();
   });
 
+  it('connector returns the audit inline without a file transfer', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({
+          type: 'json',
+          data: {
+            lighthouseVersion: '13',
+            categories: { seo: { title: 'SEO', score: 0.93 } },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const execute = getToolExecute(
+      new FastMCP({ name: 'test', version: '0.1.0' }),
+      { ...mockConfig, transport: 'httpStream', complianceMode: true },
+    );
+    const reply = await execute(
+      { url: 'https://example.com', categories: ['seo'] },
+      mockContext,
+    );
+    const text = JSON.stringify(reply);
+    expect(text).to.contain('SEO: 93/100');
+    expect(text).not.to.match(
+      /download|curl|token=|test-token|Lighthouse Version/i,
+    );
+  });
+
+  for (const extra of [{ config: {} }, { budgets: [] }]) {
+    it(`connector rejects ${Object.keys(extra)[0]} on schema bypass`, async () => {
+      const execute = getToolExecute(
+        new FastMCP({ name: 'test', version: '0.1.0' }),
+        { ...mockConfig, complianceMode: true },
+      );
+      const error = await execute(
+        { url: 'https://example.com', ...extra },
+        mockContext,
+      ).catch((e) => e);
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).to.equal(
+        'config and budgets are not available on this endpoint.',
+      );
+      expect(fetchStub.called).to.equal(false);
+    });
+  }
+
   it('returns Lighthouse scores and lab metrics on successful audit', async () => {
     const lighthouseData = {
       data: {

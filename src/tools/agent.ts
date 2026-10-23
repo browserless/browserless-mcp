@@ -46,7 +46,7 @@ import {
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { failureDetails } from '../lib/failure-details.js';
-import { defineTool } from '../lib/define-tool.js';
+import { defineTool, type ToolRunContext } from '../lib/define-tool.js';
 import {
   isPaymentStage,
   markFired,
@@ -94,6 +94,7 @@ import {
   formatSnapshotDiff,
   formatSnapshotDiffPositional,
   indexByIdentity,
+  sanitizeUpgradeBody,
 } from '../lib/agent-format.js';
 
 // export schemas, system prompt, and formatters
@@ -639,7 +640,7 @@ const SkillToolParamsSchema = z
 
 // Boundary type for both schemas: method/params are the full-only single-command
 // passthrough (absent when compliant), so optional here and read undefined-safely.
-type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
+export type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
   method?: string;
   params?: Record<string, unknown>;
 };
@@ -674,6 +675,43 @@ const sessionLine = (session: { handle: string }, compliant: boolean): string =>
   `browserless_agent call to continue this kept-alive browser without repeating ` +
   `\`keepSessionAlive: true\`. New calls without a handle are one-shot by default. ` +
   closeReminder(compliant);
+
+export type AgentRunReplies = {
+  sessionLine: typeof sessionLine;
+  oneShotClosedNotice: typeof oneShotClosedNotice;
+};
+export interface AgentRunOptions {
+  toolName: string;
+  replies: AgentRunReplies;
+  extras: boolean;
+  closeAfter: 'success' | 'always';
+}
+export interface AgentRunResult {
+  content: Content[];
+  results: Array<{
+    method: string;
+    params: Record<string, unknown>;
+    result?: unknown;
+  }>;
+}
+export class AgentRunError extends UserError {
+  constructor(
+    message: string,
+    readonly reason: {
+      kind: 'connect' | 'command' | 'navigation' | 'transport';
+      detail: string;
+      status?: number;
+    },
+  ) {
+    super(message);
+  }
+}
+export const AGENT_RUN_OPTIONS: AgentRunOptions = {
+  toolName: 'browserless_agent',
+  replies: { sessionLine, oneShotClosedNotice },
+  extras: true,
+  closeAfter: 'success',
+};
 
 export function registerAgentTools(
   server: FastMCP,
@@ -794,316 +832,587 @@ export function registerAgentTools(
       destructiveHint: true,
       openWorldHint: true,
     },
-    run: async ({
-      client,
-      params,
-      prompt,
-      log,
-      analytics,
-      mcpSource,
+    run: async (ctx) =>
+      (await runAgentCommands(ctx, config, AGENT_RUN_OPTIONS)).content,
+    format: (content) => content,
+  });
+}
+
+export const runAgentCommands = async (
+  {
+    client,
+    params,
+    prompt,
+    log,
+    analytics,
+    mcpSource,
+    token,
+    apiUrl,
+    sessionId: mcpSessionId,
+    attachSessionId,
+    userId,
+  }: ToolRunContext<AgentToolParams>,
+  config: McpConfig,
+  options: AgentRunOptions,
+): Promise<AgentRunResult> => {
+  const compliant = isCompliant(config);
+  const { sessionLine, oneShotClosedNotice } = options.replies;
+  let rawResults: AgentRunResult['results'] = [];
+  let commands: Array<{
+    method: string;
+    params: Record<string, unknown>;
+  }> =
+    params.commands && params.commands.length > 0
+      ? params.commands.map((c) => ({
+          method: c.method,
+          params: c.params ?? {},
+        }))
+      : [{ method: params.method ?? '', params: params.params ?? {} }];
+  const personaRequested =
+    params.os !== undefined ||
+    PERSONA_FIELDS.some((field) => params[field] !== undefined);
+
+  // Defense-in-depth: even if the schema were mis-built, compliant never
+  // forwards a non-allowlisted method, auth-profile, or proxy arg to the backend.
+  if (compliant) {
+    for (const c of commands) {
+      if (!COMPLIANT_AGENT_METHODS.has(c.method)) {
+        throw new UserError(
+          `Command "${c.method}" is not available on this endpoint.`,
+        );
+      }
+    }
+    if (params.profile !== undefined || params.createProfile !== undefined) {
+      throw new UserError(
+        'Authentication profiles are not available on this endpoint.',
+      );
+    }
+    if (params.proxy !== undefined) {
+      throw new UserError(
+        'Proxy configuration is not available on this endpoint.',
+      );
+    }
+    if (personaRequested) {
+      throw new UserError(
+        'Persona configuration is not available on this endpoint.',
+      );
+    }
+    if (
+      params.integrationId !== undefined ||
+      params.allowedDomains !== undefined
+    ) {
+      throw new UserError(
+        'Credential integrations are not available on this endpoint.',
+      );
+    }
+  }
+
+  // Reject the reserved method before batch validation, using the same
+  // invalid-parameter diagnostics for direct and batched calls.
+  if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
+    throw Object.assign(
+      new UserError(
+        'stripeLinkCheckout is reserved for browserless_link_checkout.',
+      ),
+      { code: 'INVALID_PARAMS' },
+    );
+  }
+
+  // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
+  // import accepts it; re-validate a provided batch against the full
+  // per-command contract here (the method/key guards above own their
+  // specific messages). Legacy single-command calls stay loose except for
+  // outcome reports and credential writes.
+  if (
+    params.commands?.length ||
+    params.method === 'reportOutcome' ||
+    params.method === 'reportSkillOutcome' ||
+    params.method === 'reportProfileAuthentication' ||
+    params.method === 'saveSecret'
+  ) {
+    const list = params.commands?.length ? params.commands : commands;
+    const parsedCommands: Array<{
+      method: string;
+      params?: Record<string, unknown>;
+    }> = [];
+    const issues: z.core.$ZodIssue[] = [];
+    if (compliant) {
+      const parsed = z.array(CompliantAgentCommandSchema).safeParse(list);
+      if (parsed.success) parsedCommands.push(...parsed.data);
+      else issues.push(...parsed.error.issues);
+    } else {
+      for (const [index, command] of list.entries()) {
+        const schema = isTypedAgentMethod(command.method)
+          ? TypedAgentCommandSchema
+          : GenericCommandSchema;
+        const parsed = schema.safeParse(command);
+        if (parsed.success) parsedCommands.push(parsed.data);
+        else
+          issues.push(
+            ...parsed.error.issues.map((issue) => ({
+              ...issue,
+              path: [index, ...issue.path],
+            })),
+          );
+      }
+    }
+    if (issues.length) {
+      throw Object.assign(
+        new UserError(
+          issues
+            .map(
+              (i) => (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
+            )
+            .join('; '),
+        ),
+        { code: 'INVALID_PARAMS' },
+      );
+    }
+    // Forward the parsed batch, not the raw one: the per-command schemas
+    // apply typed defaults and strip unknown keys (the flat boundary schema
+    // does neither), matching the behaviour when the rich schema validated
+    // at the boundary.
+    commands = parsedCommands.map(({ method, params }) => ({
+      method,
+      params: params ?? {},
+    }));
+  }
+
+  const proxy = params.proxy;
+  const profile = params.profile;
+  const createProfile = params.createProfile;
+  const integrationId = params.integrationId;
+  const allowedDomains = params.allowedDomains;
+  const record = params.record;
+  // Spoofed desktop OS for the agent's stealth fingerprint. Defaults to
+  // windows so the agent presents a coherent, low-risk desktop identity
+  // rather than its native Linux (Chrome-masked UA over "Linux x86_64" is a
+  // bot tell). Forwarded as ?emulationOs; see agent-client buildAgentWsUrl.
+  const os =
+    typeof (params as { os?: unknown }).os === 'string'
+      ? (params as { os: PersonaOptions['emulationOs'] }).os
+      : undefined;
+  const emulationOs =
+    params.emulationOs ??
+    os ??
+    (params.sessionId || attachSessionId ? undefined : 'windows');
+  // Human-like cursor movement + pacing. Improves the passive score of
+  // invisible anti-bot challenges (e.g. Revolut's post-passcode hCaptcha),
+  // which weight real mouse/interaction signals; a machine-timed agent with
+  // no cursor motion scores as a bot. Defaults ON for the demo stack.
+  // Forwarded as ?humanlike; enterprise's agent route reads it. Override with os/humanlike args.
+  const humanlike =
+    typeof (params as { humanlike?: unknown }).humanlike === 'boolean'
+      ? (params as { humanlike: boolean }).humanlike
+      : true;
+  const persona = {
+    emulationOs: params.emulationOs ?? os,
+    emulatedDevice: params.emulatedDevice,
+    screen: params.screen,
+    deviceScaleFactor: params.deviceScaleFactor,
+    deviceSlot: params.deviceSlot,
+  };
+  // createProfile attaches by session id, which omits integrationId — binding
+  // here would be silently dropped, so reject rather than mislead.
+  if (createProfile && integrationId) {
+    throw new UserError(
+      'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
+    );
+  }
+  if (record && createProfile) {
+    throw new UserError(
+      'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
+    );
+  }
+  if (record && attachSessionId) {
+    throw new UserError(
+      'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
+    );
+  }
+  if (
+    createProfile &&
+    PERSONA_FIELDS.some(
+      (field) => field !== 'emulationOs' && params[field] !== undefined,
+    )
+  ) {
+    throw new UserError(
+      'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
+    );
+  }
+  if (attachSessionId && personaRequested) {
+    throw new UserError(
+      'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
+    );
+  }
+  const echoedSessionId = params.sessionId;
+  if (
+    attachSessionId &&
+    typeof params.sessionId === 'string' &&
+    params.sessionId !== `attach:${attachSessionId}`
+  ) {
+    log.warn(
+      `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+    );
+  }
+  const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
+  // Whether the caller threaded the handle is the difference between one
+  // browser per conversation and one per call — log it, don't infer it.
+  if (config.transport === 'httpStream') {
+    console.error(
+      `[agent] handle ${echoedSessionId ? `echoed=${echoedSessionId}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
+    );
+  }
+
+  let lastCategory: ErrorCategory | undefined;
+  let liveUrlId: string | undefined;
+  let sessionReused = false;
+  let sessionAgeMs = 0;
+  let repeatCount = 0;
+  let repeatWarning = '';
+  let agentSessionHandle: string | null = echoedSessionId ?? null;
+  let lateVerdictRecorded = false;
+  let verdict:
+    | {
+        self_reported_success: boolean;
+        outcome_reason?: string;
+        verdict_delivery: 'late' | 'in_session';
+      }
+    | undefined;
+  const onSession = (reused: boolean, ageMs: number) => {
+    sessionReused = reused;
+    sessionAgeMs = ageMs;
+  };
+  let lastFailure: Record<string, unknown> | undefined;
+
+  const hasConnectedStripeLinkWallet = async (
+    snapshot: SnapshotResult | undefined,
+  ): Promise<boolean> => {
+    if (!isPaymentStage(snapshot)) return false;
+    try {
+      return (
+        (await client.stripeLinkConnection('status')).status === 'connected'
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const sendAnalytics = (success: boolean, err?: unknown) => {
+    analytics?.fireToolRequest(token, options.toolName, {
+      ...mcpSource,
+      ...(prompt ? { _prompt: prompt } : {}),
+      ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
+      session_reused: sessionReused,
+      session_age_ms: sessionAgeMs,
+      keep_session_alive: keepAlive,
+      agent_session_handle: agentSessionHandle,
+      ...verdict,
+      methods: commands.map((c) => c.method).join(','),
+      command_count: commands.length,
+      repeat_count: repeatCount,
+      api_url: apiUrl,
+      success,
+      ...(success
+        ? {}
+        : {
+            ...(lastFailure ?? failureDetails(err)),
+            error_category: lastCategory
+              ? toAnalyticsCategory(lastCategory)
+              : categorizeThrown(err),
+          }),
+      proxy_tier: proxy?.proxy ?? null,
+      proxy_country: proxy?.proxyCountry ?? null,
+      proxy_sticky: !!proxy?.proxySticky,
+      proxy_external: !!proxy?.externalProxyServer,
+      emulation_os: emulationOs,
+      persona_requested: personaRequested,
+      profile_used: !!profile,
+      create_profile: !!createProfile,
+      integration_used: !!integrationId,
+      rationale:
+        typeof params.rationale === 'string'
+          ? params.rationale.trim().slice(0, 50)
+          : null,
+    });
+  };
+
+  const proxyCmd = commands.find((c) => c.method === 'proxy');
+  if (proxyCmd) {
+    lastCategory = 'INVALID_PARAMS';
+    lastFailure = failureDetails(undefined, {
+      category: lastCategory,
+      source: 'validation',
+    });
+    sendAnalytics(false);
+    throw new UserError(
+      'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
+        'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy object alongside `method`/`commands`, e.g. { "proxy": { "proxy": "residential", "proxyCountry": "us" }, "commands": [ ... ] }.',
+    );
+  }
+
+  if (commands.length === 1 && commands[0].method === 'close') {
+    closeSession(
+      mcpSessionId,
       token,
-      apiUrl,
-      sessionId: mcpSessionId,
+      proxy,
+      profile,
+      createProfile,
       attachSessionId,
+      echoedSessionId,
+      integrationId,
+      allowedDomains,
+      onSession,
       userId,
-    }) => {
-      let commands: Array<{
-        method: string;
-        params: Record<string, unknown>;
-      }> =
-        params.commands && params.commands.length > 0
-          ? params.commands.map((c) => ({
-              method: c.method,
-              params: c.params ?? {},
-            }))
-          : [{ method: params.method ?? '', params: params.params ?? {} }];
-      const personaRequested =
-        params.os !== undefined ||
-        PERSONA_FIELDS.some((field) => params[field] !== undefined);
+    );
+    sendAnalytics(true);
+    return {
+      content: [{ type: 'text' as const, text: 'Browser session closed.' }],
+      results: [],
+    };
+  }
 
-      // Defense-in-depth: even if the schema were mis-built, compliant never
-      // forwards a non-allowlisted method, auth-profile, or proxy arg to the backend.
-      if (compliant) {
-        for (const c of commands) {
-          if (!COMPLIANT_AGENT_METHODS.has(c.method)) {
-            throw new UserError(
-              `Command "${c.method}" is not available on this endpoint.`,
-            );
-          }
-        }
-        if (
-          params.profile !== undefined ||
-          params.createProfile !== undefined
-        ) {
-          throw new UserError(
-            'Authentication profiles are not available on this endpoint.',
-          );
-        }
-        if (params.proxy !== undefined) {
-          throw new UserError(
-            'Proxy configuration is not available on this endpoint.',
-          );
-        }
-        if (personaRequested) {
-          throw new UserError(
-            'Persona configuration is not available on this endpoint.',
-          );
-        }
-        if (
-          params.integrationId !== undefined ||
-          params.allowedDomains !== undefined
-        ) {
-          throw new UserError(
-            'Credential integrations are not available on this endpoint.',
-          );
-        }
+  if (isReportOnly(commands) && !attachSessionId && !createProfile) {
+    let live = false;
+    if (echoedSessionId) {
+      try {
+        getActiveSessionByHandle(echoedSessionId, apiUrl, token, userId);
+        live = true;
+      } catch {
+        // A missing or disconnected session must not be reopened for a verdict.
       }
-
-      // Reject the reserved method before batch validation, using the same
-      // invalid-parameter diagnostics for direct and batched calls.
-      if (commands.some((c) => c.method === 'stripeLinkCheckout')) {
-        throw Object.assign(
-          new UserError(
-            'stripeLinkCheckout is reserved for browserless_link_checkout.',
-          ),
-          { code: 'INVALID_PARAMS' },
-        );
-      }
-
-      // The advertised tool schema flattens `commands` so OpenAI's hosted-MCP
-      // import accepts it; re-validate a provided batch against the full
-      // per-command contract here (the method/key guards above own their
-      // specific messages). Legacy single-command calls stay loose except for
-      // outcome reports and credential writes.
-      if (
-        params.commands?.length ||
-        params.method === 'reportOutcome' ||
-        params.method === 'reportSkillOutcome' ||
-        params.method === 'reportProfileAuthentication' ||
-        params.method === 'saveSecret'
-      ) {
-        const list = params.commands?.length ? params.commands : commands;
-        const parsedCommands: Array<{
-          method: string;
-          params?: Record<string, unknown>;
-        }> = [];
-        const issues: z.core.$ZodIssue[] = [];
-        if (compliant) {
-          const parsed = z.array(CompliantAgentCommandSchema).safeParse(list);
-          if (parsed.success) parsedCommands.push(...parsed.data);
-          else issues.push(...parsed.error.issues);
-        } else {
-          for (const [index, command] of list.entries()) {
-            const schema = isTypedAgentMethod(command.method)
-              ? TypedAgentCommandSchema
-              : GenericCommandSchema;
-            const parsed = schema.safeParse(command);
-            if (parsed.success) parsedCommands.push(parsed.data);
-            else
-              issues.push(
-                ...parsed.error.issues.map((issue) => ({
-                  ...issue,
-                  path: [index, ...issue.path],
-                })),
-              );
-          }
-        }
-        if (issues.length) {
-          throw Object.assign(
-            new UserError(
-              issues
-                .map(
-                  (i) =>
-                    (i.path.length ? `${i.path.join('.')}: ` : '') + i.message,
-                )
-                .join('; '),
-            ),
-            { code: 'INVALID_PARAMS' },
-          );
-        }
-        // Forward the parsed batch, not the raw one: the per-command schemas
-        // apply typed defaults and strip unknown keys (the flat boundary schema
-        // does neither), matching the behaviour when the rich schema validated
-        // at the boundary.
-        commands = parsedCommands.map(({ method, params }) => ({
-          method,
-          params: params ?? {},
-        }));
-      }
-
-      const proxy = params.proxy;
-      const profile = params.profile;
-      const createProfile = params.createProfile;
-      const integrationId = params.integrationId;
-      const allowedDomains = params.allowedDomains;
-      const record = params.record;
-      // Spoofed desktop OS for the agent's stealth fingerprint. Defaults to
-      // windows so the agent presents a coherent, low-risk desktop identity
-      // rather than its native Linux (Chrome-masked UA over "Linux x86_64" is a
-      // bot tell). Forwarded as ?emulationOs; see agent-client buildAgentWsUrl.
-      const os =
-        typeof (params as { os?: unknown }).os === 'string'
-          ? (params as { os: PersonaOptions['emulationOs'] }).os
-          : undefined;
-      const emulationOs =
-        params.emulationOs ??
-        os ??
-        (params.sessionId || attachSessionId ? undefined : 'windows');
-      // Human-like cursor movement + pacing. Improves the passive score of
-      // invisible anti-bot challenges (e.g. Revolut's post-passcode hCaptcha),
-      // which weight real mouse/interaction signals; a machine-timed agent with
-      // no cursor motion scores as a bot. Defaults ON for the demo stack.
-      // Forwarded as ?humanlike; enterprise's agent route reads it. Override with os/humanlike args.
-      const humanlike =
-        typeof (params as { humanlike?: unknown }).humanlike === 'boolean'
-          ? (params as { humanlike: boolean }).humanlike
-          : true;
-      const persona = {
-        emulationOs: params.emulationOs ?? os,
-        emulatedDevice: params.emulatedDevice,
-        screen: params.screen,
-        deviceScaleFactor: params.deviceScaleFactor,
-        deviceSlot: params.deviceSlot,
+    }
+    if (!live) {
+      const report = commands
+        .filter((c) => c.method === 'reportOutcome')
+        .at(-1)!;
+      verdict = {
+        self_reported_success: report.params.success as boolean,
+        ...(report.params.reason
+          ? { outcome_reason: report.params.reason as string }
+          : {}),
+        verdict_delivery: 'late',
       };
-      // createProfile attaches by session id, which omits integrationId — binding
-      // here would be silently dropped, so reject rather than mislead.
-      if (createProfile && integrationId) {
-        throw new UserError(
-          'Credential integrations cannot be combined with profile creation. Create the profile first, then pass integrationId on a follow-up session.',
-        );
+      const remaining = commands.filter((c) => c.method !== 'reportOutcome');
+      sendAnalytics(true);
+      lateVerdictRecorded = true;
+      if (remaining.every((c) => c.method === 'close')) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Outcome recorded. No browser was opened.',
+            },
+          ],
+          results: [],
+        };
       }
-      if (record && createProfile) {
-        throw new UserError(
-          'Recording cannot be armed during profile creation. Create and save the profile first, then start a new browser session with `profile` and `record: true`.',
-        );
-      }
-      if (record && attachSessionId) {
-        throw new UserError(
-          'Recording cannot be armed on an attached browser. Start a new browser session with `record: true` instead.',
-        );
-      }
-      if (
-        createProfile &&
-        PERSONA_FIELDS.some(
-          (field) => field !== 'emulationOs' && params[field] !== undefined,
-        )
-      ) {
-        throw new UserError(
-          'Additional persona options cannot be combined with profile creation. Use only os/emulationOs while creating a profile, then pass the other persona options on a later session.',
-        );
-      }
-      if (attachSessionId && personaRequested) {
-        throw new UserError(
-          'Persona options cannot redefine an attached browser. Set the persona when the browser session is created.',
-        );
-      }
-      const echoedSessionId = params.sessionId;
-      if (
-        attachSessionId &&
-        typeof params.sessionId === 'string' &&
-        params.sessionId !== `attach:${attachSessionId}`
-      ) {
-        log.warn(
-          `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
-        );
-      }
-      const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
-      // Whether the caller threaded the handle is the difference between one
-      // browser per conversation and one per call — log it, don't infer it.
-      if (config.transport === 'httpStream') {
-        console.error(
-          `[agent] handle ${echoedSessionId ? `echoed=${echoedSessionId}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
-        );
-      }
+      verdict = undefined;
+      commands = remaining;
+    }
+  }
 
-      let lastCategory: ErrorCategory | undefined;
-      let liveUrlId: string | undefined;
-      let sessionReused = false;
-      let sessionAgeMs = 0;
-      let repeatCount = 0;
-      let repeatWarning = '';
-      let agentSessionHandle: string | null = echoedSessionId ?? null;
-      let lateVerdictRecorded = false;
-      let verdict:
-        | {
-            self_reported_success: boolean;
-            outcome_reason?: string;
-            verdict_delivery: 'late' | 'in_session';
-          }
-        | undefined;
-      const onSession = (reused: boolean, ageMs: number) => {
-        sessionReused = reused;
-        sessionAgeMs = ageMs;
-      };
-      let lastFailure: Record<string, unknown> | undefined;
+  try {
+    validateSecretCaptureOrdering(commands);
+  } catch (err) {
+    lastCategory = 'INVALID_PARAMS';
+    sendAnalytics(false, err);
+    throw new UserError(
+      err instanceof Error ? err.message : 'Secret capture preflight failed.',
+    );
+  }
 
-      const hasConnectedStripeLinkWallet = async (
-        snapshot: SnapshotResult | undefined,
-      ): Promise<boolean> => {
-        if (!isPaymentStage(snapshot)) return false;
-        try {
-          return (
-            (await client.stripeLinkConnection('status')).status === 'connected'
-          );
-        } catch {
-          return false;
-        }
-      };
+  try {
+    await preflightAgentCapabilities(
+      buildAgentWsUrl(
+        apiUrl,
+        token,
+        proxy,
+        profile,
+        attachSessionId,
+        compliant,
+        integrationId,
+        allowedDomains,
+        emulationOs,
+        humanlike,
+        record,
+        persona,
+      ),
+      params.requiredCapabilities ?? [],
+    );
+  } catch (err) {
+    sendAnalytics(false, err);
+    throw new UserError(
+      err instanceof Error ? err.message : 'Capability preflight failed.',
+    );
+  }
 
-      const sendAnalytics = (success: boolean, err?: unknown) => {
-        analytics?.fireToolRequest(token, 'browserless_agent', {
-          ...mcpSource,
-          ...(prompt ? { _prompt: prompt } : {}),
-          ...(liveUrlId ? { live_url_id: liveUrlId } : {}),
-          session_reused: sessionReused,
-          session_age_ms: sessionAgeMs,
-          keep_session_alive: keepAlive,
-          agent_session_handle: agentSessionHandle,
-          ...verdict,
-          methods: commands.map((c) => c.method).join(','),
-          command_count: commands.length,
-          repeat_count: repeatCount,
-          api_url: apiUrl,
-          success,
-          ...(success
-            ? {}
-            : {
-                ...(lastFailure ?? failureDetails(err)),
-                error_category: lastCategory
-                  ? toAnalyticsCategory(lastCategory)
-                  : categorizeThrown(err),
-              }),
-          proxy_tier: proxy?.proxy ?? null,
-          proxy_country: proxy?.proxyCountry ?? null,
-          proxy_sticky: !!proxy?.proxySticky,
-          proxy_external: !!proxy?.externalProxyServer,
-          emulation_os: emulationOs,
-          persona_requested: personaRequested,
-          profile_used: !!profile,
-          create_profile: !!createProfile,
-          integration_used: !!integrationId,
-          rationale:
-            typeof params.rationale === 'string'
-              ? params.rationale.trim().slice(0, 50)
-              : null,
+  // Open-only call: no real command (e.g. `createProfile`/`profile`/`proxy`
+  // set with no method/commands). Dispatching the empty-method default would
+  // make the agent route reject it as `Missing required id/method`, so just
+  // open (or reuse) the session and report it's ready for follow-up commands.
+  if (commands.length === 1 && !commands[0].method) {
+    let opened;
+    try {
+      opened = await getOrCreateSession(
+        mcpSessionId,
+        apiUrl,
+        token,
+        proxy,
+        profile,
+        createProfile,
+        attachSessionId,
+        compliant,
+        mcpSource.source,
+        echoedSessionId,
+        integrationId,
+        allowedDomains,
+        emulationOs,
+        humanlike,
+        record,
+        persona,
+        onSession,
+        userId,
+      );
+    } catch (connErr: unknown) {
+      lastFailure = failureDetails(connErr, {
+        source: connErr instanceof UpgradeError ? 'api' : 'unknown',
+      });
+      sendAnalytics(false, connErr);
+      throw new UserError(formatConnectError(connErr));
+    }
+    agentSessionHandle = opened.handle;
+    sendAnalytics(true);
+    const text = createProfile
+      ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
+      : 'Browser session is open. Send commands to drive it.';
+    const line = sessionLine(opened, compliant);
+    return {
+      content: [
+        { type: 'text' as const, text: line ? `${text}\n\n${line}` : text },
+      ],
+      results: [],
+    };
+  }
+
+  let lastSession: ActiveSession | undefined;
+  let downloadsPending = false;
+  const completedDownloads: DownloadEntry[] = [];
+  const runCommands = async (
+    isRetry: boolean,
+    retryPersona: PersonaOptions = persona,
+  ): Promise<Content[]> => {
+    onSession(false, 0);
+    lastFailure = undefined;
+    lastCategory = undefined;
+    let agentSession;
+    try {
+      agentSession = await getOrCreateSession(
+        mcpSessionId,
+        apiUrl,
+        token,
+        proxy,
+        profile,
+        createProfile,
+        attachSessionId,
+        compliant,
+        mcpSource.source,
+        echoedSessionId,
+        integrationId,
+        allowedDomains,
+        emulationOs,
+        humanlike,
+        record,
+        retryPersona,
+        onSession,
+        userId,
+      );
+    } catch (connErr: unknown) {
+      // No retry when the server gave a definitive 4xx — re-attempting
+      // with the same (bad token / wrong profile / unsupported params)
+      // will just produce the same response and waste time.
+      if (isRetry || !isRetryableUpgradeError(connErr)) {
+        lastFailure = failureDetails(connErr, {
+          source: connErr instanceof UpgradeError ? 'api' : 'unknown',
         });
-      };
+        throw new AgentRunError(formatConnectError(connErr), {
+          kind: 'connect',
+          status:
+            connErr instanceof UpgradeError ? connErr.statusCode : undefined,
+          detail:
+            connErr instanceof UpgradeError
+              ? sanitizeUpgradeBody(connErr.body)
+              : connErr instanceof Error
+                ? connErr.message
+                : String(connErr),
+        });
+      }
+      destroySession(
+        mcpSessionId,
+        token,
+        proxy,
+        profile,
+        createProfile,
+        attachSessionId,
+        echoedSessionId,
+        integrationId,
+        allowedDomains,
+        userId,
+      );
+      return runCommands(true, retryPersona);
+    }
+    lastSession = agentSession;
+    agentSessionHandle = agentSession.handle;
+    const repetition = detectRepetition(agentSession.repeatState, commands);
+    repeatCount = repetition.count;
+    repeatWarning =
+      !options.extras || mcpSource.source === 'autologin'
+        ? ''
+        : repetition.warning;
 
-      const proxyCmd = commands.find((c) => c.method === 'proxy');
-      if (proxyCmd) {
+    // Execute all commands sequentially
+    const results: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      result?: unknown;
+    }> = [];
+    rawResults = results;
+    let closedDuringBatch = false;
+    // Cross-origin baseline: prefer the URL from the previous snapshot,
+    // else the first URL seen this batch — so [goto A, goto B, snapshot]
+    // still detects the A→snapshot cross-origin transition.
+    let crossOriginBaseline: string | undefined = agentSession.lastUrl;
+    let promptSent = false;
+    let saveSecretSent = false;
+    for (const [commandIndex, cmd] of commands.entries()) {
+      const commandFailure = (err: unknown, category: ErrorCategory) => ({
+        ...failureDetails(err, {
+          category,
+          source:
+            category === 'SCRIPT_ERROR'
+              ? 'script'
+              : category === 'NAVIGATION_FAILED'
+                ? 'target_website'
+                : category === 'SESSION_LOST'
+                  ? 'transport'
+                  : 'unknown',
+        }),
+        failed_command_index: commandIndex,
+        ...(isTypedAgentMethod(cmd.method)
+          ? { failed_method: cmd.method }
+          : {}),
+      });
+      try {
+        validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
+      } catch (err) {
         lastCategory = 'INVALID_PARAMS';
-        lastFailure = failureDetails(undefined, {
-          category: lastCategory,
-          source: 'validation',
-        });
-        sendAnalytics(false);
         throw new UserError(
-          'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
-            'Recovery: call `close` to end the current session, then call browserless_agent again with the proxy object alongside `method`/`commands`, e.g. { "proxy": { "proxy": "residential", "proxyCountry": "us" }, "commands": [ ... ] }.',
+          err instanceof Error
+            ? err.message
+            : 'Secret capture preflight failed.',
         );
       }
 
-      if (commands.length === 1 && commands[0].method === 'close') {
+      if (cmd.method === 'close') {
         closeSession(
           mcpSessionId,
           token,
@@ -1114,176 +1423,148 @@ export function registerAgentTools(
           echoedSessionId,
           integrationId,
           allowedDomains,
-          onSession,
+          undefined,
           userId,
         );
-        sendAnalytics(true);
-        return [{ type: 'text' as const, text: 'Browser session closed.' }];
+        results.push({ ...cmd, result: { closed: true } });
+        closedDuringBatch = true;
+        break;
       }
-
-      if (isReportOnly(commands) && !attachSessionId && !createProfile) {
-        let live = false;
-        if (echoedSessionId) {
-          try {
-            getActiveSessionByHandle(echoedSessionId, apiUrl, token, userId);
-            live = true;
-          } catch {
-            // A missing or disconnected session must not be reopened for a verdict.
-          }
-        }
-        if (!live) {
-          const report = commands
-            .filter((c) => c.method === 'reportOutcome')
-            .at(-1)!;
-          verdict = {
-            self_reported_success: report.params.success as boolean,
-            ...(report.params.reason
-              ? { outcome_reason: report.params.reason as string }
-              : {}),
-            verdict_delivery: 'late',
-          };
-          const remaining = commands.filter(
-            (c) => c.method !== 'reportOutcome',
-          );
-          sendAnalytics(true);
-          lateVerdictRecorded = true;
-          if (remaining.every((c) => c.method === 'close')) {
-            return [
-              {
-                type: 'text' as const,
-                text: 'Outcome recorded. No browser was opened.',
-              },
-            ];
-          }
-          verdict = undefined;
-          commands = remaining;
-        }
-      }
-
-      try {
-        validateSecretCaptureOrdering(commands);
-      } catch (err) {
-        lastCategory = 'INVALID_PARAMS';
-        sendAnalytics(false, err);
-        throw new UserError(
-          err instanceof Error
-            ? err.message
-            : 'Secret capture preflight failed.',
-        );
-      }
-
-      try {
-        await preflightAgentCapabilities(
-          buildAgentWsUrl(
-            apiUrl,
-            token,
-            proxy,
-            profile,
-            attachSessionId,
-            compliant,
-            integrationId,
-            allowedDomains,
-            emulationOs,
-            humanlike,
-            record,
-            persona,
-          ),
-          params.requiredCapabilities ?? [],
-        );
-      } catch (err) {
-        sendAnalytics(false, err);
-        throw new UserError(
-          err instanceof Error ? err.message : 'Capability preflight failed.',
-        );
-      }
-
-      // Open-only call: no real command (e.g. `createProfile`/`profile`/`proxy`
-      // set with no method/commands). Dispatching the empty-method default would
-      // make the agent route reject it as `Missing required id/method`, so just
-      // open (or reuse) the session and report it's ready for follow-up commands.
-      if (commands.length === 1 && !commands[0].method) {
-        let opened;
+      // reportProfileAuthentication deliberately takes the normal path:
+      // return its recorded result or actionable error to the model.
+      if (
+        cmd.method === 'reportSkillOutcome' ||
+        cmd.method === 'reportOutcome'
+      ) {
         try {
-          opened = await getOrCreateSession(
-            mcpSessionId,
-            apiUrl,
-            token,
-            proxy,
-            profile,
-            createProfile,
-            attachSessionId,
-            compliant,
-            mcpSource.source,
-            echoedSessionId,
-            integrationId,
-            allowedDomains,
-            emulationOs,
-            humanlike,
-            record,
-            persona,
+          // Provenance is assigned by the server, never by the agent.
+          const params = { ...cmd.params };
+          if (cmd.method === 'reportSkillOutcome') {
+            delete params.outcome_source;
+            delete params.attribution_status;
+            if (verifySkillReceipt(agentSession.token, params))
+              params.attribution_status = 'matched';
+          }
+          const response = await send(
+            agentSession,
+            cmd.method,
+            params,
+            undefined,
             onSession,
-            userId,
           );
-        } catch (connErr: unknown) {
-          lastFailure = failureDetails(connErr, {
-            source: connErr instanceof UpgradeError ? 'api' : 'unknown',
-          });
-          sendAnalytics(false, connErr);
-          throw new UserError(formatConnectError(connErr));
+          if (cmd.method === 'reportOutcome' && !response.error) {
+            verdict = {
+              self_reported_success: params.success as boolean,
+              ...(params.reason
+                ? { outcome_reason: params.reason as string }
+                : {}),
+              verdict_delivery: 'in_session',
+            };
+          }
+        } catch {
+          // noop
         }
-        agentSessionHandle = opened.handle;
-        sendAnalytics(true);
-        const text = createProfile
-          ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
-          : 'Browser session is open. Send commands to drive it.';
-        const line = sessionLine(opened, compliant);
-        return [
-          { type: 'text' as const, text: line ? `${text}\n\n${line}` : text },
-        ];
+        continue;
       }
 
-      let lastSession: ActiveSession | undefined;
-      let downloadsPending = false;
-      const completedDownloads: DownloadEntry[] = [];
-      const runCommands = async (
-        isRetry: boolean,
-        retryPersona: PersonaOptions = persona,
-      ): Promise<Content[]> => {
-        onSession(false, 0);
-        lastFailure = undefined;
-        lastCategory = undefined;
-        let agentSession;
-        try {
-          agentSession = await getOrCreateSession(
-            mcpSessionId,
-            apiUrl,
-            token,
-            proxy,
-            profile,
-            createProfile,
-            attachSessionId,
-            compliant,
-            mcpSource.source,
-            echoedSessionId,
-            integrationId,
-            allowedDomains,
-            emulationOs,
-            humanlike,
-            record,
-            retryPersona,
-            onSession,
-            userId,
+      log.info(formatAgentCommandLog(cmd));
+
+      agentSession.skillState.cmdIndex += 1;
+
+      let outboundParams = cmd.params;
+      if (cmd.method === 'liveURL' && cmd.params.timeout === undefined) {
+        outboundParams = { ...cmd.params, timeout: 300_000 };
+      }
+      // `toDisk` is a local directive (route the screenshot to the download
+      // store); it's not a CDP screenshot param, so strip it before sending
+      // or Chrome rejects the unknown key. The original cmd keeps it so the
+      // result formatter can tell it should save instead of inline.
+      if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
+        outboundParams = { ...cmd.params };
+        delete (outboundParams as Record<string, unknown>).toDisk;
+      }
+      if (
+        cmd.method === 'reportProfileAuthentication' &&
+        cmd.params.targetId === undefined
+      ) {
+        if (!agentSession.lastActiveTargetId) {
+          throw Object.assign(
+            new UserError(
+              (commands.length > 1
+                ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
+                : `${cmd.method}: `) +
+                'no active tab known — end a batch with snapshot first, or pass targetId',
+            ),
+            { code: 'INVALID_PARAMS' },
           );
-        } catch (connErr: unknown) {
-          // No retry when the server gave a definitive 4xx — re-attempting
-          // with the same (bad token / wrong profile / unsupported params)
-          // will just produce the same response and waste time.
-          if (isRetry || !isRetryableUpgradeError(connErr)) {
-            lastFailure = failureDetails(connErr, {
-              source: connErr instanceof UpgradeError ? 'api' : 'unknown',
-            });
-            throw new UserError(formatConnectError(connErr));
-          }
+        }
+        outboundParams = {
+          ...cmd.params,
+          targetId: agentSession.lastActiveTargetId,
+        };
+      }
+      // Cascade the self-reported prompt once per session so the server can
+      // author a first-party skill from the run (server keeps the first).
+      if (options.extras && prompt && !promptSent) {
+        outboundParams = { ...outboundParams, _prompt: prompt };
+        promptSent = true;
+      }
+
+      let resp;
+      try {
+        // A lost reply may follow a completed vault write. Never replay
+        // this batch after dispatching saveSecret, even if a later command fails.
+        if (cmd.method === 'saveSecret') saveSecretSent = true;
+        resp = await send(
+          agentSession,
+          cmd.method,
+          outboundParams,
+          undefined,
+          onSession,
+        );
+      } catch (sendErr: unknown) {
+        destroySession(
+          mcpSessionId,
+          token,
+          proxy,
+          profile,
+          createProfile,
+          attachSessionId,
+          echoedSessionId,
+          integrationId,
+          allowedDomains,
+          userId,
+          agentSession,
+        );
+        const errMessage =
+          sendErr instanceof Error ? sendErr.message : String(sendErr);
+        if (!isRetry && !saveSecretSent) {
+          log.warn(
+            `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
+          );
+          return runCommands(true, agentSession.persona ?? retryPersona);
+        }
+        const classified = classifyAgentError({
+          err: { message: errMessage },
+          cmd,
+        });
+        lastCategory = classified.category;
+        lastFailure = commandFailure(sendErr, classified.category);
+        throw new AgentRunError(
+          formatErrorMessage({
+            category: classified.category,
+            prefix: `${cmd.method} failed: `,
+            message: errMessage,
+            recovery: classified.recovery,
+          }),
+          { kind: 'transport', detail: errMessage },
+        );
+      }
+
+      if (resp.error) {
+        const err = resp.error;
+        const fatal = !!err.code && FATAL_CODES.has(err.code);
+        if (fatal) {
           destroySession(
             mcpSessionId,
             token,
@@ -1295,395 +1576,181 @@ export function registerAgentTools(
             integrationId,
             allowedDomains,
             userId,
+            agentSession,
           );
-          return runCommands(true, retryPersona);
-        }
-        lastSession = agentSession;
-        agentSessionHandle = agentSession.handle;
-        const repetition = detectRepetition(agentSession.repeatState, commands);
-        repeatCount = repetition.count;
-        repeatWarning =
-          mcpSource.source === 'autologin' ? '' : repetition.warning;
-
-        // Execute all commands sequentially
-        const results: Array<{
-          method: string;
-          params: Record<string, unknown>;
-          result?: unknown;
-        }> = [];
-        let closedDuringBatch = false;
-        // Cross-origin baseline: prefer the URL from the previous snapshot,
-        // else the first URL seen this batch — so [goto A, goto B, snapshot]
-        // still detects the A→snapshot cross-origin transition.
-        let crossOriginBaseline: string | undefined = agentSession.lastUrl;
-        let promptSent = false;
-        let saveSecretSent = false;
-        for (const [commandIndex, cmd] of commands.entries()) {
-          const commandFailure = (err: unknown, category: ErrorCategory) => ({
-            ...failureDetails(err, {
-              category,
-              source:
-                category === 'SCRIPT_ERROR'
-                  ? 'script'
-                  : category === 'NAVIGATION_FAILED'
-                    ? 'target_website'
-                    : category === 'SESSION_LOST'
-                      ? 'transport'
-                      : 'unknown',
-            }),
-            failed_command_index: commandIndex,
-            ...(isTypedAgentMethod(cmd.method)
-              ? { failed_method: cmd.method }
-              : {}),
-          });
-          try {
-            validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
-          } catch (err) {
-            lastCategory = 'INVALID_PARAMS';
-            throw new UserError(
-              err instanceof Error
-                ? err.message
-                : 'Secret capture preflight failed.',
-            );
+          if (!isRetry && !saveSecretSent) {
+            return runCommands(true, agentSession.persona ?? retryPersona);
           }
-
-          if (cmd.method === 'close') {
-            closeSession(
-              mcpSessionId,
-              token,
-              proxy,
-              profile,
-              createProfile,
-              attachSessionId,
-              echoedSessionId,
-              integrationId,
-              allowedDomains,
-              undefined,
-              userId,
-            );
-            results.push({ ...cmd, result: { closed: true } });
-            closedDuringBatch = true;
-            break;
-          }
-          // reportProfileAuthentication deliberately takes the normal path:
-          // return its recorded result or actionable error to the model.
-          if (
-            cmd.method === 'reportSkillOutcome' ||
-            cmd.method === 'reportOutcome'
-          ) {
-            try {
-              // Provenance is assigned by the server, never by the agent.
-              const params = { ...cmd.params };
-              if (cmd.method === 'reportSkillOutcome') {
-                delete params.outcome_source;
-                delete params.attribution_status;
-                if (verifySkillReceipt(agentSession.token, params))
-                  params.attribution_status = 'matched';
-              }
-              const response = await send(
-                agentSession,
-                cmd.method,
-                params,
-                undefined,
-                onSession,
-              );
-              if (cmd.method === 'reportOutcome' && !response.error) {
-                verdict = {
-                  self_reported_success: params.success as boolean,
-                  ...(params.reason
-                    ? { outcome_reason: params.reason as string }
-                    : {}),
-                  verdict_delivery: 'in_session',
-                };
-              }
-            } catch {
-              // noop
-            }
-            continue;
-          }
-
-          log.info(formatAgentCommandLog(cmd));
-
-          agentSession.skillState.cmdIndex += 1;
-
-          let outboundParams = cmd.params;
-          if (cmd.method === 'liveURL' && cmd.params.timeout === undefined) {
-            outboundParams = { ...cmd.params, timeout: 300_000 };
-          }
-          // `toDisk` is a local directive (route the screenshot to the download
-          // store); it's not a CDP screenshot param, so strip it before sending
-          // or Chrome rejects the unknown key. The original cmd keeps it so the
-          // result formatter can tell it should save instead of inline.
-          if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
-            outboundParams = { ...cmd.params };
-            delete (outboundParams as Record<string, unknown>).toDisk;
-          }
-          if (
-            cmd.method === 'reportProfileAuthentication' &&
-            cmd.params.targetId === undefined
-          ) {
-            if (!agentSession.lastActiveTargetId) {
-              throw Object.assign(
-                new UserError(
-                  (commands.length > 1
-                    ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
-                    : `${cmd.method}: `) +
-                    'no active tab known — end a batch with snapshot first, or pass targetId',
-                ),
-                { code: 'INVALID_PARAMS' },
-              );
-            }
-            outboundParams = {
-              ...cmd.params,
-              targetId: agentSession.lastActiveTargetId,
-            };
-          }
-          // Cascade the self-reported prompt once per session so the server can
-          // author a first-party skill from the run (server keeps the first).
-          if (prompt && !promptSent) {
-            outboundParams = { ...outboundParams, _prompt: prompt };
-            promptSent = true;
-          }
-
-          let resp;
-          try {
-            // A lost reply may follow a completed vault write. Never replay
-            // this batch after dispatching saveSecret, even if a later command fails.
-            if (cmd.method === 'saveSecret') saveSecretSent = true;
-            resp = await send(
-              agentSession,
-              cmd.method,
-              outboundParams,
-              undefined,
-              onSession,
-            );
-          } catch (sendErr: unknown) {
-            destroySession(
-              mcpSessionId,
-              token,
-              proxy,
-              profile,
-              createProfile,
-              attachSessionId,
-              echoedSessionId,
-              integrationId,
-              allowedDomains,
-              userId,
-              agentSession,
-            );
-            const errMessage =
-              sendErr instanceof Error ? sendErr.message : String(sendErr);
-            if (!isRetry && !saveSecretSent) {
-              log.warn(
-                `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
-              );
-              return runCommands(true, agentSession.persona ?? retryPersona);
-            }
-            const classified = classifyAgentError({
-              err: { message: errMessage },
-              cmd,
-            });
-            lastCategory = classified.category;
-            lastFailure = commandFailure(sendErr, classified.category);
-            throw new UserError(
-              formatErrorMessage({
-                category: classified.category,
-                prefix: `${cmd.method} failed: `,
-                message: errMessage,
-                recovery: classified.recovery,
-              }),
-            );
-          }
-
-          if (resp.error) {
-            const err = resp.error;
-            const fatal = !!err.code && FATAL_CODES.has(err.code);
-            if (fatal) {
-              destroySession(
-                mcpSessionId,
-                token,
-                proxy,
-                profile,
-                createProfile,
-                attachSessionId,
-                echoedSessionId,
-                integrationId,
-                allowedDomains,
-                userId,
-                agentSession,
-              );
-              if (!isRetry && !saveSecretSent) {
-                return runCommands(true, agentSession.persona ?? retryPersona);
-              }
-            }
-
-            const classified = classifyAgentError({ err, cmd });
-            lastCategory = classified.category;
-            lastFailure = commandFailure(err, classified.category);
-
-            const prefix =
-              commands.length > 1
-                ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
-                : `${cmd.method} failed: `;
-
-            const captureBlockedSuggestion =
-              agentSession.secretVisible &&
-              err.suggestion &&
-              CAPTURE_BLOCKED_SUGGESTION.test(err.suggestion)
-                ? err.suggestion
-                : undefined;
-            const secretCaptureBlocked = !!captureBlockedSuggestion;
-            let suggestion: string | undefined;
-            if (
-              !secretCaptureBlocked &&
-              err.code === 'SELECTOR_NOT_FOUND' &&
-              cmd.method !== 'waitForSelector' &&
-              typeof cmd.params.selector === 'string' &&
-              !cmd.params.selector.startsWith('< ')
-            ) {
-              suggestion = `Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`;
-            } else if (err.suggestion && err.code !== 'SELECTOR_NOT_FOUND') {
-              suggestion = err.suggestion;
-            }
-
-            const body = formatErrorMessage({
-              category: classified.category,
-              code: classified.category === 'UNKNOWN' ? err.code : undefined,
-              prefix,
-              message: err.message,
-              suggestion,
-              recovery: captureBlockedSuggestion ?? classified.recovery,
-              snapshotText:
-                !secretCaptureBlocked && err.snapshot
-                  ? formatSnapshot(err.snapshot)
-                  : undefined,
-            });
-
-            const triggered = secretCaptureBlocked
-              ? []
-              : detectVisibleSkills(
-                  {
-                    snapshot: err.snapshot,
-                    error: err,
-                    cmd,
-                    apiUrl,
-                    authenticated: await hasConnectedStripeLinkWallet(
-                      err.snapshot,
-                    ),
-                  },
-                  agentSession.skillState,
-                  compliant,
-                );
-            markFired(agentSession.skillState, triggered);
-
-            throw new UserError(
-              [
-                appendSkills(body, triggered, compliant),
-                fatal ? '' : sessionLine(agentSession, compliant),
-              ]
-                .filter(Boolean)
-                .join('\n\n'),
-            );
-          }
-
-          const navFailure = classifyNavigationResult(cmd.method, resp.result);
-          if (navFailure) {
-            lastCategory = navFailure.category;
-            lastFailure = commandFailure(resp.result, navFailure.category);
-            throw new UserError(
-              [
-                formatErrorMessage({
-                  category: navFailure.category,
-                  prefix: `${cmd.method} failed: `,
-                  message: `the page did not load — the browser is on ${(resp.result as { url?: string }).url ?? 'an error page'}`,
-                  recovery: navFailure.recovery,
-                }),
-                sessionLine(agentSession, compliant),
-              ]
-                .filter(Boolean)
-                .join('\n\n'),
-            );
-          }
-
-          agentSession.secretVisible = secretVisibleAfter(
-            agentSession.secretVisible,
-            cmd.method,
-            resp.result,
-          );
-
-          // Capture the first URL we observe in the batch as a fallback
-          // baseline for the cross-origin notice.
-          if (!crossOriginBaseline) {
-            const r = resp.result as { url?: unknown } | undefined;
-            if (r && typeof r.url === 'string') {
-              crossOriginBaseline = r.url;
-            }
-          }
-
-          if (cmd.method === 'stopRecording') {
-            resp.result = await persistRecording(
-              resp.result,
-              token,
-              mcpSessionId,
-            );
-          }
-
-          if (cmd.method === 'liveURL') {
-            const result = resp.result as { liveURLId?: unknown } | undefined;
-            if (typeof result?.liveURLId === 'string') {
-              liveUrlId = result.liveURLId;
-            }
-          }
-          if (cmd.method === 'getDownloads') {
-            completedDownloads.push(
-              ...(
-                (resp.result as { downloads?: DownloadEntry[] } | undefined)
-                  ?.downloads ?? []
-              ).filter((download) => !download.inProgress),
-            );
-          }
-          results.push({ ...cmd, result: resp.result });
         }
 
-        // If the batch ended with close, format the result around the
-        // command before close (close itself has no useful payload).
-        const reportable = closedDuringBatch ? results.slice(0, -1) : results;
-        // Nothing user-facing ran (only close and/or outcome reports), so
-        // there is no page result to format.
-        if (reportable.length === 0) {
-          return [
-            {
-              type: 'text' as const,
-              text: closedDuringBatch
-                ? 'Browser session closed.'
-                : !keepAlive && !createProfile && !attachSessionId
-                  ? oneShotClosedNotice(
-                      agentSession.handle,
-                      lateVerdictRecorded || verdict !== undefined,
-                    )
-                  : 'Done.',
-            },
-          ];
-        }
-        const last = reportable[reportable.length - 1];
-        const lastResult = last.result as Record<string, unknown>;
-        const lastCmd = last;
+        const classified = classifyAgentError({ err, cmd });
+        lastCategory = classified.category;
+        lastFailure = commandFailure(err, classified.category);
 
-        const closedSuffix = closedDuringBatch
-          ? '\n\nBrowser session closed.'
-          : '';
-
-        const batchPrefix =
+        const prefix =
           commands.length > 1
-            ? `Executed: ${results.map((r) => r.method).join(' → ')}\n\n`
-            : '';
+            ? `Batch failed at "${cmd.method}" (after ${results.map((r) => r.method).join(' → ') || 'start'}): `
+            : `${cmd.method} failed: `;
 
-        const lastSnapshot =
-          last.method === SNAPSHOT_METHOD
-            ? (lastResult as unknown as SnapshotResult)
+        const captureBlockedSuggestion =
+          agentSession.secretVisible &&
+          err.suggestion &&
+          CAPTURE_BLOCKED_SUGGESTION.test(err.suggestion)
+            ? err.suggestion
             : undefined;
+        const secretCaptureBlocked = !!captureBlockedSuggestion;
+        let suggestion: string | undefined;
+        if (
+          !secretCaptureBlocked &&
+          err.code === 'SELECTOR_NOT_FOUND' &&
+          cmd.method !== 'waitForSelector' &&
+          typeof cmd.params.selector === 'string' &&
+          !cmd.params.selector.startsWith('< ')
+        ) {
+          suggestion = `Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`;
+        } else if (err.suggestion && err.code !== 'SELECTOR_NOT_FOUND') {
+          suggestion = err.suggestion;
+        }
 
-        const triggered = detectVisibleSkills(
+        const body = formatErrorMessage({
+          category: classified.category,
+          code: classified.category === 'UNKNOWN' ? err.code : undefined,
+          prefix,
+          message: err.message,
+          suggestion,
+          recovery: captureBlockedSuggestion ?? classified.recovery,
+          snapshotText:
+            !secretCaptureBlocked && err.snapshot
+              ? formatSnapshot(err.snapshot)
+              : undefined,
+        });
+
+        const triggered =
+          !options.extras || secretCaptureBlocked
+            ? []
+            : detectVisibleSkills(
+                {
+                  snapshot: err.snapshot,
+                  error: err,
+                  cmd,
+                  apiUrl,
+                  authenticated: await hasConnectedStripeLinkWallet(
+                    err.snapshot,
+                  ),
+                },
+                agentSession.skillState,
+                compliant,
+              );
+        if (options.extras) markFired(agentSession.skillState, triggered);
+
+        throw new AgentRunError(
+          [
+            options.extras ? appendSkills(body, triggered, compliant) : body,
+            fatal ? '' : sessionLine(agentSession, compliant),
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+          { kind: 'command', detail: err.message },
+        );
+      }
+
+      const navFailure = classifyNavigationResult(cmd.method, resp.result);
+      if (navFailure) {
+        lastCategory = navFailure.category;
+        lastFailure = commandFailure(resp.result, navFailure.category);
+        throw new AgentRunError(
+          [
+            formatErrorMessage({
+              category: navFailure.category,
+              prefix: `${cmd.method} failed: `,
+              message: `the page did not load — the browser is on ${(resp.result as { url?: string }).url ?? 'an error page'}`,
+              recovery: navFailure.recovery,
+            }),
+            sessionLine(agentSession, compliant),
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+          {
+            kind: 'navigation',
+            detail: (resp.result as { url?: string }).url ?? 'an error page',
+          },
+        );
+      }
+
+      agentSession.secretVisible = secretVisibleAfter(
+        agentSession.secretVisible,
+        cmd.method,
+        resp.result,
+      );
+
+      // Capture the first URL we observe in the batch as a fallback
+      // baseline for the cross-origin notice.
+      if (!crossOriginBaseline) {
+        const r = resp.result as { url?: unknown } | undefined;
+        if (r && typeof r.url === 'string') {
+          crossOriginBaseline = r.url;
+        }
+      }
+
+      if (cmd.method === 'stopRecording') {
+        resp.result = await persistRecording(resp.result, token, mcpSessionId);
+      }
+
+      if (cmd.method === 'liveURL') {
+        const result = resp.result as { liveURLId?: unknown } | undefined;
+        if (typeof result?.liveURLId === 'string') {
+          liveUrlId = result.liveURLId;
+        }
+      }
+      if (cmd.method === 'getDownloads') {
+        completedDownloads.push(
+          ...(
+            (resp.result as { downloads?: DownloadEntry[] } | undefined)
+              ?.downloads ?? []
+          ).filter((download) => !download.inProgress),
+        );
+      }
+      results.push({ ...cmd, result: resp.result });
+    }
+
+    // If the batch ended with close, format the result around the
+    // command before close (close itself has no useful payload).
+    const reportable = closedDuringBatch ? results.slice(0, -1) : results;
+    // Nothing user-facing ran (only close and/or outcome reports), so
+    // there is no page result to format.
+    if (reportable.length === 0) {
+      return [
+        {
+          type: 'text' as const,
+          text: closedDuringBatch
+            ? 'Browser session closed.'
+            : !keepAlive && !createProfile && !attachSessionId
+              ? oneShotClosedNotice(
+                  agentSession.handle,
+                  lateVerdictRecorded || verdict !== undefined,
+                )
+              : 'Done.',
+        },
+      ];
+    }
+    const last = reportable[reportable.length - 1];
+    const lastResult = last.result as Record<string, unknown>;
+    const lastCmd = last;
+
+    const closedSuffix = closedDuringBatch ? '\n\nBrowser session closed.' : '';
+
+    const batchPrefix =
+      commands.length > 1
+        ? `Executed: ${results.map((r) => r.method).join(' → ')}\n\n`
+        : '';
+
+    const lastSnapshot =
+      last.method === SNAPSHOT_METHOD
+        ? (lastResult as unknown as SnapshotResult)
+        : undefined;
+
+    const triggered = options.extras
+      ? detectVisibleSkills(
           {
             snapshot: lastSnapshot,
             cmd: lastCmd,
@@ -1693,342 +1760,350 @@ export function registerAgentTools(
           },
           agentSession.skillState,
           compliant,
+        )
+      : [];
+    if (options.extras) markFired(agentSession.skillState, triggered);
+
+    // The whole batch was just `close` (or close-only after a no-op
+    // prefix that produced nothing reportable).
+    if (!last) {
+      return [{ type: 'text' as const, text: 'Browser session closed.' }];
+    }
+
+    // Auto-surface files Chrome captured this batch so the model needn't call
+    // getDownloads. One-shot calls must not close over an unsuccessful drain.
+    let autoDownloads: DownloadEntry[] = [];
+    if (
+      options.extras &&
+      !closedDuringBatch &&
+      last.method !== 'getDownloads'
+    ) {
+      try {
+        const dl = await send(
+          agentSession,
+          'getDownloads',
+          {},
+          undefined,
+          onSession,
         );
-        markFired(agentSession.skillState, triggered);
-
-        // The whole batch was just `close` (or close-only after a no-op
-        // prefix that produced nothing reportable).
-        if (!last) {
-          return [{ type: 'text' as const, text: 'Browser session closed.' }];
-        }
-
-        // Auto-surface files Chrome captured this batch so the model needn't call
-        // getDownloads. One-shot calls must not close over an unsuccessful drain.
-        let autoDownloads: DownloadEntry[] = [];
-        if (!closedDuringBatch && last.method !== 'getDownloads') {
-          try {
-            const dl = await send(
-              agentSession,
-              'getDownloads',
-              {},
-              undefined,
-              onSession,
-            );
-            if (dl.error) throw new Error('Download poll failed');
-            autoDownloads =
-              (dl.result as { downloads?: DownloadEntry[] } | undefined)
-                ?.downloads ?? [];
-            completedDownloads.push(
-              ...autoDownloads.filter((download) => !download.inProgress),
-            );
-          } catch {
-            if (!keepAlive && !createProfile && !attachSessionId) {
-              throw new UserError(
-                'Commands completed, but download collection failed. ' +
-                  'The session was not closed. Retry getDownloads with this sessionId; ' +
-                  'do not repeat the completed commands.\n\n' +
-                  sessionLine(agentSession, compliant),
-              );
-            }
-            // Reusable sessions can surface downloads on a later call.
-          }
-        }
-        // Completed files are drained by each poll, so preserve earlier batch
-        // results too. Only the final poll describes downloads still in flight.
-        const downloads = [
-          ...completedDownloads,
-          ...(last.method === 'getDownloads'
-            ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
-            : autoDownloads
-          ).filter((download) => download.inProgress),
-        ];
-        downloadsPending =
-          !closedDuringBatch &&
-          downloads.some((download) => download.inProgress);
-
-        // Surface a site-recipe pointer for the URL this batch landed on — the
-        // tool-description prose gate gets skipped/clipped, so push it as a
-        // result. Suppressed on the compliant surface (no site recipes there).
-        const currentUrl =
-          lastSnapshot?.url ??
-          (lastResult as { url?: string } | undefined)?.url ??
-          crossOriginBaseline;
-        if (!compliant) {
-          await hydrateRemoteSkills(
-            currentUrl,
-            apiUrl,
-            token,
-            config,
-            undefined,
-            (event) =>
-              analytics?.fireSkillRetrieval(token, event, mcpSource.source),
+        if (dl.error) throw new Error('Download poll failed');
+        autoDownloads =
+          (dl.result as { downloads?: DownloadEntry[] } | undefined)
+            ?.downloads ?? [];
+        completedDownloads.push(
+          ...autoDownloads.filter((download) => !download.inProgress),
+        );
+      } catch {
+        if (!keepAlive && !createProfile && !attachSessionId) {
+          throw new UserError(
+            'Commands completed, but download collection failed. ' +
+              'The session was not closed. Retry getDownloads with this sessionId; ' +
+              'do not repeat the completed commands.\n\n' +
+              sessionLine(agentSession, compliant),
           );
         }
-        const { skills: renderedSkills, siteNotice } = buildSurfaceExtras(
+        // Reusable sessions can surface downloads on a later call.
+      }
+    }
+    // Completed files are drained by each poll, so preserve earlier batch
+    // results too. Only the final poll describes downloads still in flight.
+    const downloads = [
+      ...completedDownloads,
+      ...(last.method === 'getDownloads'
+        ? ((lastResult?.downloads as DownloadEntry[] | undefined) ?? [])
+        : autoDownloads
+      ).filter((download) => download.inProgress),
+    ];
+    downloadsPending =
+      !closedDuringBatch && downloads.some((download) => download.inProgress);
+
+    // Surface a site-recipe pointer for the URL this batch landed on — the
+    // tool-description prose gate gets skipped/clipped, so push it as a
+    // result. Suppressed on the compliant surface (no site recipes there).
+    const currentUrl =
+      lastSnapshot?.url ??
+      (lastResult as { url?: string } | undefined)?.url ??
+      crossOriginBaseline;
+    if (options.extras && !compliant) {
+      await hydrateRemoteSkills(
+        currentUrl,
+        apiUrl,
+        token,
+        config,
+        undefined,
+        (event) =>
+          analytics?.fireSkillRetrieval(token, event, mcpSource.source),
+      );
+    }
+    const { skills: renderedSkills, siteNotice } = options.extras
+      ? buildSurfaceExtras(
           compliant,
           triggered,
           currentUrl,
           agentSession.skillState.sitesSurfaced,
-        );
-        if (siteNotice && currentUrl) {
-          try {
-            const host = new URL(currentUrl).hostname.toLowerCase();
-            analytics?.fireSkill(token, {
-              skill: `site:${host}`,
-              skill_action: 'surfaced',
-              site_skill: true,
-              host,
-              success: true,
-              api_url: apiUrl,
-              ...mcpSource,
-            });
-          } catch {
-            // malformed URL — nothing to report
-          }
-        }
-        const extraText = [
-          renderedSkills,
-          siteNotice,
-          repeatWarning,
-          downloadsPending &&
-          !keepAlive &&
-          !createProfile &&
-          !attachSessionId &&
-          !closedDuringBatch
-            ? 'Download collection is still in progress. Retry getDownloads with this ' +
-              'sessionId and `keepSessionAlive: false` to close when collection finishes; ' +
-              'do not repeat the completed commands.'
-            : '',
-          closedDuringBatch
-            ? ''
-            : keepAlive || downloadsPending || createProfile || attachSessionId
-              ? sessionLine(agentSession, compliant)
-              : oneShotClosedNotice(
-                  agentSession.handle,
-                  lateVerdictRecorded || verdict !== undefined,
-                ),
-        ]
-          .filter(Boolean)
-          .join('\n\n');
-        const appendExtra = (base: string): string =>
-          extraText ? `${base}\n\n${extraText}` : base;
-
-        const skillsText = extraText;
-        let baseContent: Content[];
-
-        if (lastSnapshot) {
-          // Snapshot: compact ref-based text.
-          const notice = buildCrossOriginNotice(
-            crossOriginBaseline,
-            lastSnapshot.url,
-          );
-          const noticeBlock = notice ? `${notice}\n\n` : '';
-          if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
-          // A peek (targetId ≠ active tab) reads a different tab; it must not
-          // diff against or overwrite the active tab's cache.
-          const targetId = (
-            lastCmd?.params as { targetId?: string } | undefined
-          )?.targetId;
-          const peeking =
-            !!targetId && targetId !== lastSnapshot.activeTargetId;
-          // Active tab changed (switch/create/close) → prior cache is a different
-          // tab; re-baseline with a full snapshot.
-          const switchedTab =
-            lastSnapshot.activeTargetId != null &&
-            agentSession.lastActiveTargetId != null &&
-            lastSnapshot.activeTargetId !== agentSession.lastActiveTargetId;
-          // Send full on first snapshot / cross-origin nav / mid-hydration
-          // baseline / explicit full / peek / tab switch; else diff (shortest-wins).
-          const prevElements = agentSession.lastElements;
-          const prevArr = agentSession.lastSnapshotElements;
-          const hydrating =
-            !!prevElements &&
-            lastSnapshot.elements.length > 0 &&
-            prevElements.size < lastSnapshot.elements.length * 0.25;
-          const forceFull =
-            (lastCmd?.params as { full?: boolean } | undefined)?.full === true;
-          const full = formatSnapshot(lastSnapshot);
-          let snapshotText = full;
-          if (
-            prevElements &&
-            !notice &&
-            !hydrating &&
-            !forceFull &&
-            !peeking &&
-            !switchedTab
-          ) {
-            // Shortest of full / identity-diff / positional-diff wins, so a bad
-            // positional guess (only tried at equal count) can never cost more.
-            const candidates = [
-              full,
-              formatSnapshotDiff(lastSnapshot, prevElements),
-            ];
-            if (prevArr && prevArr.length === lastSnapshot.elements.length) {
-              candidates.push(
-                formatSnapshotDiffPositional(prevArr, lastSnapshot),
-              );
-            }
-            snapshotText = candidates.reduce((a, b) =>
-              b.length < a.length ? b : a,
-            );
-          }
-          // Never let a peek's other-tab elements become the active baseline.
-          if (!peeking) {
-            agentSession.lastElements = indexByIdentity(lastSnapshot);
-            agentSession.lastSnapshotElements = lastSnapshot.elements;
-            agentSession.lastActiveTargetId = lastSnapshot.activeTargetId;
-          }
-          baseContent = [
-            {
-              type: 'text' as const,
-              text: appendExtra(
-                batchPrefix + noticeBlock + snapshotText + closedSuffix,
-              ),
-            },
-          ];
-        } else if (last.method === 'getDownloads') {
-          // Explicit drain.
-          const prefix =
-            batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
-          return await formatDownloads(downloads, prefix, skillsText, {
-            transport: config.transport,
-            sessionId: mcpSessionId,
-            mcpBaseUrl: config.mcpBaseUrl,
-            token,
-          });
-        } else if (last.method === 'stopRecording') {
-          // Video is never inlined → always a single-use download handle.
-          baseContent = formatRecordingToDisk(
-            lastResult,
-            batchPrefix,
-            skillsText,
-            {
-              transport: config.transport,
-              sessionId: mcpSessionId,
-              mcpBaseUrl: config.mcpBaseUrl,
-              token,
-            },
-          );
-        } else if (
-          last.method === 'screenshot' &&
-          lastCmd.params?.toDisk === true
-        ) {
-          // Screenshot saved to disk → reusable handle, no inline image.
-          const saved = await formatScreenshotToDisk(
-            lastResult,
-            lastCmd,
-            batchPrefix,
-            skillsText,
-            {
-              transport: config.transport,
-              sessionId: mcpSessionId,
-              mcpBaseUrl: config.mcpBaseUrl,
-              token,
-            },
-          );
-          baseContent = saved ?? [
-            {
-              type: 'text' as const,
-              text: appendExtra(
-                batchPrefix + JSON.stringify(lastResult, null, 2),
-              ),
-            },
-          ];
-        } else {
-          // Screenshot → image content block; otherwise JSON text.
-          const shot =
-            last.method === 'screenshot'
-              ? formatScreenshotContent(
-                  lastResult,
-                  lastCmd,
-                  batchPrefix,
-                  skillsText,
-                )
-              : null;
-          baseContent = shot ?? [
-            {
-              type: 'text' as const,
-              text: appendExtra(
-                batchPrefix + JSON.stringify(lastResult, null, 2),
-              ),
-            },
-          ];
-        }
-
-        // Append the captured-download notification (metadata only, no bytes).
-        if (downloads.length > 0) {
-          const notice = await formatDownloads(downloads, '', '', {
-            transport: config.transport,
-            sessionId: mcpSessionId,
-            mcpBaseUrl: config.mcpBaseUrl,
-            token,
-          });
-          baseContent = [...baseContent, ...notice];
-        }
-
-        return baseContent;
-      };
-
+        )
+      : { skills: '', siteNotice: '' };
+    if (siteNotice && currentUrl) {
       try {
-        // Resolve any local upload paths to base64 once, before the (possibly
-        // retried) send loop runs.
-        for (const cmd of commands) {
-          await normalizeUploadCommand(
-            cmd,
-            config.transport,
-            config.mcpBaseUrl,
-            token,
-          );
-        }
-        const result = await runCommands(false);
-        if (
-          !keepAlive &&
-          !downloadsPending &&
-          lastSession &&
-          !createProfile &&
-          !attachSessionId
-        ) {
-          closeSession(
-            mcpSessionId,
-            token,
-            proxy,
-            profile,
-            createProfile,
-            attachSessionId,
-            lastSession.handle,
-            integrationId,
-            allowedDomains,
-            undefined,
-            userId,
-          );
-        }
-        sendAnalytics(true);
-        return result;
-      } catch (err) {
-        sendAnalytics(false, err);
-        if (err instanceof Error && completedDownloads.length > 0) {
-          try {
-            const files = await formatDownloads(completedDownloads, '', '', {
-              transport: config.transport,
-              sessionId: mcpSessionId,
-              mcpBaseUrl: config.mcpBaseUrl,
-              token,
-            });
-            err.message += `\n\n${files
-              .filter((content) => content.type === 'text')
-              .map((content) => content.text)
-              .join('\n\n')}`;
-          } catch {
-            // Preserve the original failure even if saving files also fails.
-            err.message += '\n\nCompleted download persistence also failed.';
-          }
-        }
-        if (repeatWarning && err instanceof UserError) {
-          err.message += `\n\n${repeatWarning}`;
-        }
-        throw err;
+        const host = new URL(currentUrl).hostname.toLowerCase();
+        analytics?.fireSkill(token, {
+          skill: `site:${host}`,
+          skill_action: 'surfaced',
+          site_skill: true,
+          host,
+          success: true,
+          api_url: apiUrl,
+          ...mcpSource,
+        });
+      } catch {
+        // malformed URL — nothing to report
       }
-    },
-    format: (content) => content,
-  });
-}
+    }
+    const extraText = [
+      renderedSkills,
+      siteNotice,
+      repeatWarning,
+      downloadsPending &&
+      !keepAlive &&
+      !createProfile &&
+      !attachSessionId &&
+      !closedDuringBatch
+        ? 'Download collection is still in progress. Retry getDownloads with this ' +
+          'sessionId and `keepSessionAlive: false` to close when collection finishes; ' +
+          'do not repeat the completed commands.'
+        : '',
+      closedDuringBatch
+        ? ''
+        : keepAlive || downloadsPending || createProfile || attachSessionId
+          ? sessionLine(agentSession, compliant)
+          : oneShotClosedNotice(
+              agentSession.handle,
+              lateVerdictRecorded || verdict !== undefined,
+            ),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const appendExtra = (base: string): string =>
+      extraText ? `${base}\n\n${extraText}` : base;
+
+    const skillsText = extraText;
+    let baseContent: Content[];
+
+    if (lastSnapshot) {
+      // Snapshot: compact ref-based text.
+      const notice = buildCrossOriginNotice(
+        crossOriginBaseline,
+        lastSnapshot.url,
+      );
+      const noticeBlock = notice ? `${notice}\n\n` : '';
+      if (lastSnapshot.url) agentSession.lastUrl = lastSnapshot.url;
+      // A peek (targetId ≠ active tab) reads a different tab; it must not
+      // diff against or overwrite the active tab's cache.
+      const targetId = (lastCmd?.params as { targetId?: string } | undefined)
+        ?.targetId;
+      const peeking = !!targetId && targetId !== lastSnapshot.activeTargetId;
+      // Active tab changed (switch/create/close) → prior cache is a different
+      // tab; re-baseline with a full snapshot.
+      const switchedTab =
+        lastSnapshot.activeTargetId != null &&
+        agentSession.lastActiveTargetId != null &&
+        lastSnapshot.activeTargetId !== agentSession.lastActiveTargetId;
+      // Send full on first snapshot / cross-origin nav / mid-hydration
+      // baseline / explicit full / peek / tab switch; else diff (shortest-wins).
+      const prevElements = agentSession.lastElements;
+      const prevArr = agentSession.lastSnapshotElements;
+      const hydrating =
+        !!prevElements &&
+        lastSnapshot.elements.length > 0 &&
+        prevElements.size < lastSnapshot.elements.length * 0.25;
+      const forceFull =
+        (lastCmd?.params as { full?: boolean } | undefined)?.full === true;
+      const full = formatSnapshot(lastSnapshot);
+      let snapshotText = full;
+      if (
+        prevElements &&
+        !notice &&
+        !hydrating &&
+        !forceFull &&
+        !peeking &&
+        !switchedTab
+      ) {
+        // Shortest of full / identity-diff / positional-diff wins, so a bad
+        // positional guess (only tried at equal count) can never cost more.
+        const candidates = [
+          full,
+          formatSnapshotDiff(lastSnapshot, prevElements),
+        ];
+        if (prevArr && prevArr.length === lastSnapshot.elements.length) {
+          candidates.push(formatSnapshotDiffPositional(prevArr, lastSnapshot));
+        }
+        snapshotText = candidates.reduce((a, b) =>
+          b.length < a.length ? b : a,
+        );
+      }
+      // Never let a peek's other-tab elements become the active baseline.
+      if (!peeking) {
+        agentSession.lastElements = indexByIdentity(lastSnapshot);
+        agentSession.lastSnapshotElements = lastSnapshot.elements;
+        agentSession.lastActiveTargetId = lastSnapshot.activeTargetId;
+      }
+      baseContent = [
+        {
+          type: 'text' as const,
+          text: appendExtra(
+            batchPrefix + noticeBlock + snapshotText + closedSuffix,
+          ),
+        },
+      ];
+    } else if (last.method === 'getDownloads') {
+      // Explicit drain.
+      const prefix = batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
+      return await formatDownloads(downloads, prefix, skillsText, {
+        transport: config.transport,
+        sessionId: mcpSessionId,
+        mcpBaseUrl: config.mcpBaseUrl,
+        token,
+      });
+    } else if (last.method === 'stopRecording') {
+      // Video is never inlined → always a single-use download handle.
+      baseContent = formatRecordingToDisk(lastResult, batchPrefix, skillsText, {
+        transport: config.transport,
+        sessionId: mcpSessionId,
+        mcpBaseUrl: config.mcpBaseUrl,
+        token,
+      });
+    } else if (
+      last.method === 'screenshot' &&
+      lastCmd.params?.toDisk === true
+    ) {
+      // Screenshot saved to disk → reusable handle, no inline image.
+      const saved = await formatScreenshotToDisk(
+        lastResult,
+        lastCmd,
+        batchPrefix,
+        skillsText,
+        {
+          transport: config.transport,
+          sessionId: mcpSessionId,
+          mcpBaseUrl: config.mcpBaseUrl,
+          token,
+        },
+      );
+      baseContent = saved ?? [
+        {
+          type: 'text' as const,
+          text: appendExtra(batchPrefix + JSON.stringify(lastResult, null, 2)),
+        },
+      ];
+    } else {
+      // Screenshot → image content block; otherwise JSON text.
+      const shot =
+        last.method === 'screenshot'
+          ? formatScreenshotContent(
+              lastResult,
+              lastCmd,
+              batchPrefix,
+              skillsText,
+            )
+          : null;
+      baseContent = shot ?? [
+        {
+          type: 'text' as const,
+          text: appendExtra(batchPrefix + JSON.stringify(lastResult, null, 2)),
+        },
+      ];
+    }
+
+    // Append the captured-download notification (metadata only, no bytes).
+    if (options.extras && downloads.length > 0) {
+      const notice = await formatDownloads(downloads, '', '', {
+        transport: config.transport,
+        sessionId: mcpSessionId,
+        mcpBaseUrl: config.mcpBaseUrl,
+        token,
+      });
+      baseContent = [...baseContent, ...notice];
+    }
+
+    return baseContent;
+  };
+
+  try {
+    // Resolve any local upload paths to base64 once, before the (possibly
+    // retried) send loop runs.
+    for (const cmd of commands) {
+      await normalizeUploadCommand(
+        cmd,
+        config.transport,
+        config.mcpBaseUrl,
+        token,
+      );
+    }
+    const result = await runCommands(false);
+    if (
+      !keepAlive &&
+      !downloadsPending &&
+      lastSession &&
+      !createProfile &&
+      !attachSessionId
+    ) {
+      closeSession(
+        mcpSessionId,
+        token,
+        proxy,
+        profile,
+        createProfile,
+        attachSessionId,
+        lastSession.handle,
+        integrationId,
+        allowedDomains,
+        undefined,
+        userId,
+      );
+    }
+    sendAnalytics(true);
+    return { content: result, results: rawResults };
+  } catch (err) {
+    sendAnalytics(false, err);
+    if (options.closeAfter === 'always' && lastSession) {
+      closeSession(
+        mcpSessionId,
+        token,
+        proxy,
+        profile,
+        createProfile,
+        attachSessionId,
+        lastSession.handle,
+        integrationId,
+        allowedDomains,
+        undefined,
+        userId,
+      );
+    }
+    if (
+      options.extras &&
+      err instanceof Error &&
+      completedDownloads.length > 0
+    ) {
+      try {
+        const files = await formatDownloads(completedDownloads, '', '', {
+          transport: config.transport,
+          sessionId: mcpSessionId,
+          mcpBaseUrl: config.mcpBaseUrl,
+          token,
+        });
+        err.message += `\n\n${files
+          .filter((content) => content.type === 'text')
+          .map((content) => content.text)
+          .join('\n\n')}`;
+      } catch {
+        // Preserve the original failure even if saving files also fails.
+        err.message += '\n\nCompleted download persistence also failed.';
+      }
+    }
+    if (options.extras && repeatWarning && err instanceof UserError) {
+      err.message += `\n\n${repeatWarning}`;
+    }
+    throw err;
+  }
+};

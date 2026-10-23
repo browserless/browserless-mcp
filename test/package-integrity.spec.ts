@@ -1,11 +1,22 @@
 import { expect } from 'chai';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import {
+  readFileSync,
+  readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  copyFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 const root = process.cwd();
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const conditionalCapability =
+  'this.#capabilities.tools = globalThis.__browserlessMcpStaticTools ? {} : { listChanged: true };';
 
 const distDir = () =>
   dirname(createRequire(import.meta.url).resolve('fastmcp'));
@@ -65,19 +76,62 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     ).to.match(/^\d+\.\d+\.\d+$/);
   });
 
-  it('has enabled tools.listChanged in the installed fastmcp', () => {
+  it('makes tools.listChanged conditional in the installed fastmcp', () => {
     const sources = distSources();
     expect(
-      sources.some((c) =>
-        c.includes('this.#capabilities.tools = { listChanged: true }'),
-      ),
+      sources.some((c) => c.includes(conditionalCapability)),
       'fastmcp dist should carry the listChanged capability',
     ).to.equal(true);
     expect(
       sources.some((c) => c.includes('this.#capabilities.tools = {};')),
       'no fastmcp dist file should retain the unpatched capability',
     ).to.equal(false);
+    expect(
+      sources.some((c) =>
+        c.includes('this.#capabilities.tools = { listChanged: true };'),
+      ),
+    ).to.equal(false);
   });
+
+  for (const original of [
+    'this.#capabilities.tools = {};',
+    'this.#capabilities.tools = { listChanged: true };',
+    conditionalCapability,
+    'this.#capabilities.tools = unexpected;',
+  ]) {
+    it(`patches or rejects a capability fixture: ${original}`, () => {
+      const fixture = mkdtempSync(join(tmpdir(), 'fastmcp-patch-'));
+      try {
+        const dist = join(fixture, 'node_modules/fastmcp/dist');
+        mkdirSync(dist, { recursive: true });
+        writeFileSync(
+          join(dist, '../package.json'),
+          JSON.stringify({ main: 'dist/FastMCP.cjs' }),
+        );
+        writeFileSync(join(dist, 'FastMCP.cjs'), '');
+        const chunk = join(dist, 'chunk.js');
+        writeFileSync(chunk, original);
+        const script = join(fixture, 'patch-fastmcp.mjs');
+        copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+        const run = () =>
+          execFileSync(process.execPath, [script], {
+            encoding: 'utf8',
+            stdio: 'pipe',
+          });
+        if (original.includes('unexpected')) {
+          expect(run).to.throw('target not found');
+          expect(readFileSync(chunk, 'utf8')).to.equal(original);
+        } else {
+          run();
+          expect(readFileSync(chunk, 'utf8')).to.equal(conditionalCapability);
+          expect(run()).to.include('tools.listChanged: already patched');
+          expect(readFileSync(chunk, 'utf8')).to.equal(conditionalCapability);
+        }
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+    });
+  }
 
   it('pins mcp-proxy to an exact version', () => {
     // The script also edits mcp-proxy's built dist.
@@ -104,12 +158,14 @@ describe('package integrity — installable by --omit=dev consumers', () => {
 
   it('re-runs idempotently without error', () => {
     const script = join(root, 'scripts', 'patch-fastmcp.mjs');
+    const before = distSources();
     expect(() =>
       execFileSync(process.execPath, [script], { stdio: 'pipe' }),
     ).to.not.throw();
     expect(
-      distSources().some((c) => c.includes('listChanged: true')),
+      distSources().some((c) => c.includes(conditionalCapability)),
       'capability must remain enabled after a second run',
     ).to.equal(true);
+    expect(distSources()).to.deep.equal(before);
   });
 });
