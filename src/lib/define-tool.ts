@@ -174,6 +174,11 @@ export function assertHttpScheme(url: string): void {
   }
 }
 
+export const ACCOUNT_LIMIT_MESSAGE =
+  "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time).";
+export const isAccountLimitMessage = (message: string): boolean =>
+  /browserless\.io\/account|upgrade (?:your|the|to a paid) plan/i.test(message);
+
 export function defineTool<P, R>(
   server: FastMCP,
   config: McpConfig,
@@ -406,6 +411,13 @@ export function defineTool<P, R>(
           });
         }
 
+        if (
+          config.complianceMode &&
+          error instanceof Error &&
+          isAccountLimitMessage(error.message)
+        ) {
+          throw new UserError(ACCOUNT_LIMIT_MESSAGE);
+        }
         throw error;
       }
     },

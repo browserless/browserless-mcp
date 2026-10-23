@@ -5,10 +5,8 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 // Edits built dists that expose no option for the behaviour we need:
 //
-// 1. fastmcp advertises `tools: {}` and exposes no option to enable
-//    `listChanged`, so clients never re-fetch when our tool surface changes.
-//    The capability lives in a private field (`#capabilities.tools`) set inside
-//    FastMCPSession.
+// 1. fastmcp advertises `listChanged` itself; make it conditional on our
+//    start-up flag so the connector advertises a static tool list.
 // 2. mcp-proxy, fastmcp's HTTP layer, bundles @hono/node-server, whose stream
 //    writer ends each chunk with `return reader.read().then(flow, ...)`. The
 //    returned promise makes every chunk's promise adopt the next one, so a
@@ -53,7 +51,8 @@ const patch = ({ name, dist, files, from, to, required = true }) => {
   for (const file of entries.filter((f) => files.test(f))) {
     const path = join(dist, file);
     const src = readFileSync(path, 'utf8');
-    const updated = src.replaceAll(to, from).replaceAll(from, to);
+    const unpatched = typeof from === 'string' ? src.replaceAll(to, from) : src;
+    const updated = unpatched.replaceAll(from, to);
     if (updated !== src) {
       writeFileSync(path, updated);
       changed++;
@@ -88,8 +87,8 @@ patch({
   name: 'tools.listChanged',
   dist: dirname(fastmcpEntry),
   files: /\.(cjs|js)$/,
-  from: 'this.#capabilities.tools = {};',
-  to: 'this.#capabilities.tools = { listChanged: true };',
+  from: /this\.#capabilities\.tools = (?:\{\}|\{ listChanged: true \});/g,
+  to: 'this.#capabilities.tools = globalThis.__browserlessMcpStaticTools ? {} : { listChanged: true };',
 });
 
 // mcp-proxy is pinned only for our own installs (package.json overrides); npm

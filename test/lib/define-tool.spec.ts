@@ -106,6 +106,42 @@ describe('defineTool analytics', () => {
   beforeEach(() => mockContext.reportProgress.resetHistory());
   afterEach(() => sinon.restore());
 
+  for (const message of [
+    'Your account has run out of credits, please upgrade your plan https://browserless.io/account/upgrade',
+    "You've reached the units usage limit allowed under our free plan, please upgrade to a paid plan at https://browserless.io/account/upgrade",
+    'Your account is now in overage, please upgrade your plan',
+    'Spend limit reached; account settings at https://browserless.io/account/settings',
+    'Use a smaller timeout, or upgrade your plan for a longer session.',
+    'Concurrency limit reached (429): upgrade the plan, then start over.',
+    "Couldn't read the page: the browser could not start (HTTP 401): please upgrade your plan",
+    'Export failed (status 404): nope',
+    'Map failed: URLs targeting private/internal networks are not allowed',
+  ])
+    for (const complianceMode of [true, false])
+      for (const phase of ['run', 'format']) {
+        it(`maps only connector allowance messages (${complianceMode}, ${phase}, ${message})`, async () => {
+          const original = new UserError(message);
+          const { execute, fire } = register(
+            {
+              [phase]: async () => {
+                throw original;
+              },
+            },
+            { ...mockConfig, complianceMode },
+          );
+          const error = await rejects(execute({}, mockContext as never));
+          const limited =
+            !message.startsWith('Export failed') &&
+            !message.startsWith('Map failed');
+          expect(error.message).to.equal(
+            complianceMode && limited
+              ? "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time)."
+              : message,
+          );
+          expect(fire.calledOnce).to.equal(true);
+        });
+      }
+
   it('preserves structured thrown status without guessing its origin or leaking text', async () => {
     const { execute, props } = register({
       run: async () => {

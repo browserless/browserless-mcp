@@ -1,27 +1,13 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
-import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
-import { registerFunctionTool } from '../../src/tools/function.js';
-import { registerExportTool } from '../../src/tools/export.js';
-import { registerAgentTools } from '../../src/tools/agent.js';
-import { registerSearchTool } from '../../src/tools/search.js';
-import { registerMapTool } from '../../src/tools/map.js';
-import { registerCrawlTool } from '../../src/tools/crawl.js';
-import { registerPerformanceTool } from '../../src/tools/performance.js';
-import { registerAccountTool } from '../../src/tools/account.js';
-import { registerUsageTool } from '../../src/tools/usage.js';
-import { registerSessionsTool } from '../../src/tools/sessions.js';
-import { registerLiveURLTool } from '../../src/tools/live-url.js';
-import { registerLogsTool } from '../../src/tools/logs.js';
-import { registerStripeLinkConnectTool } from '../../src/tools/link-connect.js';
-import { registerStripeLinkCheckoutTool } from '../../src/tools/link-checkout.js';
+import { registerSurface } from '../../src/tools/register.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
   browserlessApiUrl: 'https://api.example.com',
-  transport: 'stdio',
+  transport: 'httpStream',
   port: 8080,
   requestTimeout: 30000,
   maxRetries: 0,
@@ -39,26 +25,6 @@ const mockConfig: McpConfig = {
   oauthAllowedRedirectUriPatterns: [],
 };
 
-// Every register function used by src/index.ts. registerAgentTools registers
-// two tools (browserless_skill + browserless_agent); the rest register one.
-const registrars = [
-  registerSmartScraperTool,
-  registerFunctionTool,
-  registerExportTool,
-  registerAgentTools,
-  registerSearchTool,
-  registerMapTool,
-  registerCrawlTool,
-  registerPerformanceTool,
-  registerAccountTool,
-  registerUsageTool,
-  registerSessionsTool,
-  registerLogsTool,
-  registerLiveURLTool,
-  registerStripeLinkConnectTool,
-  registerStripeLinkCheckoutTool,
-];
-
 // MCP clients (notably OpenAI) reject any tool that does not set all three
 // behavioural hints to an explicit boolean. fastmcp forwards `annotations`
 // verbatim into tools/list, so the hint must live on every tool's annotations.
@@ -71,23 +37,37 @@ const REQUIRED_HINTS = [
 describe('tool annotations', () => {
   afterEach(() => sinon.restore());
 
-  it('every registered tool sets all three behavioural hints as booleans', () => {
-    const server = new FastMCP({ name: 'test', version: '0.1.0' });
-    const addToolSpy = sinon.spy(server, 'addTool');
+  for (const complianceMode of [true, false]) {
+    it(`every ${complianceMode ? 'connector' : 'full'} tool sets all three behavioural hints as booleans`, () => {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const addToolSpy = sinon.spy(server, 'addTool');
 
-    registrars.forEach((register) => register(server, mockConfig));
+      registerSurface(server, { ...mockConfig, complianceMode });
 
-    expect(addToolSpy.callCount).to.be.greaterThan(0);
+      expect(addToolSpy.callCount).to.equal(complianceMode ? 5 : 19);
 
-    addToolSpy.getCalls().forEach((call) => {
-      const tool = call.args[0];
-      const annotations = tool.annotations ?? {};
-      REQUIRED_HINTS.forEach((hint) => {
-        expect(
-          annotations[hint],
-          `${tool.name} is missing ${hint} (must be an explicit boolean)`,
-        ).to.be.a('boolean');
+      addToolSpy.getCalls().forEach((call) => {
+        const tool = call.args[0];
+        const annotations = tool.annotations ?? {};
+        REQUIRED_HINTS.forEach((hint) => {
+          expect(
+            annotations[hint],
+            `${tool.name} is missing ${hint} (must be an explicit boolean)`,
+          ).to.be.a('boolean');
+        });
+        if (complianceMode) {
+          expect(
+            Object.fromEntries(
+              REQUIRED_HINTS.map((hint) => [hint, annotations[hint]]),
+            ),
+            tool.name,
+          ).to.deep.equal({
+            readOnlyHint: true,
+            destructiveHint: false,
+            openWorldHint: true,
+          });
+        }
       });
     });
-  });
+  }
 });
