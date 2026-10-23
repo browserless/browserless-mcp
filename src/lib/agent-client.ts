@@ -1513,6 +1513,8 @@ export const send = async (
   }
 };
 
+export class SessionCloseConflictError extends Error {}
+
 export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
@@ -1538,18 +1540,26 @@ export const closeSession = (
     allowedDomains,
     userId,
   );
+  closeSessionByKey(key, onSession);
+};
+
+/** Close the exact cached key, including profile, attach, and integration scope. */
+const closeSessionByKey = (
+  key: string,
+  onSession?: (reused: boolean, ageMs: number) => void,
+): void => {
   const session = sessions.get(key);
   if (session) {
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     if (stripeLinkOperations.has(session)) {
-      throw new Error(
+      throw new SessionCloseConflictError(
         'A Stripe Link checkout operation is in progress in this browser. Wait for it to finish before closing the browser.',
       );
     }
     clearExpiredStripeLinkContinuation(session);
     if (session.stripeLinkContinuation) {
       const action = session.stripeLinkContinuation.allowedNextAction;
-      throw new Error(
+      throw new SessionCloseConflictError(
         action === 'resume'
           ? 'A Stripe Link checkout is pending in this browser. Resume or cancel it before closing the browser.'
           : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',
@@ -1570,6 +1580,28 @@ export const closeSession = (
   retainedPersonas.delete(key);
   retainedProxies.delete(key);
   retainedProfiles.delete(key);
+};
+
+/** Handles are token/user scoped but can identify more than one integration binding. */
+export const closeSessionByHandle = (
+  handle: string,
+  token: string,
+  userId?: string,
+): boolean => {
+  const matches = [...sessions.entries()].filter(
+    ([, session]) =>
+      session.handle === handle &&
+      session.token === token &&
+      session.userId === userId,
+  );
+  if (matches.length > 1) {
+    throw new SessionCloseConflictError(
+      'Multiple browser sessions match this handle. Close the session with its original scope using browserless_agent.',
+    );
+  }
+  if (!matches.length) return false;
+  closeSessionByKey(matches[0][0]);
+  return true;
 };
 
 /**

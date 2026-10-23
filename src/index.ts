@@ -10,6 +10,7 @@ import { registerSurface } from './tools/register.js';
 import { serverInstructions } from './skills/system-prompt.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
+import { registerCloseRoute } from './resources/close-route.js';
 import { clearSession } from './lib/download-store.js';
 import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
 import {
@@ -321,6 +322,8 @@ if (config.transport === 'httpStream') {
   // Single-use, out-of-band fetch for captured downloads (the LLM GETs the file
   // instead of pulling bytes through the conversation). httpStream only.
   registerDownloadRoute(server, config);
+
+  registerCloseRoute(server, config);
   console.error(
     `[browserless-mcp] HTTP Streamable server listening on port ${config.port}`,
   );
