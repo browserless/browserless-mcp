@@ -99,7 +99,7 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full mode registers exactly the 16 tools (regression guard)', () => {
+  it('full mode registers exactly the 17 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -109,6 +109,7 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_function',
       'browserless_link_checkout',
       'browserless_link_connect',
+      'browserless_live_url',
       'browserless_logs',
       'browserless_map',
       'browserless_performance',
@@ -344,9 +345,15 @@ describe('compliance mode — compliant tool surface', () => {
   });
 
   describe('skill tool', () => {
-    it('enum excludes captchas/autonomous-login/auth-profile, keeps others', () => {
+    it('enum excludes authentication and captcha skills, keeps others', () => {
       const skill = captureTools(true).byName.get('browserless_skill')!;
-      for (const id of ['captchas', 'autonomous-login', 'auth-profile']) {
+      for (const id of [
+        'captchas',
+        'autonomous-login',
+        'autonomous-registration',
+        'auth-profile',
+        'profile-import',
+      ]) {
         expect(
           skill.parameters.safeParse({ id }).success,
           `skill ${id} must be rejected`,

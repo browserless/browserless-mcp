@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.39.0](https://github.com/browserless/browserless-mcp/compare/v1.38.0...v1.39.0) (2026-10-16)
+
+
+### Features
+
+* add autonomous registration and vault discovery guidance ([#404](https://github.com/browserless/browserless-mcp/issues/404)) ([0a88c51](https://github.com/browserless/browserless-mcp/commit/0a88c51f058d8560c0bcbaefe915cb03ad7efb1a))
+* attribute skill outcomes to the loaded recipe version ([#403](https://github.com/browserless/browserless-mcp/issues/403)) ([dfea5ff](https://github.com/browserless/browserless-mcp/commit/dfea5ff6dfa119c24a691e9fa3b9413ba1a49e9c))
+* guide local profile imports through consent ([#422](https://github.com/browserless/browserless-mcp/issues/422)) ([df547b7](https://github.com/browserless/browserless-mcp/commit/df547b790d721e14ada9d11c7e180f89c30a10ea))
+* list the server in the official MCP Registry as io.browserless/mcp ([#418](https://github.com/browserless/browserless-mcp/issues/418)) ([231b903](https://github.com/browserless/browserless-mcp/commit/231b903184a9b9ad59fc02dcf1b1684ecd970aed))
+
+
+### Bug Fixes
+
+* ensure replays can be downloaded in full without limiting context AUTO-607 ([#419](https://github.com/browserless/browserless-mcp/issues/419)) ([05516d6](https://github.com/browserless/browserless-mcp/commit/05516d64b56ef3b57999546bd8c67a7124d69642))
+
+## [1.38.0](https://github.com/browserless/browserless-mcp/compare/v1.37.1...v1.38.0) (2026-10-12)
+
+
+### Features
+
+* get PDF output from smartscrape AUTO-579 ([#398](https://github.com/browserless/browserless-mcp/issues/398)) ([a22118a](https://github.com/browserless/browserless-mcp/commit/a22118a72a306edae0f6039f5c2deb0fec04938b))
+
+
+### Bug Fixes
+
+* enhance performance measure tool to decrease context costs AUTO-570 ([#401](https://github.com/browserless/browserless-mcp/issues/401)) ([42283ac](https://github.com/browserless/browserless-mcp/commit/42283ac1ff69eb0f7dafb455830e2c7f48485fe4))
+* record agent outcomes after one-shot sessions close ([#395](https://github.com/browserless/browserless-mcp/issues/395)) ([239679c](https://github.com/browserless/browserless-mcp/commit/239679c40035e8454c647100f5f42ef2a53feda0))
+* stop long-lived SSE streams from retaining a promise per event ([#400](https://github.com/browserless/browserless-mcp/issues/400)) ([ebc2934](https://github.com/browserless/browserless-mcp/commit/ebc29345f4a4d6ff9bbef5162ad0dc550fbd7eae))
+
+## [1.37.1](https://github.com/browserless/browserless-mcp/compare/v1.37.0...v1.37.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* download session replays through signed links ([#370](https://github.com/browserless/browserless-mcp/issues/370)) ([81f8cb6](https://github.com/browserless/browserless-mcp/commit/81f8cb61f923db505ec7688d78dc53512012fba4))
+
+## [1.37.0](https://github.com/browserless/browserless-mcp/compare/v1.36.0...v1.37.0) (2026-10-08)
+
+
+### Features
+
+* add REST liveURL management tools AUTO-541 ([#391](https://github.com/browserless/browserless-mcp/issues/391)) ([d0dfac4](https://github.com/browserless/browserless-mcp/commit/d0dfac4a3a08f06355b85b9265b7964a2840751e))
+* export OpenTelemetry metrics and logs over OTLP ([#390](https://github.com/browserless/browserless-mcp/issues/390)) ([2950920](https://github.com/browserless/browserless-mcp/commit/2950920ebe76a1ec303410de3cbd407b131387d9))
+
+
+### Bug Fixes
+
+* derive tool failure reasons from recorded status ([#376](https://github.com/browserless/browserless-mcp/issues/376)) ([94c2e95](https://github.com/browserless/browserless-mcp/commit/94c2e95b4c59779b218a6f6a4b9c4b5fc4937a08))
+* preserve OAuth token lifetimes in responses and cache ([#388](https://github.com/browserless/browserless-mcp/issues/388)) ([bb9fe23](https://github.com/browserless/browserless-mcp/commit/bb9fe2306cc49d5ba41814065ccce23ad56b53c0))
+* start the response-cache sweep timer lazily to stop a per-call timer leak ([#393](https://github.com/browserless/browserless-mcp/issues/393)) ([eb0a332](https://github.com/browserless/browserless-mcp/commit/eb0a332efd0ea79917377bf8e483747dae9f3b71))
+
 ## [1.36.0](https://github.com/browserless/browserless-mcp/compare/v1.35.0...v1.36.0) (2026-10-05)
 
 

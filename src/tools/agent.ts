@@ -18,6 +18,7 @@ import {
 } from '../lib/download-store.js';
 import {
   buildAgentWsUrl,
+  getActiveSessionByHandle,
   getOrCreateSession,
   send,
   closeSession,
@@ -58,6 +59,9 @@ import {
   renderSiteSkillList,
   siteRecipeNotice,
   hydrateRemoteSkills,
+  verifySkillReceipt,
+  type SiteSkill,
+  type SkillReceipt,
 } from '../skills/sites.js';
 import {
   AgentToolParamsSchema,
@@ -114,6 +118,8 @@ const SECRET_SAFE_METHODS = new Set([
   'scroll',
   'waitForSelector',
   'waitForTimeout',
+  // Result carries only url, status and elapsed time.
+  'waitForResponse',
   'uploadFile',
   'saveProfile',
   // Saving registers values for redaction but neither arms nor reads the capture gate.
@@ -124,11 +130,13 @@ const SECRET_SAFE_METHODS = new Set([
   'reportProfileAuthentication',
   'close',
 ]);
+// Commands after which a completed top-frame navigation has replaced the page.
 const TOP_FRAME_NAVIGATION_METHODS = new Set([
   'goto',
   'back',
   'forward',
   'reload',
+  'waitForNavigation',
 ]);
 
 export const validateSecretCaptureOrdering = (
@@ -328,6 +336,7 @@ export const normalizeUploadCommand = async (
       }
       buf = await readFile(record.path);
       defaultName = record.filename;
+      if (f.mimeType === undefined) f.mimeType = record.mimeType;
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
@@ -416,7 +425,7 @@ type FormatOpts = {
 // stdio: file is already on the local disk → return its path (reuse as
 // uploadFile { path }). http: return a single-use GET URL + handle; base64
 // never enters context, and fetching consumes the file.
-const describeReadyDownload = (
+export const describeReadyDownload = (
   record: StoredDownload,
   opts: FormatOpts,
 ): string => {
@@ -426,7 +435,13 @@ const describeReadyDownload = (
       `reuse as uploadFile { path: "${record.path}" }`
     );
   }
-  const base = opts.mcpBaseUrl ?? '<MCP_BASE_URL>';
+  const baseUrl = URL.parse(opts.mcpBaseUrl ?? '');
+  const base =
+    baseUrl &&
+    ['http:', 'https:'].includes(baseUrl.protocol) &&
+    !/[?#]/.test(baseUrl.href)
+      ? baseUrl.href.replace(/\/+$/, '')
+      : '<MCP_BASE_URL>';
   const tokenQ = `?token=${
     opts.token === undefined
       ? '<YOUR_BROWSERLESS_TOKEN>'
@@ -434,6 +449,9 @@ const describeReadyDownload = (
   }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
+    (base === '<MCP_BASE_URL>'
+      ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server, without a query or fragment.\n'
+      : '') +
     `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
     `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
   );
@@ -573,6 +591,7 @@ type SkillToolParams = { id?: string; site?: string };
 export const buildSkillEventProps = (
   params: SkillToolParams,
   body: string,
+  loaded?: { skill: SiteSkill; receipt?: SkillReceipt },
 ): Record<string, unknown> => {
   const listingSite = params.site !== undefined;
   const siteSkillLoad = !listingSite && !!params.id?.includes('/');
@@ -586,6 +605,13 @@ export const buildSkillEventProps = (
         ? params.id!.split('/')[0]
         : undefined,
     success: !!body,
+    ...(loaded?.receipt
+      ? {
+          loaded_version: loaded.receipt.loaded_version,
+          domain: loaded.skill.host,
+          task: loaded.skill.slug,
+        }
+      : {}),
   };
 };
 
@@ -620,7 +646,7 @@ type AgentToolParams = Omit<AgentParams, 'method' | 'params'> & {
 
 export const closeReminder = (compliant: boolean): string =>
   `This kept-alive browser holds a concurrency slot until closed or reaped when idle. ` +
-  `When the task is done or you are giving up, end your last batch with ` +
+  `When the task is done or you are giving up, and you have seen the final results, end your last batch with ` +
   (compliant
     ? ''
     : '`reportSkillOutcome` (only if you loaded a site recipe; its footer has the exact call), then ') +
@@ -628,9 +654,18 @@ export const closeReminder = (compliant: boolean): string =>
   `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
 
-const ONE_SHOT_CLOSED_NOTICE =
-  'Browser session closed (one-shot). If you still needed this browser, ' +
+const oneShotClosedNotice = (handle: string, reported: boolean): string =>
+  'Browser session closed (one-shot). ' +
+  (reported
+    ? ''
+    : `Once you've checked these results, report whether the task worked: call browserless_agent with \`{ "sessionId": "${handle}", "commands": [{ "method": "reportOutcome", "params": { "success": <bool> } }] }\`. This opens no browser; use this id only for that report. `) +
+  'If you still needed this browser, ' +
   'set `keepSessionAlive: true` on your FIRST call next time.';
+
+const isReportOnly = (commands: Array<{ method: string }>): boolean =>
+  commands.every((c) =>
+    ['reportOutcome', 'reportSkillOutcome', 'close'].includes(c.method),
+  ) && commands.some((c) => c.method === 'reportOutcome');
 
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
@@ -682,7 +717,7 @@ export function registerAgentTools(
       destructiveHint: false,
       openWorldHint: false,
     },
-    run: async ({ params, analytics, mcpSource, token, apiUrl }) => {
+    run: async ({ params, analytics, mcpSource, token, apiUrl, sessionId }) => {
       const id = params.id ?? '';
       // Compliant: no `site` recipes; only allowlisted in-house skills. The enum
       // already blocks other ids — this guard is defense-in-depth for a bypass.
@@ -703,13 +738,17 @@ export function registerAgentTools(
             analytics?.fireSkillRetrieval(token, event, mcpSource.source),
         );
       }
+      const loaded =
+        !compliant && params.site === undefined && id.includes('/')
+          ? (loadSiteSkill(id, { token, mcpSessionId: sessionId }) ?? undefined)
+          : undefined;
       const body = compliant
         ? renderSkill(id as SkillId, true)
         : params.site !== undefined
           ? renderSiteSkillList(params.site)
-          : renderSkill(id as SkillId, false) || loadSiteSkill(id) || '';
+          : renderSkill(id as SkillId, false) || loaded?.body || '';
       analytics?.fireSkill(token, {
-        ...buildSkillEventProps(params, body),
+        ...buildSkillEventProps(params, body, loaded),
         api_url: apiUrl,
         ...mcpSource,
       });
@@ -960,6 +999,15 @@ export function registerAgentTools(
         );
       }
       const echoedSessionId = params.sessionId;
+      if (
+        attachSessionId &&
+        typeof params.sessionId === 'string' &&
+        params.sessionId !== `attach:${attachSessionId}`
+      ) {
+        log.warn(
+          `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+        );
+      }
       const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
       // Whether the caller threaded the handle is the difference between one
       // browser per conversation and one per call — log it, don't infer it.
@@ -975,6 +1023,15 @@ export function registerAgentTools(
       let sessionAgeMs = 0;
       let repeatCount = 0;
       let repeatWarning = '';
+      let agentSessionHandle: string | null = echoedSessionId ?? null;
+      let lateVerdictRecorded = false;
+      let verdict:
+        | {
+            self_reported_success: boolean;
+            outcome_reason?: string;
+            verdict_delivery: 'late' | 'in_session';
+          }
+        | undefined;
       const onSession = (reused: boolean, ageMs: number) => {
         sessionReused = reused;
         sessionAgeMs = ageMs;
@@ -1002,6 +1059,8 @@ export function registerAgentTools(
           session_reused: sessionReused,
           session_age_ms: sessionAgeMs,
           keep_session_alive: keepAlive,
+          agent_session_handle: agentSessionHandle,
+          ...verdict,
           methods: commands.map((c) => c.method).join(','),
           command_count: commands.length,
           repeat_count: repeatCount,
@@ -1061,6 +1120,45 @@ export function registerAgentTools(
         );
         sendAnalytics(true);
         return [{ type: 'text' as const, text: 'Browser session closed.' }];
+      }
+
+      if (isReportOnly(commands) && !attachSessionId && !createProfile) {
+        let live = false;
+        if (echoedSessionId) {
+          try {
+            getActiveSessionByHandle(echoedSessionId, apiUrl, token, userId);
+            live = true;
+          } catch {
+            // A missing or disconnected session must not be reopened for a verdict.
+          }
+        }
+        if (!live) {
+          const report = commands
+            .filter((c) => c.method === 'reportOutcome')
+            .at(-1)!;
+          verdict = {
+            self_reported_success: report.params.success as boolean,
+            ...(report.params.reason
+              ? { outcome_reason: report.params.reason as string }
+              : {}),
+            verdict_delivery: 'late',
+          };
+          const remaining = commands.filter(
+            (c) => c.method !== 'reportOutcome',
+          );
+          sendAnalytics(true);
+          lateVerdictRecorded = true;
+          if (remaining.every((c) => c.method === 'close')) {
+            return [
+              {
+                type: 'text' as const,
+                text: 'Outcome recorded. No browser was opened.',
+              },
+            ];
+          }
+          verdict = undefined;
+          commands = remaining;
+        }
       }
 
       try {
@@ -1134,6 +1232,7 @@ export function registerAgentTools(
           sendAnalytics(false, connErr);
           throw new UserError(formatConnectError(connErr));
         }
+        agentSessionHandle = opened.handle;
         sendAnalytics(true);
         const text = createProfile
           ? `Profile-creation session "${createProfile.name}" is open (non-headless). Send commands to drive the login, then call saveProfile.`
@@ -1201,6 +1300,7 @@ export function registerAgentTools(
           return runCommands(true, retryPersona);
         }
         lastSession = agentSession;
+        agentSessionHandle = agentSession.handle;
         const repetition = detectRepetition(agentSession.repeatState, commands);
         repeatCount = repetition.count;
         repeatWarning =
@@ -1275,15 +1375,28 @@ export function registerAgentTools(
             try {
               // Provenance is assigned by the server, never by the agent.
               const params = { ...cmd.params };
-              if (cmd.method === 'reportSkillOutcome')
+              if (cmd.method === 'reportSkillOutcome') {
                 delete params.outcome_source;
-              await send(
+                delete params.attribution_status;
+                if (verifySkillReceipt(agentSession.token, params))
+                  params.attribution_status = 'matched';
+              }
+              const response = await send(
                 agentSession,
                 cmd.method,
                 params,
                 undefined,
                 onSession,
               );
+              if (cmd.method === 'reportOutcome' && !response.error) {
+                verdict = {
+                  self_reported_success: params.success as boolean,
+                  ...(params.reason
+                    ? { outcome_reason: params.reason as string }
+                    : {}),
+                  verdict_delivery: 'in_session',
+                };
+              }
             } catch {
               // noop
             }
@@ -1542,7 +1655,10 @@ export function registerAgentTools(
               text: closedDuringBatch
                 ? 'Browser session closed.'
                 : !keepAlive && !createProfile && !attachSessionId
-                  ? ONE_SHOT_CLOSED_NOTICE
+                  ? oneShotClosedNotice(
+                      agentSession.handle,
+                      lateVerdictRecorded || verdict !== undefined,
+                    )
                   : 'Done.',
             },
           ];
@@ -1685,7 +1801,10 @@ export function registerAgentTools(
             ? ''
             : keepAlive || downloadsPending || createProfile || attachSessionId
               ? sessionLine(agentSession, compliant)
-              : ONE_SHOT_CLOSED_NOTICE,
+              : oneShotClosedNotice(
+                  agentSession.handle,
+                  lateVerdictRecorded || verdict !== undefined,
+                ),
         ]
           .filter(Boolean)
           .join('\n\n');

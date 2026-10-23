@@ -33,6 +33,11 @@ const LOGIN_URL_RE =
 const LOGIN_NUDGE_RE =
   /sign in to (view|see|continue|access|read|comment|post|reply|save|order|buy|checkout|your account)|please sign in|signed out\b.*sign in|create (an )?account to/i;
 
+const REGISTRATION_URL_RE =
+  /\/(register|registration|sign-?up|create[-_]?account|join)(?:[/?#.-]|$)|\/account\/create/i;
+const REGISTRATION_NUDGE_RE =
+  /\b(create (an? |your |new )?(free )?account|sign ?up|register|join (now|free|us|today))\b/i;
+
 const TAB_ERROR_CODES = ['TAB_NOT_FOUND', 'TAB_CLOSED', 'TAB_LIMIT_EXCEEDED'];
 const TAB_COMMAND_METHODS = ['getTabs', 'switchTab', 'createTab', 'closeTab'];
 
@@ -225,11 +230,35 @@ const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    id: 'autonomous-registration',
+    path: 'src/skills/autonomous-registration.md',
+    triggers: [
+      [{ kind: 'snapshot.url-match', regex: REGISTRATION_URL_RE }],
+      [
+        {
+          kind: 'snapshot.has-element',
+          roles: ['button', 'link'],
+          nameRegex: REGISTRATION_NUDGE_RE,
+        },
+      ],
+      // The vault write itself: injects beside the saveSecret result, which is
+      // where a VaultAmbiguous / IntegrationNotWritable outcome is read.
+      [{ kind: 'command.method', methods: ['saveSecret'] }],
+    ],
+  },
+  {
     // No auto-fire triggers: there is no snapshot/error/command signal for
     // "about to create a profile". The model loads it by id via
     // browserless_skill, prompted by the createProfile field description.
     id: 'auth-profile',
     path: 'src/skills/auth-profile.md',
+    triggers: [],
+  },
+  {
+    // No snapshot signal: load by id, prompted by server instructions
+    // and the profiles empty state, never auto-injected.
+    id: 'profile-import',
+    path: 'src/skills/profile-import.md',
     triggers: [],
   },
   {

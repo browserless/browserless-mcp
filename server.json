@@ -1,0 +1,57 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.browserless/mcp",
+  "title": "Browserless",
+  "description": "Official Browserless MCP server: browser automation, scraping, screenshots and PDFs for AI agents.",
+  "websiteUrl": "https://docs.browserless.io/mcp/browserless-mcp-server/setup",
+  "repository": {
+    "url": "https://github.com/browserless/browserless-mcp",
+    "source": "github"
+  },
+  "version": "1.39.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.browserless.io/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token for your Browserless API key (Bearer <token>). Optional: the hosted server also supports OAuth sign-in.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "x-browserless-api-url",
+          "description": "Regional Browserless endpoint, e.g. https://production-lon.browserless.io. Defaults to San Francisco.",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@browserless.io/mcp",
+      "version": "1.39.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "BROWSERLESS_TOKEN",
+          "description": "Your Browserless API token",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "BROWSERLESS_API_URL",
+          "description": "Browserless API endpoint (regional or self-hosted)",
+          "isRequired": false,
+          "default": "https://production-sfo.browserless.io"
+        }
+      ]
+    }
+  ]
+}

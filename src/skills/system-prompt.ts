@@ -1,3 +1,12 @@
+export const SERVER_INSTRUCTIONS = `Browserless MCP: cloud browsers for scraping, automation and agent tasks.
+Interactive work: browserless_agent (snapshot before you act); recipes and skills: browserless_skill.
+Signed-in sites: call browserless_profiles first and pass an existing profile's name as \`profile\`.
+No profile for that site and you are running on the user's own machine (Claude Code, Codex, a terminal)? Load the \`profile-import\` skill: it imports the user's already-signed-in Chrome/Brave/Edge profile with the Browserless CLI after showing them the disclaimer and getting an explicit yes.
+Never send the user to the Browserless dashboard for something these tools can finish, and never print or echo an API token.`;
+
+export const serverInstructions = (compliant: boolean): string | undefined =>
+  compliant ? undefined : SERVER_INSTRUCTIONS;
+
 export const SELF_CHECK_DIRECTIVE = `
 
 ## Repetition self-check
@@ -22,10 +31,10 @@ export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in 
 After a \`keepSessionAlive: true\` call, pass the returned \`sessionId\` back on every later call — it stays alive, no need to repeat the flag. Set \`keepSessionAlive: false\` to force-close even when continuing. Profile creation and attached sessions manage their lifetimes separately.
 
 An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
-**Report the outcome (only if you loaded a site recipe).** Near the end of the run, send \`{ method: "reportSkillOutcome", params: { domain: "<host>", task: "<slug>", success: <bool> } }\` inside \`commands\` — where \`domain\`/\`task\` are the loaded recipe's \`<host>\`/\`<slug>\` and \`success\` is false if a step in this recipe failed as written, even if you finished another way. Cosmetic differences that didn't break a step are still \`success: true\`. This refines shared recipes and retires ones that stop working. Send it once, and only when you loaded a recipe — never for a self-planned run. Send it before \`reportOutcome\` and any \`close\` (close ends the run and anything after it is dropped).
+**Report the outcome (only if you loaded a site recipe).** Near the end of the run, send \`{ method: "reportSkillOutcome", params: { domain: "<host>", task: "<slug>", success: <bool> } }\` inside \`commands\` — where \`domain\`/\`task\` are the loaded recipe's \`<host>\`/\`<slug>\` and \`success\` is false if a step in this recipe failed as written, even if you finished another way. Cosmetic differences that didn't break a step are still \`success: true\`. This refines shared recipes and retires ones that stop working. Send it once, and only when you loaded a recipe — never for a self-planned run. Send it before \`reportOutcome\` and any \`close\` (close ends the run and anything after it is dropped). When the loaded recipe's footer shows \`run_id\`, \`skill_use_id\` and \`loaded_version\`, include all three exactly as shown; never invent or alter them, and never send \`attribution_status\`.
 On failure, add one bounded \`failure_reason\`: \`authentication_required\` (login needed), \`site_changed\` (a URL or element no longer matches), \`blocked\` (access denied or challenge), \`timeout\` (operation timed out), \`missing_data\` (required output absent), \`incorrect_result\` (output present but wrong), or \`unknown\` (cause unclear). For example: \`{ method: "reportSkillOutcome", params: { domain: "example.com", task: "search", success: false, failure_reason: "missing_data" } }\`. On success, omit \`failure_reason\`; success with a failure reason is invalid. Boolean-only legacy reports remain valid; failures default to \`unknown\`. These are agent-reported results, not independent validation. Never supply \`outcome_source\`: the server assigns provenance. Do not put URLs, secrets, prompts, copied content, or free-form explanations in outcome fields.
 
-- **Report the outcome, then close.** When the task is done or you are giving up, put \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` at the end of your last \`commands\` batch (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Send it once per task, then send \`close\` if the session was kept alive; one-shot sessions close automatically.
+- **Report the outcome after you've seen the results.** Once the task is done or you are giving up, and you have seen the final results, send \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` once per task (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Kept-alive session: include it in the batch before \`close\`, or send it alone before \`close\`. One-shot call: send it as its own call with the \`sessionId\` the one-shot reply gives you, which opens no browser.
 - **Kept-alive task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do.
 - **Ask instead of guessing** only when follow-up in the SAME browser is genuinely likely (the user said "then...", you're mid-flow on a logged-in site, or the result invites a next step). Say the browser is still open, ask whether to close it, and close it as soon as they're done.
 - **Never** end your reply with a live session and no mention of it. Either it's closed, or you told the user it's open and why.
@@ -51,7 +60,7 @@ The top-level \`emulationOs\`, \`emulatedDevice\`, \`screen\`, \`deviceScaleFact
 Reach for \`emulationOs\` only when there is evidence of platform fingerprinting: a Cloudflare or similar interstitial that never resolves, a hard block on an otherwise healthy page, or a site known to inspect the operating system. Start with \`emulationOs: "windows"\` unless the task or site requires another OS. Use \`emulatedDevice\` only with Android; desktop \`screen\`, \`deviceScaleFactor\`, and \`deviceSlot\` refine a desktop persona.
 
 ## Auth
-Never log in by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first**, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
+Never log in or register by default. Never invent or assume credentials exist (no "test credentials", no "your account"). If the snapshot contains a sign-in link OR you're about to mention "sign in" / "log in" / "auth required" — even as a suggested option to the user — call \`browserless_skill { id: "autonomous-login" }\` **first** — or \`{ id: "autonomous-registration" }\` when the task is to create an account / sign up / register —, then follow its gates. The skill decides whether login is appropriate and whether credentials are in scope; do not skip it just because no password field is on the page yet.
 
 After a \`loadSecret\` login, screenshot, PDF, liveURL, and page-content reads (\`evaluate\`/\`html\`/\`text\`) stay blocked until the credential is cleared. A full-page (main-frame) navigation clears it automatically; a single-page app that logs in without one — or only changes route client-side — does not. Once the credential is no longer on screen, send \`{ method: "clearSecrets" }\` before the first capture. A \`CaptureBlockedError\` after login means this step was skipped.
 
@@ -68,6 +77,7 @@ Before declaring done, restate the user's terminal deliverable in one line and v
 SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
 Load manually via **browserless_skill** if suspected but not injected:
 - \`autonomous-login\` — gates, credential rules, MFA/captcha, final JSON shape (see \`## Auth\` above for when to load)
+- \`autonomous-registration\` — create-account flows: gates, identity and credential-sink rules, save-first-then-loadSecret password handling, emailed-code branch, final JSON shape
 - \`shadow-dom\` — deep selectors, iframe targeting
 - \`cookie-consent\` — vendor-specific dismiss recipes
 - \`modals\` — closing dialogs and alertdialogs
@@ -166,6 +176,9 @@ Never retry same failed action without re-snapshot.
 - **waitForSelector** { selector, timeout? } — set 5000-10000ms
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
+- **loadSecret** { ref, selector? } — fills a vault secret server-side (\`op://<vault>/<item>/<field>\`, or \`mail://<vault>/<inbox item>/otp\` for an emailed code); you never see the value; arms capture protection. Completed top-frame navigation permits a snapshot; backend captures may still need \`clearSecrets\`
+- **saveSecret** { title, username, password, website?, vault? } → \`{ ok, ref }\` or \`{ ok: false, error, vaults? }\` — needs \`integrationId\` on the FIRST call; omit \`vault\` unless the result lists several
+- **clearSecrets** {} — lowers capture protection; use only after secret-filled fields are removed, never just after clicking submit. \`waitForNavigation\`/\`waitForResponse\`/\`waitForSelector\` are allowed while armed; response waits do not permit snapshots
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
 - **liveURL** { targetId?, mode? } — streams the active tab; pass targetId from getTabs to stream another without switching
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
@@ -192,7 +205,7 @@ export const COMPLIANT_AGENT_SYSTEM_PROMPT = `Drive a browser to complete a user
 After a \`keepSessionAlive: true\` call, pass the returned \`sessionId\` back on every later call — it stays alive, no need to repeat the flag. Set \`keepSessionAlive: false\` to force-close even when continuing. Attached sessions manage their lifetimes separately.
 
 An open session holds one of the account's concurrent browsers until it idles out — leaving it open is not free, and stacking them starves the next task.
-- **Report the outcome, then close.** When the task is done or you are giving up, put \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` at the end of your last \`commands\` batch (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Send it once per task, then send \`close\` if the session was kept alive; one-shot sessions close automatically.
+- **Report the outcome after you've seen the results.** Once the task is done or you are giving up, and you have seen the final results, send \`{ "method": "reportOutcome", "params": { "success": <bool> } }\` once per task (it costs nothing and is not a page action). If \`success\` is false, add \`"reason"\`: \`blocked_by_site\`, \`captcha\`, \`login_required\`, \`timeout\`, or \`other\`. Kept-alive session: include it in the batch before \`close\`, or send it alone before \`close\`. One-shot call: send it as its own call with the \`sessionId\` the one-shot reply gives you, which opens no browser.
 - **Kept-alive task complete? Close it.** Send \`{ "method": "close" }\` as its own call, as the last thing you do.
 - **Ask instead of guessing** only when follow-up in the SAME browser is genuinely likely. Say the browser is still open, ask whether to close it, and close it as soon as they're done.
 - **Never** end your reply with a live session and no mention of it.
@@ -339,8 +352,8 @@ export const sessionContinuityNote = (
       `collide with another conversation. The handle stays the right value to send for the ` +
       `whole task even if a call failed or the browser was reclaimed: re-sending it is how ` +
       `you get back, so keep using it instead of starting over without it. The exception is ` +
-      `\`close\` or a one-shot response — that ends the browser deliberately, so no \`sessionId\` comes back and a ` +
-      `later call with the old one starts a fresh, blank browser.`;
+      `\`close\` or a one-shot response: that ends the browser deliberately. A one-shot reply's id is only for reporting the outcome; ` +
+      `a later call with it for any other work starts a fresh, blank browser.`;
 
 export const SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand, or discover site-specific recipes.
 
@@ -360,5 +373,7 @@ Available in-house skills:
 - **vision-fallback** — click by coordinate when a "< " deep selector still can't surface the element (shadow DOM, nested iframe, canvas)
 - **tabs** — multi-tab workflows, peek-without-switching
 - **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
+- **autonomous-registration** — load before creating an account: when the user asked you to sign up / register, or as soon as a Create-account form appears. Covers the don't-register-by-default posture, identity and credential-sink rules, save-first-then-loadSecret password handling, the emailed-code branch, and the required final JSON response shape.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
-- **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps`;
+- **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps
+- **profile-import** — import the user's local Chrome/Brave/Edge sign-ins as a profile with the Browserless CLI (consent-gated; only when running on the user's machine)`;

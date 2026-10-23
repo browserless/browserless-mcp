@@ -81,7 +81,7 @@ export const sanitizeUpgradeBody = (body: string): string => {
 };
 
 export const INTEGRATION_NOT_FOUND_HINT =
-  'The integrationId must be the integration\'s id (op_int_…), not its label. List ids with browserless_sessions { action: "integrations" } and pass one on the FIRST browserless_agent call and on every call after — a binding added later opens a different browser.';
+  'The integrationId must be an integration\'s id (op_int_…) or its label, exactly as listed by browserless_sessions { action: "integrations" }. Pass it on the FIRST browserless_agent call and on every call after — a binding added later opens a different browser.';
 
 /**
  * Translate a connect-time error into UserError-ready text. Typed
@@ -107,6 +107,9 @@ export const formatConnectError = (err: unknown): string => {
       case 403:
         return `Forbidden (403) — your plan does not include this feature${detail ? ` (server says: ${detail})` : ''}.`;
       case 429:
+        if (/already being accessed by another client/i.test(detail)) {
+          return `Browser session busy (429): ${detail} The attached browser session is still held by its previous connection. Retry the same call once after a few seconds; do not open a new session.`;
+        }
         return `Concurrency limit reached (429)${detail ? `: ${detail}` : ''}. Stop retrying — each new attempt opens another session and stacks more against the limit. Close any sessions you still have open (call browserless_agent with method "close"), wait for in-flight sessions to finish, or upgrade the plan, then start over.`;
       default: {
         const fallback = detail || err.statusMessage || '';

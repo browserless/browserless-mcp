@@ -2,6 +2,13 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { readFile } from 'node:fs/promises';
+import {
+  clearSession,
+  downloadOwner,
+  getDownload,
+} from '../../src/lib/download-store.js';
+import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import { registerPerformanceTool } from '../../src/tools/performance.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
@@ -36,6 +43,7 @@ const mockContext = {
     warn: sinon.stub(),
   },
   session: undefined,
+  sessionId: 'performance-test',
   client: { version: undefined },
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
@@ -50,12 +58,13 @@ describe('browserless_performance tool', () => {
   });
 
   afterEach(() => {
+    clearSession(mockContext.sessionId);
     sinon.restore();
   });
 
-  function getToolExecute(server: FastMCP) {
+  function getToolExecute(server: FastMCP, config = mockConfig) {
     const addToolSpy = sinon.spy(server, 'addTool');
-    registerPerformanceTool(server, mockConfig);
+    registerPerformanceTool(server, config);
     return addToolSpy.firstCall.args[0].execute;
   }
 
@@ -64,7 +73,7 @@ describe('browserless_performance tool', () => {
     expect(() => registerPerformanceTool(server, mockConfig)).to.not.throw();
   });
 
-  it('returns Lighthouse scores on successful audit', async () => {
+  it('returns Lighthouse scores and lab metrics on successful audit', async () => {
     const lighthouseData = {
       data: {
         lighthouseVersion: '13.0.3',
@@ -80,6 +89,12 @@ describe('browserless_performance tool', () => {
             score: 1,
             displayValue: '0.8 s',
           },
+          'largest-contentful-paint': { displayValue: '1.2 s' },
+          'total-blocking-time': { numericValue: 0 },
+          'cumulative-layout-shift': { numericValue: 0 },
+          'speed-index': { displayValue: '0.9 s' },
+          'server-response-time': { displayValue: 'Root document took 120 ms' },
+          'total-byte-weight': { displayValue: 'Total size was 150 KiB' },
         },
       },
       type: 'json',
@@ -109,15 +124,192 @@ describe('browserless_performance tool', () => {
     expect(summary.text).to.include('Accessibility: 88/100');
     expect(summary.text).to.include('SEO: 100/100');
 
-    // Second block: full JSON data
-    const jsonBlock = content[1] as { type: string; text: string };
-    expect(jsonBlock.text).to.include('first-contentful-paint');
-    expect(jsonBlock.text).to.include('lighthouseVersion');
+    const metrics = content[1] as { text: string };
+    expect(metrics.text).to.include('Lighthouse Lab Metrics');
+    for (const line of [
+      'FCP: 0.8 s',
+      'LCP: 1.2 s',
+      'TBT: 0 ms',
+      'CLS: 0',
+      'Speed Index: 0.9 s',
+      'Initial server response time: Root document took 120 ms',
+      'Total transfer size: Total size was 150 KiB',
+    ]) {
+      expect(metrics.text).to.include(line);
+    }
+    expect(metrics.text).to.include('INP is not measured');
 
-    // Third block: metadata
-    const metadata = content[2] as { type: string; text: string };
+    // Full JSON is available on disk without being included in MCP content.
+    const downloadBlock = content[2] as { type: string; text: string };
+    const path = downloadBlock.text.split('\n')[1].split(' (')[0];
+    const record = getDownload(path, downloadOwner('test-token'))!;
+    expect(record.mimeType).to.equal('application/json');
+    expect(JSON.parse(await readFile(path, 'utf8'))).to.deep.equal(
+      lighthouseData.data,
+    );
+    expect(downloadBlock.text).to.include('jq');
+    expect(downloadBlock.text).to.include(
+      'Do not read or paste the entire JSON',
+    );
+    expect(downloadBlock.text).to.not.include('"audits":');
+
+    // Final block: metadata
+    const metadata = content[3] as { type: string; text: string };
     expect(metadata.text).to.include('URL: https://example.com/');
     expect(metadata.text).to.include('Lighthouse Version: 13.0.3');
+  });
+
+  it('keeps large audit details out of context while preserving the complete UTF-8 report', async () => {
+    const data = {
+      categories: { performance: { title: 'Performance', score: null } },
+      audits: { details: 'large-audit-payload-✓'.repeat(20_000) },
+    };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content as {
+      text: string;
+    }[];
+    expect(JSON.stringify(result).length).to.be.lessThan(3000);
+    expect(JSON.stringify(result)).to.not.include('large-audit-payload');
+    expect(content[0].text).to.include('Performance: N/A');
+    const path = content[2].text.split('\n')[1].split(' (')[0];
+    expect(JSON.parse(await readFile(path, 'utf8'))).to.deep.equal(data);
+    expect(getDownload(path, downloadOwner('other-token'))).to.be.undefined;
+  });
+
+  it('marks missing, failed, and non-finite metrics unavailable', async () => {
+    const data = {
+      categories: { performance: { score: null } },
+      audits: {
+        'first-contentful-paint': {
+          scoreDisplayMode: 'error',
+          displayValue: 'Misleading timing',
+        },
+        'largest-contentful-paint': {
+          scoreDisplayMode: 'notApplicable',
+          numericValue: 0,
+        },
+        'total-blocking-time': { numericValue: null },
+        'cumulative-layout-shift': { displayValue: '' },
+        'speed-index': { numericValue: 1200 },
+        'total-byte-weight': { numericValue: 1024 },
+      },
+    };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    const text = JSON.stringify(result);
+    for (const label of [
+      'FCP',
+      'LCP',
+      'TBT',
+      'CLS',
+      'Initial server response time',
+    ]) {
+      expect(text).to.include(`${label}: Unavailable`);
+    }
+    expect(text).to.include('Speed Index: 1200 ms');
+    expect(text).to.include('Total transfer size: 1024 bytes');
+    expect(text).to.not.include('Misleading timing');
+  });
+
+  it('does not add lab metrics when performance audits are excluded', async () => {
+    const data = {
+      categories: { seo: { title: 'SEO', score: 1 } },
+      audits: {},
+    };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/', categories: ['seo'] },
+      mockContext,
+    );
+    expect(JSON.stringify(result)).to.include('SEO: 100/100');
+    expect(JSON.stringify(result)).to.not.include('Lighthouse Lab Metrics');
+  });
+
+  it('includes metrics from custom audits without category scores', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({
+          data: {
+            audits: { 'first-contentful-paint': { displayValue: '1 s' } },
+          },
+          type: 'json',
+        }),
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    expect(JSON.stringify(result)).to.include('FCP: 1 s');
+  });
+
+  it('serves HTTP reports once and only to the invocation token', async () => {
+    const config = {
+      ...mockConfig,
+      transport: 'httpStream' as const,
+      mcpBaseUrl: 'https://mcp.example.com',
+    };
+    const data = { audits: { privateDetails: 'full report' } };
+    fetchStub.resolves(new Response(JSON.stringify({ data, type: 'json' })));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    registerDownloadRoute(server, config);
+    const execute = getToolExecute(server, config);
+    const token = 'session token&value';
+    const result = await execute(
+      { url: 'https://example.com/' },
+      { ...mockContext, session: { token } },
+    );
+    const text = JSON.stringify(result);
+    const id = text.match(/\/download\/([0-9a-f]{32})/)![1];
+    expect(text).to.include(`?token=${encodeURIComponent(token)}`);
+    expect(text).to.not.include('privateDetails');
+    expect(text).to.include('download to disk first');
+    expect(
+      (await server.getApp().request(`/download/${id}?token=test-token`))
+        .status,
+    ).to.equal(404);
+    const response = await server
+      .getApp()
+      .request(`/download/${id}?token=${encodeURIComponent(token)}`);
+    expect(response.status).to.equal(200);
+    expect(response.headers.get('content-type')).to.include('application/json');
+    expect(await response.json()).to.deep.equal(data);
+    expect(
+      (
+        await server
+          .getApp()
+          .request(`/download/${id}?token=${encodeURIComponent(token)}`)
+      ).status,
+    ).to.equal(404);
+  });
+
+  it('removes report handles when the MCP session ends', async () => {
+    fetchStub.resolves(
+      new Response(JSON.stringify({ data: {}, type: 'json' })),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const result = await getToolExecute(server)(
+      { url: 'https://example.com/' },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content as {
+      text: string;
+    }[];
+    const path = content[0].text.split('\n')[1].split(' (')[0];
+    expect(getDownload(path, downloadOwner('test-token'))).to.exist;
+    clearSession(mockContext.sessionId);
+    expect(getDownload(path, downloadOwner('test-token'))).to.be.undefined;
   });
 
   it('sends url and config with categories in the request body', async () => {

@@ -9,10 +9,21 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 const distDir = () =>
   dirname(createRequire(import.meta.url).resolve('fastmcp'));
-const distSources = () =>
-  readdirSync(distDir())
-    .filter((f) => /\.(cjs|js)$/.test(f))
-    .map((f) => readFileSync(join(distDir(), f), 'utf8'));
+const sourcesIn = (dir: string, files: RegExp) =>
+  readdirSync(dir)
+    .filter((f) => files.test(f))
+    .map((f) => readFileSync(join(dir, f), 'utf8'));
+const distSources = () => sourcesIn(distDir(), /\.(cjs|js)$/);
+// mcp-proxy as fastmcp resolves it (nested under fastmcp or hoisted).
+const mcpProxySources = () =>
+  sourcesIn(
+    dirname(
+      createRequire(createRequire(import.meta.url).resolve('fastmcp')).resolve(
+        'mcp-proxy',
+      ),
+    ),
+    /\.(mjs|js)$/,
+  );
 
 // Guards the two packaging failures this postinstall has caused:
 //   #181/1.13.0 — patch-package was a devDependency and patches/ was excluded
@@ -65,6 +76,29 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     expect(
       sources.some((c) => c.includes('this.#capabilities.tools = {};')),
       'no fastmcp dist file should retain the unpatched capability',
+    ).to.equal(false);
+  });
+
+  it('pins mcp-proxy to an exact version', () => {
+    // The script also edits mcp-proxy's built dist.
+    expect(pkg.overrides?.['mcp-proxy'], 'mcp-proxy must be pinned').to.match(
+      /^\d+\.\d+\.\d+$/,
+    );
+  });
+
+  it("has unchained mcp-proxy's bundled SSE stream writer", () => {
+    const sources = mcpProxySources();
+    expect(
+      sources.some((c) =>
+        c.includes('else reader.read().then(flow, handleStreamError);'),
+      ),
+      'mcp-proxy dist should carry the unchained stream writer',
+    ).to.equal(true);
+    expect(
+      sources.some((c) =>
+        c.includes('else return reader.read().then(flow, handleStreamError);'),
+      ),
+      'no mcp-proxy dist file should retain the chaining stream writer',
     ).to.equal(false);
   });
 
