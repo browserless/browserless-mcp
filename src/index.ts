@@ -20,6 +20,7 @@ import {
 } from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
+import { admitSessionRequest, authOutcome } from './lib/session-binding.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
@@ -122,11 +123,17 @@ const hybridAuthenticate =
         // reaper from closing a session that is merely between calls or only
         // listing tools. `initialize` carries no session id yet; the reaper's
         // first discovery stamps sessions that never send another request.
-        const sid = request.headers?.['mcp-session-id'];
-        touchSession(Array.isArray(sid) ? sid[0] : sid);
+        const sidHeader = request.headers?.['mcp-session-id'];
+        const sid = Array.isArray(sidHeader) ? sidHeader[0] : sidHeader;
+        const method =
+          request.method === 'POST' ||
+          request.method === 'GET' ||
+          request.method === 'DELETE'
+            ? request.method
+            : 'other';
 
         // Per-request MCP metrics on authenticate() — the one hook that sees
-        // /mcp (memoized once per POST). Spans auth only; record once it settles.
+        // /mcp (memoized once per POST, GET, DELETE). Spans auth only; record once it settles.
         mcpInFlightAdd(1);
         const authStartedAt = performance.now();
         try {
@@ -134,10 +141,19 @@ const hybridAuthenticate =
             request,
             config,
           )) as BrowserlessSession;
-          recordMcpRequest('authenticated', performance.now() - authStartedAt);
+          admitSessionRequest(sid, session, server.sessions);
+          recordMcpRequest(
+            'authenticated',
+            performance.now() - authStartedAt,
+            method,
+          );
           return session;
         } catch (err) {
-          recordMcpRequest('rejected', performance.now() - authStartedAt);
+          recordMcpRequest(
+            authOutcome(err),
+            performance.now() - authStartedAt,
+            method,
+          );
           throw err;
         } finally {
           mcpInFlightAdd(-1);

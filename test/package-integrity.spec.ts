@@ -135,6 +135,27 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     }
   });
 
+  it('authenticates streamable session GET and DELETE requests', () => {
+    const sources = mcpProxySources().filter((s) =>
+      s.includes('const handleStreamRequest = async ({'),
+    );
+    expect(sources).to.have.length(1);
+    expect(
+      sources[0].split('const authenticateSessionRequest = async ('),
+    ).to.have.length(2);
+    expect(
+      sources[0].split('await authenticateSessionRequest('),
+    ).to.have.length(3);
+  });
+
+  it('exposes session auth in every Node session format', () => {
+    const sources = distSources().filter((s) =>
+      s.includes('updateAuth(auth) {'),
+    );
+    expect(sources.length).to.be.greaterThan(0);
+    for (const source of sources) expect(source).to.include('get auth() {');
+  });
+
   it('re-runs idempotently without error', () => {
     const script = join(root, 'scripts', 'patch-fastmcp.mjs');
     const before = mcpProxySources();

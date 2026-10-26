@@ -82,6 +82,14 @@ patch({
   to: 'this.#capabilities.tools = { listChanged: true };',
 });
 
+patch({
+  name: 'session auth accessor',
+  dist: dirname(fastmcpEntry),
+  files: /\.(cjs|js)$/,
+  from: '  updateAuth(auth) {',
+  to: '  get auth() {\n    return this.#auth;\n  }\n  updateAuth(auth) {',
+});
+
 // mcp-proxy is pinned only for our own installs (package.json overrides); npm
 // consumers resolve fastmcp's semver range, whose future builds may move or
 // change this writer. Skip there rather than fail their install —
@@ -102,6 +110,48 @@ if (mcpProxyEntry) {
     files: /\.(mjs|js)$/,
     from: 'else return reader.read().then(flow, handleStreamError);',
     to: 'else reader.read().then(flow, handleStreamError);',
+    required: false,
+  });
+  patch({
+    name: 'session request authentication',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'const handleStreamRequest = async ({',
+    to: `const authenticateSessionRequest = async ({ authenticate, oauth, req, res }) => {
+  if (!authenticate) return false;
+  let message = "Unauthorized: Authentication failed";
+  try {
+    const result = await authenticate(req);
+    if (result && result.authenticated !== false) return false;
+    if (typeof result?.error === "string") message = result.error;
+  } catch (error) {
+    if (await handleResponseError(error, res)) return true;
+    if (error instanceof Error) message = error.message;
+  }
+  const headers = { "Content-Type": "application/json" };
+  const challenge = getWWWAuthenticateHeader(oauth, { error: "invalid_token", error_description: message });
+  if (challenge) headers["WWW-Authenticate"] = challenge;
+  res.writeHead(401, headers);
+  res.end(createJsonRpcErrorResponse(-32000, message));
+  return true;
+};
+const handleStreamRequest = async ({`,
+    required: false,
+  });
+  patch({
+    name: 'session request authentication GET',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'const activeTransport = sessionId ? activeTransports[sessionId] : void 0;',
+    to: 'if (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;\n\t\tconst activeTransport = sessionId ? activeTransports[sessionId] : void 0;',
+    required: false,
+  });
+  patch({
+    name: 'session request authentication DELETE',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'console.log("[mcp-proxy] received delete request");',
+    to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
 }

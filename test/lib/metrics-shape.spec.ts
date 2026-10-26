@@ -72,7 +72,8 @@ describe('metrics shape (full exported inventory)', () => {
     recordRedisError();
     recordSessionLifetime('mcp', 60_000);
     recordSessionLifetime('agent', 120_000);
-    recordMcpRequest('authenticated', 15);
+    recordMcpRequest('authenticated', 15, 'POST');
+    recordMcpRequest('session_mismatch', 1, 'GET');
     noteAccountRequest('token-aaa');
     noteAccountRequest('token-aaa');
     noteAccountRequest('token-bbb'); // 2 distinct accounts; aaa is the top talker
@@ -164,7 +165,7 @@ describe('metrics shape (full exported inventory)', () => {
       ['browserless.mcp.agent.upstream.duration', [0.2]],
       ['browserless.mcp.redis.op.duration', [0.003]],
       ['browserless.mcp.session.cleanup.age', [60, 120]],
-      ['browserless.mcp.auth.duration', [0.015]],
+      ['browserless.mcp.auth.duration', [0.015, 0.001]],
     ] as const) {
       const metric = byName(name);
       expect(metric?.descriptor.unit, name).to.equal('s');
@@ -215,6 +216,16 @@ describe('metrics shape (full exported inventory)', () => {
     expect(
       req?.dataPoints.some((d) => d.attributes.outcome === 'authenticated'),
     ).to.equal(true);
+    for (const name of [
+      'browserless.mcp.requests',
+      'browserless.mcp.auth.duration',
+    ]) {
+      expect(
+        byName(name)?.dataPoints.find(
+          (d) => d.attributes.outcome === 'session_mismatch',
+        )?.attributes,
+      ).to.deep.equal({ outcome: 'session_mismatch', method: 'GET' });
+    }
     const life = byName('browserless.mcp.session.cleanup.age');
     const kinds = new Set(life?.dataPoints.map((d) => d.attributes.kind) ?? []);
     expect(kinds.has('mcp')).to.equal(true);
