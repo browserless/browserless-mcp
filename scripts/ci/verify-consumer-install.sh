@@ -42,7 +42,6 @@ echo "→ installing the packed tarball as a consumer (foreground postinstall)�
 # error that PERSISTS across every retry is skipped: an npm-side outage must not
 # turn every unrelated PR red, and this check guards our postinstall, not npm's
 # uptime. --foreground-scripts surfaces the postinstall output we assert on.
-registry_err='code E404|npm error 404|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ECONNREFUSED|network error'
 install_rc=1
 for attempt in 1 2 3; do
   set +o pipefail
@@ -50,17 +49,27 @@ for attempt in 1 2 3; do
   install_rc=${PIPESTATUS[0]}
   set -o pipefail
   [ "$install_rc" -eq 0 ] && break
+  # Our postinstall patch throwing is a real regression — fail, never retry.
   if grep -qE '\[patch-fastmcp\].*target not found|target not found.*build may' "$install_log"; then
     echo "::error::a required patch threw on the consumer's resolved transport build"
     exit 1
   fi
-  if ! grep -qE "$registry_err" "$install_log"; then
-    echo "::error::consumer install failed for a non-registry reason (see log above)"
+  # Classify on npm's FINAL error code — the actual cause of this exit — not any
+  # earlier warning. A recovered ECONNRESET mid-fetch must not mask a later
+  # lifecycle/postinstall failure, which stays a hard fail even when the log
+  # also carries a network warning.
+  final_code=$(grep -oE 'npm error code [A-Za-z0-9]+' "$install_log" | tail -1 | awk '{print $NF}')
+  case "$final_code" in
+  E404 | ENOTFOUND | ETIMEDOUT | ECONNRESET | EAI_AGAIN | ECONNREFUSED)
+    echo "→ npm registry fetch failed (code ${final_code}, attempt ${attempt}/3); cleaning and retrying after backoff…"
+    rm -rf node_modules package-lock.json
+    sleep $((attempt * 15))
+    ;;
+  *)
+    echo "::error::consumer install failed (npm code ${final_code:-unknown}); not a registry fetch error — see log above"
     exit 1
-  fi
-  echo "→ npm registry fetch failed (attempt ${attempt}/3); cleaning and retrying after backoff…"
-  rm -rf node_modules package-lock.json
-  sleep $((attempt * 15))
+    ;;
+  esac
 done
 
 if [ "$install_rc" -ne 0 ]; then
