@@ -19,6 +19,7 @@ export class BoundedEventStore implements EventStore {
       streamId: string;
       storedAt: number;
       bytes: number;
+      sessionId?: string;
     }
   >();
   private lastTimestamp = 0;
@@ -39,7 +40,11 @@ export class BoundedEventStore implements EventStore {
     return this.heldBytes;
   }
 
-  async storeEvent(streamId: string, message: JSONRPCMessage): Promise<string> {
+  async storeEvent(
+    streamId: string,
+    message: JSONRPCMessage,
+    sessionId?: string,
+  ): Promise<string> {
     // Keep standalone cursors for reattachment without retaining keepalives.
     if (streamId === STANDALONE_STREAM_ID)
       return this.generateEventId(streamId);
@@ -50,7 +55,13 @@ export class BoundedEventStore implements EventStore {
     if (bytes > this.maxBytes) return '';
 
     const eventId = this.generateEventId(streamId);
-    this.events.set(eventId, { message, streamId, storedAt: now, bytes });
+    this.events.set(eventId, {
+      message,
+      streamId,
+      storedAt: now,
+      bytes,
+      sessionId,
+    });
     this.heldBytes += bytes;
 
     while (this.events.size > this.maxEvents) {
@@ -70,7 +81,11 @@ export class BoundedEventStore implements EventStore {
     lastEventId: string,
     {
       send,
-    }: { send: (eventId: string, message: JSONRPCMessage) => Promise<void> },
+      sessionId,
+    }: {
+      send: (eventId: string, message: JSONRPCMessage) => Promise<void>;
+      sessionId?: string;
+    },
   ): Promise<string> {
     this.evictExpired(Date.now());
     if (
@@ -83,6 +98,9 @@ export class BoundedEventStore implements EventStore {
       return '';
     }
 
+    const context = this.events.get(lastEventId)!.sessionId;
+    if (context !== undefined && context !== sessionId) return '';
+
     const streamId = this.getStreamIdFromEventId(lastEventId);
     if (!streamId) {
       return '';
@@ -93,6 +111,8 @@ export class BoundedEventStore implements EventStore {
     const snapshot = [...this.events.entries()];
     for (const [eventId, event] of snapshot) {
       if (event.streamId !== streamId) continue;
+      if (event.sessionId !== undefined && event.sessionId !== sessionId)
+        continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
         continue;

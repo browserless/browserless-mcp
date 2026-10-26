@@ -307,6 +307,41 @@ describe('event store retention', () => {
     }
   });
 
+  for (const settled of [false, true]) {
+    it(`keeps request cursor context when settled=${settled}`, async () => {
+      const f = await fixture();
+      try {
+        const first = await f.initialize();
+        const second = await f.initialize();
+        const original = f.track(
+          await f.post(first, 'tools/call', 42, {
+            name: 'slow',
+            arguments: {},
+          }),
+        );
+        await waitFor(() => original.frames.some((frame) => frame.id));
+        const cursor = original.frames[0].id!;
+        if (settled)
+          await waitFor(() =>
+            original.frames.some((frame) => frame.data.id === 42),
+          );
+        await original.close();
+        const alternate = await f.get(second, cursor);
+        const resumed = await f.get(first, cursor);
+        await waitFor(() =>
+          resumed.frames.some((frame) => frame.data.id === 42),
+        );
+        await delay(200);
+        expect(alternate.frames).to.deep.equal([]);
+        expect(
+          resumed.frames.find((frame) => frame.data.id === 42)!.data.result,
+        ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+      } finally {
+        await f.close();
+      }
+    });
+  }
+
   it('tolerates malformed Last-Event-ID values', async () => {
     const f = await fixture(new BoundedEventStore(10_000, 50));
     try {

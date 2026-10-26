@@ -7,6 +7,31 @@ function makeMessage(id: number): JSONRPCMessage {
 }
 
 describe('BoundedEventStore', () => {
+  it('retains request context within the shared event budget', async () => {
+    const store = new BoundedEventStore(3);
+    const first = await store.storeEvent('request', makeMessage(1), 'one');
+    const received: string[] = [];
+    const send = async (id: string) => {
+      received.push(id);
+    };
+    for (const sessionId of ['two', undefined]) {
+      expect(
+        await store.replayEventsAfter(first, { send, sessionId }),
+      ).to.equal('');
+    }
+    await store.storeEvent('request', makeMessage(2), 'two');
+    const last = await store.storeEvent('request', makeMessage(3), 'one');
+    expect(
+      await store.replayEventsAfter(first, { send, sessionId: 'one' }),
+    ).to.equal('request');
+    expect(received).to.deep.equal([last]);
+    await store.storeEvent('request', makeMessage(4), 'two');
+    expect(store.size).to.equal(3);
+    expect(
+      await store.replayEventsAfter(first, { send, sessionId: 'one' }),
+    ).to.equal('');
+  });
+
   it('measures multibyte text against the payload budget', async () => {
     const store = new BoundedEventStore(10_000, 10 * 60_000, 2048);
     const message: JSONRPCMessage = {

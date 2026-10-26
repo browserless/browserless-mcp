@@ -43,8 +43,9 @@ const patch = ({ name, dist, files, from, to, required = true }) => {
   for (const file of readdirSync(dist).filter((f) => files.test(f))) {
     const path = join(dist, file);
     const src = readFileSync(path, 'utf8');
-    if (src.includes(from)) {
-      writeFileSync(path, src.replaceAll(from, to));
+    const updated = src.replaceAll(to, from).replaceAll(from, to);
+    if (updated !== src) {
+      writeFileSync(path, updated);
       changed++;
     } else if (src.includes(to)) {
       alreadyApplied = true;
@@ -104,3 +105,62 @@ if (mcpProxyEntry) {
     required: false,
   });
 }
+
+// Supply transport context alongside retained request history. Keep the
+// optional extension compatible with other EventStore implementations.
+if (!mcpProxyEntry) throw new Error('Event-store transport target not found');
+const sdkDists = new Set(
+  [require, createRequire(fastmcpEntry)].map((resolveFrom) =>
+    dirname(
+      dirname(
+        dirname(
+          resolveFrom.resolve(
+            '@modelcontextprotocol/sdk/server/streamableHttp.js',
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+for (const dist of [
+  dirname(mcpProxyEntry),
+  ...[...sdkDists].flatMap((dist) =>
+    ['esm', 'cjs'].map((format) => join(dist, format, 'server')),
+  ),
+]) {
+  for (const args of [
+    'streamId, {}',
+    'streamId, message',
+    'this._standaloneSseStreamId, message',
+  ]) {
+    patch({
+      name: 'event-store write context',
+      dist,
+      files: /\.(mjs|js)$/,
+      from: `.storeEvent(${args})`,
+      to: `.storeEvent(${args}, this.sessionId)`,
+    });
+  }
+  patch({
+    name: 'event-store replay context',
+    dist,
+    files: /\.(mjs|js)$/,
+    from: '.replayEventsAfter(lastEventId, {',
+    to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
+  });
+}
+const edgeDist = join(dirname(fastmcpEntry), 'edge');
+patch({
+  name: 'edge event-store write context',
+  dist: edgeDist,
+  files: /\.(cjs|js)$/,
+  from: '.storeEvent(streamId, message)',
+  to: '.storeEvent(streamId, message, this.activeSessionId)',
+});
+patch({
+  name: 'edge event-store replay context',
+  dist: edgeDist,
+  files: /\.(cjs|js)$/,
+  from: '.replayEventsAfter(lastEventId, {',
+  to: '.replayEventsAfter(lastEventId, { sessionId: this.activeSessionId,',
+});
