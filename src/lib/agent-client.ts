@@ -710,7 +710,10 @@ export const preflightAgentCapabilities = async (
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname += '/capabilities';
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const res = await fetch(url, {
+    headers: { 'x-browserless-mcp-tool': AGENT_TOOL_NAME },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new Error(
@@ -910,7 +913,10 @@ const postCreateProfile = async (
   try {
     res = await fetch(url.toString(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-browserless-mcp-tool': AGENT_TOOL_NAME,
+      },
       body: JSON.stringify(createProfile),
       signal: controller.signal,
     });
