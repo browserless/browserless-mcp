@@ -40,7 +40,17 @@ try {
 const patch = ({ name, dist, files, from, to, required = true }) => {
   let changed = 0;
   let alreadyApplied = false;
-  for (const file of readdirSync(dist).filter((f) => files.test(f))) {
+  // A dist whose directory is absent (e.g. a future fastmcp without `edge`) is
+  // treated as "no matching files": a `required: false` patch skips it, while a
+  // required patch still throws the clear not-found error below.
+  let entries;
+  try {
+    entries = readdirSync(dist);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    entries = [];
+  }
+  for (const file of entries.filter((f) => files.test(f))) {
     const path = join(dist, file);
     const src = readFileSync(path, 'utf8');
     const updated = src.replaceAll(to, from).replaceAll(from, to);
@@ -106,12 +116,18 @@ if (mcpProxyEntry) {
   });
 }
 
-// Supply transport context alongside retained request history. Keep the
-// optional extension compatible with other EventStore implementations.
-if (!mcpProxyEntry) throw new Error('Event-store transport target not found');
-const sdkDists = new Set(
-  [require, createRequire(fastmcpEntry)].map((resolveFrom) =>
-    dirname(
+// Supply transport context alongside retained request history. Best-effort:
+// npm `overrides` pin mcp-proxy for THIS package but do not reach dependents,
+// so a consumer can resolve a different mcp-proxy/SDK build whose call sites
+// these snippets do not match. That build is left unpatched (it runs without
+// the extension) rather than failing `postinstall` — the behaviour before this
+// extension was added. This repo and the hosted deployment pin mcp-proxy via
+// `overrides`, and the package-integrity test asserts the patch applied there.
+const transportDists = [];
+if (mcpProxyEntry) transportDists.push(dirname(mcpProxyEntry));
+for (const resolveFrom of [require, createRequire(fastmcpEntry)]) {
+  try {
+    const sdkServerRoot = dirname(
       dirname(
         dirname(
           resolveFrom.resolve(
@@ -119,15 +135,15 @@ const sdkDists = new Set(
           ),
         ),
       ),
-    ),
-  ),
-);
-for (const dist of [
-  dirname(mcpProxyEntry),
-  ...[...sdkDists].flatMap((dist) =>
-    ['esm', 'cjs'].map((format) => join(dist, format, 'server')),
-  ),
-]) {
+    );
+    for (const format of ['esm', 'cjs'])
+      transportDists.push(join(sdkServerRoot, format, 'server'));
+  } catch (err) {
+    // A consumer that resolves no SDK server build simply goes unpatched.
+    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+  }
+}
+for (const dist of [...new Set(transportDists)]) {
   for (const args of [
     'streamId, {}',
     'streamId, message',
@@ -139,6 +155,7 @@ for (const dist of [
       files: /\.(mjs|js)$/,
       from: `.storeEvent(${args})`,
       to: `.storeEvent(${args}, this.sessionId)`,
+      required: false,
     });
   }
   patch({
@@ -147,6 +164,7 @@ for (const dist of [
     files: /\.(mjs|js)$/,
     from: '.replayEventsAfter(lastEventId, {',
     to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
+    required: false,
   });
 }
 const edgeDist = join(dirname(fastmcpEntry), 'edge');
@@ -156,6 +174,7 @@ patch({
   files: /\.(cjs|js)$/,
   from: '.storeEvent(streamId, message)',
   to: '.storeEvent(streamId, message, this.activeSessionId)',
+  required: false,
 });
 patch({
   name: 'edge event-store replay context',
@@ -163,4 +182,5 @@ patch({
   files: /\.(cjs|js)$/,
   from: '.replayEventsAfter(lastEventId, {',
   to: '.replayEventsAfter(lastEventId, { sessionId: this.activeSessionId,',
+  required: false,
 });
