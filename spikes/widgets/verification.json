@@ -1,0 +1,63 @@
+{
+  "purpose": "Synthetic MCP Apps verification; experimental, not production ready",
+  "local": {
+    "status": "PASS",
+    "checks": [
+      "only show has UI metadata; reader is app-only; output schemas and resource are discoverable",
+      "two-call replay uses an opaque ref, hides events from model-visible fields, and does not rerun producer",
+      "foreign owner denied without disclosure; same owner resolves ref after a new transport session",
+      "client without MCP Apps gets useful text from show",
+      "large Unicode replay reconstructs exactly across 47 bounded chunks; foreign reads and cross-view cursors denied",
+      "gzip reader preserves full decoded payload in one bounded reply and rejects a cursor from the identity encoding",
+      "complete serialized results at 2 MiB - 1 and exactly 2 MiB inline; 2 MiB + 1 uses chunk source",
+      "local official AppBridge mounts only on show; actual replay plays, pauses, and seeks under enforced CSP",
+      "sessions refresh calls actual MCP producer via bridge, changes snapshot, and never calls show or remounts",
+      "usage timeframe switch updates in mounted widget through MCP without calling show",
+      "same resource dispatches scorecard; null score remains unavailable",
+      "browser recovers from one transient bridge failure, retains prior chunks, and renders replay after 48 attempts for 47 pages",
+      "browser decompresses the original large replay and renders it with one bridge data call under enforced CSP",
+      "reads do not extend TTL; exact expiry denies access with same non-disclosing error"
+    ],
+    "browserErrors": [],
+    "focusedTestsPassed": 144,
+    "build": "PASS",
+    "lint": "PASS"
+  },
+  "chatgpt": {
+    "source": "Manual tester confirmation",
+    "cspEnabled": true,
+    "replayPlaybackPauseSeek": "PASS",
+    "sessionsRefresh": "PASS",
+    "usageTimeframeSwitch": "PASS",
+    "nullPerformanceScore": "PASS",
+    "compressedLargeReplayLoadsAndPlays": "PASS",
+    "identity47ReadReplay": "FAIL_CONNECTION_INTERRUPTED"
+  },
+  "publicSdkCompressedRead": {
+    "status": "PASS",
+    "resourceUri": "ui://browserless/view/v3.html",
+    "decodedBytes": 3421861,
+    "gzipBytes": 9046,
+    "completeResponseBytes": 12185,
+    "readerCalls": 1
+  },
+  "limitations": [
+    "Highly compressible synthetic fixture; representative large recordings and many-call host reliability remain unverified",
+    "Synthetic identities only; no production account data or OAuth/revocation verification",
+    "No Claude host testing",
+    "Process-local storage; no multi-replica, restart durability, video preview, or real-time 15-minute soak claim"
+  ],
+  "publicSdkIdentity47Reads": "PASS",
+  "connectionControl": {
+    "pooledRequests": {
+      "passed": 30,
+      "attempted": 30
+    },
+    "freshRequests": {
+      "passed": 73,
+      "attempted": 77,
+      "lastFourErrors": "ECONNRESET before TLS"
+    },
+    "limitingComponent": "NOT_ESTABLISHED"
+  }
+}

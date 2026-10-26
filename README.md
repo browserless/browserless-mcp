@@ -451,10 +451,11 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI             | Description                     |
-| ------------------------ | ------------------------------- |
-| `browserless://api-docs` | Smart scraper API documentation |
-| `browserless://status`   | Live service health status      |
+| Resource URI                      | Description                           |
+| --------------------------------- | ------------------------------------- |
+| `browserless://api-docs`          | Smart scraper API documentation       |
+| `browserless://status`            | Live service health status            |
+| `ui://browserless/replay/v1.html` | Inline MCP Apps session replay player |
 
 ## MCP Prompts
 
@@ -471,6 +472,42 @@ npm run build
 npm test
 npm run coverage
 ```
+
+### Experimental MCP Apps verification
+
+This branch contains two synthetic experiments, not a production rollout.
+The [standalone widget probe](spikes/widgets/README.md) exercises two-call
+rendering, refresh, ownership, expiry, and compressed bulk loading. It includes
+a reproducible check and a sanitized verification summary. The direct replay
+experiment below uses a different tool shape.
+
+### Test the direct replay widget in ChatGPT
+
+From a source checkout, start a demo using the real sessions tool and a synthetic
+12-second recording. It needs no account credentials and exposes no real account
+data. The demo registers only the read-only sessions tool and replay resource.
+
+```bash
+npm run dev:replay-widget
+# In another terminal:
+ngrok http 8787
+```
+
+Connect ChatGPT to the tunnel's HTTPS URL followed by `/mcp`, with no
+authentication. Select the connection in a new chat and ask:
+
+> Show the replay for session replay-widget-demo using browserless_sessions.
+
+Check that the player appears inline, starts paused, plays the changing steps,
+pauses, and seeks when you click the timeline. Also check a narrow window and
+dark mode. Refresh the connection after changing tool metadata. Stop both
+processes with Ctrl+C when finished.
+
+The widget is available on both MCP surfaces. Replay payloads up to 2 MiB are
+delivered through widget-only result metadata; larger recordings keep the
+offline HTML fallback. Clients without MCP Apps retain the existing text and
+HTML content blocks. Recorded external assets are blocked by the widget CSP;
+the synthetic demo uses none.
 
 ### Tests
 

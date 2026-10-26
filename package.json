@@ -55,7 +55,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run build:skills && npm run build:templates && npm run build:types",
+    "build": "tsc && npm run build:skills && npm run build:templates && npm run build:types && npm run build:widgets",
     "build:skills": "mkdir -p build/src/skills && cp src/skills/*.md build/src/skills/",
     "build:types": "mkdir -p build/src/@types && cp src/@types/*.d.ts build/src/@types/",
     "clean": "rm -rf build",
@@ -69,7 +69,9 @@
     "postinstall": "node scripts/patch-fastmcp.mjs",
     "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write",
-    "build:templates": "mkdir -p build/src/lib && cp src/lib/*.html build/src/lib/"
+    "build:templates": "mkdir -p build/src/lib && cp src/lib/*.html build/src/lib/",
+    "build:widgets": "node scripts/build-widgets.mjs",
+    "dev:replay-widget": "npm run build && node scripts/replay-widget-dev.mjs"
   },
   "prettier": {
     "semi": true,
@@ -81,6 +83,7 @@
     "@amplitude/analytics-node": "^1.5.68",
     "@amplitude/mcp-analytics": "^0.6.0",
     "@aws-sdk/client-sqs": "^3.1053.0",
+    "@modelcontextprotocol/ext-apps": "1.3.2",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.223.0",
@@ -109,6 +112,7 @@
     "@types/ws": "^8.18.1",
     "c8": "^12.0.0",
     "chai": "^6.2.2",
+    "esbuild": "0.25.12",
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
     "husky": "^9.1.7",

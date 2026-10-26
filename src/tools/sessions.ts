@@ -22,6 +22,10 @@ import { isCompliant } from './compliance.js';
 import { describeReadyDownload } from './agent.js';
 import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import type { McpConfig } from '../@types/types.js';
+import {
+  MAX_WIDGET_REPLAY_BYTES,
+  REPLAY_WIDGET_URI,
+} from '../resources/replay-widget.js';
 
 export const SessionsParamsSchema = z.object({
   action: z
@@ -398,11 +402,23 @@ export function registerSessionsTool(
       'integrations. Use it to answer "what is running", "did my session ' +
       'survive", or "what got recorded". Read-only — it never stops a session. ' +
       'Action `replay` downloads one recording and returns a fully self-contained ' +
-      'playable rrweb page, needing no network to render: display it inline if ' +
-      'you can render HTML, otherwise ' +
+      'playable rrweb page. MCP Apps hosts receive an inline replay widget ' +
+      'for recordings up to 2 MiB. Otherwise ' +
       'build an artifact from the returned instructions so the user can watch it. ' +
       'Always show the replay — never just summarise it in words.',
     parameters: SessionsParamsSchema,
+    _meta: {
+      ui: { resourceUri: REPLAY_WIDGET_URI },
+      'openai/outputTemplate': REPLAY_WIDGET_URI,
+    },
+    outputSchema: z.object({
+      action: SessionsParamsSchema.shape.action,
+      summary: z.string(),
+      sessionId: z.string().optional(),
+      website: z.string().optional(),
+      eventCount: z.number().optional(),
+      playable: z.boolean().optional(),
+    }),
     annotations: {
       title: 'Browserless Sessions',
       readOnlyHint: true,
@@ -410,7 +426,7 @@ export function registerSessionsTool(
       idempotentHint: true,
       openWorldHint: true,
     },
-    run: async ({ params, token, log }) => {
+    run: async ({ params, token, log, uiEnabled }) => {
       const { action, limit, skip, page, search } = params;
       log.debug(`Reading sessions (${action})`);
 
@@ -470,7 +486,7 @@ export function registerSessionsTool(
           // Only open a browser when the server runs on the caller's own machine;
           // on a hosted deployment that would open one on a worker.
           const openedInBrowser =
-            config.transport === 'stdio' && !isCompliant(config)
+            config.transport === 'stdio' && !isCompliant(config) && !uiEnabled
               ? replayBrowser.open(htmlPath)
               : false;
           log.debug(
@@ -515,8 +531,33 @@ export function registerSessionsTool(
         result?.integrations?.length ??
         0,
     }),
-    format: async (result, params, { token, sessionId }) => {
+    format: async (result, params, { token, sessionId, uiEnabled }) => {
       const replay = result?.replay;
+      const playable =
+        replay !== undefined &&
+        Buffer.byteLength(JSON.stringify(replay.artifact)) <=
+          MAX_WIDGET_REPLAY_BYTES;
+      if (uiEnabled && (!replay || playable)) {
+        const summary = replay
+          ? `Replay ${replay.artifact.sessionId}: ${replay.artifact.events.length} events. Playback is shown in the inline widget.`
+          : FORMATTERS[params.action](result ?? {});
+        return {
+          content: [{ type: 'text' as const, text: summary }],
+          structuredContent: {
+            action: params.action,
+            summary,
+            ...(replay
+              ? {
+                  sessionId: replay.artifact.sessionId,
+                  website: replay.artifact.website,
+                  eventCount: replay.artifact.events.length,
+                  playable,
+                }
+              : {}),
+          },
+          ...(playable ? { _meta: { replay: replay!.artifact } } : {}),
+        };
+      }
       let downloads: string | undefined;
       if (replay && !replay.local && !replay.inlined) {
         // ponytail: handles are process-local; use shared storage before scaling
@@ -557,7 +598,23 @@ export function registerSessionsTool(
           },
         });
       }
-      return blocks;
+      return {
+        content: blocks,
+        structuredContent: {
+          action: params.action,
+          summary: uiEnabled
+            ? 'This recording exceeds the inline widget limit (2 MiB). Use the attached offline player or download instructions.'
+            : (blocks[0] as { text: string }).text,
+          ...(replay
+            ? {
+                sessionId: replay.artifact.sessionId,
+                website: replay.artifact.website,
+                eventCount: replay.artifact.events.length,
+                playable: false,
+              }
+            : {}),
+        },
+      };
     },
   });
 }

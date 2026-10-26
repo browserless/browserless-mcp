@@ -14,6 +14,7 @@ import { registerLiveURLTool } from './live-url.js';
 import { registerAccountTool } from './account.js';
 import { registerUsageTool } from './usage.js';
 import { registerSessionsTool } from './sessions.js';
+import { registerReplayWidget } from '../resources/replay-widget.js';
 import { registerLogsTool } from './logs.js';
 import { registerStripeLinkConnectTool } from './link-connect.js';
 import { registerStripeLinkCheckoutTool } from './link-checkout.js';
@@ -72,6 +73,7 @@ export function registerSurface(
       surface: 'both',
       register: () => registerSessionsTool(server, config, analytics),
     },
+    { surface: 'both', register: () => registerReplayWidget(server) },
     {
       surface: 'both',
       register: () => registerLogsTool(server, config, analytics),

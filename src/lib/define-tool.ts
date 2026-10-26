@@ -1,5 +1,9 @@
 import { FastMCP, UserError } from 'fastmcp';
-import type { Content } from 'fastmcp';
+import type { Content, ContentResult } from 'fastmcp';
+import {
+  getUiCapability,
+  RESOURCE_MIME_TYPE,
+} from '@modelcontextprotocol/ext-apps/server';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import {
@@ -86,6 +90,7 @@ export interface ToolRunContext<P> {
   }) => Promise<void>;
   /** MCP session id (httpStream transport) or undefined for stdio — used by agent tool. */
   sessionId: string | undefined;
+  uiEnabled?: boolean;
   /**
    * Pre-created browser session id to attach to (from the `x-browserless-session-id`
    * header). When set, the agent tool attaches to it instead of opening its own.
@@ -103,6 +108,7 @@ export interface ToolDefinition<P, R> {
   name: string;
   description: string;
   parameters: ZodType<P>;
+  outputSchema?: ZodType<Record<string, unknown>>;
   annotations?: ToolAnnotations;
   _meta?: Record<string, unknown>;
   /** Defaults also included when validation fails before run(). */
@@ -126,8 +132,8 @@ export interface ToolDefinition<P, R> {
   format: (
     result: R,
     params: P,
-    context: Pick<ToolRunContext<P>, 'token' | 'sessionId'>,
-  ) => Content[] | Promise<Content[]>;
+    context: Pick<ToolRunContext<P>, 'token' | 'sessionId' | 'uiEnabled'>,
+  ) => Content[] | ContentResult | Promise<Content[] | ContentResult>;
   /**
    * Extra event properties. Read between `run` and `format`, so a `format`
    * that throws on `!response.ok` still reports `ok`/`status_code`.
@@ -191,6 +197,7 @@ export function defineTool<P, R>(
     name: def.name,
     description: def.description,
     parameters,
+    ...(def.outputSchema ? { outputSchema: def.outputSchema } : {}),
     annotations: def.annotations,
     ...(def._meta ? { _meta: def._meta } : {}),
     execute: async (
@@ -209,6 +216,13 @@ export function defineTool<P, R>(
       // for the unconstrained generic. Tools see the typed session via this helper
       // and never cast token/apiUrl themselves.
       const s = session as BrowserlessSession | undefined;
+      const capabilities = server.sessions
+        .find((candidate) => candidate.sessionId === sessionId)
+        ?.server.getClientCapabilities();
+      const uiEnabled =
+        getUiCapability(capabilities)?.mimeTypes?.includes(
+          RESOURCE_MIME_TYPE,
+        ) === true;
       const mcpSource = resolveMcpSource(
         s,
         mcpClient?.version,
@@ -341,6 +355,7 @@ export function defineTool<P, R>(
             apiUrl,
             reportProgress,
             sessionId,
+            uiEnabled,
             attachSessionId: s?.attachSessionId,
             userId: s?.userId,
             userRole: s?.userRole,
@@ -352,13 +367,17 @@ export function defineTool<P, R>(
 
         await reportProgress({ progress: 100, total: 100 });
         resultProps = def.analyticsProps?.(params, result) ?? {};
-        const content = await def.format(result, params, { token, sessionId });
+        const formatted = await def.format(result, params, {
+          token,
+          sessionId,
+          uiEnabled,
+        });
 
         if (!fired) {
           emit(resultProps);
         }
 
-        return { content };
+        return Array.isArray(formatted) ? { content: formatted } : formatted;
       } catch (err) {
         const error =
           err instanceof ProfileNotFoundError
