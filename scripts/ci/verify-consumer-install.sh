@@ -35,28 +35,37 @@ cd "$workdir"
 echo '{"name":"consumer-smoke","version":"1.0.0","private":true}' > package.json
 
 echo "→ installing the packed tarball as a consumer (foreground postinstall)…"
-# --foreground-scripts surfaces postinstall output so we can assert the patch
-# script actually ran and took its tolerant path.
-set +o pipefail
-npm install "$tarball" --foreground-scripts --no-audit --no-fund 2>&1 | tee "$install_log"
-install_rc=${PIPESTATUS[0]}
-set -o pipefail
-
-if [ "$install_rc" -ne 0 ]; then
-  # Our postinstall patch throwing is the regression this check guards — fail.
+# A fresh consumer resolve (no lockfile) is exposed to registry blips, so a
+# transient tarball 404 / network drop is retried — it resolves into a real run
+# instead of masking the smoke. A postinstall patch that throws is OUR bug and
+# is never retried. Any non-registry failure fails. Only a registry/network
+# error that PERSISTS across every retry is skipped: an npm-side outage must not
+# turn every unrelated PR red, and this check guards our postinstall, not npm's
+# uptime. --foreground-scripts surfaces the postinstall output we assert on.
+registry_err='code E404|npm error 404|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ECONNREFUSED|network error'
+install_rc=1
+for attempt in 1 2 3; do
+  set +o pipefail
+  npm install "$tarball" --foreground-scripts --no-audit --no-fund 2>&1 | tee "$install_log"
+  install_rc=${PIPESTATUS[0]}
+  set -o pipefail
+  [ "$install_rc" -eq 0 ] && break
   if grep -qE '\[patch-fastmcp\].*target not found|target not found.*build may' "$install_log"; then
     echo "::error::a required patch threw on the consumer's resolved transport build"
     exit 1
   fi
-  # A registry-side fetch failure (an unrelated transitive dep's tarball 404s or
-  # the network drops) is an external npm incident this check can't see past —
-  # skip rather than flake CI red on something that is not this package's bug.
-  if grep -qE 'code E404|npm error 404|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ECONNREFUSED|network error' "$install_log"; then
-    echo "::warning::consumer install could not fetch dependencies from the npm registry (external incident, not this package); skipping the consumer smoke"
-    exit 0
+  if ! grep -qE "$registry_err" "$install_log"; then
+    echo "::error::consumer install failed for a non-registry reason (see log above)"
+    exit 1
   fi
-  echo "::error::consumer install failed for an unexpected reason (see log above)"
-  exit 1
+  echo "→ npm registry fetch failed (attempt ${attempt}/3); cleaning and retrying after backoff…"
+  rm -rf node_modules package-lock.json
+  sleep $((attempt * 15))
+done
+
+if [ "$install_rc" -ne 0 ]; then
+  echo "::warning::consumer install still failing after 3 attempts with an npm registry/network error (external incident, not this package); skipping the consumer smoke"
+  exit 0
 fi
 
 if ! grep -q '\[patch-fastmcp\]' "$install_log"; then
