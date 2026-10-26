@@ -7,6 +7,166 @@ function makeMessage(id: number): JSONRPCMessage {
 }
 
 describe('BoundedEventStore', () => {
+  it('retains request context within the shared event budget', async () => {
+    const store = new BoundedEventStore(3);
+    const first = await store.storeEvent('request', makeMessage(1), 'one');
+    const received: string[] = [];
+    const send = async (id: string) => {
+      received.push(id);
+    };
+    for (const sessionId of ['two', undefined]) {
+      expect(
+        await store.replayEventsAfter(first, { send, sessionId }),
+      ).to.equal('');
+    }
+    await store.storeEvent('request', makeMessage(2), 'two');
+    const last = await store.storeEvent('request', makeMessage(3), 'one');
+    expect(
+      await store.replayEventsAfter(first, { send, sessionId: 'one' }),
+    ).to.equal('request');
+    expect(received).to.deep.equal([last]);
+    await store.storeEvent('request', makeMessage(4), 'two');
+    expect(store.size).to.equal(3);
+    expect(
+      await store.replayEventsAfter(first, { send, sessionId: 'one' }),
+    ).to.equal('');
+  });
+
+  it('measures multibyte text against the payload budget', async () => {
+    const store = new BoundedEventStore(10_000, 10 * 60_000, 2048);
+    const message: JSONRPCMessage = {
+      jsonrpc: '2.0',
+      id: 1,
+      result: { text: '界'.repeat(700) },
+    };
+    expect(await store.storeEvent('request', message)).to.equal('');
+    expect(store.storedBytes).to.equal(0);
+  });
+
+  it('bounds an hour of request history by age', async () => {
+    const originalNow = Date.now;
+    let now = 1000;
+    Date.now = () => now;
+    try {
+      const bounded = new BoundedEventStore();
+      const countOnly = new BoundedEventStore(10_000, Infinity);
+      for (let tick = 0; tick < 36_000; tick++) {
+        now += 100;
+        for (const store of [bounded, countOnly]) {
+          for (let ping = 0; ping < 12; ping++)
+            await store.storeEvent('_GET_stream', makeMessage(ping));
+          if (tick % 100 < 23)
+            await store.storeEvent('request', makeMessage(tick));
+        }
+      }
+      expect(bounded.size).to.be.lessThan(2000);
+      expect(countOnly.size).to.be.greaterThan(8000);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it('expires request history at ten minutes on replay and write', async () => {
+    const originalNow = Date.now;
+    let now = 1000;
+    Date.now = () => now;
+    try {
+      const store = new BoundedEventStore();
+      const first = await store.storeEvent('request', makeMessage(1));
+      const second = await store.storeEvent('request', makeMessage(2));
+      now += 10 * 60_000 - 1;
+      const replayed: string[] = [];
+      await store.replayEventsAfter(first, {
+        send: async (id) => {
+          replayed.push(id);
+        },
+      });
+      expect(replayed).to.deep.equal([second]);
+      now++;
+      expect(
+        await store.replayEventsAfter(first, { send: async () => {} }),
+      ).to.equal('');
+      expect(store.size).to.equal(0);
+      expect(store.storedBytes).to.equal(0);
+      const third = await store.storeEvent('request', makeMessage(3));
+      now += 10 * 60_000;
+      await store.storeEvent('request', makeMessage(4));
+      expect(store.size).to.equal(1);
+      expect(store.storedBytes).to.equal(JSON.stringify(makeMessage(4)).length);
+      expect(
+        await store.replayEventsAfter(third, { send: async () => {} }),
+      ).to.equal('');
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it('bounds retained payloads while keeping small start markers', async () => {
+    const store = new BoundedEventStore();
+    const marker = await store.storeEvent('request-long', {} as JSONRPCMessage);
+    const ids: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      ids.push(
+        await store.storeEvent(`request-${i}`, {
+          jsonrpc: '2.0',
+          id: i,
+          result: { text: 'x'.repeat(5 * 1024 * 1024) },
+        }),
+      );
+    }
+    expect(store.storedBytes).to.be.at.most(64 * 1024 * 1024);
+    expect(store.size).to.be.at.most(13);
+    expect(
+      await store.replayEventsAfter(ids[0], { send: async () => {} }),
+    ).to.equal('');
+    expect(
+      await store.replayEventsAfter(ids[19], { send: async () => {} }),
+    ).to.equal('request-19');
+    const replayed: string[] = [];
+    expect(
+      await store.replayEventsAfter(marker, {
+        send: async (id) => {
+          replayed.push(id);
+        },
+      }),
+    ).to.equal('request-long');
+    expect(replayed).to.deep.equal([]);
+  });
+
+  it('does not retain a result larger than the byte budget', async () => {
+    const store = new BoundedEventStore();
+    expect(
+      await store.storeEvent('request', {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { text: 'x'.repeat(70 * 1024 * 1024) },
+      }),
+    ).to.equal('');
+    expect(store.size).to.equal(0);
+    expect(store.storedBytes).to.equal(0);
+  });
+
+  it('issues standalone cursors without retaining their events', async () => {
+    const store = new BoundedEventStore(100);
+    const id = await store.storeEvent('_GET_stream', makeMessage(1));
+    await store.storeEvent('_GET_stream', makeMessage(2));
+    expect(store.size).to.equal(0);
+    expect(store.storedBytes).to.equal(0);
+    await store.storeEvent('request', makeMessage(3));
+    expect(id).to.match(/^_GET_stream_/);
+    for (const cursor of [id, '_GET_stream_1_0_zzzzzz']) {
+      const replayed: JSONRPCMessage[] = [];
+      expect(
+        await store.replayEventsAfter(cursor, {
+          send: async (_id, message) => {
+            replayed.push(message);
+          },
+        }),
+      ).to.equal('_GET_stream');
+      expect(replayed).to.deep.equal([]);
+    }
+  });
+
   it('stores and replays events for a stream', async () => {
     const store = new BoundedEventStore(100);
 
