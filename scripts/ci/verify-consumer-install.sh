@@ -103,8 +103,7 @@ tools=$(curl -fsS -X POST "http://127.0.0.1:${port}/mcp" \
   -H 'Accept: application/json, text/event-stream' -H "mcp-session-id: ${sid}" \
   -H 'mcp-protocol-version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  | grep '^data:' | tail -1 | sed 's/^data: //' \
-  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).result.tools.length)}catch{console.log(0)}})')
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const values=[s.trim(),...s.split(/\r?\n/).filter(l=>l.startsWith("data:")).map(l=>l.slice(5).trim()).reverse()];for(const v of values){try{const m=JSON.parse(v);if(Array.isArray(m.result?.tools)){console.log(m.result.tools.length);return}}catch{}}console.log(0)})')
 if [ "${tools:-0}" -lt 1 ]; then
   echo "::error::consumer server served no tools (tools/list returned '${tools}')"; cat "$workdir/server.log"; exit 1
 fi
