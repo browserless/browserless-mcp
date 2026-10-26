@@ -40,7 +40,17 @@ try {
 const patch = ({ name, dist, files, from, to, required = true }) => {
   let changed = 0;
   let alreadyApplied = false;
-  for (const file of readdirSync(dist).filter((f) => files.test(f))) {
+  // A dist whose directory is absent (e.g. a future fastmcp without `edge`) is
+  // treated as "no matching files": a `required: false` patch skips it, while a
+  // required patch still throws the clear not-found error below.
+  let entries;
+  try {
+    entries = readdirSync(dist);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    entries = [];
+  }
+  for (const file of entries.filter((f) => files.test(f))) {
     const path = join(dist, file);
     const src = readFileSync(path, 'utf8');
     const updated = src.replaceAll(to, from).replaceAll(from, to);
