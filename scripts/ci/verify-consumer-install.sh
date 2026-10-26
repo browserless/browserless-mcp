@@ -16,17 +16,18 @@
 # built server cannot serve its tools on the consumer's resolved transport.
 set -euo pipefail
 
-pack_name=$(npm pack --pack-destination=/tmp | tail -n1)
-tarball="/tmp/${pack_name}"
-
 workdir=$(mktemp -d)
 install_log=$(mktemp)
 server_pid=""
 cleanup() {
   [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null || true
-  rm -rf "$workdir" "$install_log" "$tarball"
+  rm -rf "$workdir" "$install_log"
 }
 trap cleanup EXIT
+
+# Pack into the per-run workdir so concurrent runs never share a tarball path.
+pack_name=$(npm pack --pack-destination="$workdir" | tail -n1)
+tarball="$workdir/${pack_name}"
 
 cd "$workdir"
 # A bare project: no `overrides`, no `.npmrc`. npm resolves fastmcp's own
@@ -73,6 +74,14 @@ sid=$(curl -fsS -D - -o /dev/null -X POST "http://127.0.0.1:${port}/mcp" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
   | grep -i '^mcp-session-id' | tr -d '\r' | awk '{print $2}')
 [ -n "$sid" ] || { echo "::error::initialize returned no mcp-session-id"; cat "$workdir/server.log"; exit 1; }
+
+# MCP lifecycle: send notifications/initialized before any normal request, or a
+# spec-strict server may reject tools/list even though the install succeeded.
+curl -fsS -o /dev/null -X POST "http://127.0.0.1:${port}/mcp" \
+  -H 'Authorization: Bearer ci-smoke' -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' -H "mcp-session-id: ${sid}" \
+  -H 'mcp-protocol-version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 
 tools=$(curl -fsS -X POST "http://127.0.0.1:${port}/mcp" \
   -H 'Authorization: Bearer ci-smoke' -H 'Content-Type: application/json' \
