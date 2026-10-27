@@ -1,6 +1,6 @@
 {
   "name": "@browserless.io/mcp",
-  "version": "1.40.0",
+  "version": "1.40.1",
   "mcpName": "io.browserless/mcp",
   "description": "MCP (Model Context Protocol) server for the Browserless.io browser automation platform",
   "author": "browserless.io",
@@ -91,7 +91,7 @@
     "@opentelemetry/sdk-metrics": "3.0.0",
     "@opentelemetry/sdk-node": "0.300.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
-    "fastmcp": "4.23.7",
+    "fastmcp": "4.22.10",
     "ioredis": "^5.10.1",
     "ipaddr.js": "2.5.0",
     "rrweb-player": "2.1.7",

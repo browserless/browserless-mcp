@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.1](https://github.com/browserless/browserless-mcp/compare/v1.40.0...v1.40.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* don't fail postinstall when a consumer resolves a non-pinned mcp-proxy ([#446](https://github.com/browserless/browserless-mcp/issues/446)) ([bbd27bc](https://github.com/browserless/browserless-mcp/commit/bbd27bc362723c60a3e16e700f52cefcfef76572))
+
 ## [1.40.0](https://github.com/browserless/browserless-mcp/compare/v1.39.0...v1.40.0) (2026-10-26)
 
 
