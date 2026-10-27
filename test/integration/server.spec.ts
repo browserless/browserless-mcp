@@ -53,6 +53,114 @@ const mockConfig: McpConfig = {
 describe('MCP Server Integration', () => {
   let server: FastMCP;
 
+  for (const oauth of [false, true]) {
+    it(`binds built-server session requests with OAuth=${oauth}`, async () => {
+      const port = await freePort();
+      const base = `http://127.0.0.1:${port}`;
+      const keys = ['a'.repeat(24), 'b'.repeat(24)];
+      const child = spawn(process.execPath, ['build/src/index.js'], {
+        env: {
+          ...process.env,
+          TRANSPORT: 'httpStream',
+          PORT: String(port),
+          BROWSERLESS_API_URL: 'http://127.0.0.1:9',
+          OAUTH_ENABLED: String(oauth),
+          MCP_BASE_URL: base,
+          SUPABASE_URL: 'http://127.0.0.1:9',
+          SUPABASE_OAUTH_CLIENT_ID: 'test',
+          SUPABASE_OAUTH_CLIENT_SECRET: 'test',
+          REDIS_URL: '',
+          AMPLITUDE_API_KEY: '',
+          ANALYTICS_ENABLED: 'false',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        output += chunk;
+      });
+      const exited = once(child, 'exit');
+      let sid = '';
+      const request = (method: string, key?: string, rpc = 'tools/list') =>
+        fetch(`${base}/mcp`, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/event-stream',
+            'mcp-protocol-version': '2025-11-25',
+            ...(sid ? { 'mcp-session-id': sid } : {}),
+            ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          },
+          ...(method === 'POST'
+            ? {
+                body: JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: 1,
+                  method: rpc,
+                  params:
+                    rpc === 'initialize'
+                      ? {
+                          protocolVersion: '2025-11-25',
+                          capabilities: {},
+                          clientInfo: { name: 'binding', version: '1' },
+                        }
+                      : {},
+                }),
+              }
+            : {}),
+        });
+      try {
+        let ready = false;
+        for (let i = 0; i < 100; i++) {
+          try {
+            ready = (await fetch(`${base}/health`)).ok;
+          } catch {
+            /* starting */
+          }
+          if (ready || child.exitCode !== null) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(ready).to.equal(true);
+        const initialized = await request('POST', keys[0], 'initialize');
+        expect(initialized.status).to.equal(200);
+        sid = initialized.headers.get('mcp-session-id')!;
+        expect(sid).to.be.a('string').and.not.empty;
+        await initialized.text();
+        const challenges: (string | null)[] = [];
+        for (const method of ['GET', 'POST', 'DELETE']) {
+          const denied = await request(method);
+          expect(denied.status, method).to.equal(401);
+          expect(await denied.json()).to.have.nested.property(
+            'error.code',
+            -32000,
+          );
+          challenges.push(denied.headers.get('www-authenticate'));
+          const other = await request(method, keys[1]);
+          expect(other.status).to.equal(404);
+          expect(await other.text()).to.equal(
+            '{"error":{"code":-32001,"message":"Session not found"},"id":null,"jsonrpc":"2.0"}',
+          );
+        }
+        if (oauth) {
+          expect(challenges[0]).to.include('resource_metadata=');
+          expect(new Set(challenges).size).to.equal(1);
+        }
+        const listed = await request('POST', keys[0]);
+        expect(listed.status).to.equal(200);
+        await listed.text();
+        expect((await request('DELETE', keys[0])).status).to.equal(200);
+      } finally {
+        child.kill('SIGTERM');
+        await exited;
+      }
+      for (const key of keys) expect(output).not.to.include(key);
+      expect(output).not.to.include('key:');
+    });
+  }
+
   it('preserves OAuth registration bodies and limits only POSTs per address', async () => {
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
