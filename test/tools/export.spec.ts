@@ -85,9 +85,12 @@ describe('browserless_export tool', () => {
           : 'page text',
       );
       expect(result.content[0].text).not.to.match(/[A-Za-z0-9+/]{200,}/);
-      expect(result.content[1].text).to.equal(
-        `---\nURL: https://example.com\nContent-Type: ${binary ? 'image/png' : 'text/html'}\n---`,
-      );
+      expect(result.content).to.have.length(1);
+      expect(
+        result.content[0].text.endsWith(
+          `\n\n---\nURL: https://example.com\nContent-Type: ${binary ? 'image/png' : 'text/html'}\n---`,
+        ),
+      ).to.equal(true);
     });
   }
 

@@ -2,8 +2,9 @@ import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sinon from 'sinon';
-import { FastMCP } from 'fastmcp';
+import { FastMCP, type Content } from 'fastmcp';
 import { z } from 'zod';
+import { clearSession } from '../../src/lib/download-store.js';
 import { registerSurface } from '../../src/tools/register.js';
 import { registerStatusResource } from '../../src/resources/status.js';
 import {
@@ -107,6 +108,149 @@ const VALID_GOTO = { method: 'goto', params: { url: 'https://example.com' } };
 
 describe('compliance mode — compliant tool surface', () => {
   afterEach(() => sinon.restore());
+
+  describe('reply block layout', () => {
+    const cases = [
+      {
+        name: 'performance',
+        params: { url: 'https://example.com', categories: ['performance'] },
+        response: {
+          type: 'json',
+          data: {
+            categories: { performance: { title: 'Performance', score: 0.87 } },
+            audits: { 'largest-contentful-paint': { displayValue: '2.3 s' } },
+          },
+        },
+        parts: [
+          '## Lighthouse Scores',
+          '- Performance: 87/100',
+          '## Lighthouse Lab Metrics',
+          '- LCP: 2.3 s',
+          'INP is not measured',
+          'URL: https://example.com',
+        ],
+        fullBlocks: 4,
+      },
+      {
+        name: 'search',
+        params: { query: 'browser news', sources: ['web', 'news'] },
+        response: {
+          success: true,
+          totalResults: 2,
+          data: {
+            web: [
+              {
+                title: 'Web match',
+                url: 'https://example.com/web',
+                description: 'Web snippet',
+              },
+            ],
+            news: [
+              {
+                title: 'News match',
+                url: 'https://example.com/news',
+                description: 'News snippet',
+              },
+            ],
+          },
+        },
+        parts: [
+          '## Web Results',
+          'Web match',
+          'Web snippet',
+          '## News Results',
+          'News match',
+          'News snippet',
+          'Query: browser news',
+        ],
+        fullBlocks: 3,
+      },
+      {
+        name: 'map',
+        params: { url: 'https://example.com' },
+        response: {
+          success: true,
+          links: [{ url: 'https://example.com/about', title: 'About title' }],
+        },
+        parts: [
+          '## Site Map Results',
+          'About title',
+          '## URL List',
+          'https://example.com/about',
+          'Base URL: https://example.com',
+        ],
+        fullBlocks: 3,
+      },
+      {
+        name: 'export',
+        params: { url: 'https://example.com' },
+        response: '<p>Exported content</p>',
+        parts: [
+          '<p>Exported content</p>',
+          'URL: https://example.com',
+          'Content-Type: text/html',
+        ],
+        fullBlocks: 2,
+      },
+    ];
+
+    for (const compliant of [true, false]) {
+      for (const fixture of cases) {
+        it(`${fixture.name} preserves every section in order on ${compliant ? 'one connector block' : 'full multi-block replies'}`, async () => {
+          sinon.stub(globalThis, 'fetch').resolves(
+            new Response(
+              typeof fixture.response === 'string'
+                ? fixture.response
+                : JSON.stringify(fixture.response),
+              {
+                headers: {
+                  'Content-Type':
+                    fixture.name === 'export'
+                      ? 'text/html'
+                      : 'application/json',
+                },
+              },
+            ),
+          );
+          const context = {
+            reportProgress: sinon.stub().resolves(),
+            log: {
+              debug: sinon.stub(),
+              info: sinon.stub(),
+              warn: sinon.stub(),
+              error: sinon.stub(),
+            },
+            sessionId: 'reply-layout-test',
+          };
+          try {
+            const tool = captureTools(compliant).byName.get(
+              `browserless_${fixture.name}`,
+            )!;
+            const result = (await tool.execute(fixture.params, context)) as {
+              content: Content[];
+            };
+            expect(result.content).to.have.length(
+              compliant ? 1 : fixture.fullBlocks,
+            );
+            expect(
+              result.content.every((block) => block.type === 'text'),
+            ).to.equal(true);
+            const text = result.content
+              .map((block) => (block.type === 'text' ? block.text : ''))
+              .join('\n\n');
+            let previous = -1;
+            for (const part of fixture.parts) {
+              const index = text.indexOf(part, previous + 1);
+              expect(index, part).to.be.greaterThan(previous);
+              previous = index;
+            }
+          } finally {
+            clearSession(context.sessionId);
+          }
+        });
+      }
+    }
+  });
 
   it('registers exactly the five connector tools', () => {
     const { names } = captureTools(true);

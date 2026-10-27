@@ -106,6 +106,21 @@ describe('defineTool analytics', () => {
   beforeEach(() => mockContext.reportProgress.resetHistory());
   afterEach(() => sinon.restore());
 
+  it('joins connector text blocks with a blank line without trimming content', async () => {
+    const { execute } = register(
+      {
+        format: () => [
+          { type: 'text', text: ' first section\n' },
+          { type: 'text', text: 'second section ' },
+        ],
+      },
+      { ...mockConfig, complianceMode: true },
+    );
+    expect(await execute({}, mockContext as never)).to.deep.equal({
+      content: [{ type: 'text', text: ' first section\n\n\nsecond section ' }],
+    });
+  });
+
   for (const message of [
     'Your account has run out of credits, please upgrade your plan https://browserless.io/account/upgrade',
     "You've reached the units usage limit allowed under our free plan, please upgrade to a paid plan at https://browserless.io/account/upgrade",

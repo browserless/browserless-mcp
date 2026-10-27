@@ -365,7 +365,20 @@ export function defineTool<P, R>(
           emit(resultProps);
         }
 
-        return { content };
+        // Connector clients may consume only the first content block.
+        return {
+          content: config.complianceMode
+            ? [
+                {
+                  type: 'text',
+                  text: content
+                    .filter((block) => block.type === 'text')
+                    .map((block) => block.text)
+                    .join('\n\n'),
+                },
+              ]
+            : content,
+        };
       } catch (err) {
         const error =
           err instanceof ProfileNotFoundError
