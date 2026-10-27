@@ -106,6 +106,30 @@ try {
   );
 }
 if (mcpProxyEntry) {
+  // Backport mcp-proxy's RFC 9728 URL construction without its SDK v2 upgrade.
+  // Insert the well-known segment before the resource path, preserving query
+  // components. Cover both HTTP and middleware (401/403) challenge builders.
+  // Best-effort for consumers resolving another version; the HTTP integration
+  // test follows the advertised URL against the pinned hosted tree.
+  const metadataUrl = (resource) => {
+    const url = new URL(resource);
+    const path = url.pathname === '/' ? '' : url.pathname;
+    url.pathname = `/.well-known/oauth-protected-resource${path}`;
+    return url.toString();
+  };
+  for (const resource of [
+    'oauth.protectedResource.resource',
+    'this.config.oauth.protectedResource.resource',
+  ]) {
+    patch({
+      name: 'OAuth protected-resource metadata URL',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: '${' + resource + '}/.well-known/oauth-protected-resource',
+      to: '${(' + metadataUrl.toString() + ')(' + resource + ')}',
+      required: false,
+    });
+  }
   patch({
     name: 'SSE stream writer',
     dist: dirname(mcpProxyEntry),
