@@ -59,6 +59,9 @@ jobs:
       - name: Verify published tarball contents
         run: bash scripts/ci/verify-package-tarball.sh
 
+      - name: Verify consumer install (non-pinned transitive deps)
+        run: bash scripts/ci/verify-consumer-install.sh
+
       # Block merges that introduce a transitive dep with a known
       # high+ CVE. Runs once (Linux, lockfile-based) — cross-OS audits
       # would produce identical results since the lockfile is shared.

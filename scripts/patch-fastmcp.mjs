@@ -40,11 +40,22 @@ try {
 const patch = ({ name, dist, files, from, to, required = true }) => {
   let changed = 0;
   let alreadyApplied = false;
-  for (const file of readdirSync(dist).filter((f) => files.test(f))) {
+  // A dist whose directory is absent (e.g. a future fastmcp without `edge`) is
+  // treated as "no matching files": a `required: false` patch skips it, while a
+  // required patch still throws the clear not-found error below.
+  let entries;
+  try {
+    entries = readdirSync(dist);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    entries = [];
+  }
+  for (const file of entries.filter((f) => files.test(f))) {
     const path = join(dist, file);
     const src = readFileSync(path, 'utf8');
-    if (src.includes(from)) {
-      writeFileSync(path, src.replaceAll(from, to));
+    const updated = src.replaceAll(to, from).replaceAll(from, to);
+    if (updated !== src) {
+      writeFileSync(path, updated);
       changed++;
     } else if (src.includes(to)) {
       alreadyApplied = true;
@@ -95,6 +106,30 @@ try {
   );
 }
 if (mcpProxyEntry) {
+  // Backport mcp-proxy's RFC 9728 URL construction without its SDK v2 upgrade.
+  // Insert the well-known segment before the resource path, preserving query
+  // components. Cover both HTTP and middleware (401/403) challenge builders.
+  // Best-effort for consumers resolving another version; the HTTP integration
+  // test follows the advertised URL against the pinned hosted tree.
+  const metadataUrl = (resource) => {
+    const url = new URL(resource);
+    const path = url.pathname === '/' ? '' : url.pathname;
+    url.pathname = `/.well-known/oauth-protected-resource${path}`;
+    return url.toString();
+  };
+  for (const resource of [
+    'oauth.protectedResource.resource',
+    'this.config.oauth.protectedResource.resource',
+  ]) {
+    patch({
+      name: 'OAuth protected-resource metadata URL',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: '${' + resource + '}/.well-known/oauth-protected-resource',
+      to: '${(' + metadataUrl.toString() + ')(' + resource + ')}',
+      required: false,
+    });
+  }
   patch({
     name: 'SSE stream writer',
     dist: dirname(mcpProxyEntry),
@@ -104,3 +139,72 @@ if (mcpProxyEntry) {
     required: false,
   });
 }
+
+// Supply transport context alongside retained request history. Best-effort:
+// npm `overrides` pin mcp-proxy for THIS package but do not reach dependents,
+// so a consumer can resolve a different mcp-proxy/SDK build whose call sites
+// these snippets do not match. That build is left unpatched (it runs without
+// the extension) rather than failing `postinstall` — the behaviour before this
+// extension was added. This repo and the hosted deployment pin mcp-proxy via
+// `overrides`, and the package-integrity test asserts the patch applied there.
+const transportDists = [];
+if (mcpProxyEntry) transportDists.push(dirname(mcpProxyEntry));
+for (const resolveFrom of [require, createRequire(fastmcpEntry)]) {
+  try {
+    const sdkServerRoot = dirname(
+      dirname(
+        dirname(
+          resolveFrom.resolve(
+            '@modelcontextprotocol/sdk/server/streamableHttp.js',
+          ),
+        ),
+      ),
+    );
+    for (const format of ['esm', 'cjs'])
+      transportDists.push(join(sdkServerRoot, format, 'server'));
+  } catch (err) {
+    // A consumer that resolves no SDK server build simply goes unpatched.
+    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+  }
+}
+for (const dist of [...new Set(transportDists)]) {
+  for (const args of [
+    'streamId, {}',
+    'streamId, message',
+    'this._standaloneSseStreamId, message',
+  ]) {
+    patch({
+      name: 'event-store write context',
+      dist,
+      files: /\.(mjs|js)$/,
+      from: `.storeEvent(${args})`,
+      to: `.storeEvent(${args}, this.sessionId)`,
+      required: false,
+    });
+  }
+  patch({
+    name: 'event-store replay context',
+    dist,
+    files: /\.(mjs|js)$/,
+    from: '.replayEventsAfter(lastEventId, {',
+    to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
+    required: false,
+  });
+}
+const edgeDist = join(dirname(fastmcpEntry), 'edge');
+patch({
+  name: 'edge event-store write context',
+  dist: edgeDist,
+  files: /\.(cjs|js)$/,
+  from: '.storeEvent(streamId, message)',
+  to: '.storeEvent(streamId, message, this.activeSessionId)',
+  required: false,
+});
+patch({
+  name: 'edge event-store replay context',
+  dist: edgeDist,
+  files: /\.(cjs|js)$/,
+  from: '.replayEventsAfter(lastEventId, {',
+  to: '.replayEventsAfter(lastEventId, { sessionId: this.activeSessionId,',
+  required: false,
+});

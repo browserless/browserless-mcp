@@ -13,7 +13,7 @@ import {
   storeDownload,
 } from '../../src/lib/download-store.js';
 import { normalizeUploadCommand } from '../../src/tools/agent.js';
-import { FastMCP } from 'fastmcp';
+import { FastMCP, OAuthProvider } from 'fastmcp';
 import { z } from 'zod';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { defineTool } from '../../src/lib/define-tool.js';
@@ -122,6 +122,63 @@ describe('MCP Server Integration', () => {
 
   afterEach(async () => {
     sinon.restore();
+  });
+
+  it('serves the OAuth metadata advertised by an unauthenticated initialize', async () => {
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    server = new FastMCP({
+      name: 'discovery-test',
+      version: '1.0.0',
+      auth: new OAuthProvider({
+        baseUrl: base,
+        clientId: 'test',
+        clientSecret: 'test',
+        authorizationEndpoint: 'http://127.0.0.1:9/authorize',
+        tokenEndpoint: 'http://127.0.0.1:9/token',
+        scopes: ['email'],
+      }),
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    try {
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port, host: '127.0.0.1' },
+      });
+      const challenge = await fetch(`${base}/mcp`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'discovery-test', version: '1.0.0' },
+          },
+        }),
+      });
+      expect(challenge.status).to.equal(401);
+      const metadataUrl = challenge.headers
+        .get('www-authenticate')
+        ?.match(/resource_metadata="([^"]+)"/)?.[1];
+      expect(metadataUrl, 'challenge advertises metadata').to.be.a('string');
+      expect(new URL(metadataUrl!).origin).to.equal(base);
+      const metadata = await fetch(metadataUrl!);
+      expect(metadata.status, 'advertised metadata resolves').to.equal(200);
+      expect(await metadata.json()).to.deep.include({
+        resource: `${base}/mcp`,
+        authorization_servers: [base],
+        scopes_supported: ['email'],
+      });
+    } finally {
+      await server.stop();
+    }
   });
 
   it('starts with upload roots unset and permits re-upload from the default download directory', async () => {

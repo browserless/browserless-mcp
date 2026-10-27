@@ -1406,11 +1406,14 @@ export function registerAgentTools(
 
           agentSession.skillState.cmdIndex += 1;
 
+          let outboundParams = cmd.params;
+          if (cmd.method === 'liveURL' && cmd.params.timeout === undefined) {
+            outboundParams = { ...cmd.params, timeout: 300_000 };
+          }
           // `toDisk` is a local directive (route the screenshot to the download
           // store); it's not a CDP screenshot param, so strip it before sending
           // or Chrome rejects the unknown key. The original cmd keeps it so the
           // result formatter can tell it should save instead of inline.
-          let outboundParams = cmd.params;
           if (cmd.method === 'screenshot' && 'toDisk' in cmd.params) {
             outboundParams = { ...cmd.params };
             delete (outboundParams as Record<string, unknown>).toDisk;
