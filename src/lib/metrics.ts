@@ -11,8 +11,12 @@
 //     or block the server. `recordToolRequest` is always safe to call — when the
 //     SDK isn't started it resolves to a no-op meter.
 
-import { metrics, type BatchObservableResult } from '@opentelemetry/api';
-import { logs, SeverityNumber } from '@opentelemetry/api-logs';
+import {
+  metrics,
+  logs,
+  SeverityNumber,
+  type BatchObservableResult,
+} from '@opentelemetry/api';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
   ATTR_SERVICE_NAME,

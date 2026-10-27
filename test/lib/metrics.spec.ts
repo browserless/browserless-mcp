@@ -2,8 +2,7 @@ import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { metrics, trace } from '@opentelemetry/api';
-import { logs } from '@opentelemetry/api-logs';
+import { metrics, trace, logs } from '@opentelemetry/api';
 import {
   LoggerProvider,
   SimpleLogRecordProcessor,
