@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.2](https://github.com/browserless/browserless-mcp/compare/v1.40.1...v1.40.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* advertise reachable OAuth resource metadata ([#461](https://github.com/browserless/browserless-mcp/issues/461)) ([1ce70be](https://github.com/browserless/browserless-mcp/commit/1ce70be3ecef7f394c35d6e3dd0d4a0c71bc2700))
+
 ## [1.40.1](https://github.com/browserless/browserless-mcp/compare/v1.40.0...v1.40.1) (2026-10-27)
 
 
