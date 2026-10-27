@@ -1,6 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
+import { LiveURLInstructionsSchema } from './schemas.js';
 import type { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   LiveURLCreated,
@@ -40,19 +41,9 @@ export const LiveURLParamsSchema = z.object({
   type: z.enum(['jpeg', 'png']).optional(),
   resizable: z.boolean().optional(),
   showBrowserInterface: z.boolean().optional(),
-  instructions: z
-    .union([
-      z.string(),
-      z.object({
-        layout: z.enum(['modal', 'panel']).optional(),
-        format: instructionsFormatSchema.optional(),
-        title: z.string().trim().max(80).optional(),
-        summary: z.string().optional(),
-        steps: stepsSchema.optional(),
-        currentStep: currentStepSchema.optional(),
-      }),
-    ])
-    .optional(),
+  instructions: LiveURLInstructionsSchema.optional().describe(
+    'Tell the person what to do, for example: Sign in, then click Done.',
+  ),
   instructionsTitle: z.string().trim().max(80).optional(),
   steps: stepsSchema.optional(),
   currentStep: currentStepSchema.optional(),
@@ -75,6 +66,8 @@ export function registerLiveURLTool(
     description:
       'Create, inspect, or close a live viewer link for an existing browser through REST, without an agent connection. ' +
       'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown. ' +
+      'Link lifetime defaults to 15 minutes, capped by remaining browser session time; creating a link does not keep the browser alive. ' +
+      'For a human handoff, pass instructions explaining what to do and when to click Done. ' +
       'Instructions accept a string or an object with layout, format, title, summary, steps, and currentStep. ' +
       'For string instructions use instructionsTitle, steps, currentStep, and instructionsFormat beside instructions. ' +
       'doneLabel, failLabel, and requesterName are always top-level options. ' +

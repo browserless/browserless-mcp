@@ -1,6 +1,9 @@
 import type { EventStore } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
+export const STANDALONE_STREAM_ID = '_GET_stream';
+const SMALL_ENTRY_BYTES = 1024;
+
 /**
  * A bounded in-memory EventStore that caps the number of stored events
  * to prevent unbounded memory growth. Evicts oldest entries when full.
@@ -11,28 +14,63 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 export class BoundedEventStore implements EventStore {
   private events = new Map<
     string,
-    { message: JSONRPCMessage; streamId: string }
+    {
+      message: JSONRPCMessage;
+      streamId: string;
+      storedAt: number;
+      bytes: number;
+      sessionId?: string;
+    }
   >();
   private lastTimestamp = 0;
   private lastTimestampCounter = 0;
-  private readonly maxEvents: number;
+  private heldBytes = 0;
 
-  constructor(maxEvents = 10_000) {
-    this.maxEvents = maxEvents;
+  constructor(
+    private readonly maxEvents = 10_000,
+    private readonly maxAgeMs = 10 * 60_000,
+    private readonly maxBytes = 64 * 1024 * 1024,
+  ) {}
+
+  get size(): number {
+    return this.events.size;
   }
 
-  async storeEvent(streamId: string, message: JSONRPCMessage): Promise<string> {
-    const eventId = this.generateEventId(streamId);
-    this.events.set(eventId, { message, streamId });
+  get storedBytes(): number {
+    return this.heldBytes;
+  }
 
-    // Evict oldest entries when over capacity
-    if (this.events.size > this.maxEvents) {
-      const keysToDelete = [...this.events.keys()].slice(
-        0,
-        this.events.size - this.maxEvents,
-      );
-      for (const key of keysToDelete) {
-        this.events.delete(key);
+  async storeEvent(
+    streamId: string,
+    message: JSONRPCMessage,
+    sessionId?: string,
+  ): Promise<string> {
+    // Keep standalone cursors for reattachment without retaining keepalives.
+    if (streamId === STANDALONE_STREAM_ID)
+      return this.generateEventId(streamId);
+
+    const now = Date.now();
+    this.evictExpired(now);
+    const bytes = Buffer.byteLength(JSON.stringify(message));
+    if (bytes > this.maxBytes) return '';
+
+    const eventId = this.generateEventId(streamId);
+    this.events.set(eventId, {
+      message,
+      streamId,
+      storedAt: now,
+      bytes,
+      sessionId,
+    });
+    this.heldBytes += bytes;
+
+    while (this.events.size > this.maxEvents) {
+      this.drop(this.events.keys().next().value as string);
+    }
+    if (this.heldBytes > this.maxBytes) {
+      for (const [id, event] of this.events) {
+        if (this.heldBytes <= this.maxBytes) break;
+        if (event.bytes > SMALL_ENTRY_BYTES) this.drop(id);
       }
     }
 
@@ -43,11 +81,25 @@ export class BoundedEventStore implements EventStore {
     lastEventId: string,
     {
       send,
-    }: { send: (eventId: string, message: JSONRPCMessage) => Promise<void> },
+      sessionId,
+    }: {
+      send: (eventId: string, message: JSONRPCMessage) => Promise<void>;
+      sessionId?: string;
+    },
   ): Promise<string> {
+    this.evictExpired(Date.now());
+    if (
+      lastEventId &&
+      this.getStreamIdFromEventId(lastEventId) === STANDALONE_STREAM_ID
+    ) {
+      return STANDALONE_STREAM_ID;
+    }
     if (!lastEventId || !this.events.has(lastEventId)) {
       return '';
     }
+
+    const context = this.events.get(lastEventId)!.sessionId;
+    if (context !== undefined && context !== sessionId) return '';
 
     const streamId = this.getStreamIdFromEventId(lastEventId);
     if (!streamId) {
@@ -59,6 +111,8 @@ export class BoundedEventStore implements EventStore {
     const snapshot = [...this.events.entries()];
     for (const [eventId, event] of snapshot) {
       if (event.streamId !== streamId) continue;
+      if (event.sessionId !== undefined && event.sessionId !== sessionId)
+        continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
         continue;
@@ -67,6 +121,19 @@ export class BoundedEventStore implements EventStore {
     }
 
     return streamId;
+  }
+
+  private drop(eventId: string): void {
+    const event = this.events.get(eventId)!;
+    this.heldBytes -= event.bytes;
+    this.events.delete(eventId);
+  }
+
+  private evictExpired(now: number): void {
+    for (const [id, event] of this.events) {
+      if (now - event.storedAt < this.maxAgeMs) break;
+      this.drop(id);
+    }
   }
 
   private generateEventId(streamId: string): string {

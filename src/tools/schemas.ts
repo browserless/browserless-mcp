@@ -454,6 +454,18 @@ const WaitForResponseCommandSchema = z.object({
   }),
 });
 
+export const LiveURLInstructionsSchema = z.union([
+  z.string(),
+  z.object({
+    layout: z.enum(['modal', 'panel']).optional(),
+    format: z.enum(['text', 'markdown']).optional(),
+    title: z.string().trim().max(80).optional(),
+    summary: z.string().optional(),
+    steps: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
+    currentStep: z.number().int().min(1).max(10).optional(),
+  }),
+]);
+
 const LiveURLCommandSchema = z.object({
   method: z.literal('liveURL'),
   params: z
@@ -474,7 +486,12 @@ const LiveURLCommandSchema = z.object({
       timeout: z
         .number()
         .optional()
-        .describe('How long the live URL stays active (ms)'),
+        .describe(
+          'Link lifetime in ms (default 300000, five minutes), capped by the remaining browser session time.',
+        ),
+      instructions: LiveURLInstructionsSchema.optional().describe(
+        'Tell the person what to do, for example: Sign in, then click Done.',
+      ),
       interactable: z
         .boolean()
         .optional()

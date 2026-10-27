@@ -102,11 +102,46 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     ).to.equal(false);
   });
 
+  it('supplies event-store context in every shipped transport format', () => {
+    const sdkDist = dirname(
+      dirname(
+        dirname(
+          createRequire(import.meta.url).resolve(
+            '@modelcontextprotocol/sdk/server/streamableHttp.js',
+          ),
+        ),
+      ),
+    );
+    const variants = [
+      [mcpProxySources(), 'sessionId'],
+      ...['esm', 'cjs'].map((format) => [
+        sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/),
+        'sessionId',
+      ]),
+      [sourcesIn(join(distDir(), 'edge'), /\.(cjs|js)$/), 'activeSessionId'],
+    ] as [string[], string][];
+    for (const [sources, context] of variants) {
+      const source = sources.join('\n');
+      const writes = [...source.matchAll(/\.storeEvent\(([^\n;]+)\)/g)];
+      const replays = [
+        ...source.matchAll(/\.replayEventsAfter\(lastEventId, \{([^\n]*)/g),
+      ];
+      expect(writes.length).to.be.greaterThan(0);
+      expect(replays.length).to.be.greaterThan(0);
+      for (const match of writes)
+        expect(match[1]).to.match(new RegExp(`, this\\.${context}$`));
+      for (const match of replays)
+        expect(match[1]).to.include(`sessionId: this.${context},`);
+    }
+  });
+
   it('re-runs idempotently without error', () => {
     const script = join(root, 'scripts', 'patch-fastmcp.mjs');
+    const before = mcpProxySources();
     expect(() =>
       execFileSync(process.execPath, [script], { stdio: 'pipe' }),
     ).to.not.throw();
+    expect(mcpProxySources()).to.deep.equal(before);
     expect(
       distSources().some((c) => c.includes('listChanged: true')),
       'capability must remain enabled after a second run',

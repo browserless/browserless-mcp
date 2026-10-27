@@ -9,11 +9,26 @@ import {
   serverInstructions,
 } from '../../src/skills/system-prompt.js';
 
-it('documents liveURL tab selection in both prompt variants', () => {
-  const bullet =
-    '- **liveURL** { targetId?, mode? } — streams the active tab; pass targetId from getTabs to stream another without switching';
+it('documents liveURL tab selection and handoff in both prompt variants', () => {
   for (const prompt of [AGENT_SYSTEM_PROMPT, COMPLIANT_AGENT_SYSTEM_PROMPT]) {
-    expect(prompt).to.include(`${bullet}\n- See schema for:`);
+    const bullet = prompt
+      .split('\n')
+      .find((line) => line.startsWith('- **liveURL**'));
+    for (const text of [
+      '{ targetId?, mode?, timeout?, instructions? }',
+      'streams the active tab',
+      'pass targetId from getTabs to stream another without switching',
+      '300000ms (five minutes)',
+      'explicit timeout wins, capped by remaining browser session time',
+      'instructions explaining what to do and when to click Done',
+      'keepSessionAlive: true',
+      'reuse the returned `sessionId`',
+      'close the browser after the person finishes',
+      'Creating a link does not extend the browser deadline',
+      'keeping the browser open remains billed',
+    ]) {
+      expect(bullet).to.include(text);
+    }
   }
 });
 
