@@ -1,6 +1,5 @@
 import { expect } from 'chai';
-import { metrics } from '@opentelemetry/api';
-import { logs } from '@opentelemetry/api-logs';
+import { metrics, logs } from '@opentelemetry/api';
 import {
   LoggerProvider,
   SimpleLogRecordProcessor,
