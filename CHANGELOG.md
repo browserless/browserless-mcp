@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.0](https://github.com/browserless/browserless-mcp/compare/v1.40.2...v1.41.0) (2026-10-27)
+
+
+### Features
+
+* bind streamable HTTP sessions to the identity that opened them ([#447](https://github.com/browserless/browserless-mcp/issues/447)) ([a05fc8b](https://github.com/browserless/browserless-mcp/commit/a05fc8b14acb8f7080a47a274c2b57429ae0f7da))
+
 ## [1.40.2](https://github.com/browserless/browserless-mcp/compare/v1.40.1...v1.40.2) (2026-10-27)
 
 
