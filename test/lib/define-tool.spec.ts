@@ -93,6 +93,24 @@ const register = (def: Partial<Def>, config = mockConfig) => {
   };
 };
 
+describe('view ownership in the shared wrapper', () => {
+  afterEach(() => sinon.restore());
+
+  it('uses the resolved config token when a local session carries only attachment metadata', async () => {
+    const run = sinon.stub().resolves({});
+    const tool = register({ run });
+    await tool.execute({}, mockContext as never);
+    await tool.execute({}, {
+      ...mockContext,
+      session: { attachSessionId: 'existing-browser' },
+    } as never);
+    expect(run.firstCall.args[0].viewOwner).to.match(/^[a-f0-9]{64}$/);
+    expect(run.secondCall.args[0].viewOwner).to.equal(
+      run.firstCall.args[0].viewOwner,
+    );
+  });
+});
+
 const rejects = async (promise: Promise<unknown>): Promise<Error> => {
   try {
     await promise;
