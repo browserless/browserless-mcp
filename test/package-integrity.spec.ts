@@ -108,7 +108,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
           join(dist, '../package.json'),
           JSON.stringify({ main: 'dist/FastMCP.cjs' }),
         );
-        writeFileSync(join(dist, 'FastMCP.cjs'), '');
+        writeFileSync(join(dist, 'FastMCP.cjs'), '  updateAuth(auth) {');
         const chunk = join(dist, 'chunk.js');
         writeFileSync(chunk, original);
         const script = join(fixture, 'patch-fastmcp.mjs');
@@ -187,6 +187,27 @@ describe('package integrity — installable by --omit=dev consumers', () => {
       for (const match of replays)
         expect(match[1]).to.include(`sessionId: this.${context},`);
     }
+  });
+
+  it('authenticates streamable session GET and DELETE requests', () => {
+    const sources = mcpProxySources().filter((s) =>
+      s.includes('const handleStreamRequest = async ({'),
+    );
+    expect(sources).to.have.length(1);
+    expect(
+      sources[0].split('const authenticateSessionRequest = async ('),
+    ).to.have.length(2);
+    expect(
+      sources[0].split('await authenticateSessionRequest('),
+    ).to.have.length(3);
+  });
+
+  it('exposes session auth in every Node session format', () => {
+    const sources = distSources().filter((s) =>
+      s.includes('updateAuth(auth) {'),
+    );
+    expect(sources.length).to.be.greaterThan(0);
+    for (const source of sources) expect(source).to.include('get auth() {');
   });
 
   it('re-runs idempotently without error', () => {
