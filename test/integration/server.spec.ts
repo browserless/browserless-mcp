@@ -114,9 +114,12 @@ describe('MCP Server Integration', () => {
         if (compliant) {
           expect(names).to.deep.equal(connectorNames);
         } else {
-          expect(names).to.have.length(19);
+          expect(names).to.have.length(18);
+          expect(names).not.to.include('browserless_read_page');
           expect(names).to.include.members([
-            ...connectorNames,
+            ...connectorNames.filter(
+              (name) => name !== 'browserless_read_page',
+            ),
             'browserless_stage_file',
           ]);
         }

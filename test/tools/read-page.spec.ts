@@ -30,11 +30,7 @@ const elements = [
   { role: 'button', name: 'Press me', selector: '#b' },
   { role: 'textbox', placeholder: 'Search here', selector: '#q' },
 ];
-function capture(
-  apiUrl: string,
-  complianceMode = true,
-  analytics?: AnalyticsHelper,
-) {
+function capture(apiUrl: string, analytics?: AnalyticsHelper) {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const spy = sinon.spy(server, 'addTool');
   registerSurface(
@@ -44,7 +40,7 @@ function capture(
       transport: 'stdio',
       browserlessToken: 'test-token',
       browserlessApiUrl: apiUrl,
-      complianceMode,
+      complianceMode: true,
     },
     analytics,
   );
@@ -69,7 +65,7 @@ describe('browserless_read_page', () => {
     const analytics = new AnalyticsHelper(false);
     const fire = sinon.stub(analytics, 'fireToolRequest');
     try {
-      const reply: any = await capture(ws.url, true, analytics).execute(
+      const reply: any = await capture(ws.url, analytics).execute(
         {
           url,
           format: 'text',
@@ -98,7 +94,7 @@ describe('browserless_read_page', () => {
     }
   });
 
-  it('starts and closes a fresh full-mode browser on each call despite an attached session', async () => {
+  it('starts and closes a fresh connector browser on each call despite an attached session', async () => {
     const ws = await makeRespondingServer((method) =>
       method === 'snapshot'
         ? { url, title: 'Fresh', elements: [] }
@@ -107,7 +103,7 @@ describe('browserless_read_page', () => {
           : { url, status: 200 },
     );
     try {
-      const tool = capture(ws.url, false);
+      const tool = capture(ws.url);
       for (let call = 1; call <= 2; call++) {
         const reply: any = await tool.execute(
           { url, format: 'text' },
@@ -122,8 +118,7 @@ describe('browserless_read_page', () => {
         expect(ws.closedConnections()).to.equal(call);
       }
       for (const upgrade of ws.upgradeUrls()) {
-        const launch = new URL(upgrade, ws.url);
-        expect(launch.searchParams.get('emulationOs')).to.equal('windows');
+        expect(upgrade).not.to.match(/emulationOs|humanlike/);
         expect(upgrade).not.to.contain('existing-browser');
       }
     } finally {
@@ -153,12 +148,12 @@ describe('browserless_read_page', () => {
     }
   });
 
-  it('preserves the rejected WS401 response body in full mode without retrying', async () => {
+  it('preserves the rejected WS401 response body without retrying', async () => {
     const ws = await makeRejectingServer(401, 'Invalid API token');
     try {
       let error: any;
       try {
-        await capture(ws.url, false).execute({ url, format: 'text' }, context);
+        await capture(ws.url).execute({ url, format: 'text' }, context);
       } catch (caught) {
         error = caught;
       }

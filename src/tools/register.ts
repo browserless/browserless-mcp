@@ -26,9 +26,9 @@ import { registerExtractContentPrompt } from '../prompts/extract-content.js';
 import { registerStageFileTool } from './stage-file.js';
 
 // Registers the whole surface (tools/resources/prompts) so the compliance gate
-// covers all a reviewer lists. Each item declares 'both'|'full' — no positional
+// covers all a reviewer lists. Each item declares 'both'|'full'|'compliant' — no positional
 // "unconditional" block a new tool could ship on the directory by accident.
-type Surface = 'both' | 'full';
+type Surface = 'both' | 'full' | 'compliant';
 
 export function registerSurface(
   server: FastMCP,
@@ -51,7 +51,7 @@ export function registerSurface(
       register: () => registerExportTool(server, config, analytics),
     },
     {
-      surface: 'both',
+      surface: 'compliant',
       register: () => registerReadPageTool(server, config, analytics),
     },
     // agent + skill tools
@@ -135,6 +135,7 @@ export function registerSurface(
 
   const compliant = isCompliant(config);
   for (const { surface, register } of registrations) {
-    if (surface === 'both' || !compliant) register();
+    if (surface === 'both' || surface === (compliant ? 'compliant' : 'full'))
+      register();
   }
 }

@@ -263,7 +263,7 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full stdio mode registers exactly the 18 tools (regression guard)', () => {
+  it('full stdio mode registers exactly the 17 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -278,7 +278,6 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_map',
       'browserless_performance',
       'browserless_profiles',
-      'browserless_read_page',
       'browserless_search',
       'browserless_sessions',
       'browserless_skill',
@@ -292,6 +291,15 @@ describe('compliance mode — compliant tool surface', () => {
     expect(captureTools(false).byName.has('browserless_profiles')).to.be.true;
   });
 
+  it('browserless_read_page is connector-only', () => {
+    for (const transport of ['stdio', 'httpStream'] as const) {
+      expect(captureTools(true, transport).byName.has('browserless_read_page'))
+        .to.be.true;
+      expect(captureTools(false, transport).byName.has('browserless_read_page'))
+        .to.be.false;
+    }
+  });
+
   it('Stripe Link tools are full-only', () => {
     const compliant = captureTools(true).byName;
     const full = captureTools(false).byName;
@@ -301,10 +309,10 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('full HTTP adds stage_file for exactly 19 tools', () => {
+  it('full HTTP adds stage_file for exactly 18 tools', () => {
     const stdio = captureTools(false).names;
     const http = captureTools(false, 'httpStream').names;
-    expect(http).to.have.length(19);
+    expect(http).to.have.length(18);
     expect(http).to.deep.equal([...stdio, 'browserless_stage_file'].sort());
   });
 
