@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { gzipSync } from 'node:zlib';
+import { gzip } from 'node:zlib';
+import { promisify } from 'node:util';
 import { UserError } from 'fastmcp';
 import type { ContentResult } from 'fastmcp';
 import type { ReplayArtifact } from './session-replay-artifact.js';
@@ -15,6 +16,7 @@ export const VIEW_UNAVAILABLE =
   'This view is unavailable. Run the original data tool again to prepare a new view.';
 export const VIEW_TTL_MS = 15 * 60 * 1000;
 const PAGE_BYTES = 72 * 1024; // 96 KiB base64, leaving room for the result envelope.
+const gzipAsync = promisify(gzip);
 type Encoding = 'identity' | 'gzip';
 
 interface StoredView {
@@ -24,6 +26,7 @@ interface StoredView {
   expires: number;
   json: Buffer;
   gzip?: Buffer;
+  gzipPromise?: Promise<void>;
   cursors: Partial<Record<Encoding, string[]>>;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -53,15 +56,15 @@ export class ViewStore {
     this.views.delete(ref);
   }
 
-  private room(extra: number, keep?: string): boolean {
+  private room(extra: number, owner: string, keep?: string): boolean {
     for (const [ref, view] of this.views) {
       if (view.expires <= this.now()) this.drop(ref);
     }
     const maxBytes = this.options.maxBytes ?? 128 * 1024 * 1024;
     if (extra > maxBytes) return false;
-    for (const ref of this.views.keys()) {
+    for (const [ref, view] of this.views) {
       if (this.bytes + extra <= maxBytes) break;
-      if (ref !== keep) this.drop(ref);
+      if (ref !== keep && view.owner === owner) this.drop(ref);
     }
     return this.bytes + extra <= maxBytes;
   }
@@ -69,10 +72,14 @@ export class ViewStore {
   prepare(owner: string, artifact: ReplayArtifact): PreparedView | undefined {
     if (!ReplayPayloadSchema.safeParse(artifact).success) return undefined;
     const json = Buffer.from(JSON.stringify(artifact));
-    if (json.length > VIEW_DATA_MAX_BYTES || !this.room(json.length))
+    if (json.length > VIEW_DATA_MAX_BYTES || !this.room(json.length, owner))
       return undefined;
     while (this.views.size >= (this.options.maxEntries ?? 16)) {
-      this.drop(this.views.keys().next().value!);
+      const victim = [...this.views].find(
+        ([, view]) => view.owner === owner,
+      )?.[0];
+      if (!victim) return undefined;
+      this.drop(victim);
     }
     const events = artifact.events as Array<{ timestamp: number }>;
     const duration = Math.max(
@@ -126,9 +133,13 @@ export class ViewStore {
     const result: ContentResult = {
       content: [{ type: 'text', text: view.prepared.summary }],
       structuredContent: structuredClone(view.prepared),
-      _meta: { payload: JSON.parse(view.json.toString('utf8')) },
+      _meta: { payload: null },
     };
-    if (Buffer.byteLength(JSON.stringify(result)) > VIEW_RESULT_MAX_BYTES) {
+    // Replace the four bytes of `null` with the already serialized recording.
+    if (
+      Buffer.byteLength(JSON.stringify(result)) - 4 + view.json.length >
+      VIEW_RESULT_MAX_BYTES
+    ) {
       result._meta = {
         source: {
           viewRef: ref,
@@ -136,23 +147,33 @@ export class ViewStore {
           encoding: 'base64-json',
         },
       };
+    } else {
+      result._meta = { payload: JSON.parse(view.json.toString('utf8')) };
     }
     return result;
   }
 
-  read(
+  async read(
     ref: string,
     owner: string,
     encoding: Encoding,
     cursor?: string,
-  ): ContentResult {
+  ): Promise<ContentResult> {
     const view = this.require(ref, owner);
     if (encoding === 'gzip' && !view.gzip) {
-      const compressed = gzipSync(view.json);
-      if (!this.room(compressed.length, ref))
-        throw new UserError(VIEW_UNAVAILABLE);
-      view.gzip = compressed;
-      this.bytes += compressed.length;
+      await (view.gzipPromise ??= gzipAsync(view.json)
+        .then((compressed) => {
+          this.require(ref, owner);
+          if (!this.room(compressed.length, owner, ref))
+            throw new UserError(VIEW_UNAVAILABLE);
+          this.require(ref, owner);
+          view.gzip = compressed;
+          this.bytes += compressed.length;
+        })
+        .finally(() => {
+          view.gzipPromise = undefined;
+        }));
+      this.require(ref, owner);
     }
     const bytes = encoding === 'gzip' ? view.gzip! : view.json;
     const cursors = (view.cursors[encoding] ??= Array.from(

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { FastMCP } from 'fastmcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -171,6 +172,21 @@ describe('production replay tools over real MCP HTTP', () => {
       ).to.deep.equal(fixture.events);
       expect(downloads).to.equal(1);
       expect(accessChecks).to.equal(1);
+      const compressed = await alice.callTool({
+        name: 'browserless_view_data',
+        arguments: { viewRef, encoding: 'gzip' },
+      });
+      expect(compressed.isError).not.to.equal(true);
+      expect(compressed.structuredContent).to.deep.equal({ complete: true });
+      expect(compressed._meta!.encoding).to.equal('base64-gzip-json');
+      expect(
+        JSON.parse(
+          gunzipSync(
+            Buffer.from(compressed._meta!.data as string, 'base64'),
+          ).toString('utf8'),
+        ).events,
+      ).to.deep.equal(fixture.events);
+      expect(downloads).to.equal(1);
       const bob = await connect('bob');
       const denied = await bob.callTool({
         name: 'browserless_show',
