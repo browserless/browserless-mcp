@@ -2,9 +2,18 @@ import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sinon from 'sinon';
-import { FastMCP } from 'fastmcp';
+import { FastMCP, type Content } from 'fastmcp';
+import { z } from 'zod';
+import { clearSession } from '../../src/lib/download-store.js';
 import { registerSurface } from '../../src/tools/register.js';
+import { registerStatusResource } from '../../src/resources/status.js';
 import {
+  announceToolListOnConnect,
+  COMPLIANT_EXPORT_DESCRIPTION,
+  COMPLIANT_MAP_DESCRIPTION,
+  COMPLIANT_PERFORMANCE_DESCRIPTION,
+  COMPLIANT_SEARCH_DESCRIPTION,
+  READ_PAGE_DESCRIPTION,
   visibleSkills,
   detectVisibleSkills,
   COMPLIANT_SKILLS,
@@ -16,7 +25,10 @@ import {
   renderSkill,
   validateMarkers,
 } from '../../src/skills/index.js';
-import { buildSurfaceExtras } from '../../src/tools/agent.js';
+import {
+  buildSurfaceExtras,
+  registerAgentTools,
+} from '../../src/tools/agent.js';
 import {
   hydrateRemoteSkills,
   __resetRemoteSkillsForTesting,
@@ -48,18 +60,22 @@ const baseConfig: McpConfig = {
 type CapturedTool = {
   name: string;
   description: string;
-  parameters: { safeParse: (v: unknown) => { success: boolean; data?: any } };
+  parameters: z.ZodType;
+  execute: (a: unknown, c: unknown) => Promise<unknown>;
 };
 
 // Drive the REAL registration seam (src/tools/register.ts, which index.ts also
 // calls) so this guard catches drift — e.g. a new circumvention tool registered
 // unconditionally would change the compliant tool set and fail here.
-function captureTools(complianceMode: boolean) {
+function captureTools(
+  complianceMode: boolean,
+  transport: McpConfig['transport'] = 'stdio',
+) {
   const server = new FastMCP({ name: 'test', version: '0.1.0' });
   const toolSpy = sinon.spy(server, 'addTool');
   const promptSpy = sinon.spy(server, 'addPrompt');
   const resourceSpy = sinon.spy(server, 'addResource');
-  const config: McpConfig = { ...baseConfig, complianceMode };
+  const config: McpConfig = { ...baseConfig, complianceMode, transport };
 
   registerSurface(server, config);
 
@@ -80,26 +96,174 @@ function captureTools(complianceMode: boolean) {
   };
 }
 
+function captureAgentTools(complianceMode: boolean) {
+  const server = new FastMCP({ name: 'test', version: '0.1.0' });
+  const spy = sinon.spy(server, 'addTool');
+  registerAgentTools(server, { ...baseConfig, complianceMode });
+  const tools = spy.getCalls().map((c) => c.args[0] as unknown as CapturedTool);
+  return { byName: new Map(tools.map((tool) => [tool.name, tool])) };
+}
+
 const VALID_GOTO = { method: 'goto', params: { url: 'https://example.com' } };
 
 describe('compliance mode — compliant tool surface', () => {
   afterEach(() => sinon.restore());
 
-  it('registers exactly the 8 compliant tools (no search/smartscraper/function/map/crawl)', () => {
+  describe('reply block layout', () => {
+    const cases = [
+      {
+        name: 'performance',
+        params: { url: 'https://example.com', categories: ['performance'] },
+        response: {
+          type: 'json',
+          data: {
+            categories: { performance: { title: 'Performance', score: 0.87 } },
+            audits: { 'largest-contentful-paint': { displayValue: '2.3 s' } },
+          },
+        },
+        parts: [
+          '## Lighthouse Scores',
+          '- Performance: 87/100',
+          '## Lighthouse Lab Metrics',
+          '- LCP: 2.3 s',
+          'INP is not measured',
+          'URL: https://example.com',
+        ],
+        fullBlocks: 4,
+      },
+      {
+        name: 'search',
+        params: { query: 'browser news', sources: ['web', 'news'] },
+        response: {
+          success: true,
+          totalResults: 2,
+          data: {
+            web: [
+              {
+                title: 'Web match',
+                url: 'https://example.com/web',
+                description: 'Web snippet',
+              },
+            ],
+            news: [
+              {
+                title: 'News match',
+                url: 'https://example.com/news',
+                description: 'News snippet',
+              },
+            ],
+          },
+        },
+        parts: [
+          '## Web Results',
+          'Web match',
+          'Web snippet',
+          '## News Results',
+          'News match',
+          'News snippet',
+          'Query: browser news',
+        ],
+        fullBlocks: 3,
+      },
+      {
+        name: 'map',
+        params: { url: 'https://example.com' },
+        response: {
+          success: true,
+          links: [{ url: 'https://example.com/about', title: 'About title' }],
+        },
+        parts: [
+          '## Site Map Results',
+          'About title',
+          '## URL List',
+          'https://example.com/about',
+          'Base URL: https://example.com',
+        ],
+        fullBlocks: 3,
+      },
+      {
+        name: 'export',
+        params: { url: 'https://example.com' },
+        response: '<p>Exported content</p>',
+        parts: [
+          '<p>Exported content</p>',
+          'URL: https://example.com',
+          'Content-Type: text/html',
+        ],
+        fullBlocks: 2,
+      },
+    ];
+
+    for (const compliant of [true, false]) {
+      for (const fixture of cases) {
+        it(`${fixture.name} preserves every section in order on ${compliant ? 'one connector block' : 'full multi-block replies'}`, async () => {
+          sinon.stub(globalThis, 'fetch').resolves(
+            new Response(
+              typeof fixture.response === 'string'
+                ? fixture.response
+                : JSON.stringify(fixture.response),
+              {
+                headers: {
+                  'Content-Type':
+                    fixture.name === 'export'
+                      ? 'text/html'
+                      : 'application/json',
+                },
+              },
+            ),
+          );
+          const context = {
+            reportProgress: sinon.stub().resolves(),
+            log: {
+              debug: sinon.stub(),
+              info: sinon.stub(),
+              warn: sinon.stub(),
+              error: sinon.stub(),
+            },
+            sessionId: 'reply-layout-test',
+          };
+          try {
+            const tool = captureTools(compliant).byName.get(
+              `browserless_${fixture.name}`,
+            )!;
+            const result = (await tool.execute(fixture.params, context)) as {
+              content: Content[];
+            };
+            expect(result.content).to.have.length(
+              compliant ? 1 : fixture.fullBlocks,
+            );
+            expect(
+              result.content.every((block) => block.type === 'text'),
+            ).to.equal(true);
+            const text = result.content
+              .map((block) => (block.type === 'text' ? block.text : ''))
+              .join('\n\n');
+            let previous = -1;
+            for (const part of fixture.parts) {
+              const index = text.indexOf(part, previous + 1);
+              expect(index, part).to.be.greaterThan(previous);
+              previous = index;
+            }
+          } finally {
+            clearSession(context.sessionId);
+          }
+        });
+      }
+    }
+  });
+
+  it('registers exactly the five connector tools', () => {
     const { names } = captureTools(true);
     expect(names).to.deep.equal([
-      'browserless_account',
-      'browserless_agent',
       'browserless_export',
-      'browserless_logs',
+      'browserless_map',
       'browserless_performance',
-      'browserless_sessions',
-      'browserless_skill',
-      'browserless_usage',
+      'browserless_read_page',
+      'browserless_search',
     ]);
   });
 
-  it('full mode registers exactly the 17 tools (regression guard)', () => {
+  it('full stdio mode registers exactly the 17 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -127,6 +291,15 @@ describe('compliance mode — compliant tool surface', () => {
     expect(captureTools(false).byName.has('browserless_profiles')).to.be.true;
   });
 
+  it('browserless_read_page is connector-only', () => {
+    for (const transport of ['stdio', 'httpStream'] as const) {
+      expect(captureTools(true, transport).byName.has('browserless_read_page'))
+        .to.be.true;
+      expect(captureTools(false, transport).byName.has('browserless_read_page'))
+        .to.be.false;
+    }
+  });
+
   it('Stripe Link tools are full-only', () => {
     const compliant = captureTools(true).byName;
     const full = captureTools(false).byName;
@@ -136,9 +309,36 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('browserless_search is full-only (excluded from the compliant surface)', () => {
-    expect(captureTools(true).byName.has('browserless_search')).to.be.false;
-    expect(captureTools(false).byName.has('browserless_search')).to.be.true;
+  it('full HTTP adds stage_file for exactly 18 tools', () => {
+    const stdio = captureTools(false).names;
+    const http = captureTools(false, 'httpStream').names;
+    expect(http).to.have.length(18);
+    expect(http).to.deep.equal([...stdio, 'browserless_stage_file'].sort());
+  });
+
+  it('search and map are on both surfaces', () => {
+    for (const mode of [true, false]) {
+      expect(captureTools(mode).names).to.include.members([
+        'browserless_search',
+        'browserless_map',
+      ]);
+    }
+  });
+
+  it('agent, skill, account, usage, sessions and logs are full-only', () => {
+    const compliant = captureTools(true).names;
+    const full = captureTools(false).names;
+    for (const name of [
+      'agent',
+      'skill',
+      'account',
+      'usage',
+      'sessions',
+      'logs',
+    ]) {
+      expect(compliant).not.to.include(`browserless_${name}`);
+      expect(full).to.include(`browserless_${name}`);
+    }
   });
 
   // #179 broke compliance by re-adding direct register*() calls in index.ts,
@@ -161,17 +361,10 @@ describe('compliance mode — compliant tool surface', () => {
   });
 
   describe('non-tool surface (prompts + resources)', () => {
-    it('compliant mode omits the smartscraper-centric prompts + api-docs resource', () => {
+    it('compliant mode has no prompts or resources', () => {
       const { promptNames, resourceUris } = captureTools(true);
-      expect(promptNames, 'no scrape prompts').to.not.include.members([
-        'scrape-url',
-        'extract-content',
-      ]);
-      expect(resourceUris, 'no api-docs').to.not.include(
-        'browserless://api-docs',
-      );
-      // status resource stays on both surfaces (it reports the active surface).
-      expect(resourceUris, 'status kept').to.include('browserless://status');
+      expect(promptNames).to.deep.equal([]);
+      expect(resourceUris).to.deep.equal([]);
     });
 
     it('full mode serves the prompts + api-docs resource', () => {
@@ -184,15 +377,40 @@ describe('compliance mode — compliant tool surface', () => {
     });
   });
 
+  describe('tool-list announcements', () => {
+    for (const complianceMode of [true, false]) {
+      it(`${complianceMode ? 'connector suppresses' : 'full sends'} the connect announcement`, () => {
+        const session = {
+          triggerListChangedNotification: sinon.stub().resolves(),
+        };
+        announceToolListOnConnect(session, { ...baseConfig, complianceMode });
+        if (complianceMode) {
+          sinon.assert.notCalled(session.triggerListChangedNotification);
+        } else {
+          sinon.assert.calledOnceWithExactly(
+            session.triggerListChangedNotification,
+            'notifications/tools/list_changed',
+          );
+        }
+      });
+    }
+
+    it('index.ts delegates connect announcements to the compliance helper', () => {
+      const src = readFileSync(join(process.cwd(), 'src', 'index.ts'), 'utf8');
+      expect(src).to.match(/\bannounceToolListOnConnect\s*\(/);
+      expect(src).not.to.match(/\btriggerListChangedNotification\s*\(/);
+    });
+  });
+
   describe('agent schema', () => {
     it('accepts a navigation command batch', () => {
-      const agent = captureTools(true).byName.get('browserless_agent')!;
+      const agent = captureAgentTools(true).byName.get('browserless_agent')!;
       expect(agent.parameters.safeParse({ commands: [VALID_GOTO] }).success).to
         .be.true;
     });
 
     it('accepts capability requirements', () => {
-      const agent = captureTools(true).byName.get('browserless_agent')!;
+      const agent = captureAgentTools(true).byName.get('browserless_agent')!;
       expect(
         agent.parameters.safeParse({
           commands: [VALID_GOTO],
@@ -202,7 +420,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('rejects an empty or missing commands array', () => {
-      const agent = captureTools(true).byName.get('browserless_agent')!;
+      const agent = captureAgentTools(true).byName.get('browserless_agent')!;
       expect(
         agent.parameters.safeParse({ commands: [] }).success,
         'empty commands',
@@ -214,7 +432,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('rejects prohibited commands (solve/evaluate/loadSecret/clearSecrets/saveSecret)', () => {
-      const agent = captureTools(true).byName.get('browserless_agent')!;
+      const agent = captureAgentTools(true).byName.get('browserless_agent')!;
       for (const method of [
         'solve',
         'evaluate',
@@ -231,7 +449,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('full mode accepts solve and evaluate (they are removed only in compliant)', () => {
-      const full = captureTools(false).byName.get('browserless_agent')!;
+      const full = captureAgentTools(false).byName.get('browserless_agent')!;
       expect(
         full.parameters.safeParse({ commands: [{ method: 'solve' }] }).success,
         'full accepts solve',
@@ -245,7 +463,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('compliant rejects an unknown method (no raw-BQL passthrough arm)', () => {
-      const agent = captureTools(true).byName.get('browserless_agent')!;
+      const agent = captureAgentTools(true).byName.get('browserless_agent')!;
       expect(
         agent.parameters.safeParse({
           commands: [{ method: 'totally-unknown-method', params: {} }],
@@ -291,7 +509,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('rejects proxy / profile / createProfile / raw method passthrough (strict)', () => {
-      const agent = captureTools(true).byName.get('browserless_agent')!;
+      const agent = captureAgentTools(true).byName.get('browserless_agent')!;
       expect(
         agent.parameters.safeParse({ commands: [VALID_GOTO], proxy: {} })
           .success,
@@ -334,7 +552,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('full mode accepts profile (auth-profile capability removed only in compliant)', () => {
-      const full = captureTools(false).byName.get('browserless_agent')!;
+      const full = captureAgentTools(false).byName.get('browserless_agent')!;
       expect(
         full.parameters.safeParse({
           commands: [VALID_GOTO],
@@ -346,7 +564,7 @@ describe('compliance mode — compliant tool surface', () => {
 
   describe('skill tool', () => {
     it('enum excludes authentication and captcha skills, keeps others', () => {
-      const skill = captureTools(true).byName.get('browserless_skill')!;
+      const skill = captureAgentTools(true).byName.get('browserless_skill')!;
       for (const id of [
         'captchas',
         'autonomous-login',
@@ -386,7 +604,7 @@ describe('compliance mode — compliant tool surface', () => {
       // Fail-closed lock: the schema accepts a registry skill iff it's approved
       // (a denylist would let an un-classified skill through by default).
       const approved = new Set(APPROVED);
-      const skill = captureTools(true).byName.get('browserless_skill')!;
+      const skill = captureAgentTools(true).byName.get('browserless_skill')!;
       for (const s of skillsRegistry) {
         expect(
           skill.parameters.safeParse({ id: s.id }).success,
@@ -396,13 +614,13 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('description does not advertise captchas or autonomous-login', () => {
-      const skill = captureTools(true).byName.get('browserless_skill')!;
+      const skill = captureAgentTools(true).byName.get('browserless_skill')!;
       expect(skill.description).to.not.match(/captchas|autonomous-login/i);
     });
 
     it('description lists exactly the allowlisted skills (guards prose drift)', () => {
       const desc =
-        captureTools(true).byName.get('browserless_skill')!.description;
+        captureAgentTools(true).byName.get('browserless_skill')!.description;
       for (const id of COMPLIANT_SKILLS) {
         expect(desc, `description must mention ${id}`).to.contain(id);
       }
@@ -438,13 +656,13 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     it('full mode keeps the excluded skills selectable (regression guard)', () => {
-      const skill = captureTools(false).byName.get('browserless_skill')!;
+      const skill = captureAgentTools(false).byName.get('browserless_skill')!;
       expect(skill.parameters.safeParse({ id: 'captchas' }).success).to.be.true;
     });
 
     it('compliant drops the `site` recipe lookup (strict); full keeps it', () => {
-      const conn = captureTools(true).byName.get('browserless_skill')!;
-      const full = captureTools(false).byName.get('browserless_skill')!;
+      const conn = captureAgentTools(true).byName.get('browserless_skill')!;
+      const full = captureAgentTools(false).byName.get('browserless_skill')!;
       // compliant schema exposes only `id` — no `site` recipe param advertised
       const shape = (
         conn.parameters as unknown as { shape?: Record<string, unknown> }
@@ -513,9 +731,9 @@ describe('compliance mode — compliant tool surface', () => {
     it('serves the de-fanged compliant descriptions (what a directory reviewer reads)', () => {
       const { byName } = captureTools(true);
       // agent: explicit restrictive posture
-      expect(byName.get('browserless_agent')!.description).to.match(
-        /do not use to bypass access controls/i,
-      );
+      expect(
+        captureAgentTools(true).byName.get('browserless_agent')!.description,
+      ).to.match(/do not use to bypass access controls/i);
       // export: no bulk-asset / ZIP language
       expect(byName.get('browserless_export')!.description).to.not.match(
         /zip|bundle all|includeResources/i,
@@ -540,15 +758,7 @@ describe('compliance mode — compliant tool surface', () => {
     // Bypasses schema validation by calling execute() directly — the "schema
     // mis-built" case the allowlist loop exists for and safeParse can't reach.
     const compliantAgentExecute = () => {
-      const server = new FastMCP({ name: 'test', version: '0.1.0' });
-      const spy = sinon.spy(server, 'addTool');
-      registerSurface(server, { ...baseConfig, complianceMode: true });
-      const agent = spy
-        .getCalls()
-        .find((c) => c.args[0].name === 'browserless_agent')!.args[0] as {
-        execute: (a: unknown, c: unknown) => Promise<unknown>;
-      };
-      return agent.execute;
+      return captureAgentTools(true).byName.get('browserless_agent')!.execute;
     };
 
     it('rejects an unknown (non-allowlisted) method even when the schema is bypassed', async () => {
@@ -620,15 +830,7 @@ describe('compliance mode — compliant tool surface', () => {
     });
 
     const compliantSkillExecute = () => {
-      const server = new FastMCP({ name: 'test', version: '0.1.0' });
-      const spy = sinon.spy(server, 'addTool');
-      registerSurface(server, { ...baseConfig, complianceMode: true });
-      const skill = spy
-        .getCalls()
-        .find((c) => c.args[0].name === 'browserless_skill')!.args[0] as {
-        execute: (a: unknown, c: unknown) => Promise<unknown>;
-      };
-      return skill.execute;
+      return captureAgentTools(true).byName.get('browserless_skill')!.execute;
     };
 
     it('skill run() refuses a restricted recipe even when the enum is bypassed', async () => {
@@ -696,15 +898,6 @@ describe('compliance mode — compliant tool surface', () => {
     // edit that adds ANY top-level field (evasion or not, any name) to a
     // compliant tool fails here, regardless of what it's called.
     const EXPECTED_KEYS: Record<string, string[]> = {
-      // `sessionId` re-binds the caller to the browser it already had — a
-      // continuity handle, not a capability.
-      browserless_agent: [
-        'commands',
-        'keepSessionAlive',
-        'rationale',
-        'requiredCapabilities',
-        'sessionId',
-      ],
       browserless_export: [
         'bestAttempt',
         'gotoOptions',
@@ -712,42 +905,33 @@ describe('compliance mode — compliant tool surface', () => {
         'url',
         'waitForTimeout',
       ],
-      browserless_performance: [
-        'budgets',
+      browserless_performance: ['categories', 'device', 'timeout', 'url'],
+      browserless_search: [
         'categories',
-        'config',
-        'device',
+        'country',
+        'lang',
+        'limit',
+        'location',
+        'query',
+        'sources',
+        'tbs',
+        'timeout',
+      ],
+      browserless_map: [
+        'ignoreQueryParameters',
+        'includeSubdomains',
+        'limit',
+        'search',
+        'sitemap',
         'timeout',
         'url',
       ],
-      browserless_skill: ['id'],
-      // Account-data tools: every key is a read filter. None drives a browser,
-      // none names a credential, none accepts a URL to fetch.
-      browserless_account: ['action'],
-      browserless_usage: ['apiKeyIds', 'timeframe'],
-      browserless_sessions: [
-        'action',
-        'limit',
-        'page',
-        'search',
-        'sessionId',
-        'skip',
-      ],
-      browserless_logs: [
-        'apiKeyId',
-        'category',
-        'cursor',
-        'endTime',
-        'endpoint',
-        'eventNames',
-        'levels',
-        'limit',
-        'order',
-        'outcome',
-        'reason',
-        'requestId',
-        'startTime',
+      browserless_read_page: [
+        'format',
+        'selector',
         'url',
+        'waitForSelector',
+        'waitForTimeout',
       ],
     };
 
@@ -768,6 +952,55 @@ describe('compliance mode — compliant tool surface', () => {
           Object.keys(shape ?? {}).sort(),
           `${name} top-level keys`,
         ).to.deep.equal(EXPECTED_KEYS[name]);
+      }
+    });
+
+    it('export gotoOptions exposes exactly timeout and waitUntil', () => {
+      const tool = captureTools(true).byName.get('browserless_export')!;
+      const schema = z.toJSONSchema(tool.parameters);
+      const gotoOptions = schema.properties
+        ?.gotoOptions as z.core.JSONSchema.BaseSchema;
+      expect(gotoOptions).to.be.an('object');
+      expect(Object.keys(gotoOptions.properties ?? {}).sort()).to.deep.equal([
+        'timeout',
+        'waitUntil',
+      ]);
+    });
+
+    it('no connector tool has an untyped object field', () => {
+      const visit = (node: unknown, path: string): void => {
+        if (!node || typeof node !== 'object') return;
+        for (const [key, value] of Object.entries(node)) {
+          expect(key, path).not.to.equal('propertyNames');
+          if (key === 'additionalProperties')
+            expect(value, path).to.equal(false);
+          visit(value, `${path}.${key}`);
+        }
+      };
+      for (const [name, tool] of captureTools(true).byName) {
+        visit(z.toJSONSchema(tool.parameters), name);
+      }
+    });
+
+    it('connector descriptions equal their constants and schemas contain no forbidden copy', () => {
+      const descriptions: Record<string, string> = {
+        browserless_export: COMPLIANT_EXPORT_DESCRIPTION,
+        browserless_map: COMPLIANT_MAP_DESCRIPTION,
+        browserless_performance: COMPLIANT_PERFORMANCE_DESCRIPTION,
+        browserless_read_page: READ_PAGE_DESCRIPTION,
+        browserless_search: COMPLIANT_SEARCH_DESCRIPTION,
+      };
+      const { byName } = captureTools(true);
+      expect([...byName.keys()].sort()).to.deep.equal(
+        Object.keys(descriptions).sort(),
+      );
+      for (const [name, tool] of byName) {
+        expect(tool.description, name).to.equal(descriptions[name]);
+        const copy =
+          tool.description + JSON.stringify(z.toJSONSchema(tool.parameters));
+        expect(copy, name).not.to.match(
+          /SearXNG|Puppeteer|\/export API|\/performance API|crawl|stdio|curl|download|upgrade|pricing|\bplan\b/i,
+        );
       }
     });
 
@@ -796,7 +1029,7 @@ describe('compliance mode — compliant tool surface', () => {
     const loadStatus = async (complianceMode: boolean) => {
       const server = new FastMCP({ name: 'test', version: '0.1.0' });
       const spy = sinon.spy(server, 'addResource');
-      registerSurface(server, {
+      registerStatusResource(server, {
         ...baseConfig,
         browserlessToken: undefined,
         complianceMode,
