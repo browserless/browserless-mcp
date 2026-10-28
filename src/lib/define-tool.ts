@@ -188,6 +188,13 @@ export function assertHttpScheme(url: string): void {
   }
 }
 
+export const ACCOUNT_LIMIT_MESSAGE =
+  "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time).";
+export const isAccountLimitMessage = (message: string): boolean =>
+  /browserless\.io\/account|upgrade (?:your|the|to a paid) plan/i.test(
+    message.replace(/^Couldn't read the page at https?:\/\/\S+: /, ''),
+  );
+
 export function defineTool<P, R>(
   server: FastMCP,
   config: McpConfig,
@@ -394,7 +401,24 @@ export function defineTool<P, R>(
           emit(resultProps);
         }
 
-        return Array.isArray(formatted) ? { content: formatted } : formatted;
+        const response = Array.isArray(formatted)
+          ? { content: formatted }
+          : formatted;
+        // Connector clients may consume only the first content block.
+        return config.complianceMode
+          ? {
+              ...response,
+              content: [
+                {
+                  type: 'text',
+                  text: response.content
+                    .filter((block) => block.type === 'text')
+                    .map((block) => block.text)
+                    .join('\n\n'),
+                },
+              ],
+            }
+          : response;
       } catch (err) {
         const error =
           err instanceof ProfileNotFoundError
@@ -442,6 +466,13 @@ export function defineTool<P, R>(
           });
         }
 
+        if (
+          config.complianceMode &&
+          error instanceof Error &&
+          isAccountLimitMessage(error.message)
+        ) {
+          throw new UserError(ACCOUNT_LIMIT_MESSAGE);
+        }
         throw error;
       }
     },
