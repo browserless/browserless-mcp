@@ -23,7 +23,7 @@ import { describeReadyDownload } from './agent.js';
 import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import type { McpConfig } from '../@types/types.js';
 import { replayViews } from '../lib/view-store.js';
-import { ShowOutputSchema, type PreparedView } from '../lib/view-schemas.js';
+import type { PreparedView } from '../lib/view-schemas.js';
 
 export const SessionsParamsSchema = z.object({
   action: z
@@ -409,18 +409,6 @@ export function registerSessionsTool(
         ? ''
         : ' For MCP Apps clients, action replay returns a viewRef without rendering. Call browserless_show with that exact reference to display the recording; do not read or repeat the recording data.'),
     parameters: SessionsParamsSchema,
-    ...(!isCompliant(config)
-      ? {
-          outputSchema: z.object({
-            action: SessionsParamsSchema.shape.action,
-            summary: z.string(),
-            viewRef: ShowOutputSchema.shape.viewRef.optional(),
-            kind: ShowOutputSchema.shape.kind.optional(),
-            expiresAt: ShowOutputSchema.shape.expiresAt.optional(),
-            data: ShowOutputSchema.shape.data.optional(),
-          }),
-        }
-      : {}),
     annotations: {
       title: 'Browserless Sessions',
       readOnlyHint: true,
@@ -597,7 +585,7 @@ export function registerSessionsTool(
         {
           type: 'text' as const,
           text: replay?.view
-            ? `${replay.view.summary} Call browserless_show with the returned viewRef to play it.
+            ? `${replay.view.summary} Call browserless_show with ${JSON.stringify({ viewRef: replay.view.viewRef })} to play it.
 
 ${
   replay.local
@@ -618,19 +606,15 @@ ${downloads}`
           },
         });
       }
-      return isCompliant(config)
-        ? blocks
-        : {
+      return replay?.view
+        ? {
             content: blocks,
             structuredContent: {
               action: params.action,
-              ...(replay?.view ?? {
-                summary: replay
-                  ? 'Session replay downloaded.'
-                  : FORMATTERS[params.action](result ?? {}),
-              }),
+              ...replay.view,
             },
-          };
+          }
+        : blocks;
     },
   });
 }

@@ -125,6 +125,9 @@ describe('production replay tools over real MCP HTTP', () => {
         tools.find((tool) => tool.name === 'browserless_sessions')!._meta,
       ).to.equal(undefined);
       expect(
+        tools.find((tool) => tool.name === 'browserless_sessions'),
+      ).not.to.have.property('outputSchema');
+      expect(
         tools.find((tool) => tool.name === 'browserless_view_data')!._meta,
       ).to.deep.include({ ui: { visibility: ['app'] } });
       expect(VIEW_URI).to.equal('ui://browserless/view/v2.html');
@@ -155,6 +158,15 @@ describe('production replay tools over real MCP HTTP', () => {
       ).viewRef;
       expect(prepared._meta).to.equal(undefined);
       expect(prepared.structuredContent).to.include({ kind: 'replay' });
+      // Hosts that expose only text to the model still need the exact reference.
+      const modelText = (
+        prepared.content as Array<{ type: string; text?: string }>
+      )
+        .filter((item) => item.type === 'text')
+        .map((item) => item.text)
+        .join('\n');
+      const textViewRef = modelText.match(/view_[0-9a-f-]+/)?.[0];
+      expect(textViewRef).to.equal(viewRef);
       expect(JSON.stringify(prepared)).not.to.include('Step 1: Opened page');
       expect(JSON.stringify(prepared)).not.to.include('account-key');
       expect(
@@ -165,7 +177,7 @@ describe('production replay tools over real MCP HTTP', () => {
       expect(downloads).to.equal(1);
       const shown = await alice.callTool({
         name: 'browserless_show',
-        arguments: { viewRef },
+        arguments: { viewRef: textViewRef },
       });
       expect(
         (shown._meta!.payload as { events: unknown[] }).events,
@@ -255,6 +267,24 @@ describe('production replay tools over real MCP HTTP', () => {
           delete process.env.BROWSERLESS_DOWNLOAD_DIR;
         else process.env.BROWSERLESS_DOWNLOAD_DIR = previousDir;
         await rm(dir, { recursive: true, force: true });
+      }
+      // Both unsupported clients and failed view preparation retain legacy output.
+      replayViews.clear();
+      for (let index = 0; index < 16; index++)
+        replayViews.prepare('another-owner', fixture);
+      for (const client of [noUi, alice]) {
+        const legacy = await client.callTool({
+          name: 'browserless_sessions',
+          arguments: { action: 'replay', sessionId: fixture.sessionId },
+        });
+        expect(legacy.isError).not.to.equal(true);
+        expect(legacy).not.to.have.property('structuredContent');
+        expect(legacy.content).to.satisfy((blocks: Array<{ type: string }>) =>
+          blocks.some((block) => block.type === 'resource'),
+        );
+        expect(JSON.stringify(legacy.content)).to.include(
+          'never rebuild the player',
+        );
       }
     } finally {
       await Promise.allSettled(clients.map((client) => client.close()));
