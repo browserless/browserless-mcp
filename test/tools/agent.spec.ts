@@ -728,9 +728,13 @@ describe('formatScreenshotToDisk', () => {
     );
     const text = (content![0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+      /curl -fsS "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
     expect(text).to.include('screenshot.jpg');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
+    expect(JSON.stringify(content)).to.not.include('tok-1');
     expect(JSON.stringify(content)).to.not.include(FAKE_PNG);
   });
 
@@ -793,6 +797,8 @@ describe('fileTransferModeNote', () => {
     const note = fileTransferModeNote('httpStream', 'https://mcp.example.com');
     expect(note).to.match(/HTTP/);
     expect(note).to.include('https://mcp.example.com/upload');
+    expect(note).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+    expect(note).to.not.include('?token=');
     expect(note).to.match(/never base64/i);
   });
 });
@@ -935,10 +941,11 @@ describe('normalizeUploadCommand', () => {
       threw = true;
       const msg = (e as Error).message;
       expect(msg).to.match(/not available in HTTP mode/);
-      expect(msg).to.include('curl -s -F file=@"/etc/hosts"');
-      expect(msg).to.include(
-        'https://mcp.example.com/upload?token=<YOUR_BROWSERLESS_TOKEN>',
-      );
+      expect(msg).to.include('curl -fsS -F file=@"/etc/hosts"');
+      expect(msg).to.include('https://mcp.example.com/upload');
+      expect(msg).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+      expect(msg).to.not.include('?token=');
+      expect(msg).to.not.include('test-token');
     }
     expect(threw, 'expected normalizeUploadCommand to throw').to.be.true;
   });
@@ -1080,7 +1087,7 @@ describe('describeReadyDownload', () => {
         mcpBaseUrl,
       });
       expect(text).to.include('Replace <MCP_BASE_URL>');
-      expect(text).to.include('"<MCP_BASE_URL>/download/download-id?token=');
+      expect(text).to.include('"<MCP_BASE_URL>/download/download-id"');
       expect(text).to.not.include('"/download/');
     });
   }
@@ -1095,7 +1102,7 @@ describe('describeReadyDownload', () => {
         mcpBaseUrl,
       });
       expect(text).to.include(
-        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id?token=`,
+        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id"`,
       );
       expect(text).to.not.include('Replace <MCP_BASE_URL>');
     });
@@ -1116,11 +1123,15 @@ describe('formatDownloads (httpStream)', () => {
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.include('report.csv');
-    // GET recipe with the real base URL + token, marked single use.
+    // GET recipe references a local token without exposing its value.
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+      /curl -fsS "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
-    const urlId = text.match(/\/download\/([0-9a-f]{32})\?token=/)?.[1];
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
+    expect(JSON.stringify(content)).to.not.include('tok-1');
+    const urlId = text.match(/\/download\/([0-9a-f]{32})"/)?.[1];
     const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
     expect(urlId).to.equal(handleId);
     expect(text).to.include('single use');
@@ -1128,7 +1139,7 @@ describe('formatDownloads (httpStream)', () => {
     expect(JSON.stringify(content)).to.not.include('YWJj');
   });
 
-  it('URL-encodes tokens in the download recipe', async () => {
+  it('keeps raw and encoded account tokens out of the download recipe', async () => {
     const token = 'token+with&reserved#characters';
     const content = await formatDownloads(
       [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
@@ -1141,9 +1152,14 @@ describe('formatDownloads (httpStream)', () => {
       },
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
-    const url = text.match(/curl -s "([^"]+)"/)?.[1];
+    const url = text.match(/curl -fsS "([^"]+)"/)?.[1];
     expect(url).to.exist;
-    expect(new URL(url!).searchParams.get('token')).to.equal(token);
+    expect(new URL(url!).search).to.equal('');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
+    expect(JSON.stringify(content)).to.not.include(token);
+    expect(JSON.stringify(content)).to.not.include(encodeURIComponent(token));
   });
 
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {

@@ -126,9 +126,9 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 **NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.
 - **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it only inside the download directory or a directory explicitly allowed by the local operator through \`BROWSERLESS_UPLOAD_DIRS\`. Symlink targets must also be inside an allowed directory. Ask the operator about rejected paths; do not bypass the restriction by reading or moving the file yourself.
 - **Upload a local file (HTTP)**: the server can't read your disk. Stage it once over HTTP, then use the handle:
-  \`curl -s -F file=@"/path/to/file" "<MCP_BASE_URL>/upload?token=<TOKEN>"\` → returns \`{ "handle": "browserless-download://…" }\` → \`uploadFile { files: [{ handle }] }\`. (The path-rejection error gives you the exact command with your token + URL filled in.)
+  \`curl -fsS -F file=@"/path/to/file" "<MCP_BASE_URL>/upload" -H "Authorization: Bearer \${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"\` → returns \`{ "handle": "browserless-download://…" }\` → \`uploadFile { files: [{ handle }] }\`. (The HTTP-mode local-path error supplies this staging command. Configure the same token used for this MCP session locally; never print its value.)
 - **Re-upload something from \`getDownloads\`**: pass its \`handle\` (works in both modes).
-- **Download**: just trigger it in the agent (click a download link, or goto the file URL). The captured file **auto-surfaces** as a notification on the agent response (filename/size/handle), never the bytes — the server waits for it to finish (bounded by size), so it usually lands on that same call. stdio: file already saved, you get its path. HTTP: a **single-use** \`curl … /download/<id>?token=\` URL — fetch only if you need it. Files over the cap aren't transferred — you get the source URL to fetch directly. Path/handle reuses in \`uploadFile\`. (No separate download tool — use the agent.)
+- **Download**: just trigger it in the agent (click a download link, or goto the file URL). The captured file **auto-surfaces** as a notification on the agent response (filename/size/handle), never the bytes — the server waits for it to finish (bounded by size), so it usually lands on that same call. stdio: file already saved, you get its path. HTTP: a **single-use** \`/download/<id>\` URL with a curl command using \`Authorization: Bearer $BROWSERLESS_TOKEN\` — fetch only if you need it. Use the same token as this MCP session, configured locally; never print its value in the conversation. The command rejects missing tokens and fails on HTTP errors. Files over the cap aren't transferred — you get the source URL to fetch directly. Path/handle reuses in \`uploadFile\`. (No separate download tool — use the agent.)
 - base64 \`content\` is a LAST RESORT — tiny inline data only.
 - Full recipe: \`file-transfers\` skill.
 
@@ -323,8 +323,8 @@ export const fileTransferModeNote = (
     : `\n\n## Runtime: REMOTE (HTTP)\n` +
       `Before any file transfer, know your mode: this server runs over **HTTP** and **cannot read your filesystem**. ` +
       `To UPLOAD a local file, stage it once over HTTP, then use the handle:\n` +
-      `  \`curl -s -F file=@"/abs/file" "${mcpBaseUrl}/upload?token=<YOUR_TOKEN>"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
-      `**Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
+      `  \`curl -fsS -F file=@"/abs/file" "${mcpBaseUrl}/upload" -H "Authorization: Bearer \${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"\` -> { "handle": "browserless-download://..." } -> \`uploadFile { files: [{ handle }] }\`.\n` +
+      `Set BROWSERLESS_TOKEN locally to the same token used for this MCP session; never print its value. **Never base64 a file through the conversation.** DOWNLOADS come back with a single-use \`${mcpBaseUrl}/download/<id>\` URL.`;
 
 // HTTP-only reminder: continuation requires the echoed browser handle, not the
 // remote client's MCP session id, which may change across turns.

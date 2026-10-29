@@ -318,16 +318,20 @@ describe('browserless_performance tool', () => {
     );
     const text = JSON.stringify(result);
     const id = text.match(/\/download\/([0-9a-f]{32})/)![1];
-    expect(text).to.include(`?token=${encodeURIComponent(token)}`);
+    expect(text).to.not.include(token);
+    expect(text).to.not.include(encodeURIComponent(token));
+    expect(text).to.include(
+      'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+    );
     expect(text).to.not.include('privateDetails');
     expect(text).to.include('download to disk first');
     expect(
       (await server.getApp().request(`/download/${id}?token=test-token`))
         .status,
     ).to.equal(404);
-    const response = await server
-      .getApp()
-      .request(`/download/${id}?token=${encodeURIComponent(token)}`);
+    const response = await server.getApp().request(`/download/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     expect(response.status).to.equal(200);
     expect(response.headers.get('content-type')).to.include('application/json');
     expect(await response.json()).to.deep.equal(data);

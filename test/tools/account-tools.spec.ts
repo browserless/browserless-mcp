@@ -546,12 +546,19 @@ describe('account-data tools', () => {
             expect(text).to.not.include('browserless-replay-');
             expect(text).to.not.include('opened on that host');
             expect(text).to.not.include('test-token');
+            expect(text).to.not.include('caller-token');
+            expect(text).to.include(
+              'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+            );
             expect(text).to.include('15 minutes');
             const urls =
               text.match(/https:\/\/mcp\.example\.com\/download\/[^"\s]+/g) ??
               [];
             expect(urls).to.have.length(2);
             const app = server.getApp();
+            const ownerHeaders = {
+              Authorization: 'Bearer caller-token',
+            };
             for (const url of urls) {
               const foreign = new URL(url);
               foreign.searchParams.set('token', 'other-token');
@@ -560,7 +567,9 @@ describe('account-data tools', () => {
             if (lifecycle === 'expiry') await clock.tickAsync(15 * 60 * 1000);
             if (lifecycle === 'session end') clearSession(sessionId);
             for (const [index, url] of urls.entries()) {
-              const response = await app.request(url);
+              const response = await app.request(url, {
+                headers: ownerHeaders,
+              });
               expect(response.status).to.equal(
                 lifecycle === 'fetch' ? 200 : 404,
               );
@@ -576,7 +585,9 @@ describe('account-data tools', () => {
               };
               if (index === 0) expect(body).to.equal(buildReplayHtml(expected));
               else expect(JSON.parse(body)).to.deep.equal(expected);
-              expect((await app.request(url)).status).to.equal(404);
+              expect(
+                (await app.request(url, { headers: ownerHeaders })).status,
+              ).to.equal(404);
             }
           } finally {
             clearSession(sessionId);

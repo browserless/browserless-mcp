@@ -342,12 +342,11 @@ export const normalizeUploadCommand = async (
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
         const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
-        const tokenQ = '?token=<YOUR_BROWSERLESS_TOKEN>';
         throw new UserError(
           'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
             'read your filesystem). Stage the file once over HTTP, then pass the ' +
             'returned handle — do NOT base64 it through the conversation:\n' +
-            `  curl -s -F file=@"${f.path}" "${base}/upload${tokenQ}"\n` +
+            `  curl -fsS -F file=@"${f.path}" "${base}/upload" -H "Authorization: Bearer \${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"\n` +
             'then: uploadFile { files: [{ handle: "<handle from the response>" }] }',
         );
       }
@@ -443,17 +442,12 @@ export const describeReadyDownload = (
     !/[?#]/.test(baseUrl.href)
       ? baseUrl.href.replace(/\/+$/, '')
       : '<MCP_BASE_URL>';
-  const tokenQ = `?token=${
-    opts.token === undefined
-      ? '<YOUR_BROWSERLESS_TOKEN>'
-      : encodeURIComponent(opts.token)
-  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     (base === '<MCP_BASE_URL>'
       ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server, without a query or fragment.\n'
       : '') +
-    `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
+    `    save it:  curl -fsS "${base}/download/${record.id}" -H "Authorization: Bearer \${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}" -o "${record.filename}"   (single use)\n` +
     `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
   );
 };

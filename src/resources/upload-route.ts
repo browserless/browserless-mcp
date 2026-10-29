@@ -10,7 +10,7 @@ import type { McpConfig } from '../@types/types.js';
 
 // Registers `POST /upload` (httpStream only): clients push a file's bytes over
 // plain HTTP and get back a handle to pass to the agent's `uploadFile`.
-//   curl -s -F file=@/path/to/file "<mcpBaseUrl>/upload?token=<token>"
+//   curl -fsS -F file=@/path/to/file "<mcpBaseUrl>/upload" -H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"
 // Same token as the MCP surface; the base64 never enters the model's context.
 export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   const app = server.getApp();
