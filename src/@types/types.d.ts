@@ -234,6 +234,7 @@ export interface ActiveSession {
   // Origin tag forwarded to the browser WS as `x-browserless-mcp-source` so the
   // server can attribute captured skills (mcp_client, cli_agent, …).
   readonly source?: string;
+  readonly mcpTool?: string;
   // 1Password binding, re-sent on reconnect so loadSecret keeps its resolver
   // after a drop. Feeds the session-cache key, so readonly.
   readonly integrationId?: string;
@@ -263,6 +264,8 @@ export interface ActiveSession {
   lastSnapshotElements?: SnapshotElement[];
   // Active tab the cache above belongs to; a change means re-baseline (new tab).
   lastActiveTargetId?: string | null;
+  // Saved-login first-page check state; undefined on sessions without a profile.
+  profileAuth?: ProfileAuthState;
   // Sanitized Stripe Link state only. Provider ids, tool output, selectors, and
   // payment data never enter the session cache.
   stripeLinkContinuation?: {
@@ -813,4 +816,12 @@ export interface ApiClient {
     identityToken?: string,
   ): Promise<StripeLinkConnectionResponse>;
   getStatus(): Promise<{ ok: boolean; message: string }>;
+}
+
+export interface ProfileAuthState {
+  pendingHosts: Set<string>;
+  reportedHosts: Set<string>;
+  targetHosts: Map<string, string>;
+  activeTargetId?: string | null;
+  activeHost?: string;
 }
