@@ -719,11 +719,26 @@ export const nextProfileAuthState = (
       continue;
     }
     const page = result as
-      (Partial<SnapshotResult> & { targetId?: string }) | undefined;
-    if (page?.activeTargetId != null) next.activeTargetId = page.activeTargetId;
+      | (Partial<SnapshotResult> & {
+          targetId?: string;
+          success?: boolean;
+          active?: boolean;
+        })
+      | undefined;
+    const activeTarget =
+      page?.activeTargetId ??
+      (page?.targetId &&
+      ((method === 'switchTab' && page.success === true) ||
+        (method === 'createTab' && (page.active ?? params?.activate ?? true)))
+        ? page.targetId
+        : undefined);
     for (const tab of page?.tabs ?? []) {
       const host = hostOf(tab.url);
       if (host) next.targetHosts.set(tab.targetId, host);
+    }
+    if (activeTarget != null) {
+      next.activeTargetId = activeTarget;
+      next.activeHost = next.targetHosts.get(activeTarget);
     }
     const target = (params?.targetId ??
       page?.targetId ??

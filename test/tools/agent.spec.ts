@@ -4132,6 +4132,127 @@ describe('saved-login reminders through browserless_agent', () => {
   const text = (result: any): string =>
     result.content.map((c: { text?: string }) => c.text ?? '').join('\n');
 
+  for (const [name, command, activated] of [
+    ['switchTab', { method: 'switchTab', params: { targetId: 'T2' } }, true],
+    [
+      'default createTab',
+      { method: 'createTab', params: { url: 'https://b.com' } },
+      true,
+    ],
+    [
+      'activated createTab',
+      { method: 'createTab', params: { url: 'https://b.com', activate: true } },
+      true,
+    ],
+    [
+      'background createTab',
+      {
+        method: 'createTab',
+        params: { url: 'https://b.com', activate: false },
+      },
+      false,
+    ],
+    ['peek', { method: 'snapshot', params: { targetId: 'T2' } }, false],
+  ] as const) {
+    it(`tracks implicit navigation after ${name} without clearing another tab's check`, async () => {
+      let active = 'T1';
+      const urls: Record<string, string> = {
+        T1: 'https://a.com',
+        T2: 'https://b.com',
+      };
+      const srv = await makeRespondingServer((method, params: any) => {
+        if (method === 'snapshot') {
+          return {
+            url: urls[params.targetId ?? active],
+            title: 'Page',
+            elements: [],
+            time: 0,
+            activeTargetId: active,
+            tabs: Object.entries(urls).map(([targetId, url]) => ({
+              targetId,
+              url,
+              title: 'Page',
+              active: targetId === active,
+            })),
+          };
+        }
+        if (method === 'switchTab') {
+          active = params.targetId;
+          return { success: true, targetId: active, url: urls[active] };
+        }
+        if (method === 'createTab') {
+          if (params.activate !== false) active = 'T2';
+          return {
+            targetId: 'T2',
+            url: urls.T2,
+            active: params.activate !== false,
+          };
+        }
+        if (method === 'goto') {
+          urls[active] = params.url;
+          return { url: params.url };
+        }
+        return method === 'reportProfileAuthentication'
+          ? { recorded: true }
+          : {};
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        const first = text(
+          await execute(
+            {
+              profile: 'saved',
+              keepSessionAlive: true,
+              commands: [{ method: 'snapshot' }],
+            },
+            mockContext,
+          ),
+        );
+        const sessionId = first.match(/sessionId:\s*(\S+)/)![1];
+        const report = (targetId: string) => ({
+          method: 'reportProfileAuthentication',
+          params: {
+            targetId,
+            checkpointId: 'first-page',
+            outcome: 'unknown',
+            newLoginActivity: false,
+          },
+        });
+        await execute(
+          {
+            sessionId,
+            commands: [
+              report('T1'),
+              command,
+              report('T2'),
+              { method: 'goto', params: { url: 'https://c.com' } },
+            ],
+          },
+          mockContext,
+        );
+        expect(
+          text(
+            await execute(
+              { sessionId, commands: [report(activated ? 'T1' : 'T2')] },
+              mockContext,
+            ),
+          ),
+        ).to.include(SAVED_LOGIN_REMINDER);
+        expect(
+          text(
+            await execute(
+              { sessionId, commands: [report(activated ? 'T2' : 'T1')] },
+              mockContext,
+            ),
+          ),
+        ).not.to.include(SAVED_LOGIN_REMINDER);
+        await execute({ sessionId, method: 'close' }, mockContext);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
   it('keeps reminders until every loaded tab has a recorded report', async () => {
     const srv = await makeRespondingServer((method, params: any) => {
       if (method === 'snapshot') {
