@@ -130,7 +130,7 @@ describe('production replay tools over real MCP HTTP', () => {
       expect(
         tools.find((tool) => tool.name === 'browserless_view_data')!._meta,
       ).to.deep.include({ ui: { visibility: ['app'] } });
-      expect(VIEW_URI).to.equal('ui://browserless/view/v2.html');
+      expect(VIEW_URI).to.equal('ui://browserless/view/v3.html');
       expect(
         tools.find((tool) => tool.name === 'browserless_show')!._meta,
       ).to.deep.include({

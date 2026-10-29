@@ -2,6 +2,7 @@ import { App, applyDocumentTheme } from '@modelcontextprotocol/ext-apps';
 import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
+import { mountAgentMedia } from './agent-media.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -10,7 +11,7 @@ import {
   VIEW_DATA_MAX_BYTES,
 } from '../lib/view-schemas.js';
 
-const app = new App({ name: 'Browserless session replay', version: '1.0.1' });
+const app = new App({ name: 'Browserless views', version: '1.1.0' });
 const byId = (id) => document.getElementById(id);
 const card = document.querySelector('.replay-card');
 const controls = document.querySelector('.controls');
@@ -25,9 +26,12 @@ let player,
 let loading = new AbortController();
 const textBytes = new TextEncoder();
 let hostContext = {};
+let media;
+const mediaRoot = byId('agent-media');
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
+  media?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -77,10 +81,19 @@ function dispose() {
   player = undefined;
   byId('player').replaceChildren();
   enable(false);
+  media?.dispose();
+  media = undefined;
 }
 function fail(error) {
   loading.abort();
+  if (media) {
+    clearTimeout(expiryTimer);
+    media.fail(error);
+    return;
+  }
   dispose();
+  card.hidden = false;
+  mediaRoot.hidden = true;
   byId('empty').hidden = false;
   byId('empty').dataset.error = '';
   byId('state').textContent = 'Unavailable';
@@ -240,6 +253,8 @@ async function render(result) {
   loading = new AbortController();
   const signal = loading.signal;
   dispose();
+  card.hidden = false;
+  mediaRoot.hidden = true;
   byId('empty').hidden = false;
   delete byId('empty').dataset.error;
   byId('retry').hidden = true;
@@ -260,6 +275,18 @@ async function render(result) {
       () => fail(new Error('This view has expired. Prepare a new replay.')),
       expires - Date.now(),
     );
+    if (view.kind === 'agent-media') {
+      media = mountAgentMedia(
+        mediaRoot,
+        result._meta?.payload,
+        view,
+        app,
+        hostContext,
+      );
+      card.hidden = true;
+      mediaRoot.hidden = false;
+      return;
+    }
     byId('website').textContent =
       view.data.website || 'Recorded browser session';
     const payload = ReplayPayloadSchema.parse(

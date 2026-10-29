@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
+import { mediaOrigin, prepareAgentMedia } from '../lib/agent-media.js';
 import {
   assertAllowedUploadPath,
   InvalidUploadPathError,
@@ -692,6 +693,7 @@ export interface AgentRunResult {
     method: string;
     params: Record<string, unknown>;
     result?: unknown;
+    pageUrl?: string;
   }>;
 }
 export class AgentRunError extends UserError {
@@ -815,7 +817,8 @@ export function registerAgentTools(
         : AGENT_SYSTEM_PROMPT +
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
       SELF_CHECK_DIRECTIVE +
-      sessionContinuityNote(config.transport),
+      sessionContinuityNote(config.transport) +
+      ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions. Related screenshots can be captured in one command batch for one gallery.',
     // The tool advertises the slim, OpenAI-importable schemas — the rich
     // per-command union renders to a JSON Schema too deep/large for OpenAI's
     // hosted-MCP tool import, which rejects the whole tools/list with 424. run()
@@ -832,8 +835,46 @@ export function registerAgentTools(
       destructiveHint: true,
       openWorldHint: true,
     },
-    run: async (ctx) =>
-      (await runAgentCommands(ctx, config, AGENT_RUN_OPTIONS)).content,
+    run: async (ctx) => {
+      const run = await runAgentCommands(ctx, config, AGENT_RUN_OPTIONS);
+      if (ctx.uiEnabled && !compliant && mediaOrigin(config)) {
+        try {
+          const view = await prepareAgentMedia(
+            ctx.viewOwner,
+            ctx.token,
+            run,
+            ctx.params.rationale,
+          );
+          if (view) {
+            const content = run.content.map((block) =>
+              block.type === 'text'
+                ? {
+                    ...block,
+                    text: block.text
+                      .replaceAll(
+                        encodeURIComponent(ctx.token),
+                        '<YOUR_BROWSERLESS_TOKEN>',
+                      )
+                      .replaceAll(ctx.token, '<YOUR_BROWSERLESS_TOKEN>'),
+                  }
+                : block,
+            );
+            return [
+              ...content,
+              {
+                type: 'text' as const,
+                text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}).`,
+              },
+            ];
+          }
+        } catch {
+          ctx.log.warn(
+            'Inline media unavailable; preserving original capture output.',
+          );
+        }
+      }
+      return run.content;
+    },
     format: (content) => content,
   });
 }
@@ -851,6 +892,7 @@ export const runAgentCommands = async (
     sessionId: mcpSessionId,
     attachSessionId,
     userId,
+    uiEnabled,
   }: ToolRunContext<AgentToolParams>,
   config: McpConfig,
   options: AgentRunOptions,
@@ -1374,8 +1416,10 @@ export const runAgentCommands = async (
       method: string;
       params: Record<string, unknown>;
       result?: unknown;
+      pageUrl?: string;
     }> = [];
     rawResults = results;
+    let mediaPageUrl = agentSession.lastUrl;
     let closedDuringBatch = false;
     // Cross-origin baseline: prefer the URL from the previous snapshot,
     // else the first URL seen this batch — so [goto A, goto B, snapshot]
@@ -1710,7 +1754,19 @@ export const runAgentCommands = async (
           ).filter((download) => !download.inProgress),
         );
       }
-      results.push({ ...cmd, result: resp.result });
+      const observedUrl = (resp.result as { url?: unknown } | undefined)?.url;
+      if (typeof observedUrl === 'string') mediaPageUrl = observedUrl;
+      else if (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method))
+        mediaPageUrl = undefined;
+      results.push({
+        ...cmd,
+        result: resp.result,
+        ...(uiEnabled &&
+        mediaPageUrl &&
+        ['screenshot', 'stopRecording'].includes(cmd.method)
+          ? { pageUrl: mediaPageUrl }
+          : {}),
+      });
     }
 
     // If the batch ended with close, format the result around the
