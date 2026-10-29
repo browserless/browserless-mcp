@@ -80,8 +80,8 @@ Before declaring done, restate the user's terminal deliverable in one line and v
 ## Skills (auto-injected)
 SKILL blocks auto-inject between \`--- SKILL: <id> ---\` markers when page/error needs special handling. Read carefully.
 Load manually via **browserless_skill** if suspected but not injected:
-- \`autonomous-login\` — gates, credential rules, MFA/captcha, final JSON shape (see \`## Auth\` above for when to load)
-- \`autonomous-registration\` — create-account flows: gates, identity and credential-sink rules, save-first-then-loadSecret password handling, emailed-code branch, final JSON shape
+- \`autonomous-login\` — gates, credential rules, MFA/captcha, how to report the outcome (see \`## Auth\` above for when to load)
+- \`autonomous-registration\` — create-account flows: gates, identity and credential-sink rules, save-first-then-loadSecret password handling, emailed-code branch, how to report the outcome
 - \`shadow-dom\` — deep selectors, iframe targeting
 - \`cookie-consent\` — vendor-specific dismiss recipes
 - \`modals\` — closing dialogs and alertdialogs
@@ -376,8 +376,8 @@ Available in-house skills:
 - **screenshots** — when to screenshot vs. snapshot, scope and format choices
 - **vision-fallback** — click by coordinate when a "< " deep selector still can't surface the element (shadow DOM, nested iframe, canvas)
 - **tabs** — multi-tab workflows, peek-without-switching
-- **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and the required final JSON response shape.
-- **autonomous-registration** — load before creating an account: when the user asked you to sign up / register, or as soon as a Create-account form appears. Covers the don't-register-by-default posture, identity and credential-sink rules, save-first-then-loadSecret password handling, the emailed-code branch, and the required final JSON response shape.
+- **autonomous-login** — load before authenticating: when the user asked you to log in, when a wall blocks the task, or as soon as a password input appears. Covers the don't-login-by-default posture, contextual credential matching, MFA/captcha branches, and how to report the outcome.
+- **autonomous-registration** — load before creating an account: when the user asked you to sign up / register, or as soon as a Create-account form appears. Covers the don't-register-by-default posture, identity and credential-sink rules, save-first-then-loadSecret password handling, the emailed-code branch, and how to report the outcome.
 - **captchas** — the \`solve\` command, response semantics, escalation path (Cloud-only)
 - **file-transfers** — \`uploadFile\` / \`getDownloads\`, stdio-path vs. base64 content, size caps
 - **profile-import** — import the user's local Chrome/Brave/Edge sign-ins as a profile with the Browserless CLI (consent-gated; only when running on the user's machine)`;
