@@ -443,17 +443,12 @@ export const describeReadyDownload = (
     !/[?#]/.test(baseUrl.href)
       ? baseUrl.href.replace(/\/+$/, '')
       : '<MCP_BASE_URL>';
-  const tokenQ = `?token=${
-    opts.token === undefined
-      ? '<YOUR_BROWSERLESS_TOKEN>'
-      : encodeURIComponent(opts.token)
-  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     (base === '<MCP_BASE_URL>'
       ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server, without a query or fragment.\n'
       : '') +
-    `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
+    `    save it:  curl -s "${base}/download/${record.id}" -H "Authorization: Bearer $BROWSERLESS_TOKEN" -o "${record.filename}"   (single use)\n` +
     `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
   );
 };

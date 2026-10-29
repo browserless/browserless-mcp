@@ -728,9 +728,11 @@ describe('formatScreenshotToDisk', () => {
     );
     const text = (content![0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+      /curl -s "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
     expect(text).to.include('screenshot.jpg');
+    expect(text).to.include('-H "Authorization: Bearer $BROWSERLESS_TOKEN"');
+    expect(JSON.stringify(content)).to.not.include('tok-1');
     expect(JSON.stringify(content)).to.not.include(FAKE_PNG);
   });
 
@@ -1080,7 +1082,7 @@ describe('describeReadyDownload', () => {
         mcpBaseUrl,
       });
       expect(text).to.include('Replace <MCP_BASE_URL>');
-      expect(text).to.include('"<MCP_BASE_URL>/download/download-id?token=');
+      expect(text).to.include('"<MCP_BASE_URL>/download/download-id"');
       expect(text).to.not.include('"/download/');
     });
   }
@@ -1095,7 +1097,7 @@ describe('describeReadyDownload', () => {
         mcpBaseUrl,
       });
       expect(text).to.include(
-        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id?token=`,
+        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id"`,
       );
       expect(text).to.not.include('Replace <MCP_BASE_URL>');
     });
@@ -1116,11 +1118,13 @@ describe('formatDownloads (httpStream)', () => {
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.include('report.csv');
-    // GET recipe with the real base URL + token, marked single use.
+    // GET recipe references a local token without exposing its value.
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+      /curl -s "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
-    const urlId = text.match(/\/download\/([0-9a-f]{32})\?token=/)?.[1];
+    expect(text).to.include('-H "Authorization: Bearer $BROWSERLESS_TOKEN"');
+    expect(JSON.stringify(content)).to.not.include('tok-1');
+    const urlId = text.match(/\/download\/([0-9a-f]{32})"/)?.[1];
     const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
     expect(urlId).to.equal(handleId);
     expect(text).to.include('single use');
@@ -1128,7 +1132,7 @@ describe('formatDownloads (httpStream)', () => {
     expect(JSON.stringify(content)).to.not.include('YWJj');
   });
 
-  it('URL-encodes tokens in the download recipe', async () => {
+  it('keeps raw and encoded account tokens out of the download recipe', async () => {
     const token = 'token+with&reserved#characters';
     const content = await formatDownloads(
       [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
@@ -1143,7 +1147,10 @@ describe('formatDownloads (httpStream)', () => {
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     const url = text.match(/curl -s "([^"]+)"/)?.[1];
     expect(url).to.exist;
-    expect(new URL(url!).searchParams.get('token')).to.equal(token);
+    expect(new URL(url!).search).to.equal('');
+    expect(text).to.include('-H "Authorization: Bearer $BROWSERLESS_TOKEN"');
+    expect(JSON.stringify(content)).to.not.include(token);
+    expect(JSON.stringify(content)).to.not.include(encodeURIComponent(token));
   });
 
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {

@@ -485,17 +485,17 @@ describe('browserless_smartscraper tool', () => {
             handles.push(path);
             expect(await readFile(path)).to.deep.equal(pdf);
           } else {
-            const id = text.match(
-              /\/download\/([a-f0-9]+)\?token=session-token/,
-            )![1];
+            const id = text.match(/\/download\/([a-f0-9]+)"/)![1];
+            expect(text).not.to.include('session-token');
+            expect(text).to.include('Authorization: Bearer $BROWSERLESS_TOKEN');
             handles.push(id);
             const app = server.getApp();
             expect(
               (await app.request(`/download/${id}?token=test-token`)).status,
             ).to.equal(404);
-            const response = await app.request(
-              `/download/${id}?token=session-token`,
-            );
+            const response = await app.request(`/download/${id}`, {
+              headers: { Authorization: 'Bearer session-token' },
+            });
             expect(response.status).to.equal(200);
             expect(response.headers.get('content-type')).to.equal(
               'application/pdf',

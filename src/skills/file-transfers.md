@@ -29,10 +29,10 @@ Just trigger the download in the agent — navigate to the file URL, or click a 
 **Remote (HTTP) mode:** the server can't write to your disk, so each file comes with a **single-use** GET URL. Fetch it with `curl` to save locally — works **once**:
 
 ```bash
-curl -s "<MCP_BASE_URL>/download/<id>?token=<YOUR_BROWSERLESS_TOKEN>" -o "report.csv"
+curl -s "<MCP_BASE_URL>/download/<id>" -H "Authorization: Bearer $BROWSERLESS_TOKEN" -o "report.csv"
 ```
 
-The exact command (with id + token + URL) is in the `getDownloads` response. Alternatively, reuse the handle as `uploadFile { files: [{ handle: "browserless-download://<id>" }] }` to re-upload it elsewhere without ever fetching the bytes. A file is dropped after one GET, after 15 minutes, or when the session ends — whichever comes first.
+The command with the file's id and URL is in the `getDownloads` response. Set `BROWSERLESS_TOKEN` locally to your Browserless API token before running it; never print the token or put it in the conversation. The command references the environment variable without exposing its value. Alternatively, reuse the handle as `uploadFile { files: [{ handle: "browserless-download://<id>" }] }` to re-upload it elsewhere without ever fetching the bytes. A file is dropped after one GET, after 15 minutes, or when the session ends — whichever comes first.
 
 ## Uploading
 

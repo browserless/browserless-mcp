@@ -10,7 +10,7 @@ import type { McpConfig } from '../@types/types.js';
  * the bytes out-of-band when it decides to save them — over plain HTTP, NOT
  * through the conversation:
  *
- *   curl -s "<mcpBaseUrl>/download/<id>?token=<token>" -o ./file
+ *   curl -s "<mcpBaseUrl>/download/<id>" -H "Authorization: Bearer $BROWSERLESS_TOKEN" -o ./file
  *
  * Single use: the file is removed from the store and disk once served (or after
  * the 15-min TTL / session end, whichever comes first). Same token rules as the
