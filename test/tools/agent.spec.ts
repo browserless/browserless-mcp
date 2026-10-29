@@ -21,6 +21,8 @@ import {
   secretVisibleAfter,
   validateSecretCaptureOrdering,
   closeReminder,
+  nextProfileAuthState,
+  SAVED_LOGIN_REMINDER,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
@@ -728,9 +730,13 @@ describe('formatScreenshotToDisk', () => {
     );
     const text = (content![0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+      /curl -fsS "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
     expect(text).to.include('screenshot.jpg');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
+    expect(JSON.stringify(content)).to.not.include('tok-1');
     expect(JSON.stringify(content)).to.not.include(FAKE_PNG);
   });
 
@@ -793,6 +799,8 @@ describe('fileTransferModeNote', () => {
     const note = fileTransferModeNote('httpStream', 'https://mcp.example.com');
     expect(note).to.match(/HTTP/);
     expect(note).to.include('https://mcp.example.com/upload');
+    expect(note).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+    expect(note).to.not.include('?token=');
     expect(note).to.match(/never base64/i);
   });
 });
@@ -935,10 +943,11 @@ describe('normalizeUploadCommand', () => {
       threw = true;
       const msg = (e as Error).message;
       expect(msg).to.match(/not available in HTTP mode/);
-      expect(msg).to.include('curl -s -F file=@"/etc/hosts"');
-      expect(msg).to.include(
-        'https://mcp.example.com/upload?token=<YOUR_BROWSERLESS_TOKEN>',
-      );
+      expect(msg).to.include('curl -fsS -F file=@"/etc/hosts"');
+      expect(msg).to.include('https://mcp.example.com/upload');
+      expect(msg).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+      expect(msg).to.not.include('?token=');
+      expect(msg).to.not.include('test-token');
     }
     expect(threw, 'expected normalizeUploadCommand to throw').to.be.true;
   });
@@ -1080,7 +1089,7 @@ describe('describeReadyDownload', () => {
         mcpBaseUrl,
       });
       expect(text).to.include('Replace <MCP_BASE_URL>');
-      expect(text).to.include('"<MCP_BASE_URL>/download/download-id?token=');
+      expect(text).to.include('"<MCP_BASE_URL>/download/download-id"');
       expect(text).to.not.include('"/download/');
     });
   }
@@ -1095,7 +1104,7 @@ describe('describeReadyDownload', () => {
         mcpBaseUrl,
       });
       expect(text).to.include(
-        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id?token=`,
+        `"${mcpBaseUrl.replace(/\/$/, '')}/download/download-id"`,
       );
       expect(text).to.not.include('Replace <MCP_BASE_URL>');
     });
@@ -1116,11 +1125,15 @@ describe('formatDownloads (httpStream)', () => {
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.include('report.csv');
-    // GET recipe with the real base URL + token, marked single use.
+    // GET recipe references a local token without exposing its value.
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[^"]+\?token=tok-1"/,
+      /curl -fsS "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
-    const urlId = text.match(/\/download\/([0-9a-f]{32})\?token=/)?.[1];
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
+    expect(JSON.stringify(content)).to.not.include('tok-1');
+    const urlId = text.match(/\/download\/([0-9a-f]{32})"/)?.[1];
     const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
     expect(urlId).to.equal(handleId);
     expect(text).to.include('single use');
@@ -1128,7 +1141,7 @@ describe('formatDownloads (httpStream)', () => {
     expect(JSON.stringify(content)).to.not.include('YWJj');
   });
 
-  it('URL-encodes tokens in the download recipe', async () => {
+  it('keeps raw and encoded account tokens out of the download recipe', async () => {
     const token = 'token+with&reserved#characters';
     const content = await formatDownloads(
       [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],
@@ -1141,9 +1154,14 @@ describe('formatDownloads (httpStream)', () => {
       },
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
-    const url = text.match(/curl -s "([^"]+)"/)?.[1];
+    const url = text.match(/curl -fsS "([^"]+)"/)?.[1];
     expect(url).to.exist;
-    expect(new URL(url!).searchParams.get('token')).to.equal(token);
+    expect(new URL(url!).search).to.equal('');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
+    expect(JSON.stringify(content)).to.not.include(token);
+    expect(JSON.stringify(content)).to.not.include(encodeURIComponent(token));
   });
 
   it('degrades oversized/failed downloads to a text note with the source URL', async () => {
@@ -3989,6 +4007,634 @@ describe('browserless_agent _prompt capture', () => {
         success: false,
         live_url_id: 'before-retry',
       });
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+describe('nextProfileAuthState', () => {
+  const goto = (url: string) => ({ method: 'goto', params: { url } });
+  const report = (
+    host: string,
+    extra: Record<string, unknown> = {},
+    recorded = true,
+  ) => ({
+    method: 'reportProfileAuthentication',
+    params: { checkpointId: `${host}:first-page`, ...extra },
+    result: { recorded },
+  });
+  const pending = (s: ReturnType<typeof nextProfileAuthState>) =>
+    s?.pendingHosts.values().next().value;
+
+  it('arms on the first navigation to a site', () => {
+    expect(
+      pending(nextProfileAuthState(undefined, true, [goto('https://a.com/x')])),
+    ).to.equal('a.com');
+    expect(
+      pending(nextProfileAuthState(undefined, true, [{ method: 'evaluate' }])),
+    ).to.equal(undefined);
+  });
+
+  it('arms from the page the batch landed on (link clicks, redirects)', () => {
+    expect(
+      pending(
+        nextProfileAuthState(
+          undefined,
+          true,
+          [{ method: 'click' }, { method: 'snapshot' }],
+          'https://b.com/home',
+        ),
+      ),
+    ).to.equal('b.com');
+  });
+
+  it('clears on report and does not re-arm within a reported site', () => {
+    const reported = nextProfileAuthState(
+      nextProfileAuthState(undefined, true, [goto('https://a.com')]),
+      true,
+      [report('a.com')],
+      'https://a.com',
+    );
+    expect(pending(reported)).to.equal(undefined);
+    expect(
+      pending(
+        nextProfileAuthState(
+          reported,
+          true,
+          [goto('https://a.com/next')],
+          'https://a.com/next',
+        ),
+      ),
+    ).to.equal(undefined);
+  });
+
+  it('re-arms when a new site is loaded after another was reported', () => {
+    const reported = nextProfileAuthState(undefined, true, [
+      goto('https://a.com'),
+      report('a.com'),
+    ]);
+    expect(
+      pending(nextProfileAuthState(reported, true, [goto('https://b.com')])),
+    ).to.equal('b.com');
+  });
+
+  it('keeps the pending site when a report targets another tab', () => {
+    const state = nextProfileAuthState(undefined, true, [
+      { ...goto('https://a.com'), result: { activeTargetId: 'T1' } },
+    ]);
+    expect(
+      pending(
+        nextProfileAuthState(state, true, [
+          report('b.com', { targetId: 'T2' }),
+        ]),
+      ),
+    ).to.equal('a.com');
+    expect(
+      pending(
+        nextProfileAuthState(state, true, [
+          report('a.com', { targetId: 'T1' }),
+        ]),
+      ),
+    ).to.equal(undefined);
+    const labelOnly = {
+      method: 'reportProfileAuthentication',
+      params: { checkpointId: 'first-page', targetId: 'T1' },
+      result: { recorded: true },
+    };
+    expect(
+      pending(nextProfileAuthState(state, true, [labelOnly], undefined, 'T1')),
+    ).to.equal(undefined);
+    expect(
+      pending(
+        nextProfileAuthState(state, true, [
+          { ...labelOnly, params: { ...labelOnly.params, targetId: 'T2' } },
+        ]),
+      ),
+    ).to.equal('a.com');
+  });
+
+  it('ignores reports the server did not record', () => {
+    const state = nextProfileAuthState(undefined, true, [
+      goto('https://a.com'),
+    ]);
+    const after = nextProfileAuthState(state, true, [
+      report('a.com', {}, false),
+    ]);
+    expect(pending(after)).to.equal('a.com');
+    expect(after?.reportedHosts.has('a.com')).to.equal(false);
+  });
+
+  it('never applies to sessions without a profile', () => {
+    expect(
+      nextProfileAuthState(undefined, false, [goto('https://a.com')]),
+    ).to.equal(undefined);
+  });
+
+  it('reminds with the report call shape', () => {
+    expect(SAVED_LOGIN_REMINDER)
+      .to.include('reportProfileAuthentication')
+      .and.include('before any login actions');
+  });
+});
+
+describe('saved-login reminders through browserless_agent', () => {
+  afterEach(() => sinon.restore());
+  beforeEach(async () => {
+    for (const host of ['a.com', 'b.com', 'c.com']) {
+      await seedSiteSkill(host, 'saved-login-test', 'Read the page.');
+    }
+  });
+  const text = (result: any): string =>
+    result.content.map((c: { text?: string }) => c.text ?? '').join('\n');
+
+  for (const [name, command, activated] of [
+    ['switchTab', { method: 'switchTab', params: { targetId: 'T2' } }, true],
+    [
+      'default createTab',
+      { method: 'createTab', params: { url: 'https://b.com' } },
+      true,
+    ],
+    [
+      'activated createTab',
+      { method: 'createTab', params: { url: 'https://b.com', activate: true } },
+      true,
+    ],
+    [
+      'background createTab',
+      {
+        method: 'createTab',
+        params: { url: 'https://b.com', activate: false },
+      },
+      false,
+    ],
+    ['peek', { method: 'snapshot', params: { targetId: 'T2' } }, false],
+  ] as const) {
+    it(`tracks implicit navigation after ${name} without clearing another tab's check`, async () => {
+      let active = 'T1';
+      const urls: Record<string, string> = {
+        T1: 'https://a.com',
+        T2: 'https://b.com',
+      };
+      const srv = await makeRespondingServer((method, params: any) => {
+        if (method === 'snapshot') {
+          return {
+            url: urls[params.targetId ?? active],
+            title: 'Page',
+            elements: [],
+            time: 0,
+            activeTargetId: active,
+            tabs: Object.entries(urls).map(([targetId, url]) => ({
+              targetId,
+              url,
+              title: 'Page',
+              active: targetId === active,
+            })),
+          };
+        }
+        if (method === 'switchTab') {
+          active = params.targetId;
+          return { success: true, targetId: active, url: urls[active] };
+        }
+        if (method === 'createTab') {
+          if (params.activate !== false) active = 'T2';
+          return {
+            targetId: 'T2',
+            url: urls.T2,
+            active: params.activate !== false,
+          };
+        }
+        if (method === 'goto') {
+          urls[active] = params.url;
+          return { url: params.url };
+        }
+        return method === 'reportProfileAuthentication'
+          ? { recorded: true }
+          : {};
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        const first = text(
+          await execute(
+            {
+              profile: 'saved',
+              keepSessionAlive: true,
+              commands: [{ method: 'snapshot' }],
+            },
+            mockContext,
+          ),
+        );
+        const sessionId = first.match(/sessionId:\s*(\S+)/)![1];
+        const report = (targetId: string) => ({
+          method: 'reportProfileAuthentication',
+          params: {
+            targetId,
+            checkpointId: 'first-page',
+            outcome: 'unknown',
+            newLoginActivity: false,
+          },
+        });
+        await execute(
+          {
+            sessionId,
+            commands: [
+              report('T1'),
+              command,
+              report('T2'),
+              { method: 'goto', params: { url: 'https://c.com' } },
+            ],
+          },
+          mockContext,
+        );
+        expect(
+          text(
+            await execute(
+              { sessionId, commands: [report(activated ? 'T1' : 'T2')] },
+              mockContext,
+            ),
+          ),
+        ).to.include(SAVED_LOGIN_REMINDER);
+        expect(
+          text(
+            await execute(
+              { sessionId, commands: [report(activated ? 'T2' : 'T1')] },
+              mockContext,
+            ),
+          ),
+        ).not.to.include(SAVED_LOGIN_REMINDER);
+        await execute({ sessionId, method: 'close' }, mockContext);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('keeps reminders until every loaded tab has a recorded report', async () => {
+    const srv = await makeRespondingServer((method, params: any) => {
+      if (method === 'snapshot') {
+        return {
+          url: params.targetId === 'T2' ? 'https://b.com' : 'https://a.com',
+          title: 'Page',
+          elements: [],
+          time: 0,
+          activeTargetId: 'T1',
+          tabs: [
+            { targetId: 'T1', url: 'https://a.com', title: 'A', active: true },
+            { targetId: 'T2', url: 'https://b.com', title: 'B', active: false },
+          ],
+        };
+      }
+      return method === 'reportProfileAuthentication' ? { recorded: true } : {};
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const first = text(
+        await execute(
+          {
+            profile: 'saved',
+            keepSessionAlive: true,
+            commands: [
+              { method: 'snapshot' },
+              { method: 'snapshot', params: { targetId: 'T2' } },
+            ],
+          },
+          mockContext,
+        ),
+      );
+      const sessionId = first.match(/sessionId:\s*(\S+)/)![1];
+      const report = (targetId: string) => ({
+        method: 'reportProfileAuthentication',
+        params: {
+          targetId,
+          checkpointId: 'first-page',
+          outcome: 'unknown',
+          newLoginActivity: false,
+        },
+      });
+      expect(
+        text(
+          await execute({ sessionId, commands: [report('T2')] }, mockContext),
+        ),
+      ).to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute({ sessionId, commands: [report('T1')] }, mockContext),
+        ),
+      ).not.to.include(SAVED_LOGIN_REMINDER);
+      await execute({ sessionId, method: 'close' }, mockContext);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('clears a peeked page by its actual target, never by the checkpoint label', async () => {
+    const srv = await makeRespondingServer((method, params: any) => {
+      if (method === 'snapshot') {
+        return {
+          url: params.targetId === 'T2' ? 'https://b.com' : 'https://a.com',
+          title: 'Page',
+          elements: [],
+          time: 0,
+          activeTargetId: 'T1',
+          tabs: [
+            { targetId: 'T1', url: 'https://a.com', title: 'A', active: true },
+            { targetId: 'T2', url: 'https://b.com', title: 'B', active: false },
+          ],
+        };
+      }
+      if (method === 'reportProfileAuthentication')
+        return { recorded: params.checkpointId !== 'not-recorded' };
+      return method === 'goto' ? { url: params.url } : {};
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const first = text(
+        await execute(
+          {
+            profile: 'saved',
+            keepSessionAlive: true,
+            commands: [{ method: 'snapshot' }],
+          },
+          mockContext,
+        ),
+      );
+      const sessionId = first.match(/sessionId:\s*(\S+)/)![1];
+      const report = (targetId: string, checkpointId = 'first-page') => ({
+        method: 'reportProfileAuthentication',
+        params: {
+          targetId,
+          checkpointId,
+          outcome: 'unknown',
+          newLoginActivity: false,
+        },
+      });
+      await execute({ sessionId, commands: [report('T1')] }, mockContext);
+      expect(
+        text(
+          await execute(
+            {
+              sessionId,
+              method: 'goto',
+              params: { url: 'https://a.com/next' },
+            },
+            mockContext,
+          ),
+        ),
+      ).not.to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute(
+            {
+              sessionId,
+              commands: [{ method: 'snapshot', params: { targetId: 'T2' } }],
+            },
+            mockContext,
+          ),
+        ),
+      ).to.include(SAVED_LOGIN_REMINDER);
+      // A misleading label on the active tab cannot cover the peeked tab.
+      expect(
+        text(
+          await execute(
+            { sessionId, commands: [report('T1', 'b.com:first-page')] },
+            mockContext,
+          ),
+        ),
+      ).to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute(
+            { sessionId, commands: [report('T2', 'not-recorded')] },
+            mockContext,
+          ),
+        ),
+      ).to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute({ sessionId, commands: [report('T2')] }, mockContext),
+        ),
+      ).not.to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute(
+            {
+              sessionId,
+              commands: [{ method: 'snapshot', params: { targetId: 'T2' } }],
+            },
+            mockContext,
+          ),
+        ),
+      ).not.to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute(
+            {
+              sessionId,
+              commands: [{ method: 'goto', params: { url: 'https://c.com' } }],
+            },
+            mockContext,
+          ),
+        ),
+      ).to.include(SAVED_LOGIN_REMINDER);
+      await execute({ sessionId, method: 'close' }, mockContext);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const failure of [
+    'command',
+    'navigation',
+    'missing target',
+    'fatal',
+    'failed goto',
+    'transport',
+    'retry survives',
+    'retry fails navigation',
+  ]) {
+    it(`preserves only completed navigation state after ${failure} failure`, async () => {
+      let sessionId: string;
+      let gotoCalls = 0;
+      let clickCalls = 0;
+      const srv = await makeRespondingServer((method, params: any) => {
+        if (method === 'goto') {
+          gotoCalls++;
+          return failure === 'failed goto' ||
+            (failure === 'retry fails navigation' && gotoCalls > 1)
+            ? new AgentErrorFrame({
+                code: 'NAVIGATION_FAILED',
+                message: 'navigation failed',
+              })
+            : {
+                url:
+                  params.url === 'https://b.com'
+                    ? 'chrome-error://chromewebdata/'
+                    : params.url,
+              };
+        }
+        if (method === 'click') {
+          clickCalls++;
+          if (failure === 'transport') {
+            getActiveSessionByHandle(
+              sessionId,
+              srv.url,
+              'test-token',
+            ).ws.terminate();
+            return {};
+          }
+          return new AgentErrorFrame({
+            code:
+              failure === 'fatal' ||
+              (failure.startsWith('retry') && clickCalls === 1)
+                ? 'BROWSER_CRASHED'
+                : 'SELECTOR_NOT_FOUND',
+            message: 'failed click',
+          });
+        }
+        if (method === 'snapshot')
+          return {
+            url: 'about:blank',
+            title: 'Page',
+            elements: [],
+            time: 0,
+            activeTargetId: 'T1',
+          };
+        return {};
+      });
+      try {
+        const execute = getAgentExecute(srv.url);
+        const opened = text(
+          await execute(
+            { profile: 'saved', keepSessionAlive: true },
+            mockContext,
+          ),
+        );
+        sessionId = opened.match(/sessionId:\s*(\S+)/)![1];
+        let error: unknown;
+        try {
+          await execute(
+            {
+              sessionId,
+              commands: [
+                { method: 'goto', params: { url: 'https://a.com' } },
+                ...(failure === 'failed goto'
+                  ? []
+                  : [
+                      failure === 'missing target'
+                        ? {
+                            method: 'reportProfileAuthentication',
+                            params: {
+                              checkpointId: 'first-page',
+                              outcome: 'unknown',
+                              newLoginActivity: false,
+                            },
+                          }
+                        : failure === 'navigation'
+                          ? { method: 'goto', params: { url: 'https://b.com' } }
+                          : {
+                              method: 'click',
+                              params: { selector: '#missing' },
+                            },
+                    ]),
+              ],
+            },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(UserError);
+        const survivesWithPage = ![
+          'fatal',
+          'failed goto',
+          'transport',
+          'retry fails navigation',
+        ].includes(failure);
+        expect(
+          (error as Error).message.includes(SAVED_LOGIN_REMINDER),
+        ).to.equal(survivesWithPage);
+        expect(srv.hits()).to.equal(
+          [
+            'fatal',
+            'transport',
+            'retry survives',
+            'retry fails navigation',
+          ].includes(failure)
+            ? 2
+            : 1,
+        );
+        if (!['fatal', 'transport'].includes(failure)) {
+          expect(
+            text(
+              await execute(
+                { sessionId, method: 'waitForTimeout', params: { time: 1 } },
+                mockContext,
+              ),
+            ).includes(SAVED_LOGIN_REMINDER),
+          ).to.equal(survivesWithPage);
+          await execute({ sessionId, method: 'close' }, mockContext);
+        }
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('can report the completed snapshot after a later command fails', async () => {
+    const srv = await makeRespondingServer((method) => {
+      if (method === 'snapshot')
+        return {
+          url: 'https://a.com',
+          title: 'Page',
+          elements: [],
+          time: 0,
+          activeTargetId: 'T1',
+        };
+      if (method === 'click')
+        return new AgentErrorFrame({ message: 'failed click' });
+      return { recorded: true };
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      let message = '';
+      try {
+        await execute(
+          {
+            profile: 'saved',
+            keepSessionAlive: true,
+            commands: [
+              { method: 'snapshot' },
+              { method: 'click', params: { selector: '#missing' } },
+            ],
+          },
+          mockContext,
+        );
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).to.include(SAVED_LOGIN_REMINDER);
+      const sessionId = message.match(/sessionId:\s*(\S+)/)![1];
+      expect(
+        text(
+          await execute(
+            {
+              sessionId,
+              commands: [
+                {
+                  method: 'reportProfileAuthentication',
+                  params: {
+                    checkpointId: 'first-page',
+                    outcome: 'unknown',
+                    newLoginActivity: false,
+                  },
+                },
+              ],
+            },
+            mockContext,
+          ),
+        ),
+      ).not.to.include(SAVED_LOGIN_REMINDER);
+      await execute({ sessionId, method: 'close' }, mockContext);
     } finally {
       await srv.close();
     }

@@ -38,6 +38,7 @@ import type {
   PersonaOptions,
   SkillId,
   SnapshotResult,
+  ProfileAuthState,
 } from '../@types/types.js';
 import {
   categorizeThrown,
@@ -343,12 +344,11 @@ export const normalizeUploadCommand = async (
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
         const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
-        const tokenQ = '?token=<YOUR_BROWSERLESS_TOKEN>';
         throw new UserError(
           'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
             'read your filesystem). Stage the file once over HTTP, then pass the ' +
             'returned handle — do NOT base64 it through the conversation:\n' +
-            `  curl -s -F file=@"${f.path}" "${base}/upload${tokenQ}"\n` +
+            `  curl -fsS -F file=@"${f.path}" "${base}/upload" -H "Authorization: Bearer \${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"\n` +
             'then: uploadFile { files: [{ handle: "<handle from the response>" }] }',
         );
       }
@@ -444,17 +444,12 @@ export const describeReadyDownload = (
     !/[?#]/.test(baseUrl.href)
       ? baseUrl.href.replace(/\/+$/, '')
       : '<MCP_BASE_URL>';
-  const tokenQ = `?token=${
-    opts.token === undefined
-      ? '<YOUR_BROWSERLESS_TOKEN>'
-      : encodeURIComponent(opts.token)
-  }`;
   return (
     `${record.filename} (${record.mimeType}, ${record.size} bytes)\n` +
     (base === '<MCP_BASE_URL>'
       ? '    Replace <MCP_BASE_URL> with the absolute HTTP(S) URL of your MCP server, without a query or fragment.\n'
       : '') +
-    `    save it:  curl -s "${base}/download/${record.id}${tokenQ}" -o "${record.filename}"   (single use)\n` +
+    `    save it:  curl -fsS "${base}/download/${record.id}" -H "Authorization: Bearer \${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}" -o "${record.filename}"   (single use)\n` +
     `    or reuse: uploadFile { files: [{ handle: "${downloadUri(record.id)}" }] }`
   );
 };
@@ -663,6 +658,104 @@ const oneShotClosedNotice = (handle: string, reported: boolean): string =>
     : `Once you've checked these results, report whether the task worked: call browserless_agent with \`{ "sessionId": "${handle}", "commands": [{ "method": "reportOutcome", "params": { "success": <bool> } }] }\`. This opens no browser; use this id only for that report. `) +
   'If you still needed this browser, ' +
   'set `keepSessionAlive: true` on your FIRST call next time.';
+
+export const SAVED_LOGIN_REMINDER =
+  'Saved-login check still pending: before any login actions, send ' +
+  '`{ "method": "reportProfileAuthentication", "params": { "checkpointId": "<host>:first-page", ' +
+  '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
+  'as the first command of your next batch, then continue the task (end a batch with `snapshot` first if you have not taken one).';
+
+const hostOf = (url: unknown): string | undefined => {
+  try {
+    return typeof url === 'string'
+      ? new URL(url).hostname.toLowerCase() || undefined
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const nextProfileAuthState = (
+  state: ProfileAuthState | undefined,
+  hasProfile: boolean,
+  commands: Array<{
+    method: string;
+    params?: Record<string, unknown>;
+    result?: unknown;
+  }>,
+  landedUrl?: string,
+  activeTargetId?: string | null,
+): ProfileAuthState | undefined => {
+  if (!hasProfile) return undefined;
+  const next: ProfileAuthState = {
+    pendingHosts: new Set(state?.pendingHosts),
+    reportedHosts: new Set(state?.reportedHosts),
+    targetHosts: new Map(state?.targetHosts),
+    activeTargetId: state?.activeTargetId ?? activeTargetId,
+    activeHost: state?.activeHost,
+  };
+  const arm = (host: string | undefined): void => {
+    if (host && !next.reportedHosts.has(host)) next.pendingHosts.add(host);
+  };
+  for (const { method, params, result } of commands) {
+    if (method === 'reportProfileAuthentication') {
+      if ((result as { recorded?: boolean } | undefined)?.recorded !== true)
+        continue;
+      const target = params?.targetId as string | undefined;
+      // checkpointId is an opaque label, not evidence of the reported page.
+      const host = target
+        ? (next.targetHosts.get(target) ??
+          (target === next.activeTargetId ? next.activeHost : undefined))
+        : next.activeHost;
+      if (host) {
+        next.reportedHosts.add(host);
+        next.pendingHosts.delete(host);
+      }
+      continue;
+    }
+    const page = result as
+      | (Partial<SnapshotResult> & {
+          targetId?: string;
+          success?: boolean;
+          active?: boolean;
+        })
+      | undefined;
+    const activeTarget =
+      page?.activeTargetId ??
+      (page?.targetId &&
+      ((method === 'switchTab' && page.success === true) ||
+        (method === 'createTab' && (page.active ?? params?.activate ?? true)))
+        ? page.targetId
+        : undefined);
+    for (const tab of page?.tabs ?? []) {
+      const host = hostOf(tab.url);
+      if (host) next.targetHosts.set(tab.targetId, host);
+    }
+    if (activeTarget != null) {
+      next.activeTargetId = activeTarget;
+      next.activeHost = next.targetHosts.get(activeTarget);
+    }
+    const target = (params?.targetId ??
+      page?.targetId ??
+      next.activeTargetId) as string | undefined;
+    const host =
+      hostOf(page?.url) ??
+      (method === 'goto' || method === 'createTab'
+        ? hostOf(params?.url)
+        : undefined);
+    if (host) {
+      if (target) next.targetHosts.set(target, host);
+      if (!target || target === next.activeTargetId) next.activeHost = host;
+      arm(host);
+    }
+  }
+  const landedHost = hostOf(landedUrl);
+  if (landedHost) {
+    next.activeHost = landedHost;
+    arm(landedHost);
+  }
+  return next;
+};
 
 const isReportOnly = (commands: Array<{ method: string }>): boolean =>
   commands.every((c) =>
@@ -1242,6 +1335,7 @@ export const runAgentCommands = async (
         persona,
       ),
       params.requiredCapabilities ?? [],
+      options.toolName,
     );
   } catch (err) {
     sendAnalytics(false, err);
@@ -1276,6 +1370,7 @@ export const runAgentCommands = async (
         persona,
         onSession,
         userId,
+        options.toolName,
       );
     } catch (connErr: unknown) {
       if (connErr instanceof HumanHandoffActiveError)
@@ -1331,6 +1426,7 @@ export const runAgentCommands = async (
         retryPersona,
         onSession,
         userId,
+        options.toolName,
       );
     } catch (connErr: unknown) {
       if (connErr instanceof HumanHandoffActiveError)
@@ -1495,7 +1591,10 @@ export const runAgentCommands = async (
         cmd.method === 'reportProfileAuthentication' &&
         cmd.params.targetId === undefined
       ) {
-        if (!agentSession.lastActiveTargetId) {
+        const targetId =
+          agentSession.profileAuth?.activeTargetId ??
+          agentSession.lastActiveTargetId;
+        if (!targetId) {
           throw Object.assign(
             new UserError(
               (commands.length > 1
@@ -1508,7 +1607,7 @@ export const runAgentCommands = async (
         }
         outboundParams = {
           ...cmd.params,
-          targetId: agentSession.lastActiveTargetId,
+          targetId,
         };
       }
       // Cascade the self-reported prompt once per session so the server can
@@ -1686,6 +1785,15 @@ export const runAgentCommands = async (
           },
         );
       }
+
+      // Preserve completed page/report state even if a later command fails.
+      agentSession.profileAuth = nextProfileAuthState(
+        agentSession.profileAuth,
+        !!agentSession.profile,
+        [{ method: cmd.method, params: outboundParams, result: resp.result }],
+        undefined,
+        agentSession.lastActiveTargetId,
+      );
 
       agentSession.secretVisible = secretVisibleAfter(
         agentSession.secretVisible,
@@ -1871,6 +1979,12 @@ export const runAgentCommands = async (
     }
     const extraText = [
       renderedSkills,
+      options.extras &&
+      agentSession.profileAuth?.pendingHosts.size &&
+      keepAlive &&
+      !closedDuringBatch
+        ? SAVED_LOGIN_REMINDER
+        : '',
       siteNotice,
       repeatWarning,
       downloadsPending &&
@@ -2089,6 +2203,31 @@ export const runAgentCommands = async (
         undefined,
         userId,
       );
+    }
+    if (
+      options.extras &&
+      err instanceof Error &&
+      lastSession?.profileAuth?.pendingHosts.size &&
+      keepAlive
+    ) {
+      // Only the exact browser that survived can accept a follow-up report.
+      try {
+        if (
+          getActiveSessionByHandle(
+            lastSession.handle,
+            apiUrl,
+            token,
+            userId,
+          ) === lastSession
+        ) {
+          err.message += `\n\n${SAVED_LOGIN_REMINDER}`;
+          if (!err.message.includes(`sessionId: ${lastSession.handle}`)) {
+            err.message += `\n\n${sessionLine(lastSession, compliant)}`;
+          }
+        }
+      } catch {
+        // No surviving browser to report against.
+      }
     }
     if (
       options.extras &&

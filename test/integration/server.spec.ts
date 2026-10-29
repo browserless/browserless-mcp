@@ -1,18 +1,22 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { getConfig } from '../../src/config.js';
 import {
   consumeDownload,
   downloadOwner,
   storeDownload,
 } from '../../src/lib/download-store.js';
-import { normalizeUploadCommand } from '../../src/tools/agent.js';
+import {
+  describeReadyDownload,
+  normalizeUploadCommand,
+} from '../../src/tools/agent.js';
 import { FastMCP, OAuthProvider } from 'fastmcp';
 import { z } from 'zod';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
@@ -52,6 +56,62 @@ const mockConfig: McpConfig = {
 
 describe('MCP Server Integration', () => {
   let server: FastMCP;
+
+  it('runs the download recipe with a local owner token and fails safely otherwise', async () => {
+    const port = await freePort();
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-curl-'));
+    const owner = downloadOwner('owner-token');
+    const record = await storeDownload(
+      'download.txt',
+      'text/plain',
+      Buffer.from('download bytes'),
+      owner,
+    );
+    server = new FastMCP({ name: 'test', version: '1.0.0' });
+    registerDownloadRoute(server, mockConfig);
+    try {
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port, host: '127.0.0.1' },
+      });
+      const recipe = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl: `http://127.0.0.1:${port}`,
+      });
+      const command = recipe.split('save it:  ')[1].split('   (single use)')[0];
+      const run = (token: string | undefined) =>
+        promisify(execFile)('sh', ['-c', command], {
+          cwd: dir,
+          env: { ...process.env, BROWSERLESS_TOKEN: token },
+        });
+
+      for (const token of [undefined, '', 'other-owner']) {
+        await run(token).then(
+          () => expect.fail('expected the download command to fail'),
+          (error) => {
+            expect(error.code).to.be.a('number').and.not.equal(0);
+            expect(error.stderr).to.include(
+              token ? '404' : 'BROWSERLESS_TOKEN',
+            );
+          },
+        );
+        expect(await readdir(dir)).to.deep.equal([]);
+      }
+      await run('owner-token');
+      expect(await readFile(join(dir, record.filename), 'utf8')).to.equal(
+        'download bytes',
+      );
+      await run('owner-token').then(
+        () => expect.fail('expected the single-use URL to fail on repeat'),
+        (error) => expect(error.code).to.equal(22),
+      );
+    } finally {
+      await server.stop();
+      consumeDownload(record.id, owner);
+      await rm(record.path, { force: true });
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   for (const compliant of [true, false]) {
     it(`advertises the ${compliant ? 'connector' : 'full'} HTTP surface at startup`, async () => {
