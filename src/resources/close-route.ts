@@ -12,7 +12,11 @@ export function registerCloseRoute(server: FastMCP, config: McpConfig): void {
     if (auth instanceof Response) return auth;
     try {
       if (
-        !closeSessionByHandle(c.req.param('handle'), auth.token, auth.userId)
+        !(await closeSessionByHandle(
+          c.req.param('handle'),
+          auth.token,
+          auth.userId,
+        ))
       ) {
         return c.json({ ok: false, error: 'Browser session not found' }, 404);
       }

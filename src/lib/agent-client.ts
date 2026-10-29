@@ -46,6 +46,100 @@ const endCommand = (session: ActiveSession): void => {
 const hasInFlightCommand = (session: ActiveSession): boolean =>
   (inFlightCommands.get(session) ?? 0) > 0;
 
+const humanHandoffs = new WeakMap<ActiveSession, string>();
+type HumanHandoff = {
+  key: string;
+  session: ActiveSession;
+  expires: number;
+  close?: () => Promise<void>;
+  closing?: Promise<void>;
+};
+const handoffHandles = new Map<string, HumanHandoff>();
+const handoffKey = (
+  handle: string,
+  apiUrl: string,
+  token: string,
+  userId?: string,
+) => JSON.stringify([handle, apiUrl, hashToken(token), userId]);
+function pruneHandoffHandles() {
+  for (const [key, entry] of handoffHandles)
+    if (entry.expires <= Date.now()) handoffHandles.delete(key);
+}
+export class HumanHandoffActiveError extends Error {
+  constructor() {
+    super(
+      'A human handoff owns this browser. Wait for Done and check browserless_live_url action handoff_status with its viewRef before continuing. Do not create a replacement browser.',
+    );
+  }
+}
+export const releaseHumanHandoff = (
+  session: ActiveSession,
+  generation?: string,
+) => {
+  if (generation && humanHandoffs.get(session) !== generation) return;
+  humanHandoffs.delete(session);
+  handoffHandles.delete(
+    handoffKey(session.handle, session.apiUrl, session.token, session.userId),
+  );
+};
+
+/** Mint on the existing socket after excluding concurrent browser commands. */
+export async function startHumanHandoff(
+  session: ActiveSession,
+  params: Record<string, unknown>,
+  generation: string,
+  onClose?: (result: unknown) => Promise<void>,
+  prepareResponse?: (
+    response: AgentResponse,
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<AgentResponse>,
+  ) => Promise<AgentResponse>,
+) {
+  if (humanHandoffs.has(session)) throw new HumanHandoffActiveError();
+  pruneHandoffHandles();
+  if (handoffHandles.size >= 16)
+    throw new Error('Too many active human handoffs.');
+  if (hasInFlightCommand(session) || session.ws.readyState !== WebSocket.OPEN)
+    throw new Error(
+      'The existing browser is busy or disconnected. Retry the handoff after the current operation finishes.',
+    );
+  const key = [...sessions].find(([, active]) => active === session)?.[0];
+  if (!key) throw new Error('The existing browser session is unavailable.');
+  humanHandoffs.set(session, generation);
+  const handoff: HumanHandoff = {
+    key,
+    session,
+    expires:
+      Date.now() +
+      Math.min(
+        typeof params.timeout === 'number' ? params.timeout : 300_000,
+        900_000,
+      ),
+  };
+  handoffHandles.set(
+    handoffKey(session.handle, session.apiUrl, session.token, session.userId),
+    handoff,
+  );
+  beginCommand(session);
+  try {
+    const request = (method: string, args: Record<string, unknown>) =>
+      sendMessage(session.ws, { id: ++session.msgId, method, params: args });
+    let response = await request('liveURL', params);
+    if (!response.error && prepareResponse)
+      response = await prepareResponse(response, request);
+    if (response.error) releaseHumanHandoff(session, generation);
+    else if (onClose) handoff.close = () => onClose(response.result);
+    return response;
+  } catch (error) {
+    releaseHumanHandoff(session, generation);
+    throw error;
+  } finally {
+    endCommand(session);
+  }
+}
+
 export const clearExpiredStripeLinkContinuation = (
   session: ActiveSession,
 ): boolean => {
@@ -351,6 +445,7 @@ export const getActiveSessionByHandle = (
   apiUrl: string,
   token: string,
   userId?: string,
+  touch = true,
 ): ActiveSession => {
   const matches = [...sessions.values()].filter(
     (session) =>
@@ -365,7 +460,7 @@ export const getActiveSessionByHandle = (
       'The requested browser session is unavailable. Open or resume it with browserless_agent first.',
     );
   }
-  matches[0].lastUsedAt = Date.now();
+  if (touch) matches[0].lastUsedAt = Date.now();
   return matches[0];
 };
 
@@ -1114,6 +1209,15 @@ export const getOrCreateSession = async (
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
 ): Promise<ActiveSession> => {
+  pruneHandoffHandles();
+  const requestedHandle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : echoedSessionId;
+  const paused =
+    requestedHandle &&
+    handoffHandles.get(handoffKey(requestedHandle, apiUrl, token, userId));
+  if (paused && paused.session.ws.readyState !== WebSocket.OPEN)
+    throw new HumanHandoffActiveError();
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(
@@ -1442,6 +1546,7 @@ export const send = async (
   timeoutMs?: number,
   onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
+  if (humanHandoffs.has(session)) throw new HumanHandoffActiveError();
   // Mark the command in flight for the whole operation — including any reconnect
   // wait — so a sweep tick cannot evict the session mid-send (which would drop
   // the new socket's cleanup listener). Refresh the idle clock on completion.
@@ -1527,7 +1632,7 @@ export const closeSession = (
   allowedDomains?: string[],
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
-): void => {
+): void | Promise<void> => {
   const key = getSessionKey(
     mcpSessionId,
     token,
@@ -1540,15 +1645,18 @@ export const closeSession = (
     allowedDomains,
     userId,
   );
-  closeSessionByKey(key, onSession);
+  return closeSessionByKey(key, onSession);
 };
 
 /** Close the exact cached key, including profile, attach, and integration scope. */
 const closeSessionByKey = (
   key: string,
   onSession?: (reused: boolean, ageMs: number) => void,
-): void => {
-  const session = sessions.get(key);
+): void | Promise<void> => {
+  const handoff = [...handoffHandles.values()].find(
+    (entry) => entry.key === key,
+  );
+  const session = sessions.get(key) ?? handoff?.session;
   if (session) {
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     if (stripeLinkOperations.has(session)) {
@@ -1565,21 +1673,40 @@ const closeSessionByKey = (
           : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',
       );
     }
-    try {
-      session.ws.close();
-    } catch {
-      /* ignore */
+    if (humanHandoffs.has(session) && hasInFlightCommand(session)) {
+      throw new SessionCloseConflictError(
+        'A human handoff is being prepared. Retry closing when it finishes.',
+      );
     }
-    // Record agent lifetime on explicit close too, not only idle/cap eviction;
-    // the sessions-map delete below stops any session being counted twice.
-    const bornAt = createdAt.get(session);
-    if (bornAt !== undefined)
-      recordSessionLifetime('agent', Date.now() - bornAt);
-    sessions.delete(key);
   }
-  retainedPersonas.delete(key);
-  retainedProxies.delete(key);
-  retainedProfiles.delete(key);
+  const finish = () => {
+    if (session) {
+      releaseHumanHandoff(session);
+      try {
+        session.ws.close();
+      } catch {
+        /* ignore */
+      }
+      // Record only cached sessions; a disconnected handoff has already left it.
+      const bornAt = createdAt.get(session);
+      if (sessions.get(key) === session && bornAt !== undefined)
+        recordSessionLifetime('agent', Date.now() - bornAt);
+      sessions.delete(key);
+    }
+    retainedPersonas.delete(key);
+    retainedProxies.delete(key);
+    retainedProfiles.delete(key);
+  };
+  if (handoff?.close) {
+    return (handoff.closing ??= handoff
+      .close()
+      .then(finish)
+      .catch((error) => {
+        handoff.closing = undefined;
+        throw error;
+      }));
+  }
+  finish();
 };
 
 /** Handles are token/user scoped but can identify more than one integration binding. */
@@ -1587,8 +1714,11 @@ export const closeSessionByHandle = (
   handle: string,
   token: string,
   userId?: string,
-): boolean => {
-  const matches = [...sessions.entries()].filter(
+): boolean | Promise<boolean> => {
+  const candidates = new Map(sessions);
+  for (const entry of handoffHandles.values())
+    if (!candidates.has(entry.key)) candidates.set(entry.key, entry.session);
+  const matches = [...candidates].filter(
     ([, session]) =>
       session.handle === handle &&
       session.token === token &&
@@ -1600,8 +1730,8 @@ export const closeSessionByHandle = (
     );
   }
   if (!matches.length) return false;
-  closeSessionByKey(matches[0][0]);
-  return true;
+  const closed = closeSessionByKey(matches[0][0]);
+  return closed instanceof Promise ? closed.then(() => true) : true;
 };
 
 /**

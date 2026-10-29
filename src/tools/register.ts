@@ -45,7 +45,7 @@ export function registerSurface(
       surface: 'full',
       register: () => {
         registerShowTools(server, config, analytics);
-        registerViewWidget(server);
+        registerViewWidget(server, config);
       },
     },
     {

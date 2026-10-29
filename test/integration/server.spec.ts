@@ -114,7 +114,7 @@ describe('MCP Server Integration', () => {
         if (compliant) {
           expect(names).to.deep.equal(connectorNames);
         } else {
-          expect(names).to.have.length(20);
+          expect(names).to.have.length(21);
           expect(names).not.to.include('browserless_read_page');
           expect(names).to.include.members([
             ...connectorNames.filter(

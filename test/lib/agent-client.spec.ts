@@ -17,6 +17,9 @@ import {
   sessionHandle,
   dropMcpSession,
   send,
+  startHumanHandoff,
+  releaseHumanHandoff,
+  HumanHandoffActiveError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
 import type { ProxyOptions } from '../../src/@types/types.js';
@@ -39,6 +42,56 @@ import {
   createSyncInstruments,
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
+
+describe('agent-client explicit close during human handoff', () => {
+  for (const attachment of [undefined, 'handoff-browser']) {
+    it(`clears the closed session's guard without unlocking a later handoff (attached=${Boolean(attachment)})`, async () => {
+      const server = await makeRespondingServer(() => ({}));
+      const open = () =>
+        getOrCreateSession(
+          'handoff-close',
+          server.url,
+          'handoff-close-token',
+          undefined,
+          undefined,
+          undefined,
+          attachment,
+          false,
+          undefined,
+          's:handoff-close',
+        );
+      const first = await open();
+      let next;
+      try {
+        await startHumanHandoff(first, { timeout: 60_000 }, 'first');
+        await closeSession(
+          'handoff-close',
+          'handoff-close-token',
+          undefined,
+          undefined,
+          undefined,
+          attachment,
+          first.handle,
+        );
+        next = await open();
+        expect(next).not.to.equal(first);
+        await startHumanHandoff(next, { timeout: 60_000 }, 'next');
+        releaseHumanHandoff(first, 'first');
+        let error;
+        try {
+          await send(next, 'snapshot');
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(HumanHandoffActiveError);
+      } finally {
+        releaseHumanHandoff(first);
+        if (next) releaseHumanHandoff(next);
+        await server.close();
+      }
+    });
+  }
+});
 
 describe('agent-client repetition identity', () => {
   it('bounds history while retaining recently repeated batches', () => {
