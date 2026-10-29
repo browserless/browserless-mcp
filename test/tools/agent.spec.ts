@@ -5244,6 +5244,7 @@ describe('browserless_agent media description', () => {
         .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
         .description;
       expect(description?.includes('browserless_show')).to.equal(expected);
+      expect(description).not.to.include('one command batch for one gallery');
     });
   }
 });

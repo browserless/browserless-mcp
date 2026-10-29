@@ -183,11 +183,13 @@ describe('agent-client reconnection telemetry', () => {
         server.url,
         'tok',
       );
+      session.mediaPageUrl = 'https://previous.example/';
       session.ws.terminate();
       clock.setSystemTime(9000);
       const acquired = sinon.spy();
       await send(session, 'getCookies', {}, undefined, acquired);
       expect(acquired.calledOnceWithExactly(false, 0)).to.equal(true);
+      expect(session.mediaPageUrl).to.equal(undefined);
       expect(server.hits()).to.equal(2);
     } finally {
       await server.close();

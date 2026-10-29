@@ -141,6 +141,19 @@ const TOP_FRAME_NAVIGATION_METHODS = new Set([
   'reload',
   'waitForNavigation',
 ]);
+const MEDIA_URL_CHANGING_METHODS = new Set([
+  ...TOP_FRAME_NAVIGATION_METHODS,
+  'switchTab',
+  'createTab',
+  'closeTab',
+  'click',
+  'type',
+  'select',
+  'checkbox',
+  'evaluate',
+  'uploadFile',
+  'pressKey',
+]);
 
 export const validateSecretCaptureOrdering = (
   commands: ReadonlyArray<{
@@ -912,7 +925,7 @@ export function registerAgentTools(
       SELF_CHECK_DIRECTIVE +
       sessionContinuityNote(config.transport) +
       (!compliant && mediaOrigin(config)
-        ? ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions. Related screenshots can be captured in one command batch for one gallery.'
+        ? ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions.'
         : ''),
     // The tool advertises the slim, OpenAI-importable schemas — the rich
     // per-command union renders to a JSON Schema too deep/large for OpenAI's
@@ -945,7 +958,7 @@ export function registerAgentTools(
               ...run.content,
               {
                 type: 'text' as const,
-                text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}).`,
+                text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}). Related screenshots can be captured in one command batch for one gallery.`,
               },
             ];
           }
@@ -955,7 +968,36 @@ export function registerAgentTools(
           );
         }
       }
-      return run.content;
+      // The ordinary formatter already includes the last reportable result.
+      // Preserve earlier captures too when no gallery can carry their bytes.
+      const reportable = run.results.filter(
+        (command) => command.method !== 'close',
+      );
+      const earlier: Content[] = [];
+      const opts = {
+        transport: config.transport,
+        sessionId: ctx.sessionId,
+        mcpBaseUrl: config.mcpBaseUrl,
+        token: ctx.token,
+      };
+      for (const command of reportable.slice(0, -1)) {
+        const capture =
+          command.method === 'screenshot'
+            ? command.params.toDisk === true
+              ? await formatScreenshotToDisk(
+                  command.result,
+                  command,
+                  '',
+                  '',
+                  opts,
+                )
+              : formatScreenshotContent(command.result, command, '', '')
+            : command.method === 'stopRecording'
+              ? formatRecordingToDisk(command.result, '', '', opts)
+              : null;
+        if (capture) earlier.push(...capture);
+      }
+      return [...earlier, ...run.content];
     },
     format: (content) => content,
   });
@@ -1504,7 +1546,6 @@ export const runAgentCommands = async (
       pageUrl?: string;
     }> = [];
     rawResults = results;
-    let mediaPageUrl = agentSession.lastUrl;
     let closedDuringBatch = false;
     // Cross-origin baseline: prefer the URL from the previous snapshot,
     // else the first URL seen this batch — so [goto A, goto B, snapshot]
@@ -1644,6 +1685,11 @@ export const runAgentCommands = async (
 
       let resp;
       try {
+        if (
+          MEDIA_URL_CHANGING_METHODS.has(cmd.method) &&
+          !(cmd.method === 'createTab' && cmd.params.activate === false)
+        )
+          agentSession.mediaPageUrl = undefined;
         // A lost reply may follow a completed vault write. Never replay
         // this batch after dispatching saveSecret, even if a later command fails.
         if (cmd.method === 'saveSecret') saveSecretSent = true;
@@ -1852,16 +1898,24 @@ export const runAgentCommands = async (
         );
       }
       const observedUrl = (resp.result as { url?: unknown } | undefined)?.url;
-      if (typeof observedUrl === 'string') mediaPageUrl = observedUrl;
-      else if (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method))
-        mediaPageUrl = undefined;
+      const activeSnapshot =
+        cmd.method === SNAPSHOT_METHOD &&
+        (!cmd.params.targetId ||
+          cmd.params.targetId ===
+            (resp.result as SnapshotResult | undefined)?.activeTargetId);
+      if (
+        activeSnapshot ||
+        (TOP_FRAME_NAVIGATION_METHODS.has(cmd.method) && !cmd.params.frameId)
+      )
+        agentSession.mediaPageUrl =
+          typeof observedUrl === 'string' ? observedUrl : undefined;
       results.push({
         ...cmd,
         result: resp.result,
         ...(uiEnabled &&
-        mediaPageUrl &&
+        agentSession.mediaPageUrl &&
         ['screenshot', 'stopRecording'].includes(cmd.method)
-          ? { pageUrl: mediaPageUrl }
+          ? { pageUrl: agentSession.mediaPageUrl }
           : {}),
       });
     }

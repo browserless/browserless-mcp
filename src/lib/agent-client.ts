@@ -1493,6 +1493,7 @@ export const send = async (
       if (session.ws !== ws) {
         session.ws = ws;
         session.msgId = 0;
+        session.mediaPageUrl = undefined;
         createdAt.set(session, Date.now());
 
         const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
