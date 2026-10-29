@@ -819,7 +819,7 @@ export interface ApiClient {
 }
 
 export interface ProfileAuthState {
-  pendingHost?: string;
+  pendingHosts: Set<string>;
   reportedHosts: Set<string>;
   targetHosts: Map<string, string>;
   activeTargetId?: string | null;

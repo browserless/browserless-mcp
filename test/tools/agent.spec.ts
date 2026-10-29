@@ -4009,7 +4009,7 @@ describe('nextProfileAuthState', () => {
     result: { recorded },
   });
   const pending = (s: ReturnType<typeof nextProfileAuthState>) =>
-    s?.pendingHost;
+    s?.pendingHosts.values().next().value;
 
   it('arms on the first navigation to a site', () => {
     expect(
@@ -4131,6 +4131,64 @@ describe('saved-login reminders through browserless_agent', () => {
   });
   const text = (result: any): string =>
     result.content.map((c: { text?: string }) => c.text ?? '').join('\n');
+
+  it('keeps reminders until every loaded tab has a recorded report', async () => {
+    const srv = await makeRespondingServer((method, params: any) => {
+      if (method === 'snapshot') {
+        return {
+          url: params.targetId === 'T2' ? 'https://b.com' : 'https://a.com',
+          title: 'Page',
+          elements: [],
+          time: 0,
+          activeTargetId: 'T1',
+          tabs: [
+            { targetId: 'T1', url: 'https://a.com', title: 'A', active: true },
+            { targetId: 'T2', url: 'https://b.com', title: 'B', active: false },
+          ],
+        };
+      }
+      return method === 'reportProfileAuthentication' ? { recorded: true } : {};
+    });
+    try {
+      const execute = getAgentExecute(srv.url);
+      const first = text(
+        await execute(
+          {
+            profile: 'saved',
+            keepSessionAlive: true,
+            commands: [
+              { method: 'snapshot' },
+              { method: 'snapshot', params: { targetId: 'T2' } },
+            ],
+          },
+          mockContext,
+        ),
+      );
+      const sessionId = first.match(/sessionId:\s*(\S+)/)![1];
+      const report = (targetId: string) => ({
+        method: 'reportProfileAuthentication',
+        params: {
+          targetId,
+          checkpointId: 'first-page',
+          outcome: 'unknown',
+          newLoginActivity: false,
+        },
+      });
+      expect(
+        text(
+          await execute({ sessionId, commands: [report('T2')] }, mockContext),
+        ),
+      ).to.include(SAVED_LOGIN_REMINDER);
+      expect(
+        text(
+          await execute({ sessionId, commands: [report('T1')] }, mockContext),
+        ),
+      ).not.to.include(SAVED_LOGIN_REMINDER);
+      await execute({ sessionId, method: 'close' }, mockContext);
+    } finally {
+      await srv.close();
+    }
+  });
 
   it('clears a peeked page by its actual target, never by the checkpoint label', async () => {
     const srv = await makeRespondingServer((method, params: any) => {

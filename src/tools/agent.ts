@@ -693,14 +693,14 @@ export const nextProfileAuthState = (
 ): ProfileAuthState | undefined => {
   if (!hasProfile) return undefined;
   const next: ProfileAuthState = {
-    pendingHost: state?.pendingHost,
+    pendingHosts: new Set(state?.pendingHosts),
     reportedHosts: new Set(state?.reportedHosts),
     targetHosts: new Map(state?.targetHosts),
     activeTargetId: state?.activeTargetId ?? activeTargetId,
     activeHost: state?.activeHost,
   };
   const arm = (host: string | undefined): void => {
-    if (host && !next.reportedHosts.has(host)) next.pendingHost = host;
+    if (host && !next.reportedHosts.has(host)) next.pendingHosts.add(host);
   };
   for (const { method, params, result } of commands) {
     if (method === 'reportProfileAuthentication') {
@@ -714,7 +714,7 @@ export const nextProfileAuthState = (
         : next.activeHost;
       if (host) {
         next.reportedHosts.add(host);
-        if (host === next.pendingHost) next.pendingHost = undefined;
+        next.pendingHosts.delete(host);
       }
       continue;
     }
@@ -1961,7 +1961,7 @@ export const runAgentCommands = async (
     const extraText = [
       renderedSkills,
       options.extras &&
-      agentSession.profileAuth?.pendingHost &&
+      agentSession.profileAuth?.pendingHosts.size &&
       keepAlive &&
       !closedDuringBatch
         ? SAVED_LOGIN_REMINDER
@@ -2188,7 +2188,7 @@ export const runAgentCommands = async (
     if (
       options.extras &&
       err instanceof Error &&
-      lastSession?.profileAuth?.pendingHost &&
+      lastSession?.profileAuth?.pendingHosts.size &&
       keepAlive
     ) {
       // Only the exact browser that survived can accept a follow-up report.
