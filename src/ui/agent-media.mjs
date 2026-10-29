@@ -29,6 +29,7 @@ export function mountAgentMedia(root, rawPayload, view, app, initialHost) {
     scale = 0,
     dead = false,
     host = initialHost ?? {};
+  root.tabIndex = 0;
   root.innerHTML = `<header class="media-heading"><span class="media-brand" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="2"/><path d="m3 16 5-5 5 6 3-3 5 5M8 2h8"/><circle cx="16" cy="10" r="1.5"/></svg></span><div><h1>Agent captures</h1><p data-role="website"></p></div><span class="media-count" data-role="count"></span></header>
   <nav class="media-tabs" role="tablist" aria-label="Captured media"><button data-role="images" role="tab">Screenshots</button><button data-role="videos" role="tab">Recordings</button></nav>
   <section class="media-stage" data-role="stage" aria-label="Selected capture"><img data-role="image" alt=""/><video data-role="video" controls playsinline preload="metadata" aria-label="Captured browser recording"></video><div class="media-message" data-role="message" role="status" hidden><strong data-role="title"></strong><p data-role="detail"></p><button data-role="retry">Retry loading</button></div></section>
@@ -81,8 +82,16 @@ export function mountAgentMedia(root, rawPayload, view, app, initialHost) {
     $('videos').setAttribute('aria-selected', String(video));
     $('website').textContent =
       item.website || view.data.website || 'Captured browser output';
-    $('count').textContent =
-      `${images.length} images · ${videos.length} videos`;
+    $('count').textContent = [
+      images.length
+        ? `${images.length} image${images.length === 1 ? '' : 's'}`
+        : '',
+      videos.length
+        ? `${videos.length} video${videos.length === 1 ? '' : 's'}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
     $('count').hidden = payload.artifacts.length === 1;
     root.querySelector('.media-tabs').hidden = payload.artifacts.length === 1;
     $('label').textContent = item.label;
@@ -110,6 +119,7 @@ export function mountAgentMedia(root, rawPayload, view, app, initialHost) {
     $('next').disabled = index === total - 1;
     $('fit').hidden = video;
     $('zoom').hidden = video;
+    $('zoom').disabled = scale >= 2;
     $('gallery').hidden = video || images.length === 1;
     thumbs.forEach((button, index) =>
       button.setAttribute('aria-current', String(index === selected)),

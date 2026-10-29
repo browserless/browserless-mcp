@@ -139,6 +139,33 @@ describe('real agent tool media integration over MCP', () => {
         Buffer.from(await bytes.arrayBuffer()),
         Buffer.from(png, 'base64'),
       );
+      const largeBatch = await alice.callTool({
+        name: 'browserless_agent',
+        arguments: {
+          commands: Array.from({ length: 13 }, () => ({
+            method: 'screenshot',
+            params: {},
+          })),
+        },
+      });
+      assert.ok(!largeBatch.isError, JSON.stringify(largeBatch.content));
+      const largeRef = JSON.stringify(largeBatch.content).match(
+        /view_[0-9a-f-]+/,
+      )?.[0];
+      assert.ok(
+        largeRef,
+        'large screenshot batches still return a widget reference',
+      );
+      const largeView = await alice.callTool({
+        name: 'browserless_show',
+        arguments: { viewRef: largeRef },
+      });
+      assert.ok(!largeView.isError, JSON.stringify(largeView.content));
+      assert.equal((largeView._meta!.payload as any).artifacts.length, 12);
+      assert.match(
+        (largeView.structuredContent as any).summary,
+        /first 12 of 13/,
+      );
       const bob = await connect('bob');
       assert.equal(
         (

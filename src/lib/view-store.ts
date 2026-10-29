@@ -120,9 +120,10 @@ export class ViewStore {
     owner: string,
     inputs: MediaInput[],
   ): Promise<PreparedView | undefined> {
+    const total = inputs.length;
+    inputs = inputs.slice(0, 12);
     if (
       !inputs.length ||
-      inputs.length > 12 ||
       inputs.some(
         (item) => !item.body.length || item.body.length > VIEW_DATA_MAX_BYTES,
       )
@@ -152,10 +153,18 @@ export class ViewStore {
       videoCount = media.length - imageCount;
     const sites = new Set(media.map((item) => item.website));
     const website = sites.size === 1 ? media[0].website : undefined;
+    const counts = [
+      imageCount
+        ? `${imageCount} screenshot${imageCount === 1 ? '' : 's'}`
+        : '',
+      videoCount ? `${videoCount} recording${videoCount === 1 ? '' : 's'}` : '',
+    ]
+      .filter(Boolean)
+      .join(' and ');
     const prepared: PreparedView = {
       viewRef: ref,
       kind: 'agent-media',
-      summary: `${imageCount} screenshots and ${videoCount} recordings from this call.`,
+      summary: `${counts} from this call.${total > media.length ? ` Showing the first ${media.length} of ${total} captures.` : ''}`,
       expiresAt: new Date(expires).toISOString(),
       data: { ...(website ? { website } : {}), imageCount, videoCount },
     };

@@ -60,7 +60,7 @@ describe('agent media views and preview transport', () => {
     clearSession('media-test');
   });
 
-  it('cleans same-PID and exited-process previews at startup while preserving live previews', async () => {
+  it('cleans same-PID and exited-process previews on first media preparation while preserving live previews', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'media-startup-'));
     try {
       await promisify(execFile)(
@@ -152,6 +152,7 @@ describe('agent media views and preview transport', () => {
   it('prepares owned snapshots with bounded metadata and no private paths in results', async () => {
     const prepared = (await store.prepareMedia('alice', [input()]))!;
     assert.equal(prepared.kind, 'agent-media');
+    assert.equal(prepared.summary, '1 screenshot from this call.');
     const shown = store.show(prepared.viewRef, 'alice', origin);
     assert.equal(
       ShowOutputSchema.parse(shown.structuredContent).kind,
@@ -258,6 +259,7 @@ describe('agent media views and preview transport', () => {
         { method: 'stopRecording', params: {}, result: { download: record } },
       ],
     }))!;
+    assert.equal(prepared.summary, '1 recording from this call.');
     const asset = (
       replayViews.show(prepared.viewRef, 'alice', origin)._meta!.payload as any
     ).artifacts[0];
@@ -313,11 +315,73 @@ describe('agent media views and preview transport', () => {
     );
   });
 
+  for (const invalid of [
+    {
+      name: 'unsupported image type',
+      params: { type: 'gif' },
+      base64: () => png.toString('base64'),
+    },
+    { name: 'invalid base64', params: {}, base64: () => 'not valid base64!' },
+    {
+      name: 'oversized image',
+      params: {},
+      base64: () => 'A'.repeat(4 * Math.ceil((50 * 1024 * 1024) / 3) + 1),
+    },
+  ]) {
+    it(`keeps valid captures before and after an ${invalid.name}`, async () => {
+      const screenshot = {
+        method: 'screenshot',
+        params: {},
+        result: { base64: png.toString('base64') },
+      };
+      const prepared = await prepareAgentMedia('alice', 'token', {
+        content: [],
+        results: [
+          screenshot,
+          {
+            method: 'screenshot',
+            params: invalid.params,
+            result: { base64: invalid.base64() },
+          },
+          screenshot,
+        ],
+      });
+      assert.ok(prepared);
+      assert.equal(prepared.summary, '2 screenshots from this call.');
+      const payload = replayViews.show(prepared.viewRef, 'alice', origin)._meta!
+        .payload as any;
+      assert.deepEqual(
+        payload.artifacts.map((asset: any) => asset.commandIndex),
+        [1, 3],
+      );
+      for (const asset of payload.artifacts) {
+        const cap = new URL(asset.previewUrl).pathname.split('/').at(-1)!;
+        assert.deepEqual(await readFile(replayViews.preview(cap)!.path), png);
+      }
+    });
+  }
+
   it('bounds galleries and concurrent reservations without evicting another owner', async () => {
-    assert.equal(
-      await store.prepareMedia('alice', Array.from({ length: 13 }, input)),
-      undefined,
+    const limited = await store.prepareMedia(
+      'alice',
+      Array.from({ length: 13 }, (_, index) => ({
+        ...input(),
+        commandIndex: index + 1,
+      })),
     );
+    assert.ok(limited);
+    assert.equal(
+      limited.summary,
+      '12 screenshots from this call. Showing the first 12 of 13 captures.',
+    );
+    const captures = (
+      store.show(limited.viewRef, 'alice', origin)._meta!.payload as any
+    ).artifacts;
+    assert.deepEqual(
+      captures.map((asset: any) => asset.commandIndex),
+      Array.from({ length: 12 }, (_, index) => index + 1),
+    );
+    await store.clear();
     store = new ViewStore({ maxEntries: 1 });
     const [a, b] = await Promise.all([
       store.prepareMedia('alice', [input()]),

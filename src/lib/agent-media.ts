@@ -87,7 +87,7 @@ export async function prepareAgentMedia(
         result.base64.length > 4 * Math.ceil((50 * 1024 * 1024) / 3) ||
         !/^[A-Za-z0-9+/]*={0,2}$/.test(result.base64)
       )
-        return;
+        continue;
       mimeType = types[type as keyof typeof types];
       body = Buffer.from(result.base64, 'base64');
     } else if (command.method === 'stopRecording' && result?.download?.id) {

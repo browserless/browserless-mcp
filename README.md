@@ -91,7 +91,8 @@ browserless_show({ viewRef: "<returned-view-reference>" })
 // Displays the stored capture without repeating browser actions.
 ```
 
-For video, start recording, perform the requested browser actions, then call
+For video, set `record: true` on the call that opens the browser, then start
+recording, perform the requested browser actions, and call
 `stopRecording`. Display the reference returned by the call that completes the
 recording. For example, a user can ask: "Go to browserless.io, record the page
 while scrolling to the bottom, and show me the video inline."
@@ -104,9 +105,12 @@ artifact until expiry; preview and Save requests are repeatable and do not
 consume the original single-use download.
 
 Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
-budget. A gallery holds at most 12 artifacts, each at most 50 MiB. Preview files
-are removed on expiry or eviction; startup removes files left by exited
-processes. Storage remains process-local, so deployments must route requests to
+budget. A gallery shows the first 12 valid captures, each at most 50 MiB; its
+summary reports when more captures were returned. Invalid screenshots are
+skipped without discarding valid captures. Preview files are removed on expiry
+or eviction. Before the first media view is created, cleanup removes stale
+files left by exited processes, including files with the current process's
+reused PID. Storage remains process-local, so deployments must route requests to
 the owning process. Without MCP Apps support or a valid public origin, the
 agent retains its existing output without preparing a widget.
 
