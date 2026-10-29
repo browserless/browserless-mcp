@@ -29,10 +29,10 @@ Just trigger the download in the agent — navigate to the file URL, or click a 
 **Remote (HTTP) mode:** the server can't write to your disk, so each file comes with a **single-use** GET URL. Fetch it with `curl` to save locally — works **once**:
 
 ```bash
-curl -s "<MCP_BASE_URL>/download/<id>" -H "Authorization: Bearer $BROWSERLESS_TOKEN" -o "report.csv"
+curl -fsS "<MCP_BASE_URL>/download/<id>" -H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}" -o "report.csv"
 ```
 
-The command with the file's id and URL is in the `getDownloads` response. Set `BROWSERLESS_TOKEN` locally to your Browserless API token before running it; never print the token or put it in the conversation. The command references the environment variable without exposing its value. Alternatively, reuse the handle as `uploadFile { files: [{ handle: "browserless-download://<id>" }] }` to re-upload it elsewhere without ever fetching the bytes. A file is dropped after one GET, after 15 minutes, or when the session ends — whichever comes first.
+The command with the file's id and URL is in the `getDownloads` response. Set `BROWSERLESS_TOKEN` locally to the same Browserless API token used for this MCP session; a different token cannot fetch the file. Never print the token or put it in the conversation. The command fails if the variable is unset or empty, and HTTP errors fail without saving the error response as a file. Alternatively, reuse the handle as `uploadFile { files: [{ handle: "browserless-download://<id>" }] }` to re-upload it elsewhere without ever fetching the bytes. A file is dropped after one GET, after 15 minutes, or when the session ends — whichever comes first.
 
 ## Uploading
 
@@ -62,11 +62,11 @@ Each file is resolved in this order — pick the first you have:
 The server can't read your filesystem, so stage the file once over HTTP (bytes go via `curl`, never through the conversation), then use the returned handle:
 
 ```bash
-curl -s -F file=@"/path/to/file.png" "<MCP_BASE_URL>/upload?token=<YOUR_BROWSERLESS_TOKEN>"
+curl -fsS -F file=@"/path/to/file.png" "<MCP_BASE_URL>/upload" -H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"
 # → { "ok": true, "handle": "browserless-download://0123456789abcdef0123456789abcdef", "filename": "file.png", ... }
 ```
 
-The `/upload` route requires your Browserless token (`?token=` or `Authorization: Bearer`). The `uploadFile` path-rejection error gives you the exact command with the token filled in.
+Set `BROWSERLESS_TOKEN` locally to the same Browserless API token used for this MCP session so the returned handle belongs to the session's token. Never print its value or put it in the conversation. The HTTP-mode `uploadFile` error for a local `path` supplies a staging command that references this environment variable; it does not fill in the token.
 
 ```json
 {

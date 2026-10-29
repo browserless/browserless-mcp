@@ -487,7 +487,9 @@ describe('browserless_smartscraper tool', () => {
           } else {
             const id = text.match(/\/download\/([a-f0-9]+)"/)![1];
             expect(text).not.to.include('session-token');
-            expect(text).to.include('Authorization: Bearer $BROWSERLESS_TOKEN');
+            expect(text).to.include(
+              'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+            );
             handles.push(id);
             const app = server.getApp();
             expect(

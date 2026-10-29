@@ -547,7 +547,9 @@ describe('account-data tools', () => {
             expect(text).to.not.include('opened on that host');
             expect(text).to.not.include('test-token');
             expect(text).to.not.include('caller-token');
-            expect(text).to.include('Authorization: Bearer $BROWSERLESS_TOKEN');
+            expect(text).to.include(
+              'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+            );
             expect(text).to.include('15 minutes');
             const urls =
               text.match(/https:\/\/mcp\.example\.com\/download\/[^"\s]+/g) ??

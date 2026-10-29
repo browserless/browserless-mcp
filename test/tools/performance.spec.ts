@@ -320,7 +320,9 @@ describe('browserless_performance tool', () => {
     const id = text.match(/\/download\/([0-9a-f]{32})/)![1];
     expect(text).to.not.include(token);
     expect(text).to.not.include(encodeURIComponent(token));
-    expect(text).to.include('Authorization: Bearer $BROWSERLESS_TOKEN');
+    expect(text).to.include(
+      'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+    );
     expect(text).to.not.include('privateDetails');
     expect(text).to.include('download to disk first');
     expect(

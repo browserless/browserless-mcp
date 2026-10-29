@@ -728,10 +728,12 @@ describe('formatScreenshotToDisk', () => {
     );
     const text = (content![0] as Extract<Content, { type: 'text' }>).text;
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
+      /curl -fsS "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
     expect(text).to.include('screenshot.jpg');
-    expect(text).to.include('-H "Authorization: Bearer $BROWSERLESS_TOKEN"');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
     expect(JSON.stringify(content)).to.not.include('tok-1');
     expect(JSON.stringify(content)).to.not.include(FAKE_PNG);
   });
@@ -795,6 +797,8 @@ describe('fileTransferModeNote', () => {
     const note = fileTransferModeNote('httpStream', 'https://mcp.example.com');
     expect(note).to.match(/HTTP/);
     expect(note).to.include('https://mcp.example.com/upload');
+    expect(note).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+    expect(note).to.not.include('?token=');
     expect(note).to.match(/never base64/i);
   });
 });
@@ -937,10 +941,11 @@ describe('normalizeUploadCommand', () => {
       threw = true;
       const msg = (e as Error).message;
       expect(msg).to.match(/not available in HTTP mode/);
-      expect(msg).to.include('curl -s -F file=@"/etc/hosts"');
-      expect(msg).to.include(
-        'https://mcp.example.com/upload?token=<YOUR_BROWSERLESS_TOKEN>',
-      );
+      expect(msg).to.include('curl -fsS -F file=@"/etc/hosts"');
+      expect(msg).to.include('https://mcp.example.com/upload');
+      expect(msg).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+      expect(msg).to.not.include('?token=');
+      expect(msg).to.not.include('test-token');
     }
     expect(threw, 'expected normalizeUploadCommand to throw').to.be.true;
   });
@@ -1120,9 +1125,11 @@ describe('formatDownloads (httpStream)', () => {
     expect(text).to.include('report.csv');
     // GET recipe references a local token without exposing its value.
     expect(text).to.match(
-      /curl -s "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
+      /curl -fsS "https:\/\/mcp\.example\.com\/download\/[0-9a-f]{32}"/,
     );
-    expect(text).to.include('-H "Authorization: Bearer $BROWSERLESS_TOKEN"');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
     expect(JSON.stringify(content)).to.not.include('tok-1');
     const urlId = text.match(/\/download\/([0-9a-f]{32})"/)?.[1];
     const handleId = text.match(/browserless-download:\/\/([0-9a-f]{32})/)?.[1];
@@ -1145,10 +1152,12 @@ describe('formatDownloads (httpStream)', () => {
       },
     );
     const text = (content[0] as Extract<Content, { type: 'text' }>).text;
-    const url = text.match(/curl -s "([^"]+)"/)?.[1];
+    const url = text.match(/curl -fsS "([^"]+)"/)?.[1];
     expect(url).to.exist;
     expect(new URL(url!).search).to.equal('');
-    expect(text).to.include('-H "Authorization: Bearer $BROWSERLESS_TOKEN"');
+    expect(text).to.include(
+      '-H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"',
+    );
     expect(JSON.stringify(content)).to.not.include(token);
     expect(JSON.stringify(content)).to.not.include(encodeURIComponent(token));
   });
