@@ -848,21 +848,8 @@ export function registerAgentTools(
             ctx.params.rationale,
           );
           if (view) {
-            const content = run.content.map((block) =>
-              block.type === 'text'
-                ? {
-                    ...block,
-                    text: block.text
-                      .replaceAll(
-                        encodeURIComponent(ctx.token),
-                        '<YOUR_BROWSERLESS_TOKEN>',
-                      )
-                      .replaceAll(ctx.token, '<YOUR_BROWSERLESS_TOKEN>'),
-                  }
-                : block,
-            );
             return [
-              ...content,
+              ...run.content,
               {
                 type: 'text' as const,
                 text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}).`,
