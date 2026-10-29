@@ -96,7 +96,14 @@ describe('agent media views and preview transport', () => {
           `,
           new URL('../../src/lib/view-store.js', import.meta.url).href,
         ],
-        { env: { ...process.env, TMPDIR: directory } },
+        {
+          env: {
+            ...process.env,
+            TMPDIR: directory,
+            TEMP: directory,
+            TMP: directory,
+          },
+        },
       );
     } finally {
       await rm(directory, { recursive: true, force: true });
