@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile, unlink } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { FastMCP } from 'fastmcp';
 import {
   ViewStore,
@@ -54,6 +58,49 @@ describe('agent media views and preview transport', () => {
     await store.clear();
     await replayViews.clear();
     clearSession('media-test');
+  });
+
+  it('cleans same-PID and exited-process previews at startup while preserving live previews', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'media-startup-'));
+    try {
+      await promisify(execFile)(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+            import assert from 'node:assert/strict';
+            import { access, mkdir } from 'node:fs/promises';
+            import { tmpdir } from 'node:os';
+            import { join } from 'node:path';
+            const { ViewStore } = await import(process.argv[1]);
+            const root = join(tmpdir(), 'browserless-mcp-previews');
+            const own = join(root, process.pid + '-view_aaaaaaaa');
+            const live = join(root, process.ppid + '-view_bbbbbbbb');
+            const exited = join(root, '2147483647-view_cccccccc');
+            assert.throws(() => process.kill(2147483647, 0), { code: 'ESRCH' });
+            await Promise.all([own, live, exited].map(path => mkdir(path, { recursive: true })));
+            const store = new ViewStore();
+            const input = { type: 'image', mimeType: 'image/png', body: Buffer.from('fixture'), label: 'Capture', rationale: '', commandIndex: 1 };
+            const first = await store.prepareMedia('owner', [input]);
+            assert.ok(first);
+            await assert.rejects(access(own), { code: 'ENOENT' });
+            await assert.rejects(access(exited), { code: 'ENOENT' });
+            await access(live);
+            const payload = store.show(first.viewRef, 'owner', 'https://mcp.example')._meta.payload;
+            const cap = new URL(payload.artifacts[0].previewUrl).pathname.split('/').at(-1);
+            const current = store.preview(cap).path;
+            await store.prepareMedia('owner', [input]);
+            await access(current);
+            await store.clear();
+          `,
+          new URL('../../src/lib/view-store.js', import.meta.url).href,
+        ],
+        { env: { ...process.env, TMPDIR: directory } },
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('validates media origins and rejects script/HTML masquerading as captures', () => {

@@ -818,7 +818,9 @@ export function registerAgentTools(
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
       SELF_CHECK_DIRECTIVE +
       sessionContinuityNote(config.transport) +
-      ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions. Related screenshots can be captured in one command batch for one gallery.',
+      (!compliant && mediaOrigin(config)
+        ? ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions. Related screenshots can be captured in one command batch for one gallery.'
+        : ''),
     // The tool advertises the slim, OpenAI-importable schemas — the rich
     // per-command union renders to a JSON Schema too deep/large for OpenAI's
     // hosted-MCP tool import, which rejects the whole tools/list with 424. run()

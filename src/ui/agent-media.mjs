@@ -111,28 +111,8 @@ export function mountAgentMedia(root, rawPayload, view, app, initialHost) {
     $('fit').hidden = video;
     $('zoom').hidden = video;
     $('gallery').hidden = video || images.length === 1;
-    $('gallery').replaceChildren(
-      ...images.map((asset, index) => {
-        const button = document.createElement('button');
-        button.className = 'media-thumb';
-        button.setAttribute('aria-current', String(index === selected));
-        button.setAttribute('aria-label', `View ${asset.label}`);
-        const image = document.createElement('img');
-        image.src = asset.previewUrl;
-        image.alt = '';
-        const label = document.createElement('span');
-        label.textContent = `${index + 1} · ${asset.label}`;
-        image.onerror = () => {
-          label.textContent = `${index + 1} · Unavailable`;
-        };
-        button.append(image, label);
-        button.onclick = () => {
-          selected = index;
-          scale = 0;
-          render();
-        };
-        return button;
-      }),
+    thumbs.forEach((button, index) =>
+      button.setAttribute('aria-current', String(index === selected)),
     );
   }
   const move = (delta) => {
@@ -196,6 +176,27 @@ export function mountAgentMedia(root, rawPayload, view, app, initialHost) {
     }
   };
   root.addEventListener('keydown', keydown);
+  const thumbs = images.map((asset, index) => {
+    const button = document.createElement('button');
+    button.className = 'media-thumb';
+    button.setAttribute('aria-label', `View ${asset.label}`);
+    const image = document.createElement('img');
+    image.src = asset.previewUrl;
+    image.alt = '';
+    const label = document.createElement('span');
+    label.textContent = `${index + 1} · ${asset.label}`;
+    image.onerror = () => {
+      label.textContent = `${index + 1} · Unavailable`;
+    };
+    button.append(image, label);
+    button.onclick = () => {
+      selected = index;
+      scale = 0;
+      render();
+    };
+    return button;
+  });
+  $('gallery').replaceChildren(...thumbs);
   render();
   updateHost(host);
   return {

@@ -37,15 +37,20 @@ function prepareDirectory() {
     for (const entry of await readdir(previewRoot, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^\d+-view_[a-f0-9-]+$/.test(entry.name))
         continue;
-      try {
-        process.kill(Number(entry.name.split('-')[0]), 0);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ESRCH')
-          await rm(join(previewRoot, entry.name), {
-            recursive: true,
-            force: true,
-          });
+      const pid = Number(entry.name.split('-')[0]);
+      let stale = pid === process.pid;
+      if (!stale) {
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          stale = (error as NodeJS.ErrnoException).code === 'ESRCH';
+        }
       }
+      if (stale)
+        await rm(join(previewRoot, entry.name), {
+          recursive: true,
+          force: true,
+        });
     }
   })().catch((error) => {
     directoryReady = undefined;
