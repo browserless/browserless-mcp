@@ -28,6 +28,9 @@ export type {
   AgentError,
 } from '../@types/types.js';
 
+// Matches the `tool` value on MCP Tool Request for this tool.
+const AGENT_TOOL_NAME = 'browserless_agent';
+
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
 // Count of agent commands awaiting a response per session. A command may run
@@ -700,6 +703,7 @@ interface AgentCapabilityManifest {
 export const preflightAgentCapabilities = async (
   agentUrl: string,
   required: string[],
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<void> => {
   if (required.length === 0) return;
 
@@ -707,7 +711,10 @@ export const preflightAgentCapabilities = async (
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname += '/capabilities';
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const res = await fetch(url, {
+    headers: { 'x-browserless-mcp-tool': mcpTool },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new Error(
@@ -896,6 +903,7 @@ const postCreateProfile = async (
   token: string,
   createProfile: CreateProfileParams,
   os?: string,
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<CreationSessionInfo> => {
   const url = apiEndpoint(apiUrl, '/profile');
   url.searchParams.set('token', token);
@@ -907,7 +915,10 @@ const postCreateProfile = async (
   try {
     res = await fetch(url.toString(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-browserless-mcp-tool': mcpTool,
+      },
       body: JSON.stringify(createProfile),
       signal: controller.signal,
     });
@@ -955,6 +966,7 @@ const connect = (
   record?: boolean,
   persona?: PersonaOptions,
   handle?: string,
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -971,14 +983,15 @@ const connect = (
       record,
       persona,
     );
-    // Forward the origin on the upgrade so the server can attribute captured
-    // skills; reuses the same header the MCP already receives on its inbound.
-    const headers: Record<string, string> = {};
+    // Forward the origin and tool on the upgrade so the server can attribute
+    // captured skills and profile analytics; the source reuses the header the
+    // MCP already receives on its inbound.
+    const headers: Record<string, string> = {
+      'x-browserless-mcp-tool': mcpTool,
+    };
     if (source) headers['x-browserless-mcp-source'] = source;
     if (handle) headers['x-browserless-agent-session'] = handle;
-    const ws = new WebSocket(wsUrl, {
-      headers: Object.keys(headers).length ? headers : undefined,
-    });
+    const ws = new WebSocket(wsUrl, { headers });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -1113,6 +1126,7 @@ export const getOrCreateSession = async (
   persona?: PersonaOptions,
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<ActiveSession> => {
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
@@ -1334,6 +1348,7 @@ export const getOrCreateSession = async (
           token,
           createProfile,
           effectivePersona?.emulationOs,
+          mcpTool,
         )
       ).id;
     }
@@ -1352,6 +1367,7 @@ export const getOrCreateSession = async (
       record,
       createProfile ? undefined : effectivePersona,
       handle,
+      mcpTool,
     );
     const session: ActiveSession = {
       ws,
@@ -1363,6 +1379,7 @@ export const getOrCreateSession = async (
       createProfile,
       creationSessionId,
       source,
+      mcpTool,
       compliant,
       handle,
       integrationId,
@@ -1466,6 +1483,7 @@ export const send = async (
           session.record,
           session.creationSessionId ? undefined : session.persona,
           session.handle,
+          session.mcpTool,
         ).finally(() => {
           session.reconnecting = undefined;
         });

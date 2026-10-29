@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import http from 'node:http';
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { getConfig } from '../../src/config.js';
@@ -53,6 +54,7 @@ function capture(apiUrl: string, analytics?: AnalyticsHelper) {
 
 describe('browserless_read_page', () => {
   it('runs both waits before the snapshot and selected content, recording one read-page event', async () => {
+    const upgrades = sinon.spy(http.Server.prototype, 'emit');
     const commands: Array<{ method: string; params: unknown }> = [];
     const ws = await makeRespondingServer((method, params) => {
       commands.push({ method, params });
@@ -88,7 +90,16 @@ describe('browserless_read_page', () => {
       ]);
       expect(fire.calledOnce).to.equal(true);
       expect(fire.firstCall.args[1]).to.equal('browserless_read_page');
+      const upgrade = upgrades
+        .getCalls()
+        .find((call) => call.args[0] === 'upgrade');
+      expect(
+        (upgrade!.args[1] as http.IncomingMessage).headers[
+          'x-browserless-mcp-tool'
+        ],
+      ).to.equal('browserless_read_page');
     } finally {
+      upgrades.restore();
       fire.restore();
       await ws.close();
     }
