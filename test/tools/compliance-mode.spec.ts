@@ -263,7 +263,7 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full stdio mode registers exactly the 17 tools (regression guard)', () => {
+  it('full stdio mode registers exactly the 19 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -280,9 +280,11 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_profiles',
       'browserless_search',
       'browserless_sessions',
+      'browserless_show',
       'browserless_skill',
       'browserless_smartscraper',
       'browserless_usage',
+      'browserless_view_data',
     ]);
   });
 
@@ -309,10 +311,10 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('full HTTP adds stage_file for exactly 18 tools', () => {
+  it('full HTTP adds stage_file for exactly 20 tools', () => {
     const stdio = captureTools(false).names;
     const http = captureTools(false, 'httpStream').names;
-    expect(http).to.have.length(18);
+    expect(http).to.have.length(20);
     expect(http).to.deep.equal([...stdio, 'browserless_stage_file'].sort());
   });
 

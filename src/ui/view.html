@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browserless session replay</title>
+    <style id="widget-css"></style>
+  </head>
+  <body>
+    <main class="replay-card" aria-label="Recorded session replay">
+      <header class="heading">
+        <span class="brand" aria-hidden="true"
+          ><svg viewBox="0 0 24 24">
+            <path
+              d="M10 1.5h5M12.5 2v3.5M19.5 4.5 21 6M7.2 7A9 9 0 1 1 3.5 14.5"
+            />
+            <path
+              d="m3.5 9-3 5h6zM12.5 8v6.5H19A6.5 6.5 0 0 0 12.5 8Z"
+              fill="currentColor"
+              stroke="none"
+            /></svg
+        ></span>
+        <div class="heading-text">
+          <h1>Session replay</h1>
+          <p id="website">Recorded browser session</p>
+        </div>
+        <span id="state" class="state">Loading</span>
+      </header>
+      <div id="stage" class="stage">
+        <div id="player"></div>
+        <div id="empty" class="empty">
+          <span class="loading-dot"></span>
+          <p id="message" role="status" aria-live="polite">
+            Loading your recording…
+          </p>
+          <button id="retry" hidden>Retry loading</button>
+          <p id="fallback" hidden>
+            Use the offline player from the original replay result, or prepare a
+            new replay.
+          </p>
+        </div>
+      </div>
+      <section class="controls" aria-label="Playback controls">
+        <div class="timeline">
+          <output id="elapsed" for="seek">00:00</output
+          ><input
+            id="seek"
+            type="range"
+            min="0"
+            max="1"
+            step="100"
+            value="0"
+            aria-label="Replay timeline"
+            disabled
+          /><span id="duration">00:00</span>
+        </div>
+        <div class="buttons">
+          <button id="play" class="play" aria-label="Play recording" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path class="play-icon" d="m9 5 11 7-11 7z" />
+              <path class="pause-icon" d="M7 5h4v14H7zm7 0h4v14h-4z" />
+            </svg>
+          </button>
+          <button
+            id="rewind"
+            class="icon-button"
+            aria-label="Rewind five seconds"
+            disabled
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 8V3M5 8h5M5 7a9 9 0 1 1-1 11" />
+              <text x="13" y="17">5</text>
+            </svg>
+          </button>
+          <label class="speed-label"
+            ><span class="sr-only">Playback speed</span
+            ><select id="speed" disabled>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+            </select></label
+          >
+          <label class="skip"
+            ><input id="skip" type="checkbox" role="switch" disabled /><span
+              class="switch"
+              aria-hidden="true"
+            ></span
+            ><span>Skip inactive</span></label
+          >
+          <button
+            id="fullscreen"
+            class="icon-button"
+            aria-label="Enter fullscreen"
+            disabled
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5" />
+            </svg>
+          </button>
+        </div>
+      </section>
+      <footer>
+        <span><i aria-hidden="true"></i>Recorded session · Playback only</span
+        ><span>Browserless</span>
+      </footer>
+    </main>
+    <script id="widget-js"></script>
+  </body>
+</html>
