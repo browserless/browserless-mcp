@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.42.0](https://github.com/browserless/browserless-mcp/compare/v1.41.0...v1.42.0) (2026-10-29)
+
+
+### Features
+
+* focus the connector on five read-only tools ([#443](https://github.com/browserless/browserless-mcp/issues/443)) ([778c21a](https://github.com/browserless/browserless-mcp/commit/778c21abbfade0aecb02908a2468252eee73c2a4))
+* session replay widget AUTO-565 ([#464](https://github.com/browserless/browserless-mcp/issues/464)) ([0bcbdea](https://github.com/browserless/browserless-mcp/commit/0bcbdeac5a6ed3f77364f6480d5443236a34972c))
+
 ## [1.41.0](https://github.com/browserless/browserless-mcp/compare/v1.40.2...v1.41.0) (2026-10-27)
 
 
