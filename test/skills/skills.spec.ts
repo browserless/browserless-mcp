@@ -988,3 +988,34 @@ describe('auth skills: no references to the removed output fields', () => {
     );
   });
 });
+
+describe('auth skills: caller-owned values and report ordering', () => {
+  for (const id of ['autonomous-login', 'autonomous-registration'] as const) {
+    it(`${id} keeps caller-owned values and reports before closing`, () => {
+      const body = renderSkill(id, false);
+      expect(body).to.include(
+        'Where that format lists its own allowed values for a field, use those values; use the `reason_code` below only where it asks for a reason or result code without listing values.',
+      );
+      expect(body).not.to.include(
+        'wherever it asks for a reason or result code',
+      );
+      expect(body).to.include(
+        'send the applicable reports (`reportSkillOutcome` if you loaded a site recipe, then `reportOutcome` with `success: false`, `reason` `other`), then `close`',
+      );
+    });
+  }
+
+  it('lets a registration caller format without room for vault details win', () => {
+    const body = renderSkill('autonomous-registration', false);
+    expect(body).to.include(
+      'when it has no place for them, follow it exactly anyway — the vault item stays findable by its title.',
+    );
+    expect(body).not.to.include('else in its answer text');
+  });
+
+  it('reports before closing on the login timeout path', () => {
+    expect(renderSkill('autonomous-login', false)).not.to.include(
+      'close with `SUBMIT_NO_FEEDBACK`',
+    );
+  });
+});

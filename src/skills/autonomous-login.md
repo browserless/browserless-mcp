@@ -57,7 +57,7 @@ Anything missing → `FORM_NOT_FOUND` (say what's missing).
 
 One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call. If `loadSecret` filled a field, keep the batch as fill → click submit → `waitForNavigation`: the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; it still refuses `snapshot` and captures until then, so on a timeout (no navigation) `waitForSelector` for a signed-in element first, then send `{ method: "clearSecrets" }` before the first snapshot.
 
-Before clearing after a timeout, require both a newly appeared post-submit marker and removal of every secret-filled field. Use secret-safe `waitForSelector` for `body:not(:has(<filled-field-selector>))` per field (10000ms); hidden fields still carry values, and a pre-existing Account link proves nothing. Any wait fails → do not clear or snapshot; close with `SUBMIT_NO_FEEDBACK`. This rule also applies to TOTP and emailed-code submissions below.
+Before clearing after a timeout, require both a newly appeared post-submit marker and removal of every secret-filled field. Use secret-safe `waitForSelector` for `body:not(:has(<filled-field-selector>))` per field (10000ms); hidden fields still carry values, and a pre-existing Account link proves nothing. Any wait fails → do not clear or snapshot; send the applicable reports (`reportSkillOutcome` if you loaded a site recipe, then `reportOutcome` with `success: false`, `reason` `other`), then `close`; the outcome is `SUBMIT_NO_FEEDBACK`. This rule also applies to TOTP and emailed-code submissions below.
 
 ## Verify success (any one, priority order)
 
@@ -111,7 +111,7 @@ Your last message is a reply to the user, in plain language — never a status o
 
 Before that reply, send `reportOutcome` as the system prompt describes, then `close`. A login that blocked the task is `success: false` with `reason` `captcha` for `CAPTCHA_BLOCKED`, `login_required` for `MISSING_CONTEXT` / `INVALID_CREDENTIALS` / `MFA_INPUT_MISSING` / `MFA_FAILED`, else `other`.
 
-Only when your instructions or the task ask for a machine-readable final result (a fenced JSON block, a response schema, named fields) produce it exactly as they specify, with the `reason_code` below wherever it asks for a reason or result code. Otherwise never end with a JSON block.
+Only when your instructions or the task ask for a machine-readable final result (a fenced JSON block, a response schema, named fields) produce it exactly as they specify. Where that format lists its own allowed values for a field, use those values; use the `reason_code` below only where it asks for a reason or result code without listing values. Otherwise never end with a JSON block.
 
 `reason_code` ∈ `SUCCESS` | `LOGIN_NOT_NEEDED` | `MISSING_CONTEXT` | `INVALID_CREDENTIALS` | `MFA_INPUT_MISSING` | `MFA_FAILED` | `CAPTCHA_BLOCKED` | `FORM_NOT_FOUND` | `SUBMIT_NO_FEEDBACK` | `FIELD_TYPE_MISMATCH` | `UNEXPECTED_STATE`.
 
