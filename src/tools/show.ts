@@ -7,6 +7,7 @@ import { defineTool, type ToolRunContext } from '../lib/define-tool.js';
 import { accountQuery } from '../lib/account-api.js';
 import { replayViews, VIEW_UNAVAILABLE } from '../lib/view-store.js';
 import { ShowOutputSchema, VIEW_URI } from '../lib/view-schemas.js';
+import { mediaOrigin } from '../lib/agent-media.js';
 
 const ViewParams = z.object({ viewRef: z.string().max(128) });
 
@@ -17,6 +18,8 @@ async function authorize(
   ctx: ToolRunContext<{ viewRef: string }>,
 ) {
   const view = replayViews.require(ctx.params.viewRef, ctx.viewOwner);
+  // Captured media is an owned snapshot, independent of the live browser/replay API.
+  if (view.prepared.kind === 'agent-media') return;
   try {
     const result = await accountQuery<{
       sessionReplayBySessionId: { sessionId: string } | null;
@@ -43,7 +46,7 @@ export function registerShowTools(
   defineTool(server, config, analytics, {
     name: 'browserless_show',
     description:
-      'Display a prepared Browserless session replay inline. Pass the exact viewRef returned by browserless_sessions action replay. Does not repeat the recording download or browser operation.',
+      'Display a prepared Browserless replay, screenshot gallery, or video inline. Pass the exact viewRef returned by browserless_sessions or browserless_agent. Does not repeat a browser operation or download.',
     parameters: ViewParams,
     outputSchema: ShowOutputSchema,
     annotations: {
@@ -55,7 +58,11 @@ export function registerShowTools(
     _meta: { ui: { resourceUri: VIEW_URI }, 'openai/outputTemplate': VIEW_URI },
     run: async (ctx) => {
       await authorize(config, ctx);
-      return replayViews.show(ctx.params.viewRef, ctx.viewOwner);
+      return replayViews.show(
+        ctx.params.viewRef,
+        ctx.viewOwner,
+        mediaOrigin(config),
+      );
     },
     format: (result) => result,
   });

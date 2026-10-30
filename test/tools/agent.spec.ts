@@ -5206,6 +5206,49 @@ describe('browserless_agent skill outcome forwarding', () => {
   });
 });
 
+describe('browserless_agent media description', () => {
+  afterEach(() => sinon.restore());
+
+  for (const [name, config, expected] of [
+    [
+      'full HTTP',
+      { transport: 'httpStream', mcpBaseUrl: 'https://mcp.example' },
+      true,
+    ],
+    ['stdio', { transport: 'stdio', mcpBaseUrl: 'https://mcp.example' }, false],
+    ['missing origin', { transport: 'httpStream', mcpBaseUrl: '' }, false],
+    [
+      'unsafe origin',
+      { transport: 'httpStream', mcpBaseUrl: 'http://remote.example' },
+      false,
+    ],
+    [
+      'compliant',
+      {
+        transport: 'httpStream',
+        mcpBaseUrl: 'https://mcp.example',
+        complianceMode: true,
+      },
+      false,
+    ],
+  ] as const) {
+    it(`advertises media viewing only when available: ${name}`, () => {
+      const server = new FastMCP({
+        name: 'description-test',
+        version: '1.0.0',
+      });
+      const added = sinon.spy(server, 'addTool');
+      registerAgentTools(server, { ...mockConfig, ...config });
+      const description = added
+        .getCalls()
+        .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
+        .description;
+      expect(description?.includes('browserless_show')).to.equal(expected);
+      expect(description).not.to.include('one command batch for one gallery');
+    });
+  }
+});
+
 describe('browserless_agent session handle on errors', () => {
   afterEach(() => sinon.restore());
 

@@ -11,6 +11,7 @@ import { announceToolListOnConnect, isCompliant } from './tools/compliance.js';
 import { serverInstructions } from './skills/system-prompt.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
+import { registerMediaPreviewRoute } from './resources/media-preview.js';
 import { registerCloseRoute } from './resources/close-route.js';
 import { clearSession } from './lib/download-store.js';
 import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
@@ -342,6 +343,7 @@ if (config.transport === 'httpStream') {
   // Single-use, out-of-band fetch for captured downloads (the LLM GETs the file
   // instead of pulling bytes through the conversation). httpStream only.
   registerDownloadRoute(server, config);
+  if (!isCompliant(config)) registerMediaPreviewRoute(server);
 
   registerCloseRoute(server, config);
   console.error(
