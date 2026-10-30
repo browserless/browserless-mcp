@@ -15,7 +15,11 @@ export function registerPerformanceWidget(server: FastMCP): void {
     mimeType: RESOURCE_MIME_TYPE,
     async load() {
       return {
-        text: readFileSync(new URL('../ui/view.html', import.meta.url), 'utf8'),
+        // Errors/cancellations may not include a structured result discriminator.
+        text: readFileSync(
+          new URL('../ui/view.html', import.meta.url),
+          'utf8',
+        ).replace('<body>', '<body data-view-kind="performance">'),
         _meta: {
           ui: {
             prefersBorder: true,

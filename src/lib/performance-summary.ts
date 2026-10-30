@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { PerformanceParams } from '../@types/types.js';
 
-export const PERFORMANCE_URI = 'ui://browserless/performance/v2.html';
+export const PERFORMANCE_URI = 'ui://browserless/performance/v3.html';
 const Score = z.number().int().min(0).max(100).nullable();
 export const PerformanceViewSchema = z.object({
   kind: z.literal('performance'),

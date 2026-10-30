@@ -34,6 +34,9 @@ let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
 const performanceRoot = byId('performance');
+const isPerformanceView = () =>
+  document.body.dataset.viewKind === 'performance' ||
+  lastResult?.structuredContent?.kind === 'performance';
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
@@ -97,14 +100,16 @@ function dispose() {
 }
 function fail(error) {
   loading.abort();
-  if (lastResult?.structuredContent?.kind === 'performance') {
+  if (isPerformanceView()) {
     dispose();
     card.hidden = true;
     handoffRoot.hidden = true;
     mediaRoot.hidden = true;
     performanceRoot.hidden = false;
-    performanceRoot.textContent =
-      'This performance report is unavailable. Run a new audit.';
+    performanceRoot.innerHTML =
+      '<header class="perf-heading"><div><h1>Performance report unavailable</h1></div></header><p role="alert"></p><p class="perf-empty">Run a new audit to try again.</p>';
+    performanceRoot.querySelector('[role="alert"]').textContent =
+      error.message || 'The performance audit could not be completed.';
     return;
   }
   if (handoff) {
@@ -295,9 +300,11 @@ async function render(result) {
     if (result.isError)
       throw new Error(
         result.content?.find((item) => item.type === 'text')?.text ||
-          'Replay unavailable.',
+          (isPerformanceView()
+            ? 'Performance audit failed.'
+            : 'Replay unavailable.'),
       );
-    if (result.structuredContent?.kind === 'performance') {
+    if (isPerformanceView()) {
       performanceReport = mountPerformance(
         performanceRoot,
         result.structuredContent,
@@ -422,9 +429,15 @@ app.ontoolresult = (result) => {
   lastResult = result;
   void render(result);
 };
-app.ontoolcancelled = () => {
+app.ontoolcancelled = (params) => {
   generation++;
-  fail(new Error('Replay loading was cancelled.'));
+  fail(
+    new Error(
+      isPerformanceView()
+        ? params?.reason || 'Performance audit was cancelled.'
+        : 'Replay loading was cancelled.',
+    ),
+  );
 };
 app.onhostcontextchanged = updateHost;
 app.onteardown = async () => {
