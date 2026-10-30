@@ -18,6 +18,67 @@ async function freePort() {
 }
 
 describe('local Docker MCP runner', () => {
+  it('terminates its MCP child when the gateway exits unexpectedly', async () => {
+    const port = await freePort();
+    const internal = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    const runner = new URL('../../../scripts/local-mcp.mjs', import.meta.url)
+      .href;
+    const child = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `import ${JSON.stringify(runner)}; process.on('message', () => process.exit(2));`,
+      ],
+      {
+        env: {
+          ...process.env,
+          PORT: String(port),
+          MCP_INTERNAL_PORT: String(internal),
+          BROWSERLESS_API_URL: 'http://127.0.0.1:5555',
+          BROWSERLESS_PUBLIC_URL: base,
+          BROWSERLESS_TOKEN: 'local-runner-test',
+        },
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      },
+    );
+    const internalUrl = `http://127.0.0.1:${internal}/health`;
+    try {
+      const readyBy = Date.now() + 10_000;
+      let ready = false;
+      while (!ready && Date.now() < readyBy) {
+        ready = await fetch(internalUrl).then(
+          () => true,
+          () => false,
+        );
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.ok(ready, 'internal MCP child started');
+      const exited = once(child, 'exit');
+      child.send('exit');
+      assert.equal((await exited)[0], 2);
+      const stoppedBy = Date.now() + 3000;
+      while (
+        await fetch(internalUrl).then(
+          () => true,
+          () => false,
+        )
+      ) {
+        assert.ok(
+          Date.now() < stoppedBy,
+          'gateway exit must terminate its MCP child',
+        );
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    } finally {
+      if (child.exitCode === null) {
+        child.kill('SIGTERM');
+        await once(child, 'exit');
+      }
+    }
+  });
+
   it('proxies MCP and viewer traffic and survives aborted upgrades', async () => {
     const backend = createServer((_request, response) =>
       response.end('viewer asset'),
@@ -138,6 +199,35 @@ describe('local Docker MCP runner', () => {
       assert.deepEqual(await (await fetch(base + '/health')).json(), {
         ok: true,
       });
+      for (const upgrade of [true, false]) {
+        for (const path of ['//', '//%', 'http://[invalid']) {
+          const status = await new Promise<number | undefined>(
+            (resolve, reject) => {
+              const req = request(
+                {
+                  hostname: '127.0.0.1',
+                  port,
+                  path,
+                  headers: upgrade
+                    ? { connection: 'Upgrade', upgrade: 'websocket' }
+                    : {},
+                },
+                (response) => {
+                  response.resume();
+                  response.on('end', () => resolve(response.statusCode));
+                },
+              );
+              req.on('error', reject);
+              req.end();
+            },
+          );
+          assert.equal(
+            status,
+            400,
+            `reject malformed ${upgrade ? 'upgrade' : 'HTTP'} target ${path}`,
+          );
+        }
+      }
       assert.ok((await client.listTools()).tools.length > 0);
       assert.equal(leaked, false, 'runner must not print the API token');
     } finally {
@@ -149,5 +239,9 @@ describe('local Docker MCP runner', () => {
       backend.closeAllConnections();
       await new Promise<void>((resolve) => backend.close(() => resolve()));
     }
+    await assert.rejects(
+      fetch(`http://127.0.0.1:${internal}/health`),
+      'stopping the runner must stop its internal MCP child',
+    );
   });
 });

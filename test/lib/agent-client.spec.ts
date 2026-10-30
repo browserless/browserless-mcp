@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import assert from 'node:assert/strict';
 import sinon from 'sinon';
 import http from 'node:http';
 import {
@@ -44,6 +45,93 @@ import {
 } from '../../src/lib/metrics-recorders.js';
 
 describe('agent-client explicit close during human handoff', () => {
+  it('blocks scope and source changes until the handoff is released', async () => {
+    const server = await makeRespondingServer(() => ({ ok: true }));
+    const open = (source = 'original', integrationId?: string) =>
+      getOrCreateSession(
+        'handoff-scope',
+        server.url,
+        'scope-token',
+        undefined,
+        undefined,
+        undefined,
+        'attached-handoff',
+        false,
+        source,
+        'attach:attached-handoff',
+        integrationId,
+      );
+    const session = await open('original', 'vault');
+    try {
+      await startHumanHandoff(session, { timeout: 60_000 }, 'scope');
+      for (const [source, integration] of [
+        ['other', 'vault'],
+        ['original', 'other-vault'],
+        ['original', undefined],
+        ['original', 'vault'],
+      ] as const)
+        await assert.rejects(
+          () => open(source, integration),
+          HumanHandoffActiveError,
+        );
+      expect(server.hits()).to.equal(1);
+      releaseHumanHandoff(session, 'scope');
+      expect(await open('original', 'vault')).to.equal(session);
+      expect((await send(session, 'snapshot')).result).to.deep.equal({
+        ok: true,
+      });
+    } finally {
+      releaseHumanHandoff(session);
+      await server.close();
+    }
+  });
+
+  it('requires explicit close after a disconnected handoff expires', async () => {
+    const server = await makeRespondingServer(() => ({}));
+    const open = () =>
+      getOrCreateSession(
+        'handoff-expiry',
+        server.url,
+        'expiry-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        's:handoff-expiry',
+      );
+    const session = await open();
+    let clock: sinon.SinonStub | undefined;
+    try {
+      await startHumanHandoff(session, { timeout: 60_000 }, 'expiry');
+      const closed = new Promise<void>((resolve) =>
+        session.ws.once('close', resolve),
+      );
+      session.ws.terminate();
+      await closed;
+      const expiredAt = Date.now() + 60_001;
+      clock = sinon.stub(Date, 'now').returns(expiredAt);
+      await assert.rejects(open, HumanHandoffActiveError);
+      expect(server.hits()).to.equal(1);
+      await closeSession(
+        'handoff-expiry',
+        'expiry-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        session.handle,
+      );
+      expect(await open()).not.to.equal(session);
+      expect(server.hits()).to.equal(2);
+    } finally {
+      clock?.restore();
+      releaseHumanHandoff(session);
+      await server.close();
+    }
+  });
+
   for (const attachment of [undefined, 'handoff-browser']) {
     it(`clears the closed session's guard without unlocking a later handoff (attached=${Boolean(attachment)})`, async () => {
       const server = await makeRespondingServer(() => ({}));

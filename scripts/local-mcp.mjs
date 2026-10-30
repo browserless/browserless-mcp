@@ -54,9 +54,16 @@ if (
   throw Error('PORT and MCP_INTERNAL_PORT must be different valid TCP ports.');
 const backendRoute = (path) =>
   /^\/(?:live(?:\/|$)|(?:chromium|chrome)\/live(?:\/|$))/.test(path);
-const server = http.createServer(async (request, response) => {
+const server = http.createServer((request, response) => {
   response.shouldKeepAlive = false;
-  const url = new URL(request.url, 'http://gateway');
+  let url;
+  try {
+    url = new URL(request.url, 'http://gateway');
+  } catch {
+    response.writeHead(400, { connection: 'close' });
+    response.end();
+    return;
+  }
   if (url.pathname === '/health') {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end('{"ok":true}');
@@ -106,7 +113,15 @@ const server = http.createServer(async (request, response) => {
   request.pipe(upstream);
 });
 server.on('upgrade', (request, socket, head) => {
-  const path = new URL(request.url, 'http://gateway').pathname;
+  let path;
+  try {
+    path = new URL(request.url, 'http://gateway').pathname;
+  } catch {
+    socket.end(
+      'HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
+    );
+    return;
+  }
   const upstream = http.request({
     host: '127.0.0.1',
     port: backendRoute(path) ? config.backendPort : config.mcpPort,
@@ -232,3 +247,5 @@ server.listen(config.gatewayPort, '127.0.0.1', () => {
   );
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => stop());
+// Also terminate the child on an unexpected synchronous process exit.
+process.once('exit', () => child?.kill('SIGTERM'));

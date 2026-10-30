@@ -16,8 +16,10 @@ export function registerViewWidget(
   // Keep the previous URI readable while refreshed hosts discover the new UI.
   for (const uri of [
     VIEW_URI,
-    'ui://browserless/view/v2.html',
-    'ui://browserless/view/v1.html',
+    ...Array.from(
+      { length: 8 },
+      (_, index) => `ui://browserless/view/v${index + 1}.html`,
+    ),
   ])
     server.addResource({
       uri,

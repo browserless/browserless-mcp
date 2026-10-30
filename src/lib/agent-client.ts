@@ -64,14 +64,13 @@ const handoffKey = (
   token: string,
   userId?: string,
 ) => JSON.stringify([handle, apiUrl, hashToken(token), userId]);
-function pruneHandoffHandles() {
-  for (const [key, entry] of handoffHandles)
-    if (entry.expires <= Date.now()) handoffHandles.delete(key);
-}
+// Keep terminal guards until completion or explicit close. Expiry permits idle
+// cleanup, never silent browser replacement; the 16-entry admission cap bounds
+// retained guards as well as active handoffs.
 export class HumanHandoffActiveError extends Error {
   constructor() {
     super(
-      'A human handoff owns this browser. Wait for Done and check browserless_live_url action handoff_status with its viewRef before continuing. Do not create a replacement browser.',
+      'A human handoff owns this browser. Wait for Done and check browserless_live_url action handoff_status with its viewRef before continuing. If it expired or disconnected, explicitly close the session before starting again. Do not create a replacement browser automatically.',
     );
   }
 }
@@ -101,9 +100,10 @@ export async function startHumanHandoff(
   ) => Promise<AgentResponse>,
 ) {
   if (humanHandoffs.has(session)) throw new HumanHandoffActiveError();
-  pruneHandoffHandles();
   if (handoffHandles.size >= 16)
-    throw new Error('Too many active human handoffs.');
+    throw new Error(
+      'Too many unresolved human handoffs. Complete or explicitly close an existing session first.',
+    );
   if (hasInFlightCommand(session) || session.ws.readyState !== WebSocket.OPEN)
     throw new Error(
       'The existing browser is busy or disconnected. Retry the handoff after the current operation finishes.',
@@ -1228,15 +1228,13 @@ export const getOrCreateSession = async (
   userId?: string,
   mcpTool = AGENT_TOOL_NAME,
 ): Promise<ActiveSession> => {
-  pruneHandoffHandles();
   const requestedHandle = attachSessionId
     ? `attach:${attachSessionId}`
     : echoedSessionId;
   const paused =
     requestedHandle &&
     handoffHandles.get(handoffKey(requestedHandle, apiUrl, token, userId));
-  if (paused && paused.session.ws.readyState !== WebSocket.OPEN)
-    throw new HumanHandoffActiveError();
+  if (paused) throw new HumanHandoffActiveError();
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(

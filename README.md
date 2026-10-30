@@ -115,10 +115,13 @@ retired widgets stop polling.
 Handoffs default to five minutes, capped by the backend's browser deadline and
 15-minute link limit. Creating, opening, or polling a handoff never extends the
 browser deadline. References are caller-bound and process-local, with at most
-16 stored views. Reads recheck backend authorization, and an old view cannot
-release a newer handoff. The five-tool connector is unchanged. Clients without
-MCP Apps can continue using the agent's existing `liveURL` command for external
-viewers.
+16 stored views and 16 unresolved handoff guards. Expired or disconnected
+handoffs still block automation and browser replacement until explicitly closed
+with the original session handle; completion releases the guard. These guards
+do not keep expired browsers alive. Reads recheck backend authorization, and an
+old view cannot release a newer handoff. The five-tool connector is unchanged.
+Clients without MCP Apps can continue using the agent's existing `liveURL`
+command for external viewers.
 
 Modern backends return `browserId` with the live capability. For older Docker
 runtimes, MCP resolves the owned page through `/sessions` and replaces the old
@@ -610,7 +613,8 @@ cross-field constraints; deployments must support rich REST instructions.
 | `ui://browserless/view/v9.html` | Bundled replay, screenshot, video, and handoff widget (full surface only) |
 
 The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v8.html`
-resources remain readable for cached clients.
+resources remain readable as aliases of the current widget. Newly discovered
+tools advertise v9 so hosts do not reuse a cached pre-handoff v3 widget.
 
 ## MCP Prompts
 
