@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const VIEW_URI = 'ui://browserless/view/v9.html';
+export const VIEW_URI = 'ui://browserless/view/v3.html';
 export const VIEW_UNAVAILABLE =
   'This view is unavailable. Run the original data tool again to prepare a new view.';
 export const VIEW_RESULT_MAX_BYTES = 2 * 1024 * 1024;

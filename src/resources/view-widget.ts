@@ -16,12 +16,6 @@ export function registerViewWidget(
   // Keep the previous URI readable while refreshed hosts discover the new UI.
   for (const uri of [
     VIEW_URI,
-    'ui://browserless/view/v8.html',
-    'ui://browserless/view/v7.html',
-    'ui://browserless/view/v6.html',
-    'ui://browserless/view/v5.html',
-    'ui://browserless/view/v4.html',
-    'ui://browserless/view/v3.html',
     'ui://browserless/view/v2.html',
     'ui://browserless/view/v1.html',
   ])

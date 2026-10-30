@@ -65,13 +65,18 @@ export async function readHandoff(view: Handoff, client: ApiClient) {
       sessionId: view.session.handle,
     };
   // Never reconnect, adopt, touch the idle clock, or launch a replacement browser.
-  const active = getActiveSessionByHandle(
-    view.session.handle,
-    view.session.apiUrl,
-    view.session.token,
-    view.session.userId,
-    false,
-  );
+  let active: ActiveSession;
+  try {
+    active = getActiveSessionByHandle(
+      view.session.handle,
+      view.session.apiUrl,
+      view.session.token,
+      view.session.userId,
+      false,
+    );
+  } catch {
+    throw new UserError(VIEW_UNAVAILABLE);
+  }
   if (active !== view.session) throw new UserError(VIEW_UNAVAILABLE);
   const state = HandoffStateSchema.parse(
     await client.getLiveURL(view.browserId, view.liveURLId),
@@ -155,10 +160,13 @@ export async function prepareHandoff(
     ref,
     async (result) => {
       const minted = MintedSchema.parse(result);
-      const state = HandoffStateSchema.parse(
-        await client.getLiveURL(minted.browserId, minted.liveURLId),
-      );
-      if (state.status === 'open')
+      const live = await client
+        .getLiveURL(minted.browserId, minted.liveURLId)
+        .catch((error: { apiStatus?: number }) => {
+          if (error?.apiStatus === 404) return null;
+          throw error;
+        });
+      if (live && HandoffStateSchema.parse(live).status === 'open')
         await client.closeLiveURL(minted.browserId, minted.liveURLId);
       const view = views.get(ref);
       if (view) view.closed = true;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
@@ -17,6 +18,7 @@ import { createApiClient } from '../../src/lib/api-client.js';
 import {
   getOrCreateSession,
   closeSessionByHandle,
+  getActiveSessionByHandle,
   send,
 } from '../../src/lib/agent-client.js';
 
@@ -604,6 +606,109 @@ describe('handoff compatibility with older Docker runtimes', () => {
       await closeSessionByHandle(session.handle, 'legacy-test-token');
       clearHandoffs();
       for (const socket of sockets.clients) socket.terminate();
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      backend.closeAllConnections();
+      await new Promise<void>((resolve) => backend.close(() => resolve()));
+    }
+  });
+
+  it('stops the widget when the session is lost and completes close when the live URL is already gone', async () => {
+    let minted = 0;
+    const deleted: string[] = [];
+    const liveExists = new Map<string, boolean>();
+    const backend = createServer((request, response) => {
+      const path = new URL(request.url!, 'http://fixture').pathname;
+      const id = path.split('/').at(-1)!;
+      response.setHeader('content-type', 'application/json');
+      if (!path.startsWith('/browser/browser-1/live/')) {
+        response.writeHead(404);
+        response.end('{}');
+      } else if (request.method === 'DELETE') {
+        deleted.push(id);
+        response.writeHead(204);
+        response.end();
+      } else if (liveExists.get(id)) {
+        response.end(
+          JSON.stringify({
+            status: 'open',
+            reason: null,
+            interactable: true,
+            viewerCount: 0,
+            expiresAt: Date.now() + 60_000,
+          }),
+        );
+      } else {
+        response.writeHead(404);
+        response.end('{"message":"Not found"}');
+      }
+    });
+    await new Promise<void>((resolve) =>
+      backend.listen(0, '127.0.0.1', resolve),
+    );
+    const base = `http://127.0.0.1:${(backend.address() as AddressInfo).port}`;
+    const sockets = new WebSocketServer({ noServer: true });
+    backend.on('upgrade', (request, socket, head) =>
+      sockets.handleUpgrade(request, socket, head, (ws) =>
+        ws.on('message', (bytes) => {
+          const message = JSON.parse(String(bytes));
+          const id = `live-${++minted}`;
+          if (message.method === 'liveURL') liveExists.set(id, true);
+          ws.send(
+            JSON.stringify({
+              id: message.id,
+              result:
+                message.method === 'liveURL'
+                  ? {
+                      browserId: 'browser-1',
+                      liveURLId: id,
+                      liveURL: `${base}/live/index.html?i=${id}`,
+                      timeout: 60_000,
+                      browserExpiresAt: Date.now() + 120_000,
+                    }
+                  : {},
+            }),
+          );
+        }),
+      ),
+    );
+    const client = createApiClient({
+      ...getConfig(),
+      browserlessToken: 'lost-test-token',
+      browserlessApiUrl: base,
+      maxRetries: 0,
+    });
+    const closing = await getOrCreateSession('closing-handoff', base, 'tok-a');
+    const losing = await getOrCreateSession('losing-handoff', base, 'tok-b');
+    try {
+      const closeView = findHandoff(
+        (await prepareHandoff(closing, 'owner', client, 'Verify', 60_000))
+          .viewRef,
+        'owner',
+      )!;
+      liveExists.set(closeView.liveURLId, false);
+      await closeSessionByHandle(closing.handle, 'tok-a');
+      assert.deepEqual(deleted, [], 'a gone live URL is not deleted again');
+      assert.throws(
+        () => getActiveSessionByHandle(closing.handle, base, 'tok-a'),
+        /unavailable/,
+      );
+
+      const lostView = findHandoff(
+        (await prepareHandoff(losing, 'owner', client, 'Verify', 60_000))
+          .viewRef,
+        'owner',
+      )!;
+      assert.equal((await readHandoff(lostView, client)).status, 'open');
+      const dropped = once(losing.ws, 'close');
+      for (const ws of sockets.clients) ws.terminate();
+      await dropped;
+      await assert.rejects(
+        readHandoff(lostView, client),
+        /This view is unavailable/,
+      );
+    } finally {
+      clearHandoffs();
+      for (const ws of sockets.clients) ws.terminate();
       await new Promise<void>((resolve) => sockets.close(() => resolve()));
       backend.closeAllConnections();
       await new Promise<void>((resolve) => backend.close(() => resolve()));

@@ -61,13 +61,18 @@ describe('local Docker MCP runner', () => {
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
+    const token = 'local-runner-test';
     let logs = '';
-    child.stdout.on('data', (data) => {
+    let leaked = false;
+    let carry = '';
+    const record = (data: Buffer) => {
+      const text = carry + data;
+      if (text.includes(token)) leaked = true;
+      carry = text.slice(-(token.length - 1));
       logs = (logs + data).slice(-8000);
-    });
-    child.stderr.on('data', (data) => {
-      logs = (logs + data).slice(-8000);
-    });
+    };
+    child.stdout.on('data', record);
+    child.stderr.on('data', record);
     let client: Client | undefined;
     try {
       const deadline = Date.now() + 10_000;
@@ -134,11 +139,7 @@ describe('local Docker MCP runner', () => {
         ok: true,
       });
       assert.ok((await client.listTools()).tools.length > 0);
-      assert.equal(
-        logs.includes('local-runner-test'),
-        false,
-        'runner must not print the API token',
-      );
+      assert.equal(leaked, false, 'runner must not print the API token');
     } finally {
       await client?.close();
       child.kill('SIGTERM');

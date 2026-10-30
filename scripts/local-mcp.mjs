@@ -8,7 +8,7 @@ const backend = new URL(
 );
 if (
   backend.protocol !== 'http:' ||
-  !['localhost', '127.0.0.1', '[::1]'].includes(backend.hostname) ||
+  !['localhost', '127.0.0.1'].includes(backend.hostname) ||
   backend.username ||
   backend.password ||
   backend.search ||
@@ -23,7 +23,7 @@ if (!process.env.BROWSERLESS_TOKEN)
 const publicOrigin = new URL(
   process.env.BROWSERLESS_PUBLIC_URL ??
     process.env.MCP_BASE_URL ??
-    'http://localhost:8080',
+    `http://localhost:${process.env.PORT ?? 8080}`,
 );
 if (
   publicOrigin.username ||

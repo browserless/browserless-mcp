@@ -130,7 +130,7 @@ describe('production replay tools over real MCP HTTP', () => {
       expect(
         tools.find((tool) => tool.name === 'browserless_view_data')!._meta,
       ).to.deep.include({ ui: { visibility: ['app'] } });
-      expect(VIEW_URI).to.equal('ui://browserless/view/v9.html');
+      expect(VIEW_URI).to.equal('ui://browserless/view/v3.html');
       expect(
         tools.find((tool) => tool.name === 'browserless_show')!._meta,
       ).to.deep.include({
@@ -147,7 +147,7 @@ describe('production replay tools over real MCP HTTP', () => {
         'text' in resource && resource.text,
       );
       const previous = (
-        await alice.readResource({ uri: 'ui://browserless/view/v4.html' })
+        await alice.readResource({ uri: 'ui://browserless/view/v2.html' })
       ).contents[0];
       expect('text' in previous && previous.text).to.equal(
         'text' in resource && resource.text,

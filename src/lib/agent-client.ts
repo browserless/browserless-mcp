@@ -556,12 +556,16 @@ export const sweepSessions = (
   now = Date.now(),
   maxSessions = MAX_SESSIONS,
 ): void => {
+  const handoffActive = new Set<ActiveSession>();
+  for (const entry of handoffHandles.values())
+    if (entry.expires > now) handoffActive.add(entry.session);
   for (const [key, session] of sessions) {
     clearExpiredStripeLinkContinuation(session);
     if (
       stripeLinkOperations.has(session) ||
       session.stripeLinkContinuation ||
-      hasInFlightCommand(session)
+      hasInFlightCommand(session) ||
+      handoffActive.has(session)
     ) {
       continue;
     }
@@ -577,7 +581,8 @@ export const sweepSessions = (
       ([, session]) =>
         !stripeLinkOperations.has(session) &&
         !session.stripeLinkContinuation &&
-        !hasInFlightCommand(session),
+        !hasInFlightCommand(session) &&
+        !handoffActive.has(session),
     )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
