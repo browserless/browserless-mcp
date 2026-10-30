@@ -1,6 +1,7 @@
 import { compact, hashToken, isTextContentType } from './utils.js';
 import type {
   ApiClient,
+  BrowserPages,
   CrawlCancelResponse,
   CrawlRequest,
   CrawlStartResponse,
@@ -537,6 +538,16 @@ export function createApiClient(
         method: 'GET',
         query: { limit: params?.limit, offset: params?.offset },
         timeout: config.requestTimeout,
+      });
+    },
+
+    async listPages(browserId, mint): Promise<BrowserPages> {
+      return apiFetch(config, {
+        path: `/browser/${encodeURIComponent(browserId)}/pages`,
+        method: 'GET',
+        query: { mint },
+        timeout: config.requestTimeout,
+        ...(mint ? { maxRetries: 0 } : {}),
       });
     },
 
