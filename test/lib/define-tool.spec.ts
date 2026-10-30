@@ -93,6 +93,24 @@ const register = (def: Partial<Def>, config = mockConfig) => {
   };
 };
 
+describe('view ownership in the shared wrapper', () => {
+  afterEach(() => sinon.restore());
+
+  it('uses the resolved config token when a local session carries only attachment metadata', async () => {
+    const run = sinon.stub().resolves({});
+    const tool = register({ run });
+    await tool.execute({}, mockContext as never);
+    await tool.execute({}, {
+      ...mockContext,
+      session: { attachSessionId: 'existing-browser' },
+    } as never);
+    expect(run.firstCall.args[0].viewOwner).to.match(/^[a-f0-9]{64}$/);
+    expect(run.secondCall.args[0].viewOwner).to.equal(
+      run.firstCall.args[0].viewOwner,
+    );
+  });
+});
+
 const rejects = async (promise: Promise<unknown>): Promise<Error> => {
   try {
     await promise;
@@ -105,6 +123,60 @@ const rejects = async (promise: Promise<unknown>): Promise<Error> => {
 describe('defineTool analytics', () => {
   beforeEach(() => mockContext.reportProgress.resetHistory());
   afterEach(() => sinon.restore());
+
+  it('joins connector text blocks with a blank line without trimming content', async () => {
+    const { execute } = register(
+      {
+        format: () => [
+          { type: 'text', text: ' first section\n' },
+          { type: 'text', text: 'second section ' },
+        ],
+      },
+      { ...mockConfig, complianceMode: true },
+    );
+    expect(await execute({}, mockContext as never)).to.deep.equal({
+      content: [{ type: 'text', text: ' first section\n\n\nsecond section ' }],
+    });
+  });
+
+  for (const message of [
+    'Your account has run out of credits, please upgrade your plan https://browserless.io/account/upgrade',
+    "You've reached the units usage limit allowed under our free plan, please upgrade to a paid plan at https://browserless.io/account/upgrade",
+    'Your account is now in overage, please upgrade your plan',
+    'Spend limit reached; account settings at https://browserless.io/account/settings',
+    'Use a smaller timeout, or upgrade your plan for a longer session.',
+    'Concurrency limit reached (429): upgrade the plan, then start over.',
+    "Couldn't read the page: the browser could not start (HTTP 401): please upgrade your plan",
+    "Couldn't read the page at https://browserless.io/account: the browser connection was lost",
+    "Couldn't read the page at https://browserless.io/account: please upgrade your plan",
+    'Export failed (status 404): nope',
+    'Map failed: URLs targeting private/internal networks are not allowed',
+  ])
+    for (const complianceMode of [true, false])
+      for (const phase of ['run', 'format']) {
+        it(`maps only connector allowance messages (${complianceMode}, ${phase}, ${message})`, async () => {
+          const original = new UserError(message);
+          const { execute, fire } = register(
+            {
+              [phase]: async () => {
+                throw original;
+              },
+            },
+            { ...mockConfig, complianceMode },
+          );
+          const error = await rejects(execute({}, mockContext as never));
+          const limited =
+            !message.startsWith('Export failed') &&
+            !message.startsWith('Map failed') &&
+            !message.endsWith('the browser connection was lost');
+          expect(error.message).to.equal(
+            complianceMode && limited
+              ? "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time)."
+              : message,
+          );
+          expect(fire.calledOnce).to.equal(true);
+        });
+      }
 
   it('preserves structured thrown status without guessing its origin or leaking text', async () => {
     const { execute, props } = register({

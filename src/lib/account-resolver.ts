@@ -31,7 +31,7 @@ const cache = new ResponseCache(CACHE_TTL_MS);
 // so distinct tokens can't collide onto the same verified accountId.
 const verifyCache = new ResponseCache(CACHE_TTL_MS);
 
-const fullHash = (s: string): string =>
+export const fullHash = (s: string): string =>
   createHash('sha256').update(s).digest('hex');
 
 // Unverified claims may only shorten caching after Supabase accepts the token.

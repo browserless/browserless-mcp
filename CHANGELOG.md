@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.42.0](https://github.com/browserless/browserless-mcp/compare/v1.41.0...v1.42.0) (2026-10-29)
+
+
+### Features
+
+* focus the connector on five read-only tools ([#443](https://github.com/browserless/browserless-mcp/issues/443)) ([778c21a](https://github.com/browserless/browserless-mcp/commit/778c21abbfade0aecb02908a2468252eee73c2a4))
+* session replay widget AUTO-565 ([#464](https://github.com/browserless/browserless-mcp/issues/464)) ([0bcbdea](https://github.com/browserless/browserless-mcp/commit/0bcbdeac5a6ed3f77364f6480d5443236a34972c))
+
+## [1.41.0](https://github.com/browserless/browserless-mcp/compare/v1.40.2...v1.41.0) (2026-10-27)
+
+
+### Features
+
+* bind streamable HTTP sessions to the identity that opened them ([#447](https://github.com/browserless/browserless-mcp/issues/447)) ([a05fc8b](https://github.com/browserless/browserless-mcp/commit/a05fc8b14acb8f7080a47a274c2b57429ae0f7da))
+
+## [1.40.2](https://github.com/browserless/browserless-mcp/compare/v1.40.1...v1.40.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* advertise reachable OAuth resource metadata ([#461](https://github.com/browserless/browserless-mcp/issues/461)) ([1ce70be](https://github.com/browserless/browserless-mcp/commit/1ce70be3ecef7f394c35d6e3dd0d4a0c71bc2700))
+
 ## [1.40.1](https://github.com/browserless/browserless-mcp/compare/v1.40.0...v1.40.1) (2026-10-27)
 
 

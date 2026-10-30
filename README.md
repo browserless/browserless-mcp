@@ -36,8 +36,83 @@ No local install — see [Configuration](#configuration) for per-client snippets
 | `browserless_profiles`     | List the authentication profiles saved for the current token, with cookie and origin counts. Pass a profile's name as `profile` to another tool to reuse its logged-in state.                                                                                                                                                                                                                                                                               |
 | `browserless_account`      | Read the account behind the current token: plan, unit balance, billing period, and API key names. Never returns API token values.                                                                                                                                                                                                                                                                                                                           |
 | `browserless_usage`        | Read request and unit consumption: successes, errors, timeouts, queueing, peak concurrency, captchas, proxy bytes and units. Optionally scoped to specific API keys.                                                                                                                                                                                                                                                                                        |
-| `browserless_sessions`     | Inspect the account's sessions — browsers running now, persistent sessions on dedicated workers, recorded session replays, and 1Password credential integrations. Also downloads a replay as a fully self-contained rrweb player page (`action: "replay"`) that needs no network to render: opened in your browser when the server runs locally, otherwise attached as an inline HTML resource when small enough to send.                                   |
+| `browserless_sessions`     | Inspect active/persistent sessions, recordings, and integrations. `action: "replay"` prepares a recording and offline player. On the full surface, MCP Apps clients also receive a `viewRef` for `browserless_show`.                                                                                                                                                                                                                                        |
+| `browserless_show`         | Display an owned, previously prepared session replay, screenshot gallery, or recorded video inline. Full surface only; never repeats the capture, recording download, or browser operation.                                                                                                                                                                                                                                                                 |
 | `browserless_logs`         | Read Browserless's own record of recent requests: what was attempted, whether it failed, why it stopped, how long it took and what it cost. The tool for diagnosing a run that failed on the Browserless side. Available window is plan-dependent.                                                                                                                                                                                                          |
+
+### Inline session replay
+
+On the full surface, an MCP Apps client uses two calls:
+
+```text
+browserless_sessions({ action: "replay", sessionId: "<recorded-session>" })
+// Returns a compact summary, viewRef, expiresAt, and offline-player instructions.
+browserless_show({ viewRef: "<returned-view-reference>" })
+// Renders the prepared replay inline; does not repeat the recording download.
+```
+
+The player starts paused and includes play/pause, a keyboard-accessible timeline,
+rewind, playback speed, skip-inactive, and fullscreen where the host permits it.
+Controls follow the host's light/dark theme; the recorded page retains its own
+appearance. UI scripts, styles, and rrweb are bundled, with no runtime CDN.
+External assets referenced by recordings are blocked by the widget's CSP;
+embedded assets remain available.
+
+Replay events travel in widget-only metadata. Complete results above 2 MiB use
+`browserless_view_data`, an app-only reader with bounded gzip/identity pages
+(128 KiB maximum reply, 50 MiB maximum decoded recording). This reader does not
+render a widget and should never be called by the model to inspect raw events.
+
+References are owned by the authenticated caller/account and API scope, expire
+after 15 minutes, and survive MCP transport reconnects. Every show/read rechecks
+source access; deleted recordings and revoked API keys fail closed. OAuth follows
+the server's existing verification-cache policy. Loading/retries never extend
+the deadline. Keep the original offline-player fallback if a view expires.
+Clients without MCP Apps retain the existing replay output.
+
+Snapshots are bounded and process-local. Deploy with routing that keeps prepared
+views on the owning process; shared view storage is required for arbitrary
+cross-worker reads. Restart or eviction makes a view unavailable and never
+reruns the original operation. Presentation tools/resources are absent from the
+compliant surface, whose existing tool list is unchanged.
+
+### Inline agent screenshots and recordings
+
+On the full HTTP surface, MCP Apps clients can display screenshots and completed
+WebM recordings from `browserless_agent`. Set `MCP_BASE_URL` to the server's
+public HTTPS origin (HTTP loopback is supported for local testing). The agent
+keeps its existing text and image output and adds an exact `viewRef` in text
+when a media view is prepared. Pass that reference to `browserless_show`:
+
+```text
+browserless_agent({ commands: [{ method: "screenshot", params: {} }] })
+// Keeps the captured image and returns instructions containing its viewRef.
+browserless_show({ viewRef: "<returned-view-reference>" })
+// Displays the stored capture without repeating browser actions.
+```
+
+For video, set `record: true` on the call that opens the browser, then start
+recording, perform the requested browser actions, and call
+`stopRecording`. Display the reference returned by the call that completes the
+recording. For example, a user can ask: "Go to browserless.io, record the page
+while scrolling to the bottom, and show me the video inline."
+
+The gallery contains captures from one tool call, with keyboard navigation,
+zoom, Save, and fullscreen controls. Recordings use native video controls.
+Preview bytes load directly from the MCP server through opaque, expiring bearer
+URLs in widget-only metadata. Anyone holding a preview URL can fetch that
+artifact until expiry; preview and Save requests are repeatable and do not
+consume the original single-use download.
+
+Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
+budget. A gallery shows the first 12 valid captures, each at most 50 MiB; its
+summary reports when more captures were returned. Invalid screenshots are
+skipped without discarding valid captures. Preview files are removed on expiry
+or eviction. Before the first media view is created, cleanup removes stale
+files left by exited processes, including files with the current process's
+reused PID. Storage remains process-local, so deployments must route requests to
+the owning process. Without MCP Apps support or a valid public origin, the
+agent retains its existing output without preparing a widget.
 
 ### Native file staging (disabled by default)
 
@@ -451,10 +526,14 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI             | Description                     |
-| ------------------------ | ------------------------------- |
-| `browserless://api-docs` | Smart scraper API documentation |
-| `browserless://status`   | Live service health status      |
+| Resource URI                    | Description                                                      |
+| ------------------------------- | ---------------------------------------------------------------- |
+| `browserless://api-docs`        | Smart scraper API documentation                                  |
+| `browserless://status`          | Live service health status                                       |
+| `ui://browserless/view/v3.html` | Bundled replay, screenshot, and video widget (full surface only) |
+
+The previous `ui://browserless/view/v1.html` and `ui://browserless/view/v2.html`
+resources remain readable for cached clients.
 
 ## MCP Prompts
 

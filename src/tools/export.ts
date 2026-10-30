@@ -66,11 +66,21 @@ export const ExportParamsSchema = z.object({
 // off until allowed. Drops includeResources (bulk ZIP) + profile (auth); .strict() rejects extras.
 const CompliantExportParamsSchema = ExportParamsSchema.pick({
   url: true,
-  gotoOptions: true,
   bestAttempt: true,
   waitForTimeout: true,
   timeout: true,
-}).strict();
+})
+  .extend({
+    gotoOptions: ExportParamsSchema.shape.gotoOptions
+      .unwrap()
+      .pick({ waitUntil: true, timeout: true })
+      .strict()
+      .optional()
+      .describe(
+        'Navigation options: when to treat the page as loaded (waitUntil) and the navigation timeout in milliseconds.',
+      ),
+  })
+  .strict();
 
 export function registerExportTool(
   server: FastMCP,
@@ -120,6 +130,11 @@ export function registerExportTool(
           'Authentication profiles are not available on this endpoint.',
         );
       }
+      if (compliant && params.gotoOptions?.referer !== undefined) {
+        throw new UserError(
+          'gotoOptions.referer is not available on this endpoint.',
+        );
+      }
       const response = await client.exportPage({
         url: params.url,
         gotoOptions: params.gotoOptions,
@@ -158,9 +173,10 @@ export function registerExportTool(
       if (response.isBinary) {
         blocks.push({
           type: 'text' as const,
-          text:
-            `[Exported "${filename}" – ${response.contentType}, ` +
-            `${response.size} bytes, base64-encoded]\n${response.data}`,
+          text: compliant
+            ? `This address returned a ${response.contentType} file (${response.size} bytes), not a web page, so its content isn't included. Export works for HTML, plain text, JSON and XML.`
+            : `[Exported "${filename}" – ${response.contentType}, ` +
+              `${response.size} bytes, base64-encoded]\n${response.data}`,
         });
       } else {
         blocks.push({ type: 'text' as const, text: response.data });
@@ -170,10 +186,10 @@ export function registerExportTool(
         text: [
           '---',
           `URL: ${params.url}`,
-          `Filename: ${filename}`,
+          compliant ? '' : `Filename: ${filename}`,
           `Content-Type: ${response.contentType}`,
-          `Status: ${response.statusCode}`,
-          `Size: ${response.size} bytes`,
+          compliant ? '' : `Status: ${response.statusCode}`,
+          compliant ? '' : `Size: ${response.size} bytes`,
           params.includeResources ? 'Resources: included (ZIP)' : '',
           '---',
         ]

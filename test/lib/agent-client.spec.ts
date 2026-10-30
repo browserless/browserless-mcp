@@ -164,6 +164,9 @@ describe('agent-client reconnection telemetry', () => {
             session.handle,
           );
           expect(upgrade['x-browserless-mcp-source']).to.equal(source);
+          expect(upgrade['x-browserless-mcp-tool']).to.equal(
+            'browserless_agent',
+          );
         }
       } finally {
         await server.close();
@@ -180,11 +183,13 @@ describe('agent-client reconnection telemetry', () => {
         server.url,
         'tok',
       );
+      session.mediaPageUrl = 'https://previous.example/';
       session.ws.terminate();
       clock.setSystemTime(9000);
       const acquired = sinon.spy();
       await send(session, 'getCookies', {}, undefined, acquired);
       expect(acquired.calledOnceWithExactly(false, 0)).to.equal(true);
+      expect(session.mediaPageUrl).to.equal(undefined);
       expect(server.hits()).to.equal(2);
     } finally {
       await server.close();
@@ -803,6 +808,8 @@ describe('agent-client capability preflight', () => {
     expect(url.searchParams.get('token')).to.equal('tok');
     expect(url.searchParams.get('proxy')).to.equal('datacenter');
     expect(url.searchParams.get('emulationOs')).to.equal('macos');
+    const headers = new Headers(fetchStub.firstCall.args[1]?.headers);
+    expect(headers.get('x-browserless-mcp-tool')).to.equal('browserless_agent');
   });
 
   it('fails with the missing capability and the route where it is available', async () => {
@@ -2586,6 +2593,11 @@ describe('agent-client createProfile with os and humanlike', () => {
       expect(calledUrl.pathname).to.equal('/profile');
       expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
       expect(calledUrl.searchParams.has('humanlike')).to.equal(false);
+      const headers = new Headers(fetchStub.firstCall.args[1]?.headers);
+      expect(headers.get('x-browserless-mcp-tool')).to.equal(
+        'browserless_agent',
+      );
+      expect(headers.get('content-type')).to.equal('application/json');
       const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
       expect(attachUrl.searchParams.get('sessionId')).to.equal('sess-test-123');
       expect(attachUrl.searchParams.get('humanlike')).to.equal('true');

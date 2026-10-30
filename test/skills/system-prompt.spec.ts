@@ -79,6 +79,18 @@ describe('registration and credential guidance', () => {
 
 it('guides saved-login reporting only in the full Auth section', () => {
   const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
+  for (const surface of [auth, renderSkill('auth-profile', false)]) {
+    for (const text of [
+      'keepSessionAlive: true',
+      'initial',
+      'before any login actions',
+      'not with `close`',
+      'end that first page-load batch with `snapshot`',
+    ]) {
+      expect(surface.toLowerCase()).to.include(text.toLowerCase());
+    }
+    expect(surface).to.match(/first command of (?:your|the) next.*?batch/i);
+  }
   for (const text of [
     'reportProfileAuthentication',
     'newLoginActivity',
@@ -86,7 +98,7 @@ it('guides saved-login reporting only in the full Auth section', () => {
     'login_required',
     'challenge',
     'unknown',
-    'last command',
+    'FIRST command',
     'Never send it on sessions without',
     'session handle retains the profile',
     'before any login actions',

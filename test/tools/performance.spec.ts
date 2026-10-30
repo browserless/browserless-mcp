@@ -73,6 +73,52 @@ describe('browserless_performance tool', () => {
     expect(() => registerPerformanceTool(server, mockConfig)).to.not.throw();
   });
 
+  it('connector returns the audit inline without a file transfer', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify({
+          type: 'json',
+          data: {
+            lighthouseVersion: '13',
+            categories: { seo: { title: 'SEO', score: 0.93 } },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const execute = getToolExecute(
+      new FastMCP({ name: 'test', version: '0.1.0' }),
+      { ...mockConfig, transport: 'httpStream', complianceMode: true },
+    );
+    const reply = await execute(
+      { url: 'https://example.com', categories: ['seo'] },
+      mockContext,
+    );
+    const text = JSON.stringify(reply);
+    expect(text).to.contain('SEO: 93/100');
+    expect(text).not.to.match(
+      /download|curl|token=|test-token|Lighthouse Version/i,
+    );
+  });
+
+  for (const extra of [{ config: {} }, { budgets: [] }]) {
+    it(`connector rejects ${Object.keys(extra)[0]} on schema bypass`, async () => {
+      const execute = getToolExecute(
+        new FastMCP({ name: 'test', version: '0.1.0' }),
+        { ...mockConfig, complianceMode: true },
+      );
+      const error = await execute(
+        { url: 'https://example.com', ...extra },
+        mockContext,
+      ).catch((e) => e);
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).to.equal(
+        'config and budgets are not available on this endpoint.',
+      );
+      expect(fetchStub.called).to.equal(false);
+    });
+  }
+
   it('returns Lighthouse scores and lab metrics on successful audit', async () => {
     const lighthouseData = {
       data: {
@@ -272,16 +318,20 @@ describe('browserless_performance tool', () => {
     );
     const text = JSON.stringify(result);
     const id = text.match(/\/download\/([0-9a-f]{32})/)![1];
-    expect(text).to.include(`?token=${encodeURIComponent(token)}`);
+    expect(text).to.not.include(token);
+    expect(text).to.not.include(encodeURIComponent(token));
+    expect(text).to.include(
+      'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+    );
     expect(text).to.not.include('privateDetails');
     expect(text).to.include('download to disk first');
     expect(
       (await server.getApp().request(`/download/${id}?token=test-token`))
         .status,
     ).to.equal(404);
-    const response = await server
-      .getApp()
-      .request(`/download/${id}?token=${encodeURIComponent(token)}`);
+    const response = await server.getApp().request(`/download/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     expect(response.status).to.equal(200);
     expect(response.headers.get('content-type')).to.include('application/json');
     expect(await response.json()).to.deep.equal(data);

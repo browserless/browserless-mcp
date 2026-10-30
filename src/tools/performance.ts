@@ -3,7 +3,10 @@ import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
-import { isCompliant } from './compliance.js';
+import {
+  isCompliant,
+  COMPLIANT_PERFORMANCE_DESCRIPTION,
+} from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import { describeReadyDownload } from './agent.js';
@@ -68,8 +71,6 @@ const CompliantPerformanceParamsSchema = PerformanceParamsSchema.pick({
   url: true,
   categories: true,
   device: true,
-  config: true,
-  budgets: true,
   timeout: true,
 }).strict();
 
@@ -85,18 +86,19 @@ export function registerPerformanceTool(
     analytics,
     {
       name: 'browserless_performance',
-      description:
-        'Run a Lighthouse performance audit on any URL via the Browserless /performance API. ' +
-        'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
-        'Optionally filter by category, emulate a mobile or desktop device, ' +
-        'supply a custom Lighthouse config, or supply performance budgets. ' +
-        'Returns category scores and available Lighthouse lab metrics inline: ' +
-        'FCP, LCP, TBT, CLS, Speed Index, initial server response time, and total transfer size. ' +
-        'Use these metrics to answer page-speed questions without writing timing scripts. ' +
-        'INP is not measured by this navigation audit; TBT is a responsiveness proxy. ' +
-        'Saves the full JSON report outside the conversation. ' +
-        'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
-        'Note: audits can take 30s–120s depending on the site.',
+      description: compliant
+        ? COMPLIANT_PERFORMANCE_DESCRIPTION
+        : 'Run a Lighthouse performance audit on any URL via the Browserless /performance API. ' +
+          'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
+          'Optionally filter by category, emulate a mobile or desktop device, ' +
+          'supply a custom Lighthouse config, or supply performance budgets. ' +
+          'Returns category scores and available Lighthouse lab metrics inline: ' +
+          'FCP, LCP, TBT, CLS, Speed Index, initial server response time, and total transfer size. ' +
+          'Use these metrics to answer page-speed questions without writing timing scripts. ' +
+          'INP is not measured by this navigation audit; TBT is a responsiveness proxy. ' +
+          'Saves the full JSON report outside the conversation. ' +
+          'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
+          'Note: audits can take 30s–120s depending on the site.',
       parameters: compliant
         ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
         : PerformanceParamsSchema,
@@ -113,6 +115,14 @@ export function registerPerformanceTool(
         `live session first, or omit the profile parameter to audit ` +
         `the page anonymously.`,
       run: async ({ client, params, log }) => {
+        if (
+          compliant &&
+          (params.config !== undefined || params.budgets !== undefined)
+        ) {
+          throw new UserError(
+            'config and budgets are not available on this endpoint.',
+          );
+        }
         if (compliant && params.profile !== undefined) {
           throw new UserError(
             'Authentication profiles are not available on this endpoint.',
@@ -206,32 +216,38 @@ export function registerPerformanceTool(
               'INP is not measured by this navigation audit; TBT is a responsiveness proxy.',
           });
         }
-        const record = await storeDownload(
-          'lighthouse-report.json',
-          'application/json',
-          Buffer.from(JSON.stringify(data, null, 2)),
-          downloadOwner(token),
-          sessionId,
-        );
-        blocks.push({
-          type: 'text' as const,
-          text:
-            'Full Lighthouse report saved outside the conversation:\n' +
-            describeReadyDownload(record, {
-              transport: config.transport,
-              mcpBaseUrl: config.mcpBaseUrl,
-              token,
-            }) +
-            '\nFiles expire after 15 minutes or when the MCP session ends; save a copy if needed. ' +
-            'For HTTP, download to disk first using the save command above. ' +
-            'Inspect only the fields needed for your task with jq, for example:\n' +
-            'jq \'.audits["first-contentful-paint"] | {score, displayValue, numericValue}\' <saved-report-path>\n' +
-            'Do not read or paste the entire JSON report into the conversation.',
-        });
+        if (!compliant) {
+          const record = await storeDownload(
+            'lighthouse-report.json',
+            'application/json',
+            Buffer.from(JSON.stringify(data, null, 2)),
+            downloadOwner(token),
+            sessionId,
+          );
+          blocks.push({
+            type: 'text' as const,
+            text:
+              'Full Lighthouse report saved outside the conversation:\n' +
+              describeReadyDownload(record, {
+                transport: config.transport,
+                mcpBaseUrl: config.mcpBaseUrl,
+                token,
+              }) +
+              '\nFiles expire after 15 minutes or when the MCP session ends; save a copy if needed. ' +
+              'For HTTP, download to disk first using the save command above. ' +
+              'Inspect only the fields needed for your task with jq, for example:\n' +
+              'jq \'.audits["first-contentful-paint"] | {score, displayValue, numericValue}\' <saved-report-path>\n' +
+              'Do not read or paste the entire JSON report into the conversation.',
+          });
+        }
         const meta = [
           '---',
           `URL: ${params.url}`,
-          `Lighthouse Version: ${(data.lighthouseVersion as string) ?? 'unknown'}`,
+          ...(!compliant
+            ? [
+                `Lighthouse Version: ${(data.lighthouseVersion as string) ?? 'unknown'}`,
+              ]
+            : []),
         ];
         if (params.categories) {
           meta.push(`Categories: ${params.categories.join(', ')}`);

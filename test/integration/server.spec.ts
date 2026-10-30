@@ -1,18 +1,22 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { getConfig } from '../../src/config.js';
 import {
   consumeDownload,
   downloadOwner,
   storeDownload,
 } from '../../src/lib/download-store.js';
-import { normalizeUploadCommand } from '../../src/tools/agent.js';
+import {
+  describeReadyDownload,
+  normalizeUploadCommand,
+} from '../../src/tools/agent.js';
 import { FastMCP, OAuthProvider } from 'fastmcp';
 import { z } from 'zod';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
@@ -52,6 +56,250 @@ const mockConfig: McpConfig = {
 
 describe('MCP Server Integration', () => {
   let server: FastMCP;
+
+  it('runs the download recipe with a local owner token and fails safely otherwise', async () => {
+    const port = await freePort();
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-curl-'));
+    const owner = downloadOwner('owner-token');
+    const record = await storeDownload(
+      'download.txt',
+      'text/plain',
+      Buffer.from('download bytes'),
+      owner,
+    );
+    server = new FastMCP({ name: 'test', version: '1.0.0' });
+    registerDownloadRoute(server, mockConfig);
+    try {
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port, host: '127.0.0.1' },
+      });
+      const recipe = describeReadyDownload(record, {
+        transport: 'httpStream',
+        mcpBaseUrl: `http://127.0.0.1:${port}`,
+      });
+      const command = recipe.split('save it:  ')[1].split('   (single use)')[0];
+      const run = (token: string | undefined) =>
+        promisify(execFile)('sh', ['-c', command], {
+          cwd: dir,
+          env: { ...process.env, BROWSERLESS_TOKEN: token },
+        });
+
+      for (const token of [undefined, '', 'other-owner']) {
+        await run(token).then(
+          () => expect.fail('expected the download command to fail'),
+          (error) => {
+            expect(error.code).to.be.a('number').and.not.equal(0);
+            expect(error.stderr).to.include(
+              token ? '404' : 'BROWSERLESS_TOKEN',
+            );
+          },
+        );
+        expect(await readdir(dir)).to.deep.equal([]);
+      }
+      await run('owner-token');
+      expect(await readFile(join(dir, record.filename), 'utf8')).to.equal(
+        'download bytes',
+      );
+      await run('owner-token').then(
+        () => expect.fail('expected the single-use URL to fail on repeat'),
+        (error) => expect(error.code).to.equal(22),
+      );
+    } finally {
+      await server.stop();
+      consumeDownload(record.id, owner);
+      await rm(record.path, { force: true });
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  for (const compliant of [true, false]) {
+    it(`advertises the ${compliant ? 'connector' : 'full'} HTTP surface at startup`, async () => {
+      const port = await freePort();
+      const base = `http://127.0.0.1:${port}`;
+      const child = spawn(process.execPath, ['build/src/index.js'], {
+        env: {
+          ...process.env,
+          TRANSPORT: 'httpStream',
+          PORT: String(port),
+          MCP_COMPLIANCE_MODE: String(compliant),
+          OAUTH_ENABLED: 'false',
+          REDIS_URL: '',
+          AMPLITUDE_API_KEY: '',
+          ANALYTICS_ENABLED: 'false',
+          OTEL_ENABLED: 'false',
+          BROWSERLESS_TOKEN: '',
+        },
+        stdio: 'ignore',
+      });
+      const exited = once(child, 'exit');
+      const client = new Client({ name: 'surface-test', version: '0.0.0' });
+      try {
+        let ready = false;
+        for (let i = 0; i < 100; i++) {
+          try {
+            ready = (await fetch(`${base}/health`)).ok;
+          } catch {
+            /* starting */
+          }
+          if (ready || child.exitCode !== null) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(ready, 'surface server starts').to.equal(true);
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+            requestInit: {
+              headers: { Authorization: `Bearer ${'a'.repeat(24)}` },
+            },
+          }),
+        );
+        const caps = client.getServerCapabilities();
+        if (compliant) {
+          expect(caps?.tools).to.deep.equal({});
+          expect(caps).not.to.have.property('resources');
+          expect(caps).not.to.have.property('prompts');
+        } else {
+          expect(caps?.tools).to.deep.include({ listChanged: true });
+        }
+        const names = (await client.listTools()).tools
+          .map((tool) => tool.name)
+          .sort();
+        const connectorNames = [
+          'browserless_export',
+          'browserless_map',
+          'browserless_performance',
+          'browserless_read_page',
+          'browserless_search',
+        ];
+        if (compliant) {
+          expect(names).to.deep.equal(connectorNames);
+        } else {
+          expect(names).to.have.length(20);
+          expect(names).not.to.include('browserless_read_page');
+          expect(names).to.include.members([
+            ...connectorNames.filter(
+              (name) => name !== 'browserless_read_page',
+            ),
+            'browserless_stage_file',
+            'browserless_show',
+            'browserless_view_data',
+          ]);
+        }
+      } finally {
+        await client.close().catch(() => {});
+        child.kill('SIGTERM');
+        await exited;
+      }
+    });
+  }
+
+  for (const oauth of [false, true]) {
+    it(`binds built-server session requests with OAuth=${oauth}`, async () => {
+      const port = await freePort();
+      const base = `http://127.0.0.1:${port}`;
+      const keys = ['a'.repeat(24), 'b'.repeat(24)];
+      const child = spawn(process.execPath, ['build/src/index.js'], {
+        env: {
+          ...process.env,
+          TRANSPORT: 'httpStream',
+          PORT: String(port),
+          BROWSERLESS_API_URL: 'http://127.0.0.1:9',
+          OAUTH_ENABLED: String(oauth),
+          MCP_BASE_URL: base,
+          SUPABASE_URL: 'http://127.0.0.1:9',
+          SUPABASE_OAUTH_CLIENT_ID: 'test',
+          SUPABASE_OAUTH_CLIENT_SECRET: 'test',
+          REDIS_URL: '',
+          AMPLITUDE_API_KEY: '',
+          ANALYTICS_ENABLED: 'false',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        output += chunk;
+      });
+      const exited = once(child, 'exit');
+      let sid = '';
+      const request = (method: string, key?: string, rpc = 'tools/list') =>
+        fetch(`${base}/mcp`, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/event-stream',
+            'mcp-protocol-version': '2025-11-25',
+            ...(sid ? { 'mcp-session-id': sid } : {}),
+            ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          },
+          ...(method === 'POST'
+            ? {
+                body: JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: 1,
+                  method: rpc,
+                  params:
+                    rpc === 'initialize'
+                      ? {
+                          protocolVersion: '2025-11-25',
+                          capabilities: {},
+                          clientInfo: { name: 'binding', version: '1' },
+                        }
+                      : {},
+                }),
+              }
+            : {}),
+        });
+      try {
+        let ready = false;
+        for (let i = 0; i < 100; i++) {
+          try {
+            ready = (await fetch(`${base}/health`)).ok;
+          } catch {
+            /* starting */
+          }
+          if (ready || child.exitCode !== null) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(ready).to.equal(true);
+        const initialized = await request('POST', keys[0], 'initialize');
+        expect(initialized.status).to.equal(200);
+        sid = initialized.headers.get('mcp-session-id')!;
+        expect(sid).to.be.a('string').and.not.empty;
+        await initialized.text();
+        const challenges: (string | null)[] = [];
+        for (const method of ['GET', 'POST', 'DELETE']) {
+          const denied = await request(method);
+          expect(denied.status, method).to.equal(401);
+          expect(await denied.json()).to.have.nested.property(
+            'error.code',
+            -32000,
+          );
+          challenges.push(denied.headers.get('www-authenticate'));
+          const other = await request(method, keys[1]);
+          expect(other.status).to.equal(404);
+          expect(await other.text()).to.equal(
+            '{"error":{"code":-32001,"message":"Session not found"},"id":null,"jsonrpc":"2.0"}',
+          );
+        }
+        if (oauth) {
+          expect(challenges[0]).to.include('resource_metadata=');
+          expect(new Set(challenges).size).to.equal(1);
+        }
+        const listed = await request('POST', keys[0]);
+        expect(listed.status).to.equal(200);
+        await listed.text();
+        expect((await request('DELETE', keys[0])).status).to.equal(200);
+      } finally {
+        child.kill('SIGTERM');
+        await exited;
+      }
+      for (const key of keys) expect(output).not.to.include(key);
+      expect(output).not.to.include('key:');
+    });
+  }
 
   it('preserves OAuth registration bodies and limits only POSTs per address', async () => {
     const port = await freePort();

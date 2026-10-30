@@ -3,6 +3,7 @@ import type { McpConfig } from '../@types/types.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { registerSmartScraperTool } from './smartscraper.js';
 import { registerExportTool } from './export.js';
+import { registerReadPageTool } from './read-page.js';
 import { registerAgentTools } from './agent.js';
 import { registerSearchTool } from './search.js';
 import { registerPerformanceTool } from './performance.js';
@@ -14,6 +15,8 @@ import { registerLiveURLTool } from './live-url.js';
 import { registerAccountTool } from './account.js';
 import { registerUsageTool } from './usage.js';
 import { registerSessionsTool } from './sessions.js';
+import { registerShowTools } from './show.js';
+import { registerViewWidget } from '../resources/view-widget.js';
 import { registerLogsTool } from './logs.js';
 import { registerStripeLinkConnectTool } from './link-connect.js';
 import { registerStripeLinkCheckoutTool } from './link-checkout.js';
@@ -25,9 +28,9 @@ import { registerExtractContentPrompt } from '../prompts/extract-content.js';
 import { registerStageFileTool } from './stage-file.js';
 
 // Registers the whole surface (tools/resources/prompts) so the compliance gate
-// covers all a reviewer lists. Each item declares 'both'|'full' — no positional
+// covers all a reviewer lists. Each item declares 'both'|'full'|'compliant' — no positional
 // "unconditional" block a new tool could ship on the directory by accident.
-type Surface = 'both' | 'full';
+type Surface = 'both' | 'full' | 'compliant';
 
 export function registerSurface(
   server: FastMCP,
@@ -41,6 +44,13 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => {
+        registerShowTools(server, config, analytics);
+        registerViewWidget(server, config);
+      },
+    },
+    {
+      surface: 'full',
+      register: () => {
         if (config.transport === 'httpStream')
           registerStageFileTool(server, config, analytics);
       },
@@ -49,35 +59,39 @@ export function registerSurface(
       surface: 'both',
       register: () => registerExportTool(server, config, analytics),
     },
+    {
+      surface: 'compliant',
+      register: () => registerReadPageTool(server, config, analytics),
+    },
     // agent + skill tools
     {
-      surface: 'both',
+      surface: 'full',
       register: () => registerAgentTools(server, config, analytics),
     },
     {
       surface: 'both',
       register: () => registerPerformanceTool(server, config, analytics),
     },
-    // Account-data reads (plan, usage, sessions, logs). Safe on both surfaces:
-    // they drive no browser and mutate nothing.
+    // Full only: account reads show plans, usage and session/request IDs,
+    // which directory rules exclude.
     {
-      surface: 'both',
+      surface: 'full',
       register: () => registerAccountTool(server, config, analytics),
     },
     {
-      surface: 'both',
+      surface: 'full',
       register: () => registerUsageTool(server, config, analytics),
     },
     {
-      surface: 'both',
+      surface: 'full',
       register: () => registerSessionsTool(server, config, analytics),
     },
     {
-      surface: 'both',
+      surface: 'full',
       register: () => registerLogsTool(server, config, analytics),
     },
-    // Generic service status — safe on both (it reports the active surface).
-    { surface: 'both', register: () => registerStatusResource(server, config) },
+    // The connector exposes tools only, with no status resource.
+    { surface: 'full', register: () => registerStatusResource(server, config) },
     // Full only: scraping/code tools + the api-docs resource and scrape prompts
     // (they document proxy/captcha and steer the model to smartscraper).
     {
@@ -88,8 +102,9 @@ export function registerSurface(
       surface: 'full',
       register: () => registerFunctionTool(server, config, analytics),
     },
+    // Both: the connector schema caps limit at 500.
     {
-      surface: 'full',
+      surface: 'both',
       register: () => registerMapTool(server, config, analytics),
     },
     {
@@ -106,10 +121,9 @@ export function registerSurface(
       surface: 'full',
       register: () => registerProfilesTool(server, config, analytics),
     },
-    // Full-only: web search relies on an external search engine whose web
-    // results are currently unreliable; keep it off the focused connector.
+    // Web search is available on both surfaces.
     {
-      surface: 'full',
+      surface: 'both',
       register: () => registerSearchTool(server, config, analytics),
     },
     {
@@ -130,6 +144,7 @@ export function registerSurface(
 
   const compliant = isCompliant(config);
   for (const { surface, register } of registrations) {
-    if (surface === 'both' || !compliant) register();
+    if (surface === 'both' || surface === (compliant ? 'compliant' : 'full'))
+      register();
   }
 }

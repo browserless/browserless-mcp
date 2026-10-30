@@ -185,7 +185,12 @@ async function defaultHandleResponse<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-type ResolvedConfig = McpConfig & { browserlessToken: string };
+// `mcpTool` is forwarded as `x-browserless-mcp-tool` so server-side analytics
+// can attribute the request to the MCP tool that made it.
+type ResolvedConfig = McpConfig & {
+  browserlessToken: string;
+  mcpTool?: string;
+};
 
 function apiFetch<T>(
   config: ResolvedConfig,
@@ -197,11 +202,17 @@ function apiFetch<T>(
   }
   const url = `${config.browserlessApiUrl}${opts.path}?${query.toString()}`;
   const method = opts.method ?? 'POST';
-  const init: RequestInit = { method };
-  if (opts.body !== undefined) {
-    init.headers = { 'Content-Type': opts.contentType ?? 'application/json' };
-    init.body = JSON.stringify(opts.body);
-  }
+  const headers: Record<string, string> = {
+    ...(opts.body !== undefined
+      ? { 'Content-Type': opts.contentType ?? 'application/json' }
+      : {}),
+    ...(config.mcpTool ? { 'x-browserless-mcp-tool': config.mcpTool } : {}),
+  };
+  const init: RequestInit = {
+    method,
+    ...(Object.keys(headers).length ? { headers } : {}),
+    ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+  };
   const handle = opts.handleResponse ?? defaultHandleResponse<T>;
 
   return retryWithBackoff(
