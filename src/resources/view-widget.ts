@@ -5,6 +5,29 @@ import { VIEW_URI } from '../lib/view-schemas.js';
 import type { McpConfig } from '../@types/types.js';
 import { handoffOrigins } from '../lib/handoff.js';
 import { mediaOrigin } from '../lib/agent-media.js';
+import { PERFORMANCE_URI } from '../lib/performance-summary.js';
+
+// Performance is self-contained and needs no media, frame, or network origins.
+export function registerPerformanceWidget(server: FastMCP): void {
+  server.addResource({
+    uri: PERFORMANCE_URI,
+    name: 'Browserless Lighthouse scorecard',
+    mimeType: RESOURCE_MIME_TYPE,
+    async load() {
+      return {
+        text: readFileSync(new URL('../ui/view.html', import.meta.url), 'utf8'),
+        _meta: {
+          ui: {
+            prefersBorder: true,
+            csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
+          },
+          'openai/widgetDescription':
+            'Interactive Lighthouse scorecard already displaying category score gauges, lab metrics, and expandable failing audits. Do not recreate these charts or repeat the score and metric tables in chat. Reply briefly unless the user explicitly requests analysis, comparison, or specific values.',
+        },
+      };
+    },
+  });
+}
 
 export function registerViewWidget(
   server: FastMCP,

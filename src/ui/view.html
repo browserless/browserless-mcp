@@ -7,7 +7,7 @@
     <style id="widget-css"></style>
   </head>
   <body>
-    <main class="replay-card" aria-label="Recorded session replay">
+    <main class="replay-card" aria-label="Recorded session replay" hidden>
       <header class="heading">
         <span class="brand" aria-hidden="true"
           ><svg viewBox="0 0 24 24">
@@ -116,6 +116,12 @@
       id="agent-media"
       class="agent-media"
       aria-label="Captured agent media"
+      hidden
+    ></main>
+    <main
+      id="performance"
+      class="performance-report"
+      aria-label="Lighthouse performance report"
       hidden
     ></main>
     <script id="widget-js"></script>

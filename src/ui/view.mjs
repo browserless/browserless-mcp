@@ -4,6 +4,7 @@ import 'rrweb-player/dist/style.css';
 import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
+import { mountPerformance } from './performance.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -31,6 +32,8 @@ let handoff;
 const handoffRoot = byId('handoff');
 let media;
 const mediaRoot = byId('agent-media');
+let performanceReport;
+const performanceRoot = byId('performance');
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
@@ -89,9 +92,21 @@ function dispose() {
   handoff = undefined;
   media?.dispose();
   media = undefined;
+  performanceReport?.dispose();
+  performanceReport = undefined;
 }
 function fail(error) {
   loading.abort();
+  if (lastResult?.structuredContent?.kind === 'performance') {
+    dispose();
+    card.hidden = true;
+    handoffRoot.hidden = true;
+    mediaRoot.hidden = true;
+    performanceRoot.hidden = false;
+    performanceRoot.textContent =
+      'This performance report is unavailable. Run a new audit.';
+    return;
+  }
   if (handoff) {
     clearTimeout(expiryTimer);
     handoff.fail(error);
@@ -106,6 +121,7 @@ function fail(error) {
   card.hidden = false;
   handoffRoot.hidden = true;
   mediaRoot.hidden = true;
+  performanceRoot.hidden = true;
   byId('empty').hidden = false;
   byId('empty').dataset.error = '';
   byId('state').textContent = 'Unavailable';
@@ -268,6 +284,7 @@ async function render(result) {
   card.hidden = false;
   handoffRoot.hidden = true;
   mediaRoot.hidden = true;
+  performanceRoot.hidden = true;
   byId('empty').hidden = false;
   delete byId('empty').dataset.error;
   byId('retry').hidden = true;
@@ -280,6 +297,15 @@ async function render(result) {
         result.content?.find((item) => item.type === 'text')?.text ||
           'Replay unavailable.',
       );
+    if (result.structuredContent?.kind === 'performance') {
+      performanceReport = mountPerformance(
+        performanceRoot,
+        result.structuredContent,
+      );
+      card.hidden = true;
+      performanceRoot.hidden = false;
+      return;
+    }
     const view = ShowOutputSchema.parse(result.structuredContent);
     const expires = Date.parse(view.expiresAt);
     if (view.kind === 'handoff') {

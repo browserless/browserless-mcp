@@ -73,8 +73,24 @@ Clients without MCP Apps retain the existing replay output.
 Snapshots are bounded and process-local. Deploy with routing that keeps prepared
 views on the owning process; shared view storage is required for arbitrary
 cross-worker reads. Restart or eviction makes a view unavailable and never
-reruns the original operation. Presentation tools/resources are absent from the
-compliant surface, whose existing tool list is unchanged.
+reruns the original operation. Replay presentation tools/resources are absent
+from the compliant surface, whose existing tool list is unchanged.
+
+### Inline Lighthouse scorecard
+
+In MCP Apps clients, `browserless_performance` displays a scorecard directly
+from the completed audit. Select a category and expand its initially collapsed
+failing-audits section to see every failure, ordered by reported savings.
+Expand a row for its description and reported savings. Five Lighthouse lab
+metrics accompany performance results. Missing categories are omitted; null
+scores and missing measurements remain unavailable. Scores use Lighthouse's
+0–49, 50–89, and 90–100 bands and follow the host's light/dark theme.
+
+The scorecard receives a bounded, typed summary rather than the raw report.
+It works on both surfaces without adding connector tools, making another API
+request, or loading external assets. The connector exposes only the scorecard's
+self-contained UI resource. Clients without MCP Apps keep their existing text
+output; the full surface also retains its JSON report download.
 
 ### Inline human handoff
 

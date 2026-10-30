@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { clearSession } from '../../src/lib/download-store.js';
 import { registerSurface } from '../../src/tools/register.js';
 import { registerStatusResource } from '../../src/resources/status.js';
+import { PERFORMANCE_URI } from '../../src/lib/performance-summary.js';
 import {
   announceToolListOnConnect,
   COMPLIANT_EXPORT_DESCRIPTION,
@@ -365,10 +366,10 @@ describe('compliance mode — compliant tool surface', () => {
   });
 
   describe('non-tool surface (prompts + resources)', () => {
-    it('compliant mode has no prompts or resources', () => {
+    it('compliant mode exposes only the self-contained performance UI resource', () => {
       const { promptNames, resourceUris } = captureTools(true);
       expect(promptNames).to.deep.equal([]);
-      expect(resourceUris).to.deep.equal([]);
+      expect(resourceUris).to.deep.equal([PERFORMANCE_URI]);
     });
 
     it('full mode serves the prompts + api-docs resource', () => {
