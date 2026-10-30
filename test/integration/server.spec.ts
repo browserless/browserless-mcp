@@ -156,7 +156,7 @@ describe('MCP Server Integration', () => {
         const caps = client.getServerCapabilities();
         if (compliant) {
           expect(caps?.tools).to.deep.equal({});
-          expect(caps).not.to.have.property('resources');
+          expect(caps).to.have.property('resources');
           expect(caps).not.to.have.property('prompts');
         } else {
           expect(caps?.tools).to.deep.include({ listChanged: true });

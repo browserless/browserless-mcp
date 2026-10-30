@@ -10,6 +10,11 @@ import {
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import { describeReadyDownload } from './agent.js';
+import {
+  PERFORMANCE_URI,
+  summarizePerformance,
+} from '../lib/performance-summary.js';
+import { registerPerformanceWidget } from '../resources/view-widget.js';
 import type {
   McpConfig,
   PerformanceParams,
@@ -80,6 +85,7 @@ export function registerPerformanceTool(
   analytics?: AnalyticsHelper,
 ): void {
   const compliant = isCompliant(config);
+  registerPerformanceWidget(server);
   defineTool<PerformanceParams, PerformanceResponse>(
     server,
     config,
@@ -102,6 +108,10 @@ export function registerPerformanceTool(
       parameters: compliant
         ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
         : PerformanceParamsSchema,
+      _meta: {
+        ui: { resourceUri: PERFORMANCE_URI },
+        'openai/outputTemplate': PERFORMANCE_URI,
+      },
       annotations: {
         title: 'Browserless Lighthouse Performance Audit',
         readOnlyHint: true,
@@ -150,7 +160,7 @@ export function registerPerformanceTool(
         custom_config: !!params.config,
         profile_used: !!params.profile,
       }),
-      format: async (response, params, { token, sessionId }) => {
+      format: async (response, params, { token, sessionId, uiEnabled }) => {
         const blocks: Content[] = [];
         const data = response.data ?? {};
         const categories = (data.categories ?? {}) as Record<
@@ -257,7 +267,15 @@ export function registerPerformanceTool(
         }
         meta.push('---');
         blocks.push({ type: 'text' as const, text: meta.join('\n') });
-        return blocks;
+        // Keep legacy output byte-for-byte for clients without MCP Apps.
+        // Like other capability-gated producers, no unconditional outputSchema:
+        // those clients must not be required to receive structuredContent.
+        return uiEnabled
+          ? {
+              content: blocks,
+              structuredContent: summarizePerformance(data, params),
+            }
+          : blocks;
       },
     },
   );

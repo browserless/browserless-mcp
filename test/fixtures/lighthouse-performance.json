@@ -1,0 +1,193 @@
+{
+  "lighthouseVersion": "13.4.1",
+  "finalUrl": "https://example.test/scorecard-fixture",
+  "configSettings": {
+    "formFactor": "mobile"
+  },
+  "categories": {
+    "performance": {
+      "title": "Performance",
+      "score": 1,
+      "auditRefs": [
+        {
+          "id": "first-contentful-paint",
+          "weight": 10
+        },
+        {
+          "id": "largest-contentful-paint",
+          "weight": 25
+        },
+        {
+          "id": "total-blocking-time",
+          "weight": 30
+        },
+        {
+          "id": "cumulative-layout-shift",
+          "weight": 25
+        },
+        {
+          "id": "speed-index",
+          "weight": 10
+        }
+      ]
+    },
+    "accessibility": {
+      "title": "Accessibility",
+      "score": 0.66,
+      "auditRefs": [
+        {
+          "id": "button-name",
+          "weight": 10
+        },
+        {
+          "id": "color-contrast",
+          "weight": 7
+        },
+        {
+          "id": "image-alt",
+          "weight": 10
+        },
+        {
+          "id": "landmark-one-main",
+          "weight": 3
+        }
+      ]
+    },
+    "best-practices": {
+      "title": "Best Practices",
+      "score": 0.96,
+      "auditRefs": [
+        {
+          "id": "charset",
+          "weight": 1
+        }
+      ]
+    },
+    "seo": {
+      "title": "SEO",
+      "score": 0.75,
+      "auditRefs": [
+        {
+          "id": "meta-description",
+          "weight": 1
+        },
+        {
+          "id": "robots-txt",
+          "weight": 1
+        },
+        {
+          "id": "image-alt",
+          "weight": 1
+        }
+      ]
+    }
+  },
+  "audits": {
+    "largest-contentful-paint": {
+      "title": "Largest Contentful Paint",
+      "score": 1,
+      "scoreDisplayMode": "numeric",
+      "description": "Largest Contentful Paint marks the time at which the largest text or image is painted. [Learn more about the Largest Contentful Paint metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-largest-contentful-paint/)",
+      "displayValue": "0.9 s",
+      "numericValue": 898.011,
+      "numericUnit": "millisecond"
+    },
+    "total-blocking-time": {
+      "title": "Total Blocking Time",
+      "score": 1,
+      "scoreDisplayMode": "numeric",
+      "description": "Sum of all time periods between FCP and Time to Interactive, when task length exceeded 50ms, expressed in milliseconds. [Learn more about the Total Blocking Time metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-total-blocking-time/).",
+      "displayValue": "0 ms",
+      "numericValue": 0,
+      "numericUnit": "millisecond"
+    },
+    "cumulative-layout-shift": {
+      "title": "Cumulative Layout Shift",
+      "score": 1,
+      "scoreDisplayMode": "numeric",
+      "description": "Cumulative Layout Shift measures the movement of visible elements within the viewport. [Learn more about the Cumulative Layout Shift metric](https://web.dev/articles/cls).",
+      "displayValue": "0",
+      "numericValue": 0,
+      "numericUnit": "unitless",
+      "details": {
+        "type": "debugdata"
+      }
+    },
+    "first-contentful-paint": {
+      "title": "First Contentful Paint",
+      "score": 1,
+      "scoreDisplayMode": "numeric",
+      "description": "First Contentful Paint marks the time at which the first text or image is painted. [Learn more about the First Contentful Paint metric](https://developer.chrome.com/docs/lighthouse/performance/first-contentful-paint/).",
+      "displayValue": "0.9 s",
+      "numericValue": 898.011,
+      "numericUnit": "millisecond"
+    },
+    "speed-index": {
+      "title": "Speed Index",
+      "score": 1,
+      "scoreDisplayMode": "numeric",
+      "description": "Speed Index shows how quickly the contents of a page are visibly populated. [Learn more about the Speed Index metric](https://developer.chrome.com/docs/lighthouse/performance/speed-index/).",
+      "displayValue": "0.9 s",
+      "numericValue": 900,
+      "numericUnit": "millisecond"
+    },
+    "button-name": {
+      "title": "Buttons do not have an accessible name",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "When a button doesn't have an accessible name, screen readers announce it as \"button\", making it unusable for users who rely on screen readers. [Learn how to make buttons more accessible](https://dequeuniversity.com/rules/axe/4.12/button-name).",
+      "details": {
+        "type": "table"
+      }
+    },
+    "color-contrast": {
+      "title": "Background and foreground colors do not have a sufficient contrast ratio.",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "Low-contrast text is difficult or impossible for many users to read. [Learn how to provide sufficient color contrast](https://dequeuniversity.com/rules/axe/4.12/color-contrast).",
+      "details": {
+        "type": "table"
+      }
+    },
+    "image-alt": {
+      "title": "Image elements do not have `[alt]` attributes",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "Informative elements should aim for short, descriptive alternate text. Decorative elements can be ignored with an empty alt attribute. [Learn more about the `alt` attribute](https://dequeuniversity.com/rules/axe/4.12/image-alt).",
+      "details": {
+        "type": "table"
+      }
+    },
+    "landmark-one-main": {
+      "title": "Document does not have a main landmark.",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "One main landmark helps screen reader users navigate a web page. [Learn more about landmarks](https://dequeuniversity.com/rules/axe/4.12/landmark-one-main).",
+      "details": {
+        "type": "table"
+      }
+    },
+    "charset": {
+      "title": "Charset declaration is missing or occurs too late in the HTML",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "A character encoding declaration is required. It can be done with a `<meta>` tag in the first 1024 bytes of the HTML or in the Content-Type HTTP response header. [Learn more about declaring the character encoding](https://developer.chrome.com/docs/lighthouse/best-practices/charset/)."
+    },
+    "meta-description": {
+      "title": "Document does not have a meta description",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "Meta descriptions may be included in search results to concisely summarize page content. [Learn more about the meta description](https://developer.chrome.com/docs/lighthouse/seo/meta-description/)."
+    },
+    "robots-txt": {
+      "title": "robots.txt is not valid",
+      "score": 0,
+      "scoreDisplayMode": "binary",
+      "description": "If your robots.txt file is malformed, crawlers may not be able to understand how you want your website to be crawled or indexed. [Learn more about robots.txt](https://developer.chrome.com/docs/lighthouse/seo/invalid-robots-txt/).",
+      "displayValue": "1 error found",
+      "details": {
+        "type": "table"
+      }
+    }
+  }
+}

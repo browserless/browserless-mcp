@@ -4,6 +4,7 @@ import 'rrweb-player/dist/style.css';
 import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
+import { mountPerformance } from './performance.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -31,6 +32,11 @@ let handoff;
 const handoffRoot = byId('handoff');
 let media;
 const mediaRoot = byId('agent-media');
+let performanceReport;
+const performanceRoot = byId('performance');
+const isPerformanceView = () =>
+  document.body.dataset.viewKind === 'performance' ||
+  lastResult?.structuredContent?.kind === 'performance';
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
@@ -89,9 +95,23 @@ function dispose() {
   handoff = undefined;
   media?.dispose();
   media = undefined;
+  performanceReport?.dispose();
+  performanceReport = undefined;
 }
 function fail(error) {
   loading.abort();
+  if (isPerformanceView()) {
+    dispose();
+    card.hidden = true;
+    handoffRoot.hidden = true;
+    mediaRoot.hidden = true;
+    performanceRoot.hidden = false;
+    performanceRoot.innerHTML =
+      '<header class="perf-heading"><div><h1>Performance report unavailable</h1></div></header><p role="alert"></p><p class="perf-empty">Run a new audit to try again.</p>';
+    performanceRoot.querySelector('[role="alert"]').textContent =
+      error.message || 'The performance audit could not be completed.';
+    return;
+  }
   if (handoff) {
     clearTimeout(expiryTimer);
     handoff.fail(error);
@@ -106,6 +126,7 @@ function fail(error) {
   card.hidden = false;
   handoffRoot.hidden = true;
   mediaRoot.hidden = true;
+  performanceRoot.hidden = true;
   byId('empty').hidden = false;
   byId('empty').dataset.error = '';
   byId('state').textContent = 'Unavailable';
@@ -268,6 +289,7 @@ async function render(result) {
   card.hidden = false;
   handoffRoot.hidden = true;
   mediaRoot.hidden = true;
+  performanceRoot.hidden = true;
   byId('empty').hidden = false;
   delete byId('empty').dataset.error;
   byId('retry').hidden = true;
@@ -278,8 +300,19 @@ async function render(result) {
     if (result.isError)
       throw new Error(
         result.content?.find((item) => item.type === 'text')?.text ||
-          'Replay unavailable.',
+          (isPerformanceView()
+            ? 'Performance audit failed.'
+            : 'Replay unavailable.'),
       );
+    if (isPerformanceView()) {
+      performanceReport = mountPerformance(
+        performanceRoot,
+        result.structuredContent,
+      );
+      card.hidden = true;
+      performanceRoot.hidden = false;
+      return;
+    }
     const view = ShowOutputSchema.parse(result.structuredContent);
     const expires = Date.parse(view.expiresAt);
     if (view.kind === 'handoff') {
@@ -396,9 +429,15 @@ app.ontoolresult = (result) => {
   lastResult = result;
   void render(result);
 };
-app.ontoolcancelled = () => {
+app.ontoolcancelled = (params) => {
   generation++;
-  fail(new Error('Replay loading was cancelled.'));
+  fail(
+    new Error(
+      isPerformanceView()
+        ? params?.reason || 'Performance audit was cancelled.'
+        : 'Replay loading was cancelled.',
+    ),
+  );
 };
 app.onhostcontextchanged = updateHost;
 app.onteardown = async () => {

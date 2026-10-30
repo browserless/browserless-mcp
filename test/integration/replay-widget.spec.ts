@@ -13,6 +13,7 @@ import { getConfig } from '../../src/config.js';
 import { registerSurface } from '../../src/tools/register.js';
 import { replayViews, VIEW_UNAVAILABLE } from '../../src/lib/view-store.js';
 import { VIEW_URI, ShowOutputSchema } from '../../src/lib/view-schemas.js';
+import { PERFORMANCE_URI } from '../../src/lib/performance-summary.js';
 
 const fixture = JSON.parse(
   readFileSync('test/fixtures/replay-widget.json', 'utf8'),
@@ -120,7 +121,7 @@ describe('production replay tools over real MCP HTTP', () => {
               (tool._meta.ui as { resourceUri?: string }).resourceUri,
           )
           .map((tool) => tool.name),
-      ).to.deep.equal(['browserless_show']);
+      ).to.deep.equal(['browserless_show', 'browserless_performance']);
       expect(
         tools.find((tool) => tool.name === 'browserless_sessions')!._meta,
       ).to.equal(undefined);
@@ -300,7 +301,7 @@ describe('production replay tools over real MCP HTTP', () => {
     }
   });
 
-  it('does not add presentation tools or resources to the compliant surface', () => {
+  it('keeps replay presentation off the compliant surface', () => {
     const server = new FastMCP({
       name: 'compliant-replay-test',
       version: '1.0.0',
@@ -321,5 +322,6 @@ describe('production replay tools over real MCP HTTP', () => {
     expect(tools).not.to.include('browserless_show');
     expect(tools).not.to.include('browserless_view_data');
     expect(resources).not.to.include(VIEW_URI);
+    expect(resources).to.deep.equal([PERFORMANCE_URI]);
   });
 });
