@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.43.0](https://github.com/browserless/browserless-mcp/compare/v1.42.0...v1.43.0) (2026-10-30)
+
+
+### Features
+
+* add widget for performance tool AUTO-567 ([#472](https://github.com/browserless/browserless-mcp/issues/472)) ([10e660c](https://github.com/browserless/browserless-mcp/commit/10e660c08a9058789a6eda246f289c410373be95))
+* liveurl handoff widget [DO NOT MERGE] ([#471](https://github.com/browserless/browserless-mcp/issues/471)) ([c0e0cf7](https://github.com/browserless/browserless-mcp/commit/c0e0cf74000c6985b79c7e1e67feff903a490632))
+* widget to show agent screenshots and videos inline AUTO-566 ([#467](https://github.com/browserless/browserless-mcp/issues/467)) ([1216695](https://github.com/browserless/browserless-mcp/commit/1216695a94ca8df80cebbcd72d541b2258fb1f24))
+
+
+### Bug Fixes
+
+* **agent:** improve saved-login reporting and tool attribution ([#421](https://github.com/browserless/browserless-mcp/issues/421)) ([0efd83b](https://github.com/browserless/browserless-mcp/commit/0efd83bf1341d8918b6eac45111c89a0f9e7f9b5))
+* ensure token is not embedded and logged when uploading and downloading AUTO-654 ([#468](https://github.com/browserless/browserless-mcp/issues/468)) ([d29b39b](https://github.com/browserless/browserless-mcp/commit/d29b39bc5c60c7c8ba55d450ad0f229d667d66af))
+* make auth skills answer the user in plain language ([#470](https://github.com/browserless/browserless-mcp/issues/470)) ([e93f084](https://github.com/browserless/browserless-mcp/commit/e93f084efc9dc2521b912c3e19a2827a11eb5f98))
+
 ## [1.42.0](https://github.com/browserless/browserless-mcp/compare/v1.41.0...v1.42.0) (2026-10-29)
 
 
