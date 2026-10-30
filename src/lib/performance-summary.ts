@@ -122,6 +122,10 @@ export function summarizePerformance(
         ]
           .filter(Boolean)
           .join(' · ');
+        const description =
+          typeof audit.description === 'string'
+            ? audit.description.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+            : '';
         return [
           {
             milliseconds,
@@ -129,7 +133,7 @@ export function summarizePerformance(
             summary: {
               id: auditId.slice(0, 128),
               title: text(audit.title, 256),
-              description: text(audit.description, 2000),
+              description: text(description, 2000),
               displayValue: text(audit.displayValue, 256) || null,
               savings: savings || null,
             },

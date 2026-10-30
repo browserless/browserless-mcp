@@ -12,6 +12,36 @@ const recorded = JSON.parse(
 const params = { url: 'https://example.test/' };
 
 describe('Lighthouse scorecard summary', () => {
+  it('converts Markdown links to labels before limiting audit descriptions', () => {
+    const prefix = 'x'.repeat(1980);
+    for (const [description, expected] of [
+      [
+        'Use [caching](https://example.test/cache) and [compression](https://example.test/compression).',
+        'Use caching and compression.',
+      ],
+      [
+        `${prefix}[Learn more](https://example.test/${'path'.repeat(100)}) and [examples](https://example.test/examples)`,
+        `${prefix}Learn more and examples`.slice(0, 2000),
+      ],
+      ['Plain description', 'Plain description'],
+      [null, ''],
+      [undefined, ''],
+      [42, ''],
+      [{ text: 'Not a description string' }, ''],
+    ]) {
+      const report = summarizePerformance(
+        {
+          categories: { seo: { auditRefs: [{ id: 'example' }] } },
+          audits: {
+            example: { title: 'Example audit', score: 0, description },
+          },
+        },
+        params,
+      );
+      expect(report.categories[0].audits[0].description).to.equal(expected);
+    }
+  });
+
   it('extracts category-owned failures and five metrics from a recorded Lighthouse response', () => {
     const report = summarizePerformance(recorded, params);
     expect(PerformanceViewSchema.safeParse(report).success).to.equal(true);
