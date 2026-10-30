@@ -9,6 +9,7 @@ import { replayViews, VIEW_UNAVAILABLE } from '../lib/view-store.js';
 import { ShowOutputSchema, VIEW_URI } from '../lib/view-schemas.js';
 import { findHandoff, readHandoff } from '../lib/handoff.js';
 import { HandoffStateSchema } from '../lib/view-schemas.js';
+import { mediaOrigin } from '../lib/agent-media.js';
 
 const ViewParams = z.object({ viewRef: z.string().max(128) });
 
@@ -19,6 +20,8 @@ async function authorize(
   ctx: ToolRunContext<{ viewRef: string }>,
 ) {
   const view = replayViews.require(ctx.params.viewRef, ctx.viewOwner);
+  // Captured media is an owned snapshot, independent of the live browser/replay API.
+  if (view.prepared.kind === 'agent-media') return;
   try {
     const result = await accountQuery<{
       sessionReplayBySessionId: { sessionId: string } | null;
@@ -45,7 +48,7 @@ export function registerShowTools(
   defineTool(server, config, analytics, {
     name: 'browserless_show',
     description:
-      'Display a prepared Browserless replay or human handoff inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions or creates another handoff.',
+      'Display a prepared Browserless replay, screenshot gallery, video, or human handoff inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
     parameters: ViewParams,
     outputSchema: ShowOutputSchema,
     annotations: {
@@ -71,7 +74,11 @@ export function registerShowTools(
         };
       }
       await authorize(config, ctx);
-      return replayViews.show(ctx.params.viewRef, ctx.viewOwner);
+      return replayViews.show(
+        ctx.params.viewRef,
+        ctx.viewOwner,
+        mediaOrigin(config),
+      );
     },
     format: (result) => result,
   });

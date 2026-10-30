@@ -4,6 +4,7 @@ import { RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
 import { VIEW_URI } from '../lib/view-schemas.js';
 import type { McpConfig } from '../@types/types.js';
 import { handoffOrigins } from '../lib/handoff.js';
+import { mediaOrigin } from '../lib/agent-media.js';
 
 export function registerViewWidget(
   server: FastMCP,
@@ -46,11 +47,12 @@ export function registerViewWidget(
                   config?.transport === 'httpStream'
                     ? handoffOrigins(config)
                     : [],
-                resourceDomains: [],
+                resourceDomains:
+                  config && mediaOrigin(config) ? [mediaOrigin(config)!] : [],
               },
             },
             'openai/widgetDescription':
-              'Browserless replay and interactive human handoff viewer.',
+              'Browserless replay player, screenshot gallery, recorded video, and interactive human handoff viewer.',
           },
         };
       },

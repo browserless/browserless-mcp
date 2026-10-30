@@ -261,6 +261,8 @@ export interface ActiveSession {
   secretVisible: boolean;
   lastUsedAt: number;
   lastUrl?: string;
+  // Last verified active-page URL for captures; independent of snapshot diffs.
+  mediaPageUrl?: string;
   lastElements?: Map<string, SnapshotElement>;
   lastSnapshotElements?: SnapshotElement[];
   // Active tab the cache above belongs to; a change means re-baseline (new tab).

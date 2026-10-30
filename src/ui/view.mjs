@@ -3,6 +3,7 @@ import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
 import { mountHandoff } from './handoff.mjs';
+import { mountAgentMedia } from './agent-media.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -28,10 +29,13 @@ const textBytes = new TextEncoder();
 let hostContext = {};
 let handoff;
 const handoffRoot = byId('handoff');
+let media;
+const mediaRoot = byId('agent-media');
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
   handoff?.updateHost(context);
+  media?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -83,6 +87,8 @@ function dispose() {
   enable(false);
   handoff?.dispose();
   handoff = undefined;
+  media?.dispose();
+  media = undefined;
 }
 function fail(error) {
   loading.abort();
@@ -91,9 +97,15 @@ function fail(error) {
     handoff.fail(error);
     return;
   }
+  if (media) {
+    clearTimeout(expiryTimer);
+    media.fail(error);
+    return;
+  }
   dispose();
   card.hidden = false;
   handoffRoot.hidden = true;
+  mediaRoot.hidden = true;
   byId('empty').hidden = false;
   byId('empty').dataset.error = '';
   byId('state').textContent = 'Unavailable';
@@ -255,6 +267,7 @@ async function render(result) {
   dispose();
   card.hidden = false;
   handoffRoot.hidden = true;
+  mediaRoot.hidden = true;
   byId('empty').hidden = false;
   delete byId('empty').dataset.error;
   byId('retry').hidden = true;
@@ -287,6 +300,18 @@ async function render(result) {
       expires - Date.now(),
     );
     if (handoff) return;
+    if (view.kind === 'agent-media') {
+      media = mountAgentMedia(
+        mediaRoot,
+        result._meta?.payload,
+        view,
+        app,
+        hostContext,
+      );
+      card.hidden = true;
+      mediaRoot.hidden = false;
+      return;
+    }
     byId('website').textContent =
       view.data.website || 'Recorded browser session';
     const payload = ReplayPayloadSchema.parse(

@@ -47,6 +47,9 @@ input:focus-visible,
   padding: 20px 16px;
   background: var(--surface);
 }
+.replay-card[hidden] {
+  display: none !important;
+}
 .heading {
   display: flex;
   align-items: center;

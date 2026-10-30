@@ -32,6 +32,11 @@ export const HandoffSummarySchema = z.object({
   sessionId: z.string().max(256),
   instructions: z.string().trim().min(1).max(2000),
 });
+export const MediaSummarySchema = z.object({
+  website: z.string().max(256).optional(),
+  imageCount: z.number().int().nonnegative(),
+  videoCount: z.number().int().nonnegative(),
+});
 export const HandoffStateSchema = z.object({
   status: z.enum(['open', 'expired', 'closed']),
   reason: z
@@ -46,14 +51,22 @@ export const HandoffStateSchema = z.object({
 export const ShowOutputSchema = z
   .object({
     viewRef: z.string(),
-    kind: z.enum(['replay', 'handoff']),
+    kind: z.enum(['replay', 'handoff', 'agent-media']),
     summary: z.string(),
     expiresAt: z.string().datetime(),
-    data: z.union([ReplaySummarySchema, HandoffSummarySchema]),
+    data: z.union([
+      ReplaySummarySchema,
+      HandoffSummarySchema,
+      MediaSummarySchema,
+    ]),
   })
   .superRefine((value, ctx) => {
     const schema =
-      value.kind === 'replay' ? ReplaySummarySchema : HandoffSummarySchema;
+      value.kind === 'replay'
+        ? ReplaySummarySchema
+        : value.kind === 'handoff'
+          ? HandoffSummarySchema
+          : MediaSummarySchema;
     if (!schema.safeParse(value.data).success)
       ctx.addIssue({
         code: 'custom',
@@ -70,3 +83,36 @@ export const ViewSourceSchema = z.object({
 
 export type ReplaySummary = z.infer<typeof ReplaySummarySchema>;
 export type PreparedView = z.infer<typeof ShowOutputSchema>;
+
+export const MediaPayloadSchema = z.object({
+  mediaOrigin: z.string().url(),
+  artifacts: z
+    .array(
+      z
+        .object({
+          id: z.string().max(128),
+          type: z.enum(['image', 'video']),
+          mimeType: z.enum([
+            'image/png',
+            'image/jpeg',
+            'image/webp',
+            'video/webm',
+          ]),
+          bytes: z.number().int().positive().max(VIEW_DATA_MAX_BYTES),
+          label: z.string().max(128),
+          rationale: z.string().max(500),
+          commandIndex: z.number().int().positive(),
+          website: z.string().max(256).optional(),
+          width: z.number().int().positive().optional(),
+          height: z.number().int().positive().optional(),
+          previewUrl: z.string().url().max(2048),
+          saveUrl: z.string().url().max(2048),
+        })
+        .superRefine((asset, ctx) => {
+          if ((asset.type === 'video') !== (asset.mimeType === 'video/webm'))
+            ctx.addIssue({ code: 'custom', message: 'Mismatched media type.' });
+        }),
+    )
+    .min(1)
+    .max(12),
+});
