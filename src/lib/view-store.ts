@@ -13,11 +13,11 @@ import {
   VIEW_CHUNK_MAX_BYTES,
   VIEW_DATA_MAX_BYTES,
   VIEW_RESULT_MAX_BYTES,
+  VIEW_UNAVAILABLE,
   type PreparedView,
 } from './view-schemas.js';
 
-export const VIEW_UNAVAILABLE =
-  'This view is unavailable. Run the original data tool again to prepare a new view.';
+export { VIEW_UNAVAILABLE } from './view-schemas.js';
 export const VIEW_TTL_MS = 15 * 60 * 1000;
 const PAGE_BYTES = 72 * 1024; // 96 KiB base64, leaving room for the result envelope.
 const gzipAsync = promisify(gzip);

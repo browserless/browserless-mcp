@@ -112,6 +112,7 @@ export interface McpConfig {
   supabaseOAuthClientSecret: string;
   supabaseServiceRoleKey: string;
   mcpBaseUrl: string;
+  publicBrowserlessUrl?: string;
   redisUrl?: string;
   oauthAllowedRedirectUriPatterns: string[];
 }
@@ -796,6 +797,7 @@ export interface LiveURLState {
 }
 
 export interface ApiClient {
+  getBrowserIdForTarget(targetId: string): Promise<string | undefined>;
   createLiveURL(
     browserId: string,
     options: LiveURLOptions,

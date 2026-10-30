@@ -76,6 +76,86 @@ cross-worker reads. Restart or eviction makes a view unavailable and never
 reruns the original operation. Presentation tools/resources are absent from the
 compliant surface, whose existing tool list is unchanged.
 
+### Inline human handoff
+
+When an agent needs a person to complete a step, keep its existing browser open
+and prepare a handoff through `browserless_live_url`. The full HTTP surface and
+an MCP Apps client are required:
+
+```text
+browserless_live_url({
+  action: "handoff",
+  sessionId: "<existing-agent-sessionId>",
+  instructions: "Complete the verification, then choose Done.",
+  timeout: 300000
+})
+browserless_show({ viewRef: "<returned-view-reference>" })
+```
+
+The widget embeds the existing interactive Live URL viewer, including its Done
+and Couldn't finish controls, and offers an external-viewer link when embedding
+is blocked. Its live capability stays in widget-only metadata. Reopening a view
+only reads the existing handoff; it never creates another link or browser.
+
+Browser commands are blocked while a person has control. The widget reads
+`browserless_handoff_state`, an app-only tool, to confirm the backend outcome.
+After the person replies in chat, call `browserless_live_url` with
+`action: "handoff_status"` and the original `viewRef`. Resume with a fresh
+snapshot in the same session only when the reason is `userDone`. Failure,
+expiry, disconnection, and unavailable status do not count as success.
+After Done is confirmed, the widget asks the person to return to the conversation
+and type “Continue”. It does not send an automatic follow-up: tested ChatGPT
+widget-generated turns did not invoke the browser tool, while a typed reply did.
+
+A temporary status-check failure leaves the live viewer open and asks the person
+to check status again before continuing. Confirmed closure, expiry, or loss of
+access removes the viewer. Explicit session close cancels its handoff; closed or
+retired widgets stop polling.
+
+Handoffs default to five minutes, capped by the backend's browser deadline and
+15-minute link limit. Creating, opening, or polling a handoff never extends the
+browser deadline. References are caller-bound and process-local, with at most
+16 stored views and 16 unresolved handoff guards. Expired or disconnected
+handoffs still block automation and browser replacement until explicitly closed
+with the original session handle; completion releases the guard. These guards
+do not keep expired browsers alive. Reads recheck backend authorization, and an
+old view cannot release a newer handoff. The five-tool connector is unchanged.
+Clients without MCP Apps can continue using the agent's existing `liveURL`
+command for external viewers.
+
+Modern backends return `browserId` with the live capability. For older Docker
+runtimes, MCP resolves the owned page through `/sessions` and replaces the old
+capability before publishing a fresh viewer. Ambiguous targets fail without
+launching another browser. The pause applies to commands through this MCP
+process; independent clients can still control the browser. Hosted `/agent/run`
+handoffs are a separate flow.
+
+#### Local Docker and ngrok
+
+The development runner serves MCP and proxies the existing Live URL viewer on
+one origin. It uses the existing Browserless Docker instance on port 5555;
+it does not start or modify the container. Build first, then run:
+
+```sh
+export BROWSERLESS_TOKEN="$(docker exec browserless-5555 printenv TOKEN)"
+BROWSERLESS_API_URL=http://localhost:5555 \
+BROWSERLESS_PUBLIC_URL=https://YOUR-DOMAIN.ngrok-free.dev \
+PORT=8080 npm run start:local
+```
+
+In another terminal:
+
+```sh
+ngrok http http://127.0.0.1:8080 --url=https://YOUR-DOMAIN.ngrok-free.dev --inspect=false
+```
+
+Use No authentication in the MCP client and connect to
+`https://YOUR-DOMAIN.ngrok-free.dev/mcp?token=<BROWSERLESS_TOKEN>`. Keep the token
+private. `BROWSERLESS_PUBLIC_URL` changes only the viewer origin; backend API
+requests stay on localhost. The runner disables OAuth, analytics, and compliance
+mode for local testing. Its gateway listens on loopback and uses port 8088 for
+the internal MCP process (`MCP_INTERNAL_PORT` can change it).
+
 ### Inline agent screenshots and recordings
 
 On the full HTTP surface, MCP Apps clients can display screenshots and completed
@@ -526,14 +606,15 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI                    | Description                                                      |
-| ------------------------------- | ---------------------------------------------------------------- |
-| `browserless://api-docs`        | Smart scraper API documentation                                  |
-| `browserless://status`          | Live service health status                                       |
-| `ui://browserless/view/v3.html` | Bundled replay, screenshot, and video widget (full surface only) |
+| Resource URI                    | Description                                                               |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `browserless://api-docs`        | Smart scraper API documentation                                           |
+| `browserless://status`          | Live service health status                                                |
+| `ui://browserless/view/v9.html` | Bundled replay, screenshot, video, and handoff widget (full surface only) |
 
-The previous `ui://browserless/view/v1.html` and `ui://browserless/view/v2.html`
-resources remain readable for cached clients.
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v8.html`
+resources remain readable as aliases of the current widget. Newly discovered
+tools advertise v9 so hosts do not reuse a cached pre-handoff v3 widget.
 
 ## MCP Prompts
 

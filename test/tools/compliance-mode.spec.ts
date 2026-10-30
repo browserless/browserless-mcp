@@ -311,11 +311,13 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('full HTTP adds stage_file for exactly 20 tools', () => {
+  it('full HTTP adds stage_file and the handoff reader for exactly 21 tools', () => {
     const stdio = captureTools(false).names;
     const http = captureTools(false, 'httpStream').names;
-    expect(http).to.have.length(20);
-    expect(http).to.deep.equal([...stdio, 'browserless_stage_file'].sort());
+    expect(http).to.have.length(21);
+    expect(http).to.deep.equal(
+      [...stdio, 'browserless_stage_file', 'browserless_handoff_state'].sort(),
+    );
   });
 
   it('search and map are on both surfaces', () => {

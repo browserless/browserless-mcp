@@ -7,6 +7,8 @@ import { defineTool, type ToolRunContext } from '../lib/define-tool.js';
 import { accountQuery } from '../lib/account-api.js';
 import { replayViews, VIEW_UNAVAILABLE } from '../lib/view-store.js';
 import { ShowOutputSchema, VIEW_URI } from '../lib/view-schemas.js';
+import { findHandoff, readHandoff } from '../lib/handoff.js';
+import { HandoffStateSchema } from '../lib/view-schemas.js';
 import { mediaOrigin } from '../lib/agent-media.js';
 
 const ViewParams = z.object({ viewRef: z.string().max(128) });
@@ -46,7 +48,7 @@ export function registerShowTools(
   defineTool(server, config, analytics, {
     name: 'browserless_show',
     description:
-      'Display a prepared Browserless replay, screenshot gallery, or video inline. Pass the exact viewRef returned by browserless_sessions or browserless_agent. Does not repeat a browser operation or download.',
+      'Display a prepared Browserless replay, screenshot gallery, video, or human handoff inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
     parameters: ViewParams,
     outputSchema: ShowOutputSchema,
     annotations: {
@@ -57,6 +59,20 @@ export function registerShowTools(
     },
     _meta: { ui: { resourceUri: VIEW_URI }, 'openai/outputTemplate': VIEW_URI },
     run: async (ctx) => {
+      const handoff = findHandoff(ctx.params.viewRef, ctx.viewOwner);
+      if (handoff) {
+        const state = await readHandoff(handoff, ctx.client);
+        return {
+          content: [{ type: 'text' as const, text: handoff.prepared.summary }],
+          structuredContent: structuredClone(handoff.prepared),
+          _meta: {
+            payload: {
+              state,
+              ...(state.status === 'open' ? { liveURL: handoff.liveURL } : {}),
+            },
+          },
+        };
+      }
       await authorize(config, ctx);
       return replayViews.show(
         ctx.params.viewRef,
@@ -66,6 +82,30 @@ export function registerShowTools(
     },
     format: (result) => result,
   });
+  if (config.transport === 'httpStream')
+    defineTool(server, config, analytics, {
+      name: 'browserless_handoff_state',
+      description:
+        'Widget-only status reader for an existing human handoff. Never creates, completes, or renews a live viewer.',
+      parameters: ViewParams,
+      outputSchema: HandoffStateSchema.extend({ sessionId: z.string() }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      _meta: { ui: { visibility: ['app'] } },
+      run: async (ctx) => {
+        const view = findHandoff(ctx.params.viewRef, ctx.viewOwner);
+        if (!view) throw new UserError(VIEW_UNAVAILABLE);
+        return readHandoff(view, ctx.client);
+      },
+      format: (state) => ({
+        content: [{ type: 'text', text: JSON.stringify(state) }],
+        structuredContent: state,
+      }),
+    });
   defineTool(server, config, analytics, {
     name: 'browserless_view_data',
     description:

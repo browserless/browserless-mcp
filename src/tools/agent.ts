@@ -28,6 +28,7 @@ import {
   isRetryableUpgradeError,
   PERSONA_FIELDS,
   UpgradeError,
+  HumanHandoffActiveError,
   preflightAgentCapabilities,
   type ActiveSession,
 } from '../lib/agent-client.js';
@@ -924,6 +925,9 @@ export function registerAgentTools(
           fileTransferModeNote(config.transport, config.mcpBaseUrl)) +
       SELF_CHECK_DIRECTIVE +
       sessionContinuityNote(config.transport) +
+      (!compliant && config.transport === 'httpStream'
+        ? ' When blocked by a step requiring human input, stop browser actions and keep the existing session open. Call browserless_live_url with action handoff, that sessionId, and specific plain-text instructions; display its viewRef with browserless_show. Ask the person to complete the step, click Done in the viewer, then reply here. Do not continue automation or create another browser while waiting. On their return, check handoff_status with the viewRef and resume with a fresh snapshot in the same session only after reason userDone. For userFailed, expiry, disconnection, or unavailable status, explain the outcome and ask how to proceed; do not assume success.'
+        : '') +
       (!compliant && mediaOrigin(config)
         ? ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions.'
         : ''),
@@ -1317,7 +1321,7 @@ export const runAgentCommands = async (
   }
 
   if (commands.length === 1 && commands[0].method === 'close') {
-    closeSession(
+    await closeSession(
       mcpSessionId,
       token,
       proxy,
@@ -1442,6 +1446,8 @@ export const runAgentCommands = async (
         options.toolName,
       );
     } catch (connErr: unknown) {
+      if (connErr instanceof HumanHandoffActiveError)
+        throw new UserError(connErr.message);
       lastFailure = failureDetails(connErr, {
         source: connErr instanceof UpgradeError ? 'api' : 'unknown',
       });
@@ -1496,6 +1502,8 @@ export const runAgentCommands = async (
         options.toolName,
       );
     } catch (connErr: unknown) {
+      if (connErr instanceof HumanHandoffActiveError)
+        throw new UserError(connErr.message);
       // No retry when the server gave a definitive 4xx — re-attempting
       // with the same (bad token / wrong profile / unsupported params)
       // will just produce the same response and waste time.
@@ -1583,7 +1591,7 @@ export const runAgentCommands = async (
       }
 
       if (cmd.method === 'close') {
-        closeSession(
+        await closeSession(
           mcpSessionId,
           token,
           proxy,
@@ -1701,6 +1709,8 @@ export const runAgentCommands = async (
           onSession,
         );
       } catch (sendErr: unknown) {
+        if (sendErr instanceof HumanHandoffActiveError)
+          throw new UserError(sendErr.message);
         destroySession(
           mcpSessionId,
           token,
@@ -2260,7 +2270,7 @@ export const runAgentCommands = async (
       !createProfile &&
       !attachSessionId
     ) {
-      closeSession(
+      await closeSession(
         mcpSessionId,
         token,
         proxy,
@@ -2279,7 +2289,7 @@ export const runAgentCommands = async (
   } catch (err) {
     sendAnalytics(false, err);
     if (options.closeAfter === 'always' && lastSession) {
-      closeSession(
+      await closeSession(
         mcpSessionId,
         token,
         proxy,

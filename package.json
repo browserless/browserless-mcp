@@ -70,7 +70,8 @@
     "prepare": "husky",
     "prettier": "prettier '{src,test,bin,.github}/**/*.{js,ts,json,yml,yaml,md}' --log-level error --write",
     "build:templates": "mkdir -p build/src/lib && cp src/lib/*.html build/src/lib/",
-    "build:widgets": "node scripts/build-widgets.mjs"
+    "build:widgets": "node scripts/build-widgets.mjs",
+    "start:local": "node scripts/local-mcp.mjs"
   },
   "prettier": {
     "semi": true,

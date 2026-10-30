@@ -540,6 +540,26 @@ export function createApiClient(
       });
     },
 
+    async getBrowserIdForTarget(targetId): Promise<string | undefined> {
+      const sessions: unknown = await apiFetch(config, {
+        path: '/sessions',
+        method: 'GET',
+        timeout: config.requestTimeout,
+        maxRetries: 0,
+      });
+      if (!Array.isArray(sessions)) return;
+      const ids = new Set<string>();
+      for (const row of sessions)
+        if (
+          row &&
+          row.id === targetId &&
+          typeof row.browserId === 'string' &&
+          row.browserId.length
+        )
+          ids.add(row.browserId);
+      return ids.size === 1 ? [...ids][0] : undefined;
+    },
+
     async createLiveURL(browserId, options): Promise<LiveURLCreated> {
       return apiFetch(config, {
         path: `/browser/${encodeURIComponent(browserId)}/live`,

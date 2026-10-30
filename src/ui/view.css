@@ -409,3 +409,7 @@ footer i {
 .replay-card.expanded {
   height: calc(100dvh - 16px);
 }
+
+.replay-card[hidden] {
+  display: none !important;
+}

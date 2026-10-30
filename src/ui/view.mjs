@@ -2,6 +2,7 @@ import { App, applyDocumentTheme } from '@modelcontextprotocol/ext-apps';
 import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
+import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import {
   ReplayPayloadSchema,
@@ -26,11 +27,14 @@ let player,
 let loading = new AbortController();
 const textBytes = new TextEncoder();
 let hostContext = {};
+let handoff;
+const handoffRoot = byId('handoff');
 let media;
 const mediaRoot = byId('agent-media');
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
+  handoff?.updateHost(context);
   media?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
@@ -81,11 +85,18 @@ function dispose() {
   player = undefined;
   byId('player').replaceChildren();
   enable(false);
+  handoff?.dispose();
+  handoff = undefined;
   media?.dispose();
   media = undefined;
 }
 function fail(error) {
   loading.abort();
+  if (handoff) {
+    clearTimeout(expiryTimer);
+    handoff.fail(error);
+    return;
+  }
   if (media) {
     clearTimeout(expiryTimer);
     media.fail(error);
@@ -93,6 +104,7 @@ function fail(error) {
   }
   dispose();
   card.hidden = false;
+  handoffRoot.hidden = true;
   mediaRoot.hidden = true;
   byId('empty').hidden = false;
   byId('empty').dataset.error = '';
@@ -254,6 +266,7 @@ async function render(result) {
   const signal = loading.signal;
   dispose();
   card.hidden = false;
+  handoffRoot.hidden = true;
   mediaRoot.hidden = true;
   byId('empty').hidden = false;
   delete byId('empty').dataset.error;
@@ -269,12 +282,24 @@ async function render(result) {
       );
     const view = ShowOutputSchema.parse(result.structuredContent);
     const expires = Date.parse(view.expiresAt);
+    if (view.kind === 'handoff') {
+      handoff = mountHandoff(
+        handoffRoot,
+        result._meta?.payload,
+        view,
+        app,
+        hostContext,
+      );
+      card.hidden = true;
+      handoffRoot.hidden = false;
+    }
     if (expires <= Date.now())
       throw new Error('This view has expired. Prepare a new replay.');
     expiryTimer = setTimeout(
       () => fail(new Error('This view has expired. Prepare a new replay.')),
       expires - Date.now(),
     );
+    if (handoff) return;
     if (view.kind === 'agent-media') {
       media = mountAgentMedia(
         mediaRoot,
