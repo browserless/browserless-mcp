@@ -258,3 +258,15 @@ describe('full Agent persona and proxy guidance', () => {
     expect(AGENT_SYSTEM_PROMPT).to.match(/residential.*block/i);
   });
 });
+
+describe('auth skill summaries', () => {
+  it('summarize both auth skills as reporting the outcome, not a JSON shape', () => {
+    const skills = AGENT_SYSTEM_PROMPT.split(
+      '## Skills (auto-injected)',
+    )[1].split('\n## ')[0];
+    for (const text of [skills, SKILL_TOOL_DESCRIPTION]) {
+      expect(text).not.to.include('final JSON');
+      expect(text.split('how to report the outcome').length - 1).to.equal(2);
+    }
+  });
+});
