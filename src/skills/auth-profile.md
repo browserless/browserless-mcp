@@ -65,10 +65,10 @@ the session handle retains the profile, so repeating `profile` is optional.
    { "method": "saveProfile", "params": { "name": "github" } }
    ```
    Pass the same `name` you opened the session with. If a profile with that
-   name already exists for this token, the call returns `ok: false` with an
-   `error` saying the profile already exists. Don't retry `saveProfile` with the
-   same name — choose a different name, or tell the user a profile by that name
-   already exists.
+   name already exists in your account, `saveProfile` replaces its saved login
+   with this session's state (same `profileId`, `ok: true`). Only save once
+   login is confirmed, because this overwrites an existing good login.
+   Use a different name to keep a separate profile.
 5. **Inspect the result.** A successful save returns:
 
    ```json
