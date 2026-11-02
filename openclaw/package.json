@@ -1,0 +1,21 @@
+{
+  "name": "browserless",
+  "version": "1.0.0",
+  "description": "Browserless for OpenClaw: registers the hosted Browserless MCP server and a usage skill.",
+  "type": "module",
+  "private": true,
+  "author": "browserless.io",
+  "license": "SSPL-1.0",
+  "homepage": "https://browserless.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/browserless/browserless-mcp.git",
+    "directory": "openclaw"
+  },
+  "keywords": [
+    "openclaw",
+    "browserless",
+    "mcp",
+    "browser automation"
+  ]
+}
