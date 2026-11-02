@@ -55,7 +55,7 @@ export const LiveURLParamsSchema = z.object({
     .positive()
     .optional()
     .describe(
-      'Link lifetime in ms; server clamps to remaining session time and 15 minutes.',
+      "Link lifetime in ms; server caps it at your plan's maximum session time, remaining browser time, and 15 minutes.",
     ),
   quality: z.number().int().min(1).max(100).optional(),
   type: z.enum(['jpeg', 'png']).optional(),
@@ -86,7 +86,7 @@ export function registerLiveURLTool(
     description:
       'Create, inspect, or close a live viewer link for an existing browser through REST, without an agent connection. ' +
       'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown. ' +
-      'Link lifetime defaults to 15 minutes, capped by remaining browser session time; creating a link does not keep the browser alive. ' +
+      "Link lifetime defaults to 15 minutes, capped by your plan's maximum session time and remaining browser time; creating a link does not keep the browser alive. " +
       'For a human handoff, pass instructions explaining what to do and when to click Done. ' +
       'Instructions accept a string or an object with layout, format, title, summary, steps, and currentStep. ' +
       'For string instructions use instructionsTitle, steps, currentStep, and instructionsFormat beside instructions. ' +
