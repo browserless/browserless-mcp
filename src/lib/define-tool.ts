@@ -1,5 +1,11 @@
 import { FastMCP, UserError } from 'fastmcp';
-import type { Content } from 'fastmcp';
+import type { Content, ContentResult, ToolParameters } from 'fastmcp';
+import {
+  getUiCapability,
+  RESOURCE_MIME_TYPE,
+} from '@modelcontextprotocol/ext-apps/server';
+import { sessionPrincipal } from './session-binding.js';
+import { fullHash } from './account-resolver.js';
 import { z, type ZodType } from 'zod';
 import { createApiClient, ProfileNotFoundError } from './api-client.js';
 import {
@@ -86,6 +92,10 @@ export interface ToolRunContext<P> {
   }) => Promise<void>;
   /** MCP session id (httpStream transport) or undefined for stdio — used by agent tool. */
   sessionId: string | undefined;
+  /** Initialized MCP Apps capability, never inferred from a client name. */
+  uiEnabled: boolean;
+  /** Server-derived caller/account/API scope, independent of the transport. */
+  viewOwner: string;
   /**
    * Pre-created browser session id to attach to (from the `x-browserless-session-id`
    * header). When set, the agent tool attaches to it instead of opening its own.
@@ -103,6 +113,7 @@ export interface ToolDefinition<P, R> {
   name: string;
   description: string;
   parameters: ZodType<P>;
+  outputSchema?: ToolParameters;
   annotations?: ToolAnnotations;
   _meta?: Record<string, unknown>;
   /** Defaults also included when validation fails before run(). */
@@ -126,8 +137,11 @@ export interface ToolDefinition<P, R> {
   format: (
     result: R,
     params: P,
-    context: Pick<ToolRunContext<P>, 'token' | 'sessionId'>,
-  ) => Content[] | Promise<Content[]>;
+    context: Pick<
+      ToolRunContext<P>,
+      'token' | 'sessionId' | 'uiEnabled' | 'viewOwner'
+    >,
+  ) => Content[] | ContentResult | Promise<Content[] | ContentResult>;
   /**
    * Extra event properties. Read between `run` and `format`, so a `format`
    * that throws on `!response.ok` still reports `ok`/`status_code`.
@@ -174,6 +188,13 @@ export function assertHttpScheme(url: string): void {
   }
 }
 
+export const ACCOUNT_LIMIT_MESSAGE =
+  "This request couldn't be completed because the connected Browserless account has reached a limit (for example its usage allowance or maximum run time).";
+export const isAccountLimitMessage = (message: string): boolean =>
+  /browserless\.io\/account|upgrade (?:your|the|to a paid) plan/i.test(
+    message.replace(/^Couldn't read the page at https?:\/\/\S+: /, ''),
+  );
+
 export function defineTool<P, R>(
   server: FastMCP,
   config: McpConfig,
@@ -191,6 +212,7 @@ export function defineTool<P, R>(
     name: def.name,
     description: def.description,
     parameters,
+    ...(def.outputSchema ? { outputSchema: def.outputSchema } : {}),
     annotations: def.annotations,
     ...(def._meta ? { _meta: def._meta } : {}),
     execute: async (
@@ -209,6 +231,13 @@ export function defineTool<P, R>(
       // for the unconstrained generic. Tools see the typed session via this helper
       // and never cast token/apiUrl themselves.
       const s = session as BrowserlessSession | undefined;
+      const capabilities = server.sessions
+        .find((candidate) => candidate.sessionId === sessionId)
+        ?.server.getClientCapabilities();
+      const uiEnabled =
+        getUiCapability(capabilities)?.mimeTypes?.includes(
+          RESOURCE_MIME_TYPE,
+        ) === true;
       const mcpSource = resolveMcpSource(
         s,
         mcpClient?.version,
@@ -310,6 +339,13 @@ export function defineTool<P, R>(
           }
           apiUrl = s.apiUrl;
         }
+        const viewOwner = fullHash(
+          JSON.stringify([
+            sessionPrincipal({ ...s, token, apiUrl }),
+            apiUrl,
+            config.apiServerUrl,
+          ]),
+        );
         def.validateUrl?.(params);
         validating = false;
 
@@ -320,6 +356,7 @@ export function defineTool<P, R>(
             ...config,
             browserlessToken: token,
             browserlessApiUrl: apiUrl,
+            mcpTool: def.name,
           },
           def.cache,
         );
@@ -341,6 +378,8 @@ export function defineTool<P, R>(
             apiUrl,
             reportProgress,
             sessionId,
+            uiEnabled,
+            viewOwner,
             attachSessionId: s?.attachSessionId,
             userId: s?.userId,
             userRole: s?.userRole,
@@ -352,13 +391,35 @@ export function defineTool<P, R>(
 
         await reportProgress({ progress: 100, total: 100 });
         resultProps = def.analyticsProps?.(params, result) ?? {};
-        const content = await def.format(result, params, { token, sessionId });
+        const formatted = await def.format(result, params, {
+          token,
+          sessionId,
+          uiEnabled,
+          viewOwner,
+        });
 
         if (!fired) {
           emit(resultProps);
         }
 
-        return { content };
+        const response = Array.isArray(formatted)
+          ? { content: formatted }
+          : formatted;
+        // Connector clients may consume only the first content block.
+        return config.complianceMode
+          ? {
+              ...response,
+              content: [
+                {
+                  type: 'text',
+                  text: response.content
+                    .filter((block) => block.type === 'text')
+                    .map((block) => block.text)
+                    .join('\n\n'),
+                },
+              ],
+            }
+          : response;
       } catch (err) {
         const error =
           err instanceof ProfileNotFoundError
@@ -406,6 +467,13 @@ export function defineTool<P, R>(
           });
         }
 
+        if (
+          config.complianceMode &&
+          error instanceof Error &&
+          isAccountLimitMessage(error.message)
+        ) {
+          throw new UserError(ACCOUNT_LIMIT_MESSAGE);
+        }
         throw error;
       }
     },

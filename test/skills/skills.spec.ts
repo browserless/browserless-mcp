@@ -904,3 +904,118 @@ describe('skills/detectSkills - once-per-session and re-fire', () => {
     expect(detectSkills(ctx, state)).to.include('captchas');
   });
 });
+
+describe('auth skills: the final response is a reply to the user', () => {
+  const finalResponse = (body: string) =>
+    body.split('## Final response')[1].split('\n## ')[0];
+
+  for (const id of ['autonomous-login', 'autonomous-registration'] as const) {
+    it(`${id} answers in plain language and leaves machine formats to the caller`, () => {
+      const body = renderSkill(id, false);
+      const final = finalResponse(body);
+      expect(body).not.to.include('nothing before or after, no prose');
+      expect(body).not.to.include('emit the final JSON');
+      expect(body).not.to.include('Emit anything but the final JSON');
+      expect(final).to.include(
+        'Your last message is a reply to the user, in plain language — never a status object.',
+      );
+      expect(final).to.include(
+        'send `reportOutcome` as the system prompt describes, then `close`',
+      );
+      expect(final).to.include(
+        'Only when your instructions or the task ask for a machine-readable final result',
+      );
+      expect(final).to.include('Otherwise never end with a JSON block.');
+      expect(final).to.include('`reason_code` ∈ `SUCCESS`');
+      expect(body).to.include(
+        '- End your reply with a JSON block or a bare `reason_code` unless your instructions or the task ask for that format.',
+      );
+      expect(body).to.include(
+        'Do NOT `close` — this turn is not your final response.',
+      );
+    });
+  }
+
+  it('maps a blocking login onto existing reportOutcome reasons', () => {
+    const final = finalResponse(renderSkill('autonomous-login', false));
+    expect(final).to.include('`captcha` for `CAPTCHA_BLOCKED`');
+    expect(final).to.include(
+      '`login_required` for `MISSING_CONTEXT` / `INVALID_CREDENTIALS` / `MFA_INPUT_MISSING` / `MFA_FAILED`, else `other`',
+    );
+  });
+
+  it('names the account and vault item in the registration reply, never the password', () => {
+    const body = renderSkill('autonomous-registration', false);
+    const final = finalResponse(body);
+    expect(final).to.include(
+      "give the account email and the vault item's title and `op://` reference",
+    );
+    expect(final).to.include(
+      'The password itself never appears in the final response.',
+    );
+    expect(final).to.include(
+      "Ask-the-user turns aren't final — plain prose, stop, no `close`.",
+    );
+    expect(body).to.include(
+      'do NOT `close`; this turn is not your final response and the session stays open.',
+    );
+  });
+});
+
+describe('auth skills: no references to the removed output fields', () => {
+  for (const id of ['autonomous-login', 'autonomous-registration'] as const) {
+    it(`${id} states a failed gate as the outcome, not as emitted output`, () => {
+      const body = renderSkill(id, false);
+      expect(body).not.to.include('emit the matching');
+      expect(body).not.to.include('`evidence`');
+      expect(body).to.include(
+        'Gate 1 or 2 fails → stop; the matching `reason_code` is your outcome (see Final response).',
+      );
+    });
+  }
+
+  it('keeps the registration vault-item duty in the reply', () => {
+    const body = renderSkill('autonomous-registration', false);
+    expect(body).not.to.include('in `credential_ref`');
+    expect(body).not.to.include('`success: false` and `evidence');
+    expect(body).to.include('name the listed vault titles in your reply');
+    expect(body).to.include('name the stale item in your reply');
+    expect(body).to.include(
+      "say the outcome is unverified and give the vault item's title and `op://` reference",
+    );
+    expect(body).to.include(
+      'give its title and `op://` reference whatever the outcome',
+    );
+  });
+});
+
+describe('auth skills: caller-owned values and report ordering', () => {
+  for (const id of ['autonomous-login', 'autonomous-registration'] as const) {
+    it(`${id} keeps caller-owned values and reports before closing`, () => {
+      const body = renderSkill(id, false);
+      expect(body).to.include(
+        'Where that format lists its own allowed values for a field, use those values; use the `reason_code` below only where it asks for a reason or result code without listing values.',
+      );
+      expect(body).not.to.include(
+        'wherever it asks for a reason or result code',
+      );
+      expect(body).to.include(
+        'send the applicable reports (`reportSkillOutcome` if you loaded a site recipe, then `reportOutcome` with `success: false`, `reason` `other`), then `close`',
+      );
+    });
+  }
+
+  it('lets a registration caller format without room for vault details win', () => {
+    const body = renderSkill('autonomous-registration', false);
+    expect(body).to.include(
+      'when it has no place for them, follow it exactly anyway — the vault item stays findable by its title.',
+    );
+    expect(body).not.to.include('else in its answer text');
+  });
+
+  it('reports before closing on the login timeout path', () => {
+    expect(renderSkill('autonomous-login', false)).not.to.include(
+      'close with `SUBMIT_NO_FEEDBACK`',
+    );
+  });
+});

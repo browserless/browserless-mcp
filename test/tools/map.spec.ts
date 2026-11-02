@@ -64,6 +64,20 @@ describe('browserless_map tool', () => {
     expect(() => registerMapTool(server, mockConfig)).to.not.throw();
   });
 
+  it('connector rejects a limit above 500 before making a backend request', async () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const spy = sinon.spy(server, 'addTool');
+    registerMapTool(server, { ...mockConfig, complianceMode: true });
+    const error = await spy.firstCall.args[0]
+      .execute({ url: 'https://example.com', limit: 501 }, mockContext)
+      .catch((e) => e);
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.equal(
+      'limit can be at most 500 on this endpoint.',
+    );
+    expect(fetchStub.called).to.equal(false);
+  });
+
   it('returns discovered URLs', async () => {
     fetchStub.resolves(
       new Response(

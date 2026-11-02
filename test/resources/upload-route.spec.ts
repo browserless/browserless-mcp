@@ -52,15 +52,16 @@ describe('upload route', () => {
     expect(await owner.text()).to.equal('upload bytes');
   });
 
-  it('preserves URL-reserved characters in the owner token', async () => {
+  it('accepts bearer headers with URL-reserved characters in the owner token', async () => {
     const route = app();
     const token = 'owner+with&reserved#characters';
     const body = new FormData();
     body.set('file', new File(['upload bytes'], 'fixture.bin'));
-    const response = await route.request(
-      `/upload?token=${encodeURIComponent(token)}`,
-      { method: 'POST', body },
-    );
+    const response = await route.request('/upload', {
+      method: 'POST',
+      body,
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const { handle } = (await response.json()) as { handle: string };
     const id = handle.replace('browserless-download://', '');
 

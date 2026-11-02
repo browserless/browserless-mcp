@@ -346,6 +346,10 @@ describe('browserless_live_url', () => {
 
   it('rejects missing IDs and incompatible PNG quality before fetching', async () => {
     for (const input of [
+      { action: 'pages' },
+      { action: 'create' },
+      { action: 'status' },
+      { action: 'close' },
       { action: 'status', browserId: 'b' },
       { action: 'close', browserId: 'b' },
       { action: 'create', browserId: 'b', type: 'png', quality: 70 },
@@ -354,7 +358,7 @@ describe('browserless_live_url', () => {
         await tool().execute(input as any, mockContext);
         expect.fail('Expected error');
       } catch (error) {
-        expect((error as Error).message).to.match(/liveURLId|PNG/);
+        expect((error as Error).message).to.match(/browserId|liveURLId|PNG/);
       }
     }
     expect(fetchStub.called).to.be.false;

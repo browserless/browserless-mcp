@@ -1,0 +1,155 @@
+{
+  "sessionId": "replay-widget-demo",
+  "website": "https://example.com/replay-demo",
+  "timestamp": 1793016000,
+  "events": [
+    {
+      "type": 4,
+      "timestamp": 1793016000000,
+      "data": {
+        "href": "https://example.com/replay-demo",
+        "width": 960,
+        "height": 540
+      }
+    },
+    {
+      "type": 2,
+      "timestamp": 1793016000010,
+      "data": {
+        "initialOffset": { "top": 0, "left": 0 },
+        "node": {
+          "type": 0,
+          "id": 1,
+          "childNodes": [
+            {
+              "type": 1,
+              "id": 2,
+              "name": "html",
+              "publicId": "",
+              "systemId": ""
+            },
+            {
+              "type": 2,
+              "id": 3,
+              "tagName": "html",
+              "attributes": {},
+              "childNodes": [
+                {
+                  "type": 2,
+                  "id": 4,
+                  "tagName": "head",
+                  "attributes": {},
+                  "childNodes": []
+                },
+                {
+                  "type": 2,
+                  "id": 5,
+                  "tagName": "body",
+                  "attributes": {
+                    "style": "margin:0;padding:48px;background:#eef2ff;font:24px system-ui;color:#172554;min-height:540px;box-sizing:border-box"
+                  },
+                  "childNodes": [
+                    {
+                      "type": 2,
+                      "id": 6,
+                      "tagName": "h1",
+                      "attributes": {},
+                      "childNodes": [
+                        {
+                          "type": 3,
+                          "id": 7,
+                          "textContent": "Browserless Replay"
+                        }
+                      ]
+                    },
+                    {
+                      "type": 2,
+                      "id": 8,
+                      "tagName": "p",
+                      "attributes": {},
+                      "childNodes": [
+                        {
+                          "type": 3,
+                          "id": 9,
+                          "textContent": "Synthetic recording. No account data."
+                        }
+                      ]
+                    },
+                    {
+                      "type": 2,
+                      "id": 10,
+                      "tagName": "div",
+                      "attributes": {
+                        "style": "padding:24px;background:white;border-radius:16px"
+                      },
+                      "childNodes": [
+                        {
+                          "type": 3,
+                          "id": 11,
+                          "textContent": "Step 1: Opened page"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": 3,
+      "timestamp": 1793016003000,
+      "data": {
+        "source": 0,
+        "texts": [{ "id": 11, "value": "Step 2: Filled form" }],
+        "attributes": [],
+        "removes": [],
+        "adds": []
+      }
+    },
+    {
+      "type": 3,
+      "timestamp": 1793016006000,
+      "data": {
+        "source": 0,
+        "texts": [{ "id": 11, "value": "Step 3: Submitted form" }],
+        "attributes": [
+          {
+            "id": 10,
+            "attributes": {
+              "style": "padding:24px;background:#bbf7d0;border-radius:16px"
+            }
+          }
+        ],
+        "removes": [],
+        "adds": []
+      }
+    },
+    {
+      "type": 3,
+      "timestamp": 1793016009000,
+      "data": {
+        "source": 0,
+        "texts": [{ "id": 11, "value": "Step 4: Success" }],
+        "attributes": [],
+        "removes": [],
+        "adds": []
+      }
+    },
+    {
+      "type": 3,
+      "timestamp": 1793016012000,
+      "data": {
+        "source": 0,
+        "texts": [
+          { "id": 11, "value": "Recording complete. Scrub back to replay." }
+        ],
+        "attributes": [],
+        "removes": [],
+        "adds": []
+      }
+    }
+  ]
+}

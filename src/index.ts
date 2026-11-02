@@ -7,9 +7,11 @@ import type { OAuthProxy } from 'fastmcp/auth';
 import { getConfig, classifyComplianceInput } from './config.js';
 import type { BrowserlessSession } from './@types/types.js';
 import { registerSurface } from './tools/register.js';
+import { announceToolListOnConnect, isCompliant } from './tools/compliance.js';
 import { serverInstructions } from './skills/system-prompt.js';
 import { registerUploadRoute } from './resources/upload-route.js';
 import { registerDownloadRoute } from './resources/download-route.js';
+import { registerMediaPreviewRoute } from './resources/media-preview.js';
 import { registerCloseRoute } from './resources/close-route.js';
 import { clearSession } from './lib/download-store.js';
 import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
@@ -20,6 +22,7 @@ import {
 } from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
+import { admitSessionRequest, authOutcome } from './lib/session-binding.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
@@ -122,11 +125,17 @@ const hybridAuthenticate =
         // reaper from closing a session that is merely between calls or only
         // listing tools. `initialize` carries no session id yet; the reaper's
         // first discovery stamps sessions that never send another request.
-        const sid = request.headers?.['mcp-session-id'];
-        touchSession(Array.isArray(sid) ? sid[0] : sid);
+        const sidHeader = request.headers?.['mcp-session-id'];
+        const sid = Array.isArray(sidHeader) ? sidHeader[0] : sidHeader;
+        const method =
+          request.method === 'POST' ||
+          request.method === 'GET' ||
+          request.method === 'DELETE'
+            ? request.method
+            : 'other';
 
         // Per-request MCP metrics on authenticate() — the one hook that sees
-        // /mcp (memoized once per POST). Spans auth only; record once it settles.
+        // /mcp (memoized once per POST, GET, DELETE). Spans auth only; record once it settles.
         mcpInFlightAdd(1);
         const authStartedAt = performance.now();
         try {
@@ -134,16 +143,30 @@ const hybridAuthenticate =
             request,
             config,
           )) as BrowserlessSession;
-          recordMcpRequest('authenticated', performance.now() - authStartedAt);
+          admitSessionRequest(sid, session, server.sessions);
+          recordMcpRequest(
+            'authenticated',
+            performance.now() - authStartedAt,
+            method,
+          );
           return session;
         } catch (err) {
-          recordMcpRequest('rejected', performance.now() - authStartedAt);
+          recordMcpRequest(
+            authOutcome(err),
+            performance.now() - authStartedAt,
+            method,
+          );
           throw err;
         } finally {
           mcpInFlightAdd(-1);
         }
       }
     : undefined;
+
+// The patched FastMCP reads this flag when constructing session capabilities.
+(
+  globalThis as { __browserlessMcpStaticTools?: boolean }
+).__browserlessMcpStaticTools = isCompliant(config);
 
 const server = new FastMCP<BrowserlessSession>({
   name: 'browserless-mcp',
@@ -223,10 +246,8 @@ server.on('connect', (event) => {
       '[browserless-mcp] WARNING: FastMCP session server is not an MCP SDK Server; Amplitude instrumentation may be disabled.',
     );
   }
-  // force the client to refresh its tool list on connect
-  void event.session.triggerListChangedNotification(
-    'notifications/tools/list_changed',
-  );
+  // Only the full surface asks clients to refresh the tool list on connect.
+  announceToolListOnConnect(event.session, config);
 });
 
 if (amplitudeAnalytics || telemetryShutdown) {
@@ -322,6 +343,7 @@ if (config.transport === 'httpStream') {
   // Single-use, out-of-band fetch for captured downloads (the LLM GETs the file
   // instead of pulling bytes through the conversation). httpStream only.
   registerDownloadRoute(server, config);
+  if (!isCompliant(config)) registerMediaPreviewRoute(server);
 
   registerCloseRoute(server, config);
   console.error(

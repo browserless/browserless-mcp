@@ -22,6 +22,8 @@ import { isCompliant } from './compliance.js';
 import { describeReadyDownload } from './agent.js';
 import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import type { McpConfig } from '../@types/types.js';
+import { replayViews } from '../lib/view-store.js';
+import type { PreparedView } from '../lib/view-schemas.js';
 
 export const SessionsParamsSchema = z.object({
   action: z
@@ -113,6 +115,7 @@ interface SessionsResult {
   integrations?: OpIntegration[] | null;
   replay?: {
     artifact: ReplayArtifact;
+    view?: PreparedView;
     html: string;
     htmlPath: string;
     jsonPath: string;
@@ -401,7 +404,10 @@ export function registerSessionsTool(
       'playable rrweb page, needing no network to render: display it inline if ' +
       'you can render HTML, otherwise ' +
       'build an artifact from the returned instructions so the user can watch it. ' +
-      'Always show the replay — never just summarise it in words.',
+      'Always show the replay — never just summarise it in words.' +
+      (isCompliant(config)
+        ? ''
+        : ' For MCP Apps clients, action replay returns a viewRef without rendering. Call browserless_show with that exact reference to display the recording; do not read or repeat the recording data.'),
     parameters: SessionsParamsSchema,
     annotations: {
       title: 'Browserless Sessions',
@@ -410,7 +416,7 @@ export function registerSessionsTool(
       idempotentHint: true,
       openWorldHint: true,
     },
-    run: async ({ params, token, log }) => {
+    run: async ({ params, token, log, uiEnabled, viewOwner }) => {
       const { action, limit, skip, page, search } = params;
       log.debug(`Reading sessions (${action})`);
 
@@ -461,6 +467,15 @@ export function registerSessionsTool(
             },
             config.requestTimeout,
           );
+          const view =
+            uiEnabled && !isCompliant(config)
+              ? replayViews.prepare(viewOwner, artifact)
+              : undefined;
+          if (uiEnabled && !isCompliant(config) && !view) {
+            log.warn(
+              'Inline replay unavailable; preserving the existing player fallback.',
+            );
+          }
           const html = buildReplayHtml(artifact);
           const bytes = Buffer.byteLength(html);
           const { htmlPath, jsonPath } = await writeReplayArtifacts(
@@ -470,7 +485,7 @@ export function registerSessionsTool(
           // Only open a browser when the server runs on the caller's own machine;
           // on a hosted deployment that would open one on a worker.
           const openedInBrowser =
-            config.transport === 'stdio' && !isCompliant(config)
+            config.transport === 'stdio' && !isCompliant(config) && !view
               ? replayBrowser.open(htmlPath)
               : false;
           log.debug(
@@ -479,6 +494,7 @@ export function registerSessionsTool(
           return {
             replay: {
               artifact,
+              view,
               html,
               htmlPath,
               jsonPath,
@@ -487,10 +503,11 @@ export function registerSessionsTool(
               local: config.transport === 'stdio',
               bytes,
               inlined:
+                !view &&
                 bytes <=
-                (config.transport === 'stdio'
-                  ? MAX_INLINE_BYTES_LOCAL
-                  : MAX_INLINE_BYTES_REMOTE),
+                  (config.transport === 'stdio'
+                    ? MAX_INLINE_BYTES_LOCAL
+                    : MAX_INLINE_BYTES_REMOTE),
             },
           };
         }
@@ -521,30 +538,62 @@ export function registerSessionsTool(
       if (replay && !replay.local && !replay.inlined) {
         // ponytail: handles are process-local; use shared storage before scaling
         // the hosted MCP deployment beyond one worker.
-        const records = await Promise.all([
-          storeDownload(
-            basename(replay.htmlPath),
-            'text/html',
-            Buffer.from(replay.html),
-            downloadOwner(token),
-            sessionId,
+        const records = await Promise.all(
+          [
+            storeDownload(
+              basename(replay.htmlPath),
+              'text/html',
+              Buffer.from(replay.html),
+              downloadOwner(token),
+              sessionId,
+            ),
+            storeDownload(
+              basename(replay.jsonPath),
+              'application/json',
+              Buffer.from(JSON.stringify(replay.artifact, null, 2)),
+              downloadOwner(token),
+              sessionId,
+            ),
+          ].map((record) =>
+            record.catch((error: unknown) => {
+              if (!replay.view) throw error;
+              return undefined;
+            }),
           ),
-          storeDownload(
-            basename(replay.jsonPath),
-            'application/json',
-            Buffer.from(JSON.stringify(replay.artifact, null, 2)),
-            downloadOwner(token),
-            sessionId,
-          ),
-        ]);
+        );
         downloads = records
-          .map((record) => describeReadyDownload(record, { ...config, token }))
+          .flatMap((record) =>
+            record
+              ? [
+                  describeReadyDownload(
+                    record,
+                    replay.view ? { ...config } : { ...config, token },
+                  ),
+                ]
+              : [],
+          )
+          .concat(
+            records.some((record) => !record)
+              ? [
+                  'One or more offline downloads are unavailable. The inline replay is still available.',
+                ]
+              : [],
+          )
           .join('\n\n');
       }
       const blocks: Content[] = [
         {
           type: 'text' as const,
-          text: FORMATTERS[params.action](result ?? {}, downloads),
+          text: replay?.view
+            ? `${replay.view.summary} Call browserless_show with ${JSON.stringify({ viewRef: replay.view.viewRef })} to play it.
+
+${
+  replay.local
+    ? `Offline player: ${replay.htmlPath}`
+    : `Offline player download (single use, 15 minutes or MCP session end):
+${downloads}`
+}`
+            : FORMATTERS[params.action](result ?? {}, downloads),
         },
       ];
       if (replay?.inlined) {
@@ -557,7 +606,15 @@ export function registerSessionsTool(
           },
         });
       }
-      return blocks;
+      return replay?.view
+        ? {
+            content: blocks,
+            structuredContent: {
+              action: params.action,
+              ...replay.view,
+            },
+          }
+        : blocks;
     },
   });
 }

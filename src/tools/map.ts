@@ -3,6 +3,7 @@ import type { Content } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { isCompliant, COMPLIANT_MAP_DESCRIPTION } from './compliance.js';
 import type { MapParams, MapResponse, McpConfig } from '../@types/types.js';
 
 export const SitemapModeSchema = z.enum(['include', 'skip', 'only']);
@@ -44,20 +45,33 @@ export const MapParamsSchema = z.object({
     .describe('Request timeout in milliseconds'),
 });
 
+const CompliantMapParamsSchema = MapParamsSchema.extend({
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(500)
+    .optional()
+    .default(100)
+    .describe('Maximum number of URLs to return (default: 100, max: 500)'),
+}).strict();
+
 export function registerMapTool(
   server: FastMCP,
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const compliant = isCompliant(config);
   defineTool<MapParams, MapResponse>(server, config, analytics, {
     name: 'browserless_map',
-    description:
-      'Discover and map all URLs on a website using Browserless. ' +
-      'Scans a site via sitemaps and link extraction to find all pages. ' +
-      'Returns a list of URLs with optional titles and descriptions. ' +
-      'Use the search parameter to order results by relevance to a query. ' +
-      'Useful for site audits, content discovery, and building site maps.',
-    parameters: MapParamsSchema,
+    description: compliant
+      ? COMPLIANT_MAP_DESCRIPTION
+      : 'Discover and map all URLs on a website using Browserless. ' +
+        'Scans a site via sitemaps and link extraction to find all pages. ' +
+        'Returns a list of URLs with optional titles and descriptions. ' +
+        'Use the search parameter to order results by relevance to a query. ' +
+        'Useful for site audits, content discovery, and building site maps.',
+    parameters: compliant ? CompliantMapParamsSchema : MapParamsSchema,
     annotations: {
       title: 'Browserless Map',
       readOnlyHint: true,
@@ -66,6 +80,9 @@ export function registerMapTool(
     },
     validateUrl: (p) => assertHttpScheme(p.url),
     run: async ({ client, params, log }) => {
+      if (compliant && (params.limit ?? 100) > 500) {
+        throw new UserError('limit can be at most 500 on this endpoint.');
+      }
       const response = await client.map({
         url: params.url,
         search: params.search,

@@ -440,6 +440,7 @@ describe('account-data tools', () => {
         expect(resource.resource.text).to.include('rrweb-player');
         // The events must be inlined so the page plays offline.
         expect(resource.resource.text).to.include('replay-data');
+        expect(result).not.to.have.property('structuredContent');
 
         expect(textOf(result)).to.include('sr_1');
         expect(textOf(result)).to.include('2 events');
@@ -484,6 +485,7 @@ describe('account-data tools', () => {
           ...mockConfig,
           transport: 'httpStream',
         });
+        expect(spy.firstCall.args[0]).not.to.have.property('outputSchema');
         const result = (await (
           spy.firstCall.args[0].execute as never as (
             a: unknown,
@@ -494,6 +496,7 @@ describe('account-data tools', () => {
         };
 
         const text = (result.content[0] as { text: string }).text;
+        expect(result).not.to.have.property('structuredContent');
         expect(text).to.include('write the resource to a .html file');
         expect(text).to.include('never rebuild the player');
         expect(text).to.not.include('browserless-replay-');
@@ -538,16 +541,24 @@ describe('account-data tools', () => {
               } as never,
             )) as { content: Content[] };
             const text = textOf(result);
+            expect(result).not.to.have.property('structuredContent');
             expect(result.content).to.have.length(1);
             expect(text).to.not.include('browserless-replay-');
             expect(text).to.not.include('opened on that host');
             expect(text).to.not.include('test-token');
+            expect(text).to.not.include('caller-token');
+            expect(text).to.include(
+              'Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}',
+            );
             expect(text).to.include('15 minutes');
             const urls =
               text.match(/https:\/\/mcp\.example\.com\/download\/[^"\s]+/g) ??
               [];
             expect(urls).to.have.length(2);
             const app = server.getApp();
+            const ownerHeaders = {
+              Authorization: 'Bearer caller-token',
+            };
             for (const url of urls) {
               const foreign = new URL(url);
               foreign.searchParams.set('token', 'other-token');
@@ -556,7 +567,9 @@ describe('account-data tools', () => {
             if (lifecycle === 'expiry') await clock.tickAsync(15 * 60 * 1000);
             if (lifecycle === 'session end') clearSession(sessionId);
             for (const [index, url] of urls.entries()) {
-              const response = await app.request(url);
+              const response = await app.request(url, {
+                headers: ownerHeaders,
+              });
               expect(response.status).to.equal(
                 lifecycle === 'fetch' ? 200 : 404,
               );
@@ -572,7 +585,9 @@ describe('account-data tools', () => {
               };
               if (index === 0) expect(body).to.equal(buildReplayHtml(expected));
               else expect(JSON.parse(body)).to.deep.equal(expected);
-              expect((await app.request(url)).status).to.equal(404);
+              expect(
+                (await app.request(url, { headers: ownerHeaders })).status,
+              ).to.equal(404);
             }
           } finally {
             clearSession(sessionId);

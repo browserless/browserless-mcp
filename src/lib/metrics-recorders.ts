@@ -93,11 +93,12 @@ export const createSyncInstruments = (): void => {
     },
   );
   mcpRequests = meter.createCounter('browserless.mcp.requests', {
-    description: 'Inbound MCP requests (POST /mcp), by authentication outcome',
+    description:
+      'Inbound MCP endpoint requests (POST, GET, DELETE), by authentication outcome',
     unit: '{request}',
   });
   mcpDuration = meter.createHistogram('browserless.mcp.auth.duration', {
-    description: 'Inbound MCP request authentication duration (POST /mcp)',
+    description: 'Inbound MCP endpoint request authentication duration',
     unit: 's',
     advice: DURATION_ADVICE,
   });
@@ -190,17 +191,18 @@ export const recordSessionLifetime = (
   }
 };
 
-/** Record an inbound MCP request (POST /mcp) when auth settles, via FastMCP's
+/** Record an inbound MCP endpoint request when auth settles, via FastMCP's
  *  authenticate hook: durationMs = auth latency, outcome = pass/fail. Never throws. */
 export const recordMcpRequest = (
-  outcome: 'authenticated' | 'rejected',
+  outcome: 'authenticated' | 'rejected' | 'session_mismatch',
   durationMs: number,
+  method: 'POST' | 'GET' | 'DELETE' | 'other',
 ): void => {
   if (!mcpRequests) return;
   try {
-    mcpRequests.add(1, { outcome });
+    mcpRequests.add(1, { outcome, method });
     if (Number.isFinite(durationMs))
-      mcpDuration?.record(durationMs / 1000, { outcome });
+      mcpDuration?.record(durationMs / 1000, { outcome, method });
   } catch {
     /* never break request handling */
   }

@@ -28,6 +28,9 @@ export type {
   AgentError,
 } from '../@types/types.js';
 
+// Matches the `tool` value on MCP Tool Request for this tool.
+const AGENT_TOOL_NAME = 'browserless_agent';
+
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
 // Count of agent commands awaiting a response per session. A command may run
@@ -45,6 +48,100 @@ const endCommand = (session: ActiveSession): void => {
 };
 const hasInFlightCommand = (session: ActiveSession): boolean =>
   (inFlightCommands.get(session) ?? 0) > 0;
+
+const humanHandoffs = new WeakMap<ActiveSession, string>();
+type HumanHandoff = {
+  key: string;
+  session: ActiveSession;
+  expires: number;
+  close?: () => Promise<void>;
+  closing?: Promise<void>;
+};
+const handoffHandles = new Map<string, HumanHandoff>();
+const handoffKey = (
+  handle: string,
+  apiUrl: string,
+  token: string,
+  userId?: string,
+) => JSON.stringify([handle, apiUrl, hashToken(token), userId]);
+// Keep terminal guards until completion or explicit close. Expiry permits idle
+// cleanup, never silent browser replacement; the 16-entry admission cap bounds
+// retained guards as well as active handoffs.
+export class HumanHandoffActiveError extends Error {
+  constructor() {
+    super(
+      'A human handoff owns this browser. Wait for Done and check browserless_live_url action handoff_status with its viewRef before continuing. If it expired or disconnected, explicitly close the session before starting again. Do not create a replacement browser automatically.',
+    );
+  }
+}
+export const releaseHumanHandoff = (
+  session: ActiveSession,
+  generation?: string,
+) => {
+  if (generation && humanHandoffs.get(session) !== generation) return;
+  humanHandoffs.delete(session);
+  handoffHandles.delete(
+    handoffKey(session.handle, session.apiUrl, session.token, session.userId),
+  );
+};
+
+/** Mint on the existing socket after excluding concurrent browser commands. */
+export async function startHumanHandoff(
+  session: ActiveSession,
+  params: Record<string, unknown>,
+  generation: string,
+  onClose?: (result: unknown) => Promise<void>,
+  prepareResponse?: (
+    response: AgentResponse,
+    request: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<AgentResponse>,
+  ) => Promise<AgentResponse>,
+) {
+  if (humanHandoffs.has(session)) throw new HumanHandoffActiveError();
+  if (handoffHandles.size >= 16)
+    throw new Error(
+      'Too many unresolved human handoffs. Complete or explicitly close an existing session first.',
+    );
+  if (hasInFlightCommand(session) || session.ws.readyState !== WebSocket.OPEN)
+    throw new Error(
+      'The existing browser is busy or disconnected. Retry the handoff after the current operation finishes.',
+    );
+  const key = [...sessions].find(([, active]) => active === session)?.[0];
+  if (!key) throw new Error('The existing browser session is unavailable.');
+  humanHandoffs.set(session, generation);
+  const handoff: HumanHandoff = {
+    key,
+    session,
+    expires:
+      Date.now() +
+      Math.min(
+        typeof params.timeout === 'number' ? params.timeout : 300_000,
+        900_000,
+      ),
+  };
+  handoffHandles.set(
+    handoffKey(session.handle, session.apiUrl, session.token, session.userId),
+    handoff,
+  );
+  beginCommand(session);
+  try {
+    const request = (method: string, args: Record<string, unknown>) =>
+      sendMessage(session.ws, { id: ++session.msgId, method, params: args });
+    let response = await request('liveURL', params);
+    if (!response.error && prepareResponse)
+      response = await prepareResponse(response, request);
+    if (response.error) releaseHumanHandoff(session, generation);
+    else if (onClose) handoff.close = () => onClose(response.result);
+    return response;
+  } catch (error) {
+    releaseHumanHandoff(session, generation);
+    throw error;
+  } finally {
+    endCommand(session);
+  }
+}
 
 export const clearExpiredStripeLinkContinuation = (
   session: ActiveSession,
@@ -351,6 +448,7 @@ export const getActiveSessionByHandle = (
   apiUrl: string,
   token: string,
   userId?: string,
+  touch = true,
 ): ActiveSession => {
   const matches = [...sessions.values()].filter(
     (session) =>
@@ -365,7 +463,7 @@ export const getActiveSessionByHandle = (
       'The requested browser session is unavailable. Open or resume it with browserless_agent first.',
     );
   }
-  matches[0].lastUsedAt = Date.now();
+  if (touch) matches[0].lastUsedAt = Date.now();
   return matches[0];
 };
 
@@ -458,12 +556,16 @@ export const sweepSessions = (
   now = Date.now(),
   maxSessions = MAX_SESSIONS,
 ): void => {
+  const handoffActive = new Set<ActiveSession>();
+  for (const entry of handoffHandles.values())
+    if (entry.expires > now) handoffActive.add(entry.session);
   for (const [key, session] of sessions) {
     clearExpiredStripeLinkContinuation(session);
     if (
       stripeLinkOperations.has(session) ||
       session.stripeLinkContinuation ||
-      hasInFlightCommand(session)
+      hasInFlightCommand(session) ||
+      handoffActive.has(session)
     ) {
       continue;
     }
@@ -479,7 +581,8 @@ export const sweepSessions = (
       ([, session]) =>
         !stripeLinkOperations.has(session) &&
         !session.stripeLinkContinuation &&
-        !hasInFlightCommand(session),
+        !hasInFlightCommand(session) &&
+        !handoffActive.has(session),
     )
     .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
     .slice(0, overage);
@@ -700,6 +803,7 @@ interface AgentCapabilityManifest {
 export const preflightAgentCapabilities = async (
   agentUrl: string,
   required: string[],
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<void> => {
   if (required.length === 0) return;
 
@@ -707,7 +811,10 @@ export const preflightAgentCapabilities = async (
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname += '/capabilities';
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const res = await fetch(url, {
+    headers: { 'x-browserless-mcp-tool': mcpTool },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new Error(
@@ -896,6 +1003,7 @@ const postCreateProfile = async (
   token: string,
   createProfile: CreateProfileParams,
   os?: string,
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<CreationSessionInfo> => {
   const url = apiEndpoint(apiUrl, '/profile');
   url.searchParams.set('token', token);
@@ -907,7 +1015,10 @@ const postCreateProfile = async (
   try {
     res = await fetch(url.toString(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-browserless-mcp-tool': mcpTool,
+      },
       body: JSON.stringify(createProfile),
       signal: controller.signal,
     });
@@ -955,6 +1066,7 @@ const connect = (
   record?: boolean,
   persona?: PersonaOptions,
   handle?: string,
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
     const wsUrl = buildAgentWsUrl(
@@ -971,14 +1083,15 @@ const connect = (
       record,
       persona,
     );
-    // Forward the origin on the upgrade so the server can attribute captured
-    // skills; reuses the same header the MCP already receives on its inbound.
-    const headers: Record<string, string> = {};
+    // Forward the origin and tool on the upgrade so the server can attribute
+    // captured skills and profile analytics; the source reuses the header the
+    // MCP already receives on its inbound.
+    const headers: Record<string, string> = {
+      'x-browserless-mcp-tool': mcpTool,
+    };
     if (source) headers['x-browserless-mcp-source'] = source;
     if (handle) headers['x-browserless-agent-session'] = handle;
-    const ws = new WebSocket(wsUrl, {
-      headers: Object.keys(headers).length ? headers : undefined,
-    });
+    const ws = new WebSocket(wsUrl, { headers });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -1113,7 +1226,15 @@ export const getOrCreateSession = async (
   persona?: PersonaOptions,
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
+  mcpTool = AGENT_TOOL_NAME,
 ): Promise<ActiveSession> => {
+  const requestedHandle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : echoedSessionId;
+  const paused =
+    requestedHandle &&
+    handoffHandles.get(handoffKey(requestedHandle, apiUrl, token, userId));
+  if (paused) throw new HumanHandoffActiveError();
   sweepSessions();
   if (os && persona?.emulationOs && os !== persona.emulationOs) {
     throw new PersonaConflictError(
@@ -1334,6 +1455,7 @@ export const getOrCreateSession = async (
           token,
           createProfile,
           effectivePersona?.emulationOs,
+          mcpTool,
         )
       ).id;
     }
@@ -1352,6 +1474,7 @@ export const getOrCreateSession = async (
       record,
       createProfile ? undefined : effectivePersona,
       handle,
+      mcpTool,
     );
     const session: ActiveSession = {
       ws,
@@ -1363,6 +1486,7 @@ export const getOrCreateSession = async (
       createProfile,
       creationSessionId,
       source,
+      mcpTool,
       compliant,
       handle,
       integrationId,
@@ -1442,6 +1566,7 @@ export const send = async (
   timeoutMs?: number,
   onSession?: (reused: boolean, ageMs: number) => void,
 ): Promise<AgentResponse> => {
+  if (humanHandoffs.has(session)) throw new HumanHandoffActiveError();
   // Mark the command in flight for the whole operation — including any reconnect
   // wait — so a sweep tick cannot evict the session mid-send (which would drop
   // the new socket's cleanup listener). Refresh the idle clock on completion.
@@ -1466,6 +1591,7 @@ export const send = async (
           session.record,
           session.creationSessionId ? undefined : session.persona,
           session.handle,
+          session.mcpTool,
         ).finally(() => {
           session.reconnecting = undefined;
         });
@@ -1475,6 +1601,7 @@ export const send = async (
       if (session.ws !== ws) {
         session.ws = ws;
         session.msgId = 0;
+        session.mediaPageUrl = undefined;
         createdAt.set(session, Date.now());
 
         const key = [...sessions.entries()].find(([, s]) => s === session)?.[0];
@@ -1527,7 +1654,7 @@ export const closeSession = (
   allowedDomains?: string[],
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
-): void => {
+): void | Promise<void> => {
   const key = getSessionKey(
     mcpSessionId,
     token,
@@ -1540,15 +1667,18 @@ export const closeSession = (
     allowedDomains,
     userId,
   );
-  closeSessionByKey(key, onSession);
+  return closeSessionByKey(key, onSession);
 };
 
 /** Close the exact cached key, including profile, attach, and integration scope. */
 const closeSessionByKey = (
   key: string,
   onSession?: (reused: boolean, ageMs: number) => void,
-): void => {
-  const session = sessions.get(key);
+): void | Promise<void> => {
+  const handoff = [...handoffHandles.values()].find(
+    (entry) => entry.key === key,
+  );
+  const session = sessions.get(key) ?? handoff?.session;
   if (session) {
     onSession?.(true, Math.max(0, Date.now() - createdAt.get(session)!));
     if (stripeLinkOperations.has(session)) {
@@ -1565,21 +1695,40 @@ const closeSessionByKey = (
           : 'A Stripe Link checkout is awaiting its outcome report. Submit the order and report it before closing the browser.',
       );
     }
-    try {
-      session.ws.close();
-    } catch {
-      /* ignore */
+    if (humanHandoffs.has(session) && hasInFlightCommand(session)) {
+      throw new SessionCloseConflictError(
+        'A human handoff is being prepared. Retry closing when it finishes.',
+      );
     }
-    // Record agent lifetime on explicit close too, not only idle/cap eviction;
-    // the sessions-map delete below stops any session being counted twice.
-    const bornAt = createdAt.get(session);
-    if (bornAt !== undefined)
-      recordSessionLifetime('agent', Date.now() - bornAt);
-    sessions.delete(key);
   }
-  retainedPersonas.delete(key);
-  retainedProxies.delete(key);
-  retainedProfiles.delete(key);
+  const finish = () => {
+    if (session) {
+      releaseHumanHandoff(session);
+      try {
+        session.ws.close();
+      } catch {
+        /* ignore */
+      }
+      // Record only cached sessions; a disconnected handoff has already left it.
+      const bornAt = createdAt.get(session);
+      if (sessions.get(key) === session && bornAt !== undefined)
+        recordSessionLifetime('agent', Date.now() - bornAt);
+      sessions.delete(key);
+    }
+    retainedPersonas.delete(key);
+    retainedProxies.delete(key);
+    retainedProfiles.delete(key);
+  };
+  if (handoff?.close) {
+    return (handoff.closing ??= handoff
+      .close()
+      .then(finish)
+      .catch((error) => {
+        handoff.closing = undefined;
+        throw error;
+      }));
+  }
+  finish();
 };
 
 /** Handles are token/user scoped but can identify more than one integration binding. */
@@ -1587,8 +1736,11 @@ export const closeSessionByHandle = (
   handle: string,
   token: string,
   userId?: string,
-): boolean => {
-  const matches = [...sessions.entries()].filter(
+): boolean | Promise<boolean> => {
+  const candidates = new Map(sessions);
+  for (const entry of handoffHandles.values())
+    if (!candidates.has(entry.key)) candidates.set(entry.key, entry.session);
+  const matches = [...candidates].filter(
     ([, session]) =>
       session.handle === handle &&
       session.token === token &&
@@ -1600,8 +1752,8 @@ export const closeSessionByHandle = (
     );
   }
   if (!matches.length) return false;
-  closeSessionByKey(matches[0][0]);
-  return true;
+  const closed = closeSessionByKey(matches[0][0]);
+  return closed instanceof Promise ? closed.then(() => true) : true;
 };
 
 /**

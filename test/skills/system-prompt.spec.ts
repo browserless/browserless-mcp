@@ -56,6 +56,18 @@ describe('registration and credential guidance', () => {
 
 it('guides saved-login reporting only in the full Auth section', () => {
   const auth = AGENT_SYSTEM_PROMPT.split('## Auth')[1].split('\n## ')[0];
+  for (const surface of [auth, renderSkill('auth-profile', false)]) {
+    for (const text of [
+      'keepSessionAlive: true',
+      'initial',
+      'before any login actions',
+      'not with `close`',
+      'end that first page-load batch with `snapshot`',
+    ]) {
+      expect(surface.toLowerCase()).to.include(text.toLowerCase());
+    }
+    expect(surface).to.match(/first command of (?:your|the) next.*?batch/i);
+  }
   for (const text of [
     'reportProfileAuthentication',
     'newLoginActivity',
@@ -63,7 +75,7 @@ it('guides saved-login reporting only in the full Auth section', () => {
     'login_required',
     'challenge',
     'unknown',
-    'last command',
+    'FIRST command',
     'Never send it on sessions without',
     'session handle retains the profile',
     'before any login actions',
@@ -244,5 +256,17 @@ describe('full Agent persona and proxy guidance', () => {
     expect(AGENT_SYSTEM_PROMPT).to.match(/datacenter/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/lower-cost/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/residential.*block/i);
+  });
+});
+
+describe('auth skill summaries', () => {
+  it('summarize both auth skills as reporting the outcome, not a JSON shape', () => {
+    const skills = AGENT_SYSTEM_PROMPT.split(
+      '## Skills (auto-injected)',
+    )[1].split('\n## ')[0];
+    for (const text of [skills, SKILL_TOOL_DESCRIPTION]) {
+      expect(text).not.to.include('final JSON');
+      expect(text.split('how to report the outcome').length - 1).to.equal(2);
+    }
   });
 });

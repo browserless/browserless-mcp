@@ -21,6 +21,26 @@ describe('download route', () => {
     expect((await app().request('/download/missing')).status).to.equal(401);
   });
 
+  it('accepts bearer headers while preserving ownership and single use', async () => {
+    const record = await storeDownload(
+      'header.txt',
+      'text/plain',
+      Buffer.from('header bytes'),
+      downloadOwner('owner-a'),
+    );
+    const route = app();
+    const request = (token: string) =>
+      route.request(`/download/${record.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+    expect((await request('owner-b')).status).to.equal(404);
+    const response = await request('owner-a');
+    expect(response.status).to.equal(200);
+    expect(await response.text()).to.equal('header bytes');
+    expect((await request('owner-a')).status).to.equal(404);
+  });
+
   it('hides foreign records without consuming them', async () => {
     const record = await storeDownload(
       'private.txt',

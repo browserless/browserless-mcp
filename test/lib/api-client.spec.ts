@@ -56,6 +56,44 @@ describe('createApiClient', () => {
     sinon.restore();
   });
 
+  describe('MCP tool attribution', () => {
+    it('forwards the MCP tool name as x-browserless-mcp-tool', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient({
+        ...mockConfig,
+        mcpTool: 'browserless_smartscraper',
+      });
+      await client.smartScrape({ url: 'https://example.com' });
+
+      const [, options] = fetchStub.firstCall.args;
+      expect(options.headers).to.deep.equal({
+        'Content-Type': 'application/json',
+        'x-browserless-mcp-tool': 'browserless_smartscraper',
+      });
+    });
+
+    it('omits the header when no MCP tool is configured', async () => {
+      fetchStub.resolves(
+        new Response(JSON.stringify(mockSuccessResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const client = createApiClient(mockConfig);
+      await client.smartScrape({ url: 'https://example.com' });
+
+      const [, options] = fetchStub.firstCall.args;
+      expect(options.headers).to.not.have.property('x-browserless-mcp-tool');
+    });
+  });
+
   describe('smartScrape', () => {
     it('sends correct request to the /smart-scrape endpoint', async () => {
       fetchStub.resolves(

@@ -5,10 +5,8 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 // Edits built dists that expose no option for the behaviour we need:
 //
-// 1. fastmcp advertises `tools: {}` and exposes no option to enable
-//    `listChanged`, so clients never re-fetch when our tool surface changes.
-//    The capability lives in a private field (`#capabilities.tools`) set inside
-//    FastMCPSession.
+// 1. fastmcp advertises `listChanged` itself; make it conditional on our
+//    start-up flag so the connector advertises a static tool list.
 // 2. mcp-proxy, fastmcp's HTTP layer, bundles @hono/node-server, whose stream
 //    writer ends each chunk with `return reader.read().then(flow, ...)`. The
 //    returned promise makes every chunk's promise adopt the next one, so a
@@ -53,7 +51,8 @@ const patch = ({ name, dist, files, from, to, required = true }) => {
   for (const file of entries.filter((f) => files.test(f))) {
     const path = join(dist, file);
     const src = readFileSync(path, 'utf8');
-    const updated = src.replaceAll(to, from).replaceAll(from, to);
+    const unpatched = typeof from === 'string' ? src.replaceAll(to, from) : src;
+    const updated = unpatched.replaceAll(from, to);
     if (updated !== src) {
       writeFileSync(path, updated);
       changed++;
@@ -88,8 +87,16 @@ patch({
   name: 'tools.listChanged',
   dist: dirname(fastmcpEntry),
   files: /\.(cjs|js)$/,
-  from: 'this.#capabilities.tools = {};',
-  to: 'this.#capabilities.tools = { listChanged: true };',
+  from: /this\.#capabilities\.tools = (?:\{\}|\{ listChanged: true \});/g,
+  to: 'this.#capabilities.tools = globalThis.__browserlessMcpStaticTools ? {} : { listChanged: true };',
+});
+
+patch({
+  name: 'session auth accessor',
+  dist: dirname(fastmcpEntry),
+  files: /\.(cjs|js)$/,
+  from: '  updateAuth(auth) {',
+  to: '  get auth() {\n    return this.#auth;\n  }\n  updateAuth(auth) {',
 });
 
 // mcp-proxy is pinned only for our own installs (package.json overrides); npm
@@ -136,6 +143,48 @@ if (mcpProxyEntry) {
     files: /\.(mjs|js)$/,
     from: 'else return reader.read().then(flow, handleStreamError);',
     to: 'else reader.read().then(flow, handleStreamError);',
+    required: false,
+  });
+  patch({
+    name: 'session request authentication',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'const handleStreamRequest = async ({',
+    to: `const authenticateSessionRequest = async ({ authenticate, oauth, req, res }) => {
+  if (!authenticate) return false;
+  let message = "Unauthorized: Authentication failed";
+  try {
+    const result = await authenticate(req);
+    if (result && result.authenticated !== false) return false;
+    if (typeof result?.error === "string") message = result.error;
+  } catch (error) {
+    if (await handleResponseError(error, res)) return true;
+    if (error instanceof Error) message = error.message;
+  }
+  const headers = { "Content-Type": "application/json" };
+  const challenge = getWWWAuthenticateHeader(oauth, { error: "invalid_token", error_description: message });
+  if (challenge) headers["WWW-Authenticate"] = challenge;
+  res.writeHead(401, headers);
+  res.end(createJsonRpcErrorResponse(-32000, message));
+  return true;
+};
+const handleStreamRequest = async ({`,
+    required: false,
+  });
+  patch({
+    name: 'session request authentication GET',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'const activeTransport = sessionId ? activeTransports[sessionId] : void 0;',
+    to: 'if (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;\n\t\tconst activeTransport = sessionId ? activeTransports[sessionId] : void 0;',
+    required: false,
+  });
+  patch({
+    name: 'session request authentication DELETE',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'console.log("[mcp-proxy] received delete request");',
+    to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
 }

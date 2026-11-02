@@ -29,7 +29,7 @@ Match **contextually** by name-to-domain correspondence (fixed names not require
 
 Absent / ambiguous / multiple plausible pairs → `MISSING_CONTEXT`. TOTP same rule.
 
-Gate 1 or 2 fails → stop, emit the matching `reason_code`. (Gate 0 isn't a stop — it means fix the call and retry.) Continue only when both pass.
+Gate 1 or 2 fails → stop; the matching `reason_code` is your outcome (see Final response). (Gate 0 isn't a stop — it means fix the call and retry.) Continue only when both pass.
 
 ## Reach the form
 
@@ -57,7 +57,7 @@ Anything missing → `FORM_NOT_FOUND` (say what's missing).
 
 One batched call (type username, type password, click submit) with Gate-2 values → `waitForNavigation` (10000ms) or `waitForResponse` on `*`. Both time out → verify anyway (page may update in place). Re-snapshot. **Never retype the same credentials to retry** — caller's call. If `loadSecret` filled a field, keep the batch as fill → click submit → `waitForNavigation`: the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; it still refuses `snapshot` and captures until then, so on a timeout (no navigation) `waitForSelector` for a signed-in element first, then send `{ method: "clearSecrets" }` before the first snapshot.
 
-Before clearing after a timeout, require both a newly appeared post-submit marker and removal of every secret-filled field. Use secret-safe `waitForSelector` for `body:not(:has(<filled-field-selector>))` per field (10000ms); hidden fields still carry values, and a pre-existing Account link proves nothing. Any wait fails → do not clear or snapshot; close with `SUBMIT_NO_FEEDBACK`. This rule also applies to TOTP and emailed-code submissions below.
+Before clearing after a timeout, require both a newly appeared post-submit marker and removal of every secret-filled field. Use secret-safe `waitForSelector` for `body:not(:has(<filled-field-selector>))` per field (10000ms); hidden fields still carry values, and a pre-existing Account link proves nothing. Any wait fails → do not clear or snapshot; send the applicable reports (`reportSkillOutcome` if you loaded a site recipe, then `reportOutcome` with `success: false`, `reason` `other`), then `close`; the outcome is `SUBMIT_NO_FEEDBACK`. This rule also applies to TOTP and emailed-code submissions below.
 
 ## Verify success (any one, priority order)
 
@@ -95,7 +95,7 @@ Triggered by `autocomplete="one-time-code"`, numeric input with `maxlength` ∈ 
 
 - Contextually-matched TOTP (Gate-2 rule; an `op://…?attribute=otp` ref via `loadSecret`, or a user-supplied code via `type`) → fill, submit, re-verify.
 
-**Emailed code.** If the task names a mailbox item in the bound vault, let the site send the code, focus the code input, then send `{ method: "loadSecret", params: { ref: "mail://<vault>/<item>/otp", selector: "<code input>" } }` — the server polls that mailbox for up to ~45 s and types the newest code; you never see it (vault and item segments are URL-encoded; append `?wait=90000` for slow senders). In the same batch click the submit control, then `waitForNavigation` (10000ms) — the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; if it times out, `waitForSelector` (secret-safe) for a signed-in control or confirmation element, then `{ method: "clearSecrets" }` and re-verify; neither appears → treat the code as not accepted and do not `clearSecrets` to peek. `OtpTimeout` → click `Resend` once and retry once. **No mailbox item, or two timeouts → ask the user for the code in plain text and STOP this turn. Do NOT `close`, do NOT emit the final JSON. Leave the session open so the code input and cookies survive the round-trip.** User replies → `type` it, submit, re-verify. **Magic link** (no code field) → ask the user to click it, keep the session open, then re-verify. **Phone/SMS or WebAuthn** → never attempt.
+**Emailed code.** If the task names a mailbox item in the bound vault, let the site send the code, focus the code input, then send `{ method: "loadSecret", params: { ref: "mail://<vault>/<item>/otp", selector: "<code input>" } }` — the server polls that mailbox for up to ~45 s and types the newest code; you never see it (vault and item segments are URL-encoded; append `?wait=90000` for slow senders). In the same batch click the submit control, then `waitForNavigation` (10000ms) — the MCP allows navigation and response waits while the capture gate is armed and lowers the gate itself when the navigation completes; if it times out, `waitForSelector` (secret-safe) for a signed-in control or confirmation element, then `{ method: "clearSecrets" }` and re-verify; neither appears → treat the code as not accepted and do not `clearSecrets` to peek. `OtpTimeout` → click `Resend` once and retry once. **No mailbox item, or two timeouts → ask the user for the code in plain text and STOP this turn. Do NOT `close` — this turn is not your final response. Leave the session open so the code input and cookies survive the round-trip.** User replies → `type` it, submit, re-verify. **Magic link** (no code field) → ask the user to click it, keep the session open, then re-verify. **Phone/SMS or WebAuthn** → never attempt.
 
 - No matching TOTP and no mailbox item → ask the user (the rule above). User declines / has none, or the prompt demands phone/SMS or WebAuthn → `MFA_INPUT_MISSING`.
 - Code rejected (`/invalid|expired|incorrect/i`) → ask for a fresh code (same don't-close rule); one fresh-code rejection → `MFA_FAILED`.
@@ -107,7 +107,11 @@ Filled a field with `loadSecret` (1Password `op://` ref or emailed code)? The ba
 
 ## Final response
 
-`close`, then emit **exactly one** fenced JSON block — nothing before or after, no prose. Fields: `success`, `reason_code`, `final_url`, `evidence`, `steps_taken` (JSON-RPC call count; batched call = 1). On failure: `success: false`, `final_url` = current URL.
+Your last message is a reply to the user, in plain language — never a status object. It answers the task they gave you: when logging in was one step of a bigger task, finish that task and answer it; the login gets a sentence only where it matters. When the login failed or was not needed, say so and why (e.g. "the site rejected the credentials", "no credentials for this site were provided") and name the page you ended on.
+
+Before that reply, send `reportOutcome` as the system prompt describes, then `close`. A login that blocked the task is `success: false` with `reason` `captcha` for `CAPTCHA_BLOCKED`, `login_required` for `MISSING_CONTEXT` / `INVALID_CREDENTIALS` / `MFA_INPUT_MISSING` / `MFA_FAILED`, else `other`.
+
+Only when your instructions or the task ask for a machine-readable final result (a fenced JSON block, a response schema, named fields) produce it exactly as they specify. Where that format lists its own allowed values for a field, use those values; use the `reason_code` below only where it asks for a reason or result code without listing values. Otherwise never end with a JSON block.
 
 `reason_code` ∈ `SUCCESS` | `LOGIN_NOT_NEEDED` | `MISSING_CONTEXT` | `INVALID_CREDENTIALS` | `MFA_INPUT_MISSING` | `MFA_FAILED` | `CAPTCHA_BLOCKED` | `FORM_NOT_FOUND` | `SUBMIT_NO_FEEDBACK` | `FIELD_TYPE_MISMATCH` | `UNEXPECTED_STATE`.
 
@@ -119,5 +123,5 @@ Filled a field with `loadSecret` (1Password `op://` ref or emailed code)? The ba
 - Try SSO buttons unless the task names that provider.
 - `evaluate` to set input `value` — use `type` so real keystrokes fire.
 - Leak credentials into narration, errors, or non-`type.params.text` fields.
-- Emit anything but the final JSON in your last _terminal_ message (ask-the-user turns aren't terminal — plain prose, stop, no `close`).
+- End your reply with a JSON block or a bare `reason_code` unless your instructions or the task ask for that format.
 - `close` while awaiting a user-supplied OTP — leave the session open so cookies, page state, and the OTP input survive the round-trip.

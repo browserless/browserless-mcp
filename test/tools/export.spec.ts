@@ -65,6 +65,55 @@ describe('browserless_export tool', () => {
     expect(() => registerExportTool(server, mockConfig)).to.not.throw();
   });
 
+  for (const binary of [false, true]) {
+    it(`connector returns ${binary ? 'a file note' : 'text'} with only public page metadata`, async () => {
+      fetchStub.resolves(
+        new Response(binary ? Buffer.alloc(200, 42) : 'page text', {
+          headers: { 'Content-Type': binary ? 'image/png' : 'text/html' },
+        }),
+      );
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const spy = sinon.spy(server, 'addTool');
+      registerExportTool(server, { ...mockConfig, complianceMode: true });
+      const result = (await spy.firstCall.args[0].execute(
+        { url: 'https://example.com' },
+        mockContext,
+      )) as { content: Array<{ text: string }> };
+      expect(result.content[0].text).to.contain(
+        binary
+          ? 'This address returned a image/png file (200 bytes)'
+          : 'page text',
+      );
+      expect(result.content[0].text).not.to.match(/[A-Za-z0-9+/]{200,}/);
+      expect(result.content).to.have.length(1);
+      expect(
+        result.content[0].text.endsWith(
+          `\n\n---\nURL: https://example.com\nContent-Type: ${binary ? 'image/png' : 'text/html'}\n---`,
+        ),
+      ).to.equal(true);
+    });
+  }
+
+  it('connector rejects referer even when schema validation is bypassed', async () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const spy = sinon.spy(server, 'addTool');
+    registerExportTool(server, { ...mockConfig, complianceMode: true });
+    const error = await spy.firstCall.args[0]
+      .execute(
+        {
+          url: 'https://example.com',
+          gotoOptions: { referer: 'https://other.com' },
+        },
+        mockContext,
+      )
+      .catch((e) => e);
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.equal(
+      'gotoOptions.referer is not available on this endpoint.',
+    );
+    expect(fetchStub.called).to.equal(false);
+  });
+
   for (const [status, reason, category] of [
     [400, 'unknown', 'user_error'],
     [401, 'unauthorized', 'user_error'],

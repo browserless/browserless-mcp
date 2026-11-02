@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import assert from 'node:assert/strict';
 import sinon from 'sinon';
 import http from 'node:http';
 import {
@@ -17,6 +18,9 @@ import {
   sessionHandle,
   dropMcpSession,
   send,
+  startHumanHandoff,
+  releaseHumanHandoff,
+  HumanHandoffActiveError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
 import type { ProxyOptions } from '../../src/@types/types.js';
@@ -39,6 +43,143 @@ import {
   createSyncInstruments,
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
+
+describe('agent-client explicit close during human handoff', () => {
+  it('blocks scope and source changes until the handoff is released', async () => {
+    const server = await makeRespondingServer(() => ({ ok: true }));
+    const open = (source = 'original', integrationId?: string) =>
+      getOrCreateSession(
+        'handoff-scope',
+        server.url,
+        'scope-token',
+        undefined,
+        undefined,
+        undefined,
+        'attached-handoff',
+        false,
+        source,
+        'attach:attached-handoff',
+        integrationId,
+      );
+    const session = await open('original', 'vault');
+    try {
+      await startHumanHandoff(session, { timeout: 60_000 }, 'scope');
+      for (const [source, integration] of [
+        ['other', 'vault'],
+        ['original', 'other-vault'],
+        ['original', undefined],
+        ['original', 'vault'],
+      ] as const)
+        await assert.rejects(
+          () => open(source, integration),
+          HumanHandoffActiveError,
+        );
+      expect(server.hits()).to.equal(1);
+      releaseHumanHandoff(session, 'scope');
+      expect(await open('original', 'vault')).to.equal(session);
+      expect((await send(session, 'snapshot')).result).to.deep.equal({
+        ok: true,
+      });
+    } finally {
+      releaseHumanHandoff(session);
+      await server.close();
+    }
+  });
+
+  it('requires explicit close after a disconnected handoff expires', async () => {
+    const server = await makeRespondingServer(() => ({}));
+    const open = () =>
+      getOrCreateSession(
+        'handoff-expiry',
+        server.url,
+        'expiry-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        's:handoff-expiry',
+      );
+    const session = await open();
+    let clock: sinon.SinonStub | undefined;
+    try {
+      await startHumanHandoff(session, { timeout: 60_000 }, 'expiry');
+      const closed = new Promise<void>((resolve) =>
+        session.ws.once('close', resolve),
+      );
+      session.ws.terminate();
+      await closed;
+      const expiredAt = Date.now() + 60_001;
+      clock = sinon.stub(Date, 'now').returns(expiredAt);
+      await assert.rejects(open, HumanHandoffActiveError);
+      expect(server.hits()).to.equal(1);
+      await closeSession(
+        'handoff-expiry',
+        'expiry-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        session.handle,
+      );
+      expect(await open()).not.to.equal(session);
+      expect(server.hits()).to.equal(2);
+    } finally {
+      clock?.restore();
+      releaseHumanHandoff(session);
+      await server.close();
+    }
+  });
+
+  for (const attachment of [undefined, 'handoff-browser']) {
+    it(`clears the closed session's guard without unlocking a later handoff (attached=${Boolean(attachment)})`, async () => {
+      const server = await makeRespondingServer(() => ({}));
+      const open = () =>
+        getOrCreateSession(
+          'handoff-close',
+          server.url,
+          'handoff-close-token',
+          undefined,
+          undefined,
+          undefined,
+          attachment,
+          false,
+          undefined,
+          's:handoff-close',
+        );
+      const first = await open();
+      let next;
+      try {
+        await startHumanHandoff(first, { timeout: 60_000 }, 'first');
+        await closeSession(
+          'handoff-close',
+          'handoff-close-token',
+          undefined,
+          undefined,
+          undefined,
+          attachment,
+          first.handle,
+        );
+        next = await open();
+        expect(next).not.to.equal(first);
+        await startHumanHandoff(next, { timeout: 60_000 }, 'next');
+        releaseHumanHandoff(first, 'first');
+        let error;
+        try {
+          await send(next, 'snapshot');
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(HumanHandoffActiveError);
+      } finally {
+        releaseHumanHandoff(first);
+        if (next) releaseHumanHandoff(next);
+        await server.close();
+      }
+    });
+  }
+});
 
 describe('agent-client repetition identity', () => {
   it('bounds history while retaining recently repeated batches', () => {
@@ -164,6 +305,9 @@ describe('agent-client reconnection telemetry', () => {
             session.handle,
           );
           expect(upgrade['x-browserless-mcp-source']).to.equal(source);
+          expect(upgrade['x-browserless-mcp-tool']).to.equal(
+            'browserless_agent',
+          );
         }
       } finally {
         await server.close();
@@ -180,11 +324,13 @@ describe('agent-client reconnection telemetry', () => {
         server.url,
         'tok',
       );
+      session.mediaPageUrl = 'https://previous.example/';
       session.ws.terminate();
       clock.setSystemTime(9000);
       const acquired = sinon.spy();
       await send(session, 'getCookies', {}, undefined, acquired);
       expect(acquired.calledOnceWithExactly(false, 0)).to.equal(true);
+      expect(session.mediaPageUrl).to.equal(undefined);
       expect(server.hits()).to.equal(2);
     } finally {
       await server.close();
@@ -803,6 +949,8 @@ describe('agent-client capability preflight', () => {
     expect(url.searchParams.get('token')).to.equal('tok');
     expect(url.searchParams.get('proxy')).to.equal('datacenter');
     expect(url.searchParams.get('emulationOs')).to.equal('macos');
+    const headers = new Headers(fetchStub.firstCall.args[1]?.headers);
+    expect(headers.get('x-browserless-mcp-tool')).to.equal('browserless_agent');
   });
 
   it('fails with the missing capability and the route where it is available', async () => {
@@ -2586,6 +2734,11 @@ describe('agent-client createProfile with os and humanlike', () => {
       expect(calledUrl.pathname).to.equal('/profile');
       expect(calledUrl.searchParams.get('emulationOs')).to.equal('macos');
       expect(calledUrl.searchParams.has('humanlike')).to.equal(false);
+      const headers = new Headers(fetchStub.firstCall.args[1]?.headers);
+      expect(headers.get('x-browserless-mcp-tool')).to.equal(
+        'browserless_agent',
+      );
+      expect(headers.get('content-type')).to.equal('application/json');
       const attachUrl = new URL(server.upgradeUrls()[0]!, server.url);
       expect(attachUrl.searchParams.get('sessionId')).to.equal('sess-test-123');
       expect(attachUrl.searchParams.get('humanlike')).to.equal('true');
