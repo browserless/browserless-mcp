@@ -23,6 +23,7 @@ import {
   recordRedisError,
   recordSessionLifetime,
   recordMcpRequest,
+  recordEventStoreContextMissing,
   mcpInFlightAdd,
   noteAccountRequest,
   collectAccountWindow,
@@ -73,6 +74,7 @@ describe('metrics shape (full exported inventory)', () => {
     recordSessionLifetime('agent', 120_000);
     recordMcpRequest('authenticated', 15, 'POST');
     recordMcpRequest('session_mismatch', 1, 'GET');
+    recordEventStoreContextMissing();
     noteAccountRequest('token-aaa');
     noteAccountRequest('token-aaa');
     noteAccountRequest('token-bbb'); // 2 distinct accounts; aaa is the top talker
@@ -116,6 +118,7 @@ describe('metrics shape (full exported inventory)', () => {
     'browserless.mcp.requests',
     'browserless.mcp.auth.duration',
     'browserless.mcp.accounts.active',
+    'browserless.mcp.event_store.context_missing',
   ];
 
   it('exports every expected metric name and nothing less', () => {
@@ -150,6 +153,7 @@ describe('metrics shape (full exported inventory)', () => {
       'browserless.mcp.tool.requests',
       'browserless.mcp.redis.errors',
       'browserless.mcp.requests',
+      'browserless.mcp.event_store.context_missing',
     ]) {
       const m = byName(c);
       expect(m?.dataPointType, c).to.equal(DataPointType.SUM);

@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import {
   authInputFromRequest,
   guardRouteAuth,
+  presentsCredential,
   resolveBrowserlessAuth,
 } from '../../src/lib/http-auth.js';
 import { InvalidApiUrlError } from '../../src/lib/api-url-guard.js';
@@ -17,6 +18,18 @@ const config = {
 
 describe('resolveBrowserlessAuth', () => {
   afterEach(() => sinon.restore());
+
+  it('distinguishes presented credentials without resolving them', () => {
+    for (const [input, expected] of [
+      [{}, false],
+      [{ authHeader: 'Bearer ' }, false],
+      [{ authHeader: 'Bearer abc' }, true],
+      [{ authHeader: 'abc' }, true],
+      [{ tokenQuery: 'x' }, true],
+      [{ authHeader: 'Bearer header.payload.signature' }, true],
+    ] as const)
+      expect(presentsCredential(input)).to.equal(expected);
+  });
 
   for (const [input, token, authMethod] of [
     [{ authHeader: 'Bearer header-key' }, 'header-key', 'api_key_header'],

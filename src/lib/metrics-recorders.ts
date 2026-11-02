@@ -48,6 +48,22 @@ let redisErrors: Counter | undefined;
 let sessionLifetime: Histogram | undefined;
 let mcpRequests: Counter | undefined;
 let mcpDuration: Histogram | undefined;
+let eventStoreContextMissing: Counter | undefined;
+
+export type CursorKind =
+  'none' | 'standalone' | 'request' | 'prior_process' | 'malformed';
+export type McpRequestReason =
+  | 'ok'
+  | 'unknown_session'
+  | 'principal_mismatch'
+  | 'missing_credentials'
+  | 'invalid_credentials'
+  | 'unknown_cursor'
+  | 'cursor_context_mismatch';
+export interface McpRequestDetail {
+  reason: McpRequestReason;
+  cursor?: CursorKind;
+}
 
 // Inbound MCP requests (POST /mcp) authenticating now; read by the metrics.ts
 // gauge, maintained by the authenticate hook via mcpInFlightAdd.
@@ -102,6 +118,13 @@ export const createSyncInstruments = (): void => {
     unit: 's',
     advice: DURATION_ADVICE,
   });
+  eventStoreContextMissing = meter.createCounter(
+    'browserless.mcp.event_store.context_missing',
+    {
+      description: 'Retained request events stored without a session context',
+      unit: '{event}',
+    },
+  );
   accountsEnabled = true;
 };
 
@@ -115,6 +138,7 @@ export const resetSyncInstruments = (): void => {
   sessionLifetime = undefined;
   mcpRequests = undefined;
   mcpDuration = undefined;
+  eventStoreContextMissing = undefined;
   accountsEnabled = false;
   accountWindow.clear();
 };
@@ -197,14 +221,23 @@ export const recordMcpRequest = (
   outcome: 'authenticated' | 'rejected' | 'session_mismatch',
   durationMs: number,
   method: 'POST' | 'GET' | 'DELETE' | 'other',
+  detail?: McpRequestDetail,
 ): void => {
   if (!mcpRequests) return;
   try {
-    mcpRequests.add(1, { outcome, method });
+    mcpRequests.add(1, { outcome, method, ...detail });
     if (Number.isFinite(durationMs))
       mcpDuration?.record(durationMs / 1000, { outcome, method });
   } catch {
     /* never break request handling */
+  }
+};
+
+export const recordEventStoreContextMissing = (): void => {
+  try {
+    eventStoreContextMissing?.add(1);
+  } catch {
+    // Observation does not affect retention.
   }
 };
 

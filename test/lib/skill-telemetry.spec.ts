@@ -9,6 +9,65 @@ import {
 } from '../../src/lib/skill-telemetry.js';
 
 describe('skill telemetry contract', () => {
+  it('preserves the ordered skill record payload', async () => {
+    const previous = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = 'http://127.0.0.1:9/v1/logs';
+    const fetcher = sinon
+      .stub(globalThis, 'fetch')
+      .resolves(new Response(null));
+    try {
+      await logSkillEvent('skill.retrieval.failed', {
+        result: 'error',
+        domain: 'shop.example',
+        attempt: 1,
+        duration_ms: 17,
+      });
+      const payload = JSON.parse(fetcher.firstCall.args[1]!.body as string);
+      delete payload.resourceLogs[0].scopeLogs[0].logRecords[0].timeUnixNano;
+      expect(payload).to.deep.equal({
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                {
+                  key: 'service.name',
+                  value: { stringValue: 'browserless-mcp' },
+                },
+              ],
+            },
+            scopeLogs: [
+              {
+                scope: { name: 'skill-catalog' },
+                logRecords: [
+                  {
+                    severityNumber: 13,
+                    severityText: 'WARN',
+                    body: { stringValue: 'skill.retrieval.failed' },
+                    attributes: [
+                      { key: 'result', value: { stringValue: 'error' } },
+                      { key: 'domain', value: { stringValue: 'shop.example' } },
+                      { key: 'attempt', value: { intValue: '1' } },
+                      { key: 'duration_ms', value: { intValue: '17' } },
+                      {
+                        key: 'event.name',
+                        value: { stringValue: 'skill.retrieval.failed' },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      fetcher.restore();
+      if (previous === undefined)
+        delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = previous;
+    }
+  });
+
   const completion = {
     result: 'miss',
     skill_count: 0,
