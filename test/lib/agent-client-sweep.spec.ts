@@ -247,6 +247,32 @@ describe('agent-client session sweep', () => {
     }
   });
 
+  it('skips a session with a live handoff and reclaims it once the handoff expires', async () => {
+    const browser = await makeRespondingServer(() => ({}));
+    try {
+      const session = await client.getOrCreateSession(
+        'handoff-sweep',
+        browser.url,
+        'tok',
+      );
+      const now = Date.now();
+      await client.startHumanHandoff(session, { timeout: 60_000 }, 'gen-1');
+      const outbound = sinon.spy(session.ws, 'send');
+      session.lastUsedAt = now - 16 * 60 * 1000;
+      // Live handoff: neither the idle loop nor the cap loop may close it.
+      client.sweepSessions(now);
+      client.sweepSessions(now, 0);
+      expect(outbound.called).to.equal(false);
+      // Expired handoff: the idle session is reclaimed like any other.
+      const closed = once(session.ws, 'close');
+      client.sweepSessions(now + 61_000);
+      await closed;
+      client.releaseHumanHandoff(session, 'gen-1');
+    } finally {
+      await browser.close();
+    }
+  });
+
   for (const [value, expected] of [
     ['-1', 60_000],
     ['2147483648', 60_000],

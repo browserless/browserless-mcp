@@ -3461,6 +3461,8 @@ describe('browserless_agent live URL handoff', () => {
             undefined,
             {},
             { instructions },
+            { targetId: 'T2', mode: 'tab', instructions },
+            { mode: 'follow', timeout: 120_000 },
             { timeout: 120_000, instructions: 'Sign in, then click Done.' },
             { timeout: 600_000, instructions },
           ]) {
@@ -5268,7 +5270,7 @@ describe('browserless_agent media description', () => {
         .getCalls()
         .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
         .description;
-      expect(description?.includes('browserless_show')).to.equal(expected);
+      expect(description?.includes('Media-producing calls')).to.equal(expected);
       expect(description).not.to.include('one command batch for one gallery');
     });
   }

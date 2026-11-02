@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-export const VIEW_URI = 'ui://browserless/view/v3.html';
+export const VIEW_URI = 'ui://browserless/view/v9.html';
+export const VIEW_UNAVAILABLE =
+  'This view is unavailable. Run the original data tool again to prepare a new view.';
 export const VIEW_RESULT_MAX_BYTES = 2 * 1024 * 1024;
 export const VIEW_CHUNK_MAX_BYTES = 128 * 1024;
 export const VIEW_DATA_MAX_BYTES = 50 * 1024 * 1024;
@@ -25,24 +27,46 @@ export const ReplaySummarySchema = z.object({
   eventCount: z.number().int().nonnegative(),
 });
 
+export const HandoffSummarySchema = z.object({
+  website: z.string().max(256).optional(),
+  sessionId: z.string().max(256),
+  instructions: z.string().trim().min(1).max(2000),
+});
 export const MediaSummarySchema = z.object({
   website: z.string().max(256).optional(),
   imageCount: z.number().int().nonnegative(),
   videoCount: z.number().int().nonnegative(),
+});
+export const HandoffStateSchema = z.object({
+  status: z.enum(['open', 'expired', 'closed']),
+  reason: z
+    .enum(['timeout', 'closed', 'viewerDisconnected', 'userDone', 'userFailed'])
+    .nullable(),
+  interactable: z.boolean(),
+  viewerCount: z.number().int().nonnegative(),
+  expiresAt: z.number().finite().positive(),
 });
 
 // Keep an object root for hosts which reject a top-level union at discovery.
 export const ShowOutputSchema = z
   .object({
     viewRef: z.string(),
-    kind: z.enum(['replay', 'agent-media']),
+    kind: z.enum(['replay', 'handoff', 'agent-media']),
     summary: z.string(),
     expiresAt: z.string().datetime(),
-    data: z.union([ReplaySummarySchema, MediaSummarySchema]),
+    data: z.union([
+      ReplaySummarySchema,
+      HandoffSummarySchema,
+      MediaSummarySchema,
+    ]),
   })
   .superRefine((value, ctx) => {
     const schema =
-      value.kind === 'replay' ? ReplaySummarySchema : MediaSummarySchema;
+      value.kind === 'replay'
+        ? ReplaySummarySchema
+        : value.kind === 'handoff'
+          ? HandoffSummarySchema
+          : MediaSummarySchema;
     if (!schema.safeParse(value.data).success)
       ctx.addIssue({
         code: 'custom',

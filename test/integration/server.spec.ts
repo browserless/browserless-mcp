@@ -156,7 +156,7 @@ describe('MCP Server Integration', () => {
         const caps = client.getServerCapabilities();
         if (compliant) {
           expect(caps?.tools).to.deep.equal({});
-          expect(caps).not.to.have.property('resources');
+          expect(caps).to.have.property('resources');
           expect(caps).not.to.have.property('prompts');
         } else {
           expect(caps?.tools).to.deep.include({ listChanged: true });
@@ -174,7 +174,7 @@ describe('MCP Server Integration', () => {
         if (compliant) {
           expect(names).to.deep.equal(connectorNames);
         } else {
-          expect(names).to.have.length(20);
+          expect(names).to.have.length(21);
           expect(names).not.to.include('browserless_read_page');
           expect(names).to.include.members([
             ...connectorNames.filter(

@@ -13,6 +13,7 @@ import { getConfig } from '../../src/config.js';
 import { registerSurface } from '../../src/tools/register.js';
 import { replayViews, VIEW_UNAVAILABLE } from '../../src/lib/view-store.js';
 import { VIEW_URI, ShowOutputSchema } from '../../src/lib/view-schemas.js';
+import { PERFORMANCE_URI } from '../../src/lib/performance-summary.js';
 
 const fixture = JSON.parse(
   readFileSync('test/fixtures/replay-widget.json', 'utf8'),
@@ -120,7 +121,7 @@ describe('production replay tools over real MCP HTTP', () => {
               (tool._meta.ui as { resourceUri?: string }).resourceUri,
           )
           .map((tool) => tool.name),
-      ).to.deep.equal(['browserless_show']);
+      ).to.deep.equal(['browserless_show', 'browserless_performance']);
       expect(
         tools.find((tool) => tool.name === 'browserless_sessions')!._meta,
       ).to.equal(undefined);
@@ -130,7 +131,7 @@ describe('production replay tools over real MCP HTTP', () => {
       expect(
         tools.find((tool) => tool.name === 'browserless_view_data')!._meta,
       ).to.deep.include({ ui: { visibility: ['app'] } });
-      expect(VIEW_URI).to.equal('ui://browserless/view/v3.html');
+      expect(VIEW_URI).to.equal('ui://browserless/view/v9.html');
       expect(
         tools.find((tool) => tool.name === 'browserless_show')!._meta,
       ).to.deep.include({
@@ -140,12 +141,17 @@ describe('production replay tools over real MCP HTTP', () => {
       const resource = (await alice.readResource({ uri: VIEW_URI }))
         .contents[0];
       expect(resource.mimeType).to.equal('text/html;profile=mcp-app');
-      const legacy = (
-        await alice.readResource({ uri: 'ui://browserless/view/v1.html' })
-      ).contents[0];
-      expect('text' in legacy && legacy.text).to.equal(
-        'text' in resource && resource.text,
-      );
+      for (let version = 1; version <= 8; version++) {
+        const legacy = (
+          await alice.readResource({
+            uri: `ui://browserless/view/v${version}.html`,
+          })
+        ).contents[0];
+        expect(legacy.mimeType).to.equal(resource.mimeType);
+        expect('text' in legacy && legacy.text).to.equal(
+          'text' in resource && resource.text,
+        );
+      }
       expect(resource._meta).to.have.property('ui');
       expect('text' in resource && resource.text).to.include('Replay timeline');
       const prepared = await alice.callTool({
@@ -295,7 +301,7 @@ describe('production replay tools over real MCP HTTP', () => {
     }
   });
 
-  it('does not add presentation tools or resources to the compliant surface', () => {
+  it('keeps replay presentation off the compliant surface', () => {
     const server = new FastMCP({
       name: 'compliant-replay-test',
       version: '1.0.0',
@@ -316,5 +322,6 @@ describe('production replay tools over real MCP HTTP', () => {
     expect(tools).not.to.include('browserless_show');
     expect(tools).not.to.include('browserless_view_data');
     expect(resources).not.to.include(VIEW_URI);
+    expect(resources).to.deep.equal([PERFORMANCE_URI]);
   });
 });

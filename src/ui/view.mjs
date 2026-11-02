@@ -2,7 +2,9 @@ import { App, applyDocumentTheme } from '@modelcontextprotocol/ext-apps';
 import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
+import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
+import { mountPerformance } from './performance.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -26,11 +28,19 @@ let player,
 let loading = new AbortController();
 const textBytes = new TextEncoder();
 let hostContext = {};
+let handoff;
+const handoffRoot = byId('handoff');
 let media;
 const mediaRoot = byId('agent-media');
+let performanceReport;
+const performanceRoot = byId('performance');
+const isPerformanceView = () =>
+  document.body.dataset.viewKind === 'performance' ||
+  lastResult?.structuredContent?.kind === 'performance';
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
   if (context.theme) applyDocumentTheme(context.theme);
+  handoff?.updateHost(context);
   media?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
@@ -81,11 +91,32 @@ function dispose() {
   player = undefined;
   byId('player').replaceChildren();
   enable(false);
+  handoff?.dispose();
+  handoff = undefined;
   media?.dispose();
   media = undefined;
+  performanceReport?.dispose();
+  performanceReport = undefined;
 }
 function fail(error) {
   loading.abort();
+  if (isPerformanceView()) {
+    dispose();
+    card.hidden = true;
+    handoffRoot.hidden = true;
+    mediaRoot.hidden = true;
+    performanceRoot.hidden = false;
+    performanceRoot.innerHTML =
+      '<header class="perf-heading"><div><h1>Performance report unavailable</h1></div></header><p role="alert"></p><p class="perf-empty">Run a new audit to try again.</p>';
+    performanceRoot.querySelector('[role="alert"]').textContent =
+      error.message || 'The performance audit could not be completed.';
+    return;
+  }
+  if (handoff) {
+    clearTimeout(expiryTimer);
+    handoff.fail(error);
+    return;
+  }
   if (media) {
     clearTimeout(expiryTimer);
     media.fail(error);
@@ -93,7 +124,9 @@ function fail(error) {
   }
   dispose();
   card.hidden = false;
+  handoffRoot.hidden = true;
   mediaRoot.hidden = true;
+  performanceRoot.hidden = true;
   byId('empty').hidden = false;
   byId('empty').dataset.error = '';
   byId('state').textContent = 'Unavailable';
@@ -254,7 +287,9 @@ async function render(result) {
   const signal = loading.signal;
   dispose();
   card.hidden = false;
+  handoffRoot.hidden = true;
   mediaRoot.hidden = true;
+  performanceRoot.hidden = true;
   byId('empty').hidden = false;
   delete byId('empty').dataset.error;
   byId('retry').hidden = true;
@@ -265,16 +300,39 @@ async function render(result) {
     if (result.isError)
       throw new Error(
         result.content?.find((item) => item.type === 'text')?.text ||
-          'Replay unavailable.',
+          (isPerformanceView()
+            ? 'Performance audit failed.'
+            : 'Replay unavailable.'),
       );
+    if (isPerformanceView()) {
+      performanceReport = mountPerformance(
+        performanceRoot,
+        result.structuredContent,
+      );
+      card.hidden = true;
+      performanceRoot.hidden = false;
+      return;
+    }
     const view = ShowOutputSchema.parse(result.structuredContent);
     const expires = Date.parse(view.expiresAt);
+    if (view.kind === 'handoff') {
+      handoff = mountHandoff(
+        handoffRoot,
+        result._meta?.payload,
+        view,
+        app,
+        hostContext,
+      );
+      card.hidden = true;
+      handoffRoot.hidden = false;
+    }
     if (expires <= Date.now())
       throw new Error('This view has expired. Prepare a new replay.');
     expiryTimer = setTimeout(
       () => fail(new Error('This view has expired. Prepare a new replay.')),
       expires - Date.now(),
     );
+    if (handoff) return;
     if (view.kind === 'agent-media') {
       media = mountAgentMedia(
         mediaRoot,
@@ -371,9 +429,15 @@ app.ontoolresult = (result) => {
   lastResult = result;
   void render(result);
 };
-app.ontoolcancelled = () => {
+app.ontoolcancelled = (params) => {
   generation++;
-  fail(new Error('Replay loading was cancelled.'));
+  fail(
+    new Error(
+      isPerformanceView()
+        ? params?.reason || 'Performance audit was cancelled.'
+        : 'Replay loading was cancelled.',
+    ),
+  );
 };
 app.onhostcontextchanged = updateHost;
 app.onteardown = async () => {

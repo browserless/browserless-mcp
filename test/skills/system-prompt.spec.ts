@@ -23,7 +23,9 @@ it('documents liveURL tab selection and handoff in both prompt variants', () => 
       'instructions explaining what to do and when to click Done',
       'keepSessionAlive: true',
       'reuse the returned `sessionId`',
-      'close the browser after the person finishes',
+      prompt === AGENT_SYSTEM_PROMPT
+        ? 'close the browser when the overall task finishes'
+        : 'close the browser after the person finishes',
       'Creating a link does not extend the browser deadline',
       'keeping the browser open remains billed',
     ]) {
@@ -279,5 +281,17 @@ describe('full Agent persona and proxy guidance', () => {
     expect(AGENT_SYSTEM_PROMPT).to.match(/datacenter/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/lower-cost/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/residential.*block/i);
+  });
+});
+
+describe('auth skill summaries', () => {
+  it('summarize both auth skills as reporting the outcome, not a JSON shape', () => {
+    const skills = AGENT_SYSTEM_PROMPT.split(
+      '## Skills (auto-injected)',
+    )[1].split('\n## ')[0];
+    for (const text of [skills, SKILL_TOOL_DESCRIPTION]) {
+      expect(text).not.to.include('final JSON');
+      expect(text.split('how to report the outcome').length - 1).to.equal(2);
+    }
   });
 });

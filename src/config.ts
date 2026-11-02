@@ -95,6 +95,7 @@ export function getConfig(): McpConfig & { uploadDirs: string[] } {
     supabaseOAuthClientSecret: process.env.SUPABASE_OAUTH_CLIENT_SECRET ?? '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     mcpBaseUrl: process.env.MCP_BASE_URL ?? 'https://mcp.browserless.io',
+    publicBrowserlessUrl: process.env.BROWSERLESS_PUBLIC_URL || undefined,
     redisUrl: process.env.REDIS_URL || undefined,
     oauthAllowedRedirectUriPatterns: [
       ...DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS,
