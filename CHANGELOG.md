@@ -6,7 +6,7 @@
 ### Features
 
 * add widget for performance tool AUTO-567 ([#472](https://github.com/browserless/browserless-mcp/issues/472)) ([10e660c](https://github.com/browserless/browserless-mcp/commit/10e660c08a9058789a6eda246f289c410373be95))
-* liveurl handoff widget [DO NOT MERGE] ([#471](https://github.com/browserless/browserless-mcp/issues/471)) ([c0e0cf7](https://github.com/browserless/browserless-mcp/commit/c0e0cf74000c6985b79c7e1e67feff903a490632))
+* liveurl handoff widget ([#471](https://github.com/browserless/browserless-mcp/issues/471)) ([c0e0cf7](https://github.com/browserless/browserless-mcp/commit/c0e0cf74000c6985b79c7e1e67feff903a490632))
 * widget to show agent screenshots and videos inline AUTO-566 ([#467](https://github.com/browserless/browserless-mcp/issues/467)) ([1216695](https://github.com/browserless/browserless-mcp/commit/1216695a94ca8df80cebbcd72d541b2258fb1f24))
 
 
