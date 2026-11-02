@@ -147,7 +147,6 @@ entry), which also needs `gateway.publicOrigin`. See OpenClaw's
 | `.mcp.json`                   | Registers the hosted Browserless MCP server (Streamable HTTP, OAuth).   |
 | `skills/browserless/SKILL.md` | Tool-selection, browser-driving, and credential-safety guidance.        |
 | `.claude-plugin/plugin.json`  | Bundle manifest. OpenClaw loads this package as a Claude-format bundle. |
-| `openclaw.plugin.json`        | Plugin identity and an empty config schema, required by ClawHub.        |
 | `package.json`                | Package name and version for ClawHub.                                   |
 
 Tools appear in OpenClaw with the server prefix, for example
@@ -178,7 +177,7 @@ and session replays use Browserless-operated API and asset hosts as needed.
 ## Publishing (maintainers)
 
 The package is versioned on its own; bump `version` in `package.json`,
-`openclaw.plugin.json`, and `.claude-plugin/plugin.json` together. Then, from
+and `.claude-plugin/plugin.json` together. Then, from
 the repository root:
 
 ```bash
@@ -196,10 +195,13 @@ Keep in mind:
 - Publish only from a pushed commit that contains your `openclaw/` changes.
   ClawHub records the source commit from the local checkout, so publishing
   uncommitted files links the listing to a commit that doesn't have them.
-- Never add an `openclaw.extensions` field to `package.json`. It makes OpenClaw
-  load the package as a native plugin, and `.mcp.json` and the skill silently
-  stop loading. `.claude-plugin/plugin.json` is what marks this as a bundle;
-  `openclaw.plugin.json` is only there because ClawHub requires it.
+- Keep exactly one bundle marker: `.claude-plugin/plugin.json`. Do not add
+  `openclaw.plugin.json` or an `openclaw.extensions` field to `package.json`: native
+  plugin detection takes precedence over bundle detection, so the MCP config and
+  skill would no longer load as bundle capabilities. ClawHub accepts the bundle
+  marker directly; it does not require a native manifest envelope. See the
+  [OpenClaw detection rules](https://docs.openclaw.ai/plugins/bundles#detection-precedence)
+  and [ClawHub publishing requirements](https://github.com/openclaw/clawhub/blob/main/docs/cli.md).
 
 ## License
 
