@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-export const VIEW_URI = 'ui://browserless/view/v9.html';
+export const VIEW_URI = 'ui://browserless/view/v10.html';
+// Cloud viewers include an encrypted worker-routing prefix.
+export const LIVE_VIEWER_PATH = /^\/(?:e\/[a-f0-9]+\/)?live(?:\/|$)/;
 export const VIEW_UNAVAILABLE =
   'This view is unavailable. Run the original data tool again to prepare a new view.';
 export const VIEW_RESULT_MAX_BYTES = 2 * 1024 * 1024;
