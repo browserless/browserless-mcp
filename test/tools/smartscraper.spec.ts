@@ -322,11 +322,51 @@ describe('browserless_smartscraper tool', () => {
     const content = (result as { content: Content[] }).content;
     expect(content[0]).to.deep.equal({
       type: 'text',
-      text: '## Warning\nNo AI extraction result returned by the API.',
+      text: '## Warning\nNo result returned by the API for: json, summary.',
     });
     expect(JSON.stringify(content)).not.to.include('<html>');
     expect(JSON.stringify(content)).not.to.include('## JSON');
   });
+
+  for (const missing of ['json', 'summary'] as const) {
+    it(`warns about missing ${missing} alongside a successful extraction`, async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify(
+            makeSuccessResponse({
+              json: missing === 'json' ? null : { title: 'Example' },
+              summary: missing === 'summary' ? '' : 'Page summary',
+            }),
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+      const execute = getToolExecute(
+        new FastMCP({ name: 'test', version: '0.1.0' }),
+      );
+      const result = await execute(
+        {
+          url: 'https://example.com',
+          formats: ['json', 'summary'],
+          jsonOptions: { prompt: 'get title' },
+        },
+        mockContext,
+      );
+      const content = (result as { content: Content[] }).content;
+      expect(content[0]).to.deep.equal({
+        type: 'text',
+        text:
+          missing === 'json'
+            ? '## Summary\nPage summary'
+            : '## JSON\n{\n  "title": "Example"\n}',
+      });
+      expect(content[1]).to.deep.equal({
+        type: 'text',
+        text: `## Warning\nNo result returned by the API for: ${missing}.`,
+      });
+      expect(JSON.stringify(content)).not.to.include('<html>');
+    });
+  }
 
   for (const [status, reason] of [
     [404, 'not_found'],

@@ -229,8 +229,18 @@ export function registerSmartScraperTool(
       if (response.summary) {
         blocks.push({ type: 'text', text: `## Summary\n${response.summary}` });
       }
+      const missingFormats = params.formats.filter(
+        (format) =>
+          (format === 'json' && response.json == null) ||
+          (format === 'summary' && !response.summary),
+      );
       if (response.warning) {
         blocks.push({ type: 'text', text: `## Warning\n${response.warning}` });
+      } else if (missingFormats.length) {
+        blocks.push({
+          type: 'text',
+          text: `## Warning\nNo result returned by the API for: ${missingFormats.join(', ')}.`,
+        });
       }
       const aiOnly = params.formats.every(
         (f) => f === 'json' || f === 'summary',
@@ -250,11 +260,6 @@ export function registerSmartScraperTool(
       }
       if (!aiOnly) {
         blocks.push({ type: 'text' as const, text: textContent });
-      } else if (blocks.length === 0) {
-        blocks.push({
-          type: 'text',
-          text: '## Warning\nNo AI extraction result returned by the API.',
-        });
       }
       if (
         response.markdown &&
