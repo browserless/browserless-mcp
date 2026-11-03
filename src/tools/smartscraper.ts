@@ -250,6 +250,11 @@ export function registerSmartScraperTool(
       }
       if (!aiOnly) {
         blocks.push({ type: 'text' as const, text: textContent });
+      } else if (blocks.length === 0) {
+        blocks.push({
+          type: 'text',
+          text: '## Warning\nNo AI extraction result returned by the API.',
+        });
       }
       if (
         response.markdown &&
