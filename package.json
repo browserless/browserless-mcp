@@ -97,7 +97,7 @@
     "fastmcp": "4.23.8",
     "ioredis": "^5.10.1",
     "ipaddr.js": "2.5.0",
-    "rrweb-player": "2.1.7",
+    "rrweb-player": "2.2.0",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
