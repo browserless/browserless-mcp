@@ -23,6 +23,8 @@ export const ScrapeFormatSchema = z.enum([
   'screenshot',
   'pdf',
   'links',
+  'json',
+  'summary',
 ]);
 
 export const SmartScraperParamsSchema = z
@@ -34,7 +36,28 @@ export const SmartScraperParamsSchema = z
       .optional()
       .default(['markdown'])
       .describe(
-        'Output formats to include: "markdown", "html", "rawText", "screenshot", "pdf", "links". PDFs are saved outside the conversation and returned as a local path (stdio) or a single-use download URL (HTTP). rawText is DOM text with script, style, and noscript elements removed and whitespace collapsed, or extracted text for PDF targets. Defaults to ["markdown"].',
+        'Output formats to include: "markdown", "html", "rawText", "screenshot", "pdf", "links", "json", "summary". PDFs are saved outside the conversation and returned as a local path (stdio) or a single-use download URL (HTTP). rawText is DOM text with script, style, and noscript elements removed and whitespace collapsed, or extracted text for PDF targets. Defaults to ["markdown"]. "json" returns data extracted by an AI model per jsonOptions; "summary" returns a short AI-written summary. Both read the page\'s markdown, don\'t force a browser, and add AI extraction units on top of the scrape (about 1 unit for a typical page).',
+      ),
+    jsonOptions: z
+      .object({
+        schema: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'JSON Schema object the extracted data must follow (at most 20,000 characters when serialized).',
+          ),
+        prompt: z
+          .string()
+          .max(10_000)
+          .optional()
+          .describe(
+            'Instruction guiding the extraction, up to 10,000 characters.',
+          ),
+      })
+      .strict()
+      .optional()
+      .describe(
+        'Inputs for the "json" format: a schema, a prompt, or both. Required when formats includes "json"; rejected otherwise.',
       ),
     timeout: z
       .number()
@@ -81,6 +104,25 @@ export const SmartScraperParamsSchema = z
       ),
   })
   .superRefine((params, context) => {
+    if (params.jsonOptions !== undefined && !params.formats.includes('json')) {
+      context.addIssue({
+        code: 'custom',
+        message: '"jsonOptions" requires "json" in formats',
+        path: ['jsonOptions'],
+      });
+    }
+    if (
+      params.formats.includes('json') &&
+      !params.jsonOptions?.schema &&
+      !params.jsonOptions?.prompt?.trim()
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message:
+          '"json" format requires "jsonOptions.schema" or "jsonOptions.prompt"',
+        path: ['jsonOptions'],
+      });
+    }
     if (params.includeTags?.length && params.excludeTags?.length) {
       context.addIssue({
         code: 'custom',
@@ -111,6 +153,9 @@ export const SmartScraperResponseSchema = z.object({
   markdown: z.string().nullable(),
   links: z.array(z.string()).nullable(),
   rawText: z.string().nullable().optional(),
+  json: z.record(z.string(), z.unknown()).nullable().optional(),
+  summary: z.string().nullable().optional(),
+  warning: z.string().nullable().optional(),
   metadata: z
     .object({
       title: z.string().nullable(),
@@ -134,7 +179,7 @@ export function registerSmartScraperTool(
     name: 'browserless_smartscraper',
     failureStatus: { origin: 'target_website' },
     description:
-      'Scrape a SINGLE webpage and return HTML, markdown, raw DOM text, links, screenshots, or PDFs plus page metadata. ' +
+      'Scrape a SINGLE webpage and return HTML, markdown, raw DOM text, links, screenshots, or PDFs plus page metadata, or AI-extracted JSON (formats "json" + jsonOptions) and a short summary (format "summary"); the AI formats add extraction units. ' +
       'Handles JavaScript-heavy pages and anti-bot measures automatically. ' +
       'For content across MULTIPLE pages of a site, use browserless_crawl; ' +
       "to list a site's URLs, use browserless_map.",
@@ -175,6 +220,21 @@ export function registerSmartScraperTool(
         );
       }
       const blocks: Content[] = [];
+      if (response.json != null) {
+        blocks.push({
+          type: 'text',
+          text: `## JSON\n${JSON.stringify(response.json, null, 2)}`,
+        });
+      }
+      if (response.summary) {
+        blocks.push({ type: 'text', text: `## Summary\n${response.summary}` });
+      }
+      if (response.warning) {
+        blocks.push({ type: 'text', text: `## Warning\n${response.warning}` });
+      }
+      const aiOnly = params.formats.every(
+        (f) => f === 'json' || f === 'summary',
+      );
       // Primary text content: prefer markdown > rawText > string content > object content > diagnostic
       let textContent: string;
       if (response.markdown) {
@@ -188,7 +248,9 @@ export function registerSmartScraperTool(
       } else {
         textContent = `[No page content returned by the API. Strategy: ${response.strategy}, Status: ${response.statusCode}]`;
       }
-      blocks.push({ type: 'text' as const, text: textContent });
+      if (!aiOnly) {
+        blocks.push({ type: 'text' as const, text: textContent });
+      }
       if (
         response.markdown &&
         params.formats.includes('rawText') &&

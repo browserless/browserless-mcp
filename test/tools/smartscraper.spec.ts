@@ -111,6 +111,193 @@ describe('browserless_smartscraper tool', () => {
     expect(() => registerSmartScraperTool(server, mockConfig)).to.not.throw();
   });
 
+  it('accepts schema, prompt, boundary-length prompt, and summary inputs', () => {
+    for (const fields of [
+      { formats: ['json'], jsonOptions: { schema: { type: 'object' } } },
+      { formats: ['json'], jsonOptions: { prompt: 'get title' } },
+      { formats: ['json'], jsonOptions: { prompt: 'x'.repeat(10_000) } },
+      { formats: ['summary'] },
+    ]) {
+      const parsed = SmartScraperParamsSchema.safeParse({
+        url: 'https://example.com',
+        ...fields,
+      });
+      expect(parsed.success).to.be.true;
+      if (parsed.success) expect(parsed.data).to.deep.include(fields);
+    }
+    expect(fetchStub.called).to.be.false;
+  });
+
+  it('rejects missing or blank JSON instructions and options without JSON', () => {
+    for (const fields of [
+      { formats: ['json'] },
+      { formats: ['json'], jsonOptions: { prompt: '   ' } },
+      { formats: ['markdown'], jsonOptions: { prompt: 'x' } },
+    ]) {
+      const parsed = SmartScraperParamsSchema.safeParse({
+        url: 'https://example.com',
+        ...fields,
+      });
+      expect(parsed.success).to.be.false;
+      if (!parsed.success) {
+        expect(parsed.error.issues).to.deep.include({
+          code: 'custom',
+          path: ['jsonOptions'],
+          message: fields.formats.includes('json')
+            ? '"json" format requires "jsonOptions.schema" or "jsonOptions.prompt"'
+            : '"jsonOptions" requires "json" in formats',
+        });
+      }
+    }
+    expect(fetchStub.called).to.be.false;
+  });
+
+  it('rejects oversized prompts and unknown JSON option keys', () => {
+    for (const [jsonOptions, path, code] of [
+      [{ prompt: 'x'.repeat(10_001) }, ['jsonOptions', 'prompt'], 'too_big'],
+      [{ prompt: 'x', foo: 1 }, ['jsonOptions'], 'unrecognized_keys'],
+    ] as const) {
+      const parsed = SmartScraperParamsSchema.safeParse({
+        url: 'https://example.com',
+        formats: ['json'],
+        jsonOptions,
+      });
+      expect(parsed.success).to.be.false;
+      if (!parsed.success) {
+        expect(
+          parsed.error.issues.some(
+            (issue) =>
+              issue.code === code &&
+              JSON.stringify(issue.path) === JSON.stringify(path),
+          ),
+        ).to.be.true;
+      }
+    }
+    expect(fetchStub.called).to.be.false;
+  });
+
+  it('advertises AI formats and their extraction cost', () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    registerSmartScraperTool(server, mockConfig);
+    for (const description of [
+      addTool.firstCall.args[0].description,
+      SmartScraperParamsSchema.shape.formats.description,
+    ]) {
+      for (const text of ['"json"', '"summary"', 'extraction units']) {
+        expect(description).to.include(text);
+      }
+    }
+  });
+
+  it('leads with JSON without HTML and forwards options without analytics exposure', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({
+            markdown: null,
+            json: { a: 1 },
+          }),
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerSmartScraperTool(server, mockConfig, analytics);
+    const jsonOptions = {
+      schema: { type: 'object' },
+      prompt: 'PRIVATE extraction instruction',
+    };
+    const result = await addTool.firstCall.args[0].execute(
+      {
+        url: 'https://example.com',
+        formats: ['json'],
+        jsonOptions,
+      },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content;
+    expect(content[0]).to.deep.equal({
+      type: 'text',
+      text: '## JSON\n{\n  "a": 1\n}',
+    });
+    expect(JSON.stringify(content)).not.to.include('<html>');
+    expect(
+      JSON.parse(fetchStub.firstCall.args[1].body).jsonOptions,
+    ).to.deep.equal(jsonOptions);
+    expect(fire.calledOnce).to.be.true;
+    const props = fire.firstCall.args[2];
+    expect(props.formats).to.equal('json');
+    expect(props).not.to.have.property('jsonOptions');
+    expect(props).not.to.have.property('prompt');
+    expect(JSON.stringify(props)).not.to.include(jsonOptions.prompt);
+  });
+
+  it('orders summary and warning before requested markdown', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({
+            summary: 'S',
+            warning: 'W',
+            markdown: '# M',
+          }),
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const execute = getToolExecute(
+      new FastMCP({ name: 'test', version: '0.1.0' }),
+    );
+    const result = await execute(
+      { url: 'https://example.com', formats: ['summary', 'markdown'] },
+      mockContext,
+    );
+    expect(
+      (result as { content: Content[] }).content.slice(0, 3),
+    ).to.deep.equal([
+      { type: 'text', text: '## Summary\nS' },
+      { type: 'text', text: '## Warning\nW' },
+      { type: 'text', text: '# M' },
+    ]);
+  });
+
+  it('shows a failed extraction warning without JSON or HTML fallback', async () => {
+    fetchStub.resolves(
+      new Response(
+        JSON.stringify(
+          makeSuccessResponse({
+            markdown: null,
+            json: null,
+            warning: 'JSON extraction failed; retry',
+          }),
+        ),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const execute = getToolExecute(
+      new FastMCP({ name: 'test', version: '0.1.0' }),
+    );
+    const result = await execute(
+      {
+        url: 'https://example.com',
+        formats: ['json'],
+        jsonOptions: { prompt: 'get title' },
+      },
+      mockContext,
+    );
+    const content = (result as { content: Content[] }).content;
+    expect(content[0]).to.deep.equal({
+      type: 'text',
+      text: '## Warning\nJSON extraction failed; retry',
+    });
+    expect(JSON.stringify(content)).not.to.include('## JSON');
+    expect(JSON.stringify(content)).not.to.include('<html>');
+  });
+
   for (const [status, reason] of [
     [404, 'not_found'],
     [403, 'forbidden'],
