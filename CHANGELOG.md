@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.1](https://github.com/browserless/browserless-mcp/compare/v1.43.0...v1.43.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* liveurl handoff ([964dce9](https://github.com/browserless/browserless-mcp/commit/964dce9aaa194c003734367c9507ac4c798dac73))
+
 ## [1.43.0](https://github.com/browserless/browserless-mcp/compare/v1.42.0...v1.43.0) (2026-11-02)
 
 
