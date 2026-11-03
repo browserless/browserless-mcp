@@ -205,6 +205,19 @@ describe('metrics (OTLP telemetry)', () => {
     expect(source).to.include('telemetryShutdown');
   });
 
+  it('wires request observation and the event-store context callback', () => {
+    const source = readFileSync('src/index.ts', 'utf8');
+    const storeStart = source.indexOf('new BoundedEventStore(');
+    expect(source.slice(storeStart, storeStart + 200)).to.include(
+      'noteMissingStoreContext(surface)',
+    );
+    expect(source.match(/new BoundedEventStore\(/g)).to.have.length(1);
+    expect(source).to.match(/eventStore(?:\s*:\s*eventStore)?\s*,/);
+    const start = source.indexOf('const hybridAuthenticate');
+    const hook = source.slice(start, source.indexOf(': undefined;', start));
+    expect(hook.match(/observeSessionRequest\(/g)).to.have.length(2);
+  });
+
   it('counts MCP requests on the authenticate hook, not the Hono fall-through app', () => {
     const source = readFileSync('src/index.ts', 'utf8');
     // The Hono app from getApp() only sees non-/mcp fall-through routes, so the

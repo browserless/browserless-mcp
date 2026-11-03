@@ -22,8 +22,16 @@ import {
 } from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
-import { admitSessionRequest, authOutcome } from './lib/session-binding.js';
+import {
+  admitSessionRequest,
+  authOutcome,
+  type SessionRefusal,
+} from './lib/session-binding.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
+import {
+  observeSessionRequest,
+  noteMissingStoreContext,
+} from './lib/session-request-log.js';
 import { RedisTokenStorage } from './lib/redis-token-storage.js';
 import { BrowserlessOAuthProxy } from './lib/oauth-redirect-uri.js';
 import { createRegisterRateLimiter } from './lib/oauth-register-rate-limit.js';
@@ -114,6 +122,11 @@ const oauthProvider =
       })
     : undefined;
 
+const surface = config.complianceMode ? 'connector' : 'full';
+const eventStore = new BoundedEventStore(10_000, undefined, undefined, () =>
+  noteMissingStoreContext(surface),
+);
+
 // Hybrid authenticate, in order: (1) Authorization header with a plain API
 // key or (2) ?token= query param → direct token session; (3) Authorization
 // header with a Supabase JWT → resolve the Browserless API key via PostgREST.
@@ -138,16 +151,32 @@ const hybridAuthenticate =
         // /mcp (memoized once per POST, GET, DELETE). Spans auth only; record once it settles.
         mcpInFlightAdd(1);
         const authStartedAt = performance.now();
+        let refusal: SessionRefusal | undefined;
+        let owner: BrowserlessSession | undefined;
+        let session: BrowserlessSession | undefined;
         try {
-          const session = (await resolveBrowserlessRequestAuth(
+          session = (await resolveBrowserlessRequestAuth(
             request,
             config,
           )) as BrowserlessSession;
-          admitSessionRequest(sid, session, server.sessions);
+          admitSessionRequest(sid, session, server.sessions, (r, o) => {
+            refusal = r;
+            owner = o;
+          });
           recordMcpRequest(
             'authenticated',
             performance.now() - authStartedAt,
             method,
+            observeSessionRequest({
+              request,
+              sessionId: sid,
+              method,
+              surface,
+              failed: false,
+              auth: session,
+              store: eventStore,
+              sessions: () => server.sessions,
+            }),
           );
           return session;
         } catch (err) {
@@ -155,6 +184,18 @@ const hybridAuthenticate =
             authOutcome(err),
             performance.now() - authStartedAt,
             method,
+            observeSessionRequest({
+              request,
+              sessionId: sid,
+              method,
+              surface,
+              failed: true,
+              auth: session,
+              refusal,
+              owner,
+              store: eventStore,
+              sessions: () => server.sessions,
+            }),
           );
           throw err;
         } finally {
@@ -299,7 +340,7 @@ if (config.transport === 'httpStream') {
     httpStream: {
       port: config.port,
       host: '0.0.0.0',
-      eventStore: new BoundedEventStore(10_000),
+      eventStore,
       stateless: false,
     },
   });

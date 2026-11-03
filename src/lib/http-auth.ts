@@ -20,6 +20,13 @@ export interface AuthInput {
   requestPath?: string;
 }
 
+export const presentsCredential = (input: AuthInput): boolean => {
+  const headerToken = input.authHeader?.startsWith('Bearer ')
+    ? input.authHeader.slice(7)
+    : input.authHeader;
+  return Boolean(headerToken || input.tokenQuery);
+};
+
 export function authInputFromRequest(
   request: Pick<IncomingMessage, 'headers' | 'url'>,
 ): AuthInput {

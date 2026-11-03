@@ -7,6 +7,16 @@ export type SessionLike = {
   readonly auth?: unknown;
 };
 
+export type SessionRefusal = 'unknown_session' | 'principal_mismatch';
+
+export const findLiveSession = (
+  sessionId: string | undefined,
+  sessions: readonly SessionLike[],
+): SessionLike | undefined =>
+  sessionId
+    ? sessions.find((s) => s.sessionId === sessionId && s.auth !== undefined)
+    : undefined;
+
 export const sessionPrincipal = (auth: BrowserlessSession): string =>
   auth.authMethod === 'oauth' && auth.accountId && auth.userId
     ? `user:${auth.accountId}:${auth.userId}`
@@ -26,23 +36,34 @@ export const assertSessionPrincipal = (
   sessionId: string | undefined,
   auth: BrowserlessSession,
   sessions: readonly SessionLike[],
+  onRefused?: (refusal: SessionRefusal, owner?: BrowserlessSession) => void,
 ): void => {
   if (!sessionId) return;
-  const session = sessions.find((s) => s.sessionId === sessionId);
+  const session = findLiveSession(sessionId, sessions);
   if (
     session?.auth === undefined ||
     sessionPrincipal(session.auth as BrowserlessSession) !==
       sessionPrincipal(auth)
-  )
+  ) {
+    try {
+      onRefused?.(
+        session ? 'principal_mismatch' : 'unknown_session',
+        session?.auth as BrowserlessSession | undefined,
+      );
+    } catch {
+      // Observation does not affect admission.
+    }
     throw sessionNotFoundResponse();
+  }
 };
 
 export const admitSessionRequest = (
   sessionId: string | undefined,
   auth: BrowserlessSession,
   sessions: readonly SessionLike[],
+  onRefused?: (refusal: SessionRefusal, owner?: BrowserlessSession) => void,
 ): void => {
-  assertSessionPrincipal(sessionId, auth, sessions);
+  assertSessionPrincipal(sessionId, auth, sessions, onRefused);
   touchSession(sessionId);
 };
 
