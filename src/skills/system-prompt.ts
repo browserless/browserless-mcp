@@ -185,7 +185,7 @@ Never retry same failed action without re-snapshot.
 - **saveSecret** { title, username, password, website?, vault? } → \`{ ok, ref }\` or \`{ ok: false, error, vaults? }\` — needs \`integrationId\` on the FIRST call; omit \`vault\` unless the result lists several
 - **clearSecrets** {} — lowers capture protection; use only after secret-filled fields are removed, never just after clicking submit. \`waitForNavigation\`/\`waitForResponse\`/\`waitForSelector\` are allowed while armed; response waits do not permit snapshots
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
-- **liveURL** { timeout?, instructions? } — defaults to 300000ms (five minutes); explicit timeout wins, capped by remaining browser session time. For a human handoff, pass instructions explaining what to do and when to click Done. Set \`keepSessionAlive: true\` on the handoff call, reuse the returned \`sessionId\`, and close the browser when the overall task finishes. Creating a link does not extend the browser deadline; keeping the browser open remains billed.
+- **liveURL** { timeout?, instructions? } — defaults to 300000ms (five minutes); server caps the requested lifetime at your plan's maximum session time and remaining browser time. For a human handoff, pass instructions explaining what to do and when to click Done. Set \`keepSessionAlive: true\` on the handoff call, reuse the returned \`sessionId\`, and close the browser when the overall task finishes. Creating a link does not extend the browser deadline; keeping the browser open remains billed.
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 `;
@@ -306,7 +306,7 @@ Never retry the same failed action without re-snapshot.
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
-- **liveURL** { timeout?, instructions? } — defaults to 300000ms (five minutes); explicit timeout wins, capped by remaining browser session time. For a human handoff, pass instructions explaining what to do and when to click Done. Set \`keepSessionAlive: true\` on the handoff call, reuse the returned \`sessionId\`, and close the browser after the person finishes. Creating a link does not extend the browser deadline; keeping the browser open remains billed.
+- **liveURL** { timeout?, instructions? } — defaults to 300000ms (five minutes); server caps the requested lifetime at your plan's maximum session time and remaining browser time. For a human handoff, pass instructions explaining what to do and when to click Done. Set \`keepSessionAlive: true\` on the handoff call, reuse the returned \`sessionId\`, and close the browser when the overall task finishes. Creating a link does not extend the browser deadline; keeping the browser open remains billed.
 - See schema for: screenshot, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 Provide \`commands\` as a sequential batch; only the final result is returned.`;
