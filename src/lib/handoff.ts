@@ -232,7 +232,8 @@ export async function prepareHandoff(
           url.protocol === 'http:' &&
           ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
         )) ||
-      !/^\/live(?:\/|$)/.test(url.pathname) ||
+      // Cloud viewers include an encrypted worker-routing prefix.
+      !/^\/(?:e\/[a-f0-9]+\/)?live(?:\/|$)/.test(url.pathname) ||
       url.searchParams.get('i') !== minted.liveURLId
     )
       throw new Error('Invalid live viewer URL');
