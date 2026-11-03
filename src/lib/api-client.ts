@@ -494,7 +494,7 @@ export function createApiClient(
       });
       if (
         !(formats.includes('json') && result.json == null) &&
-        !(formats.includes('summary') && result.summary == null)
+        !(formats.includes('summary') && !result.summary)
       ) {
         _cache.set(cacheKey, result);
       }

@@ -185,7 +185,9 @@ describe('createApiClient', () => {
     });
 
     for (const format of ['json', 'summary'] as const) {
-      for (const missing of [null, undefined]) {
+      for (const missing of format === 'summary'
+        ? [null, undefined, '']
+        : [null, undefined]) {
         it(`retries ${format} extraction when its result is ${String(missing)}`, async () => {
           fetchStub.callsFake(
             async () =>
@@ -217,6 +219,24 @@ describe('createApiClient', () => {
         });
       }
     }
+
+    it('still caches a non-empty summary', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ ...mockSuccessResponse, summary: 'Page summary' }),
+        ),
+      );
+      const client = createApiClient(mockConfig);
+      const params: SmartScrapeRequest = {
+        url: 'https://example.com',
+        formats: ['summary'],
+      };
+      await client.smartScrape(params);
+      const repeated = await client.smartScrape(params);
+      expect(fetchStub.callCount).to.equal(1);
+      expect(repeated.cacheHit).to.be.true;
+      expect(repeated.summary).to.equal('Page summary');
+    });
 
     it('isolates JSON extraction cache entries by token', async () => {
       fetchStub.callsFake(
