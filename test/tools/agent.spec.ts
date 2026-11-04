@@ -3409,7 +3409,7 @@ describe('browserless_agent live URL handoff', () => {
 
   for (const complianceMode of [false, true]) {
     for (const batched of [false, true]) {
-      it(`defaults live URL timeout and preserves instructions (compliant=${complianceMode}, batch=${batched})`, async () => {
+      it(`defaults interactive live URL instructions and timeout (compliant=${complianceMode}, batch=${batched})`, async () => {
         const sent: Array<Record<string, unknown>> = [];
         const srv = await makeRespondingServer((method, params) => {
           if (method === 'liveURL') {
@@ -3435,6 +3435,11 @@ describe('browserless_agent live URL handoff', () => {
           for (const params of [
             undefined,
             {},
+            { timeout: 120_000 },
+            { interactable: true },
+            { interactable: false },
+            { instructions: '' },
+            { instructions: '   ' },
             { instructions },
             { timeout: 120_000, instructions: 'Sign in, then click Done.' },
             { timeout: 600_000, instructions },
@@ -3450,6 +3455,13 @@ describe('browserless_agent live URL handoff', () => {
             expect(sent.at(-1)).to.deep.equal({
               ...params,
               timeout: params?.timeout ?? 300_000,
+              ...(params?.interactable !== false &&
+              params?.instructions === undefined
+                ? {
+                    instructions:
+                      'Complete the step shown on screen, then click Done.',
+                  }
+                : {}),
             });
             expect(JSON.stringify(result)).not.to.include('closed (one-shot)');
             const handle = /sessionId: (\S+) /.exec(JSON.stringify(result))![1];
