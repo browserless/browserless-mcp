@@ -242,9 +242,11 @@ export function registerSmartScraperTool(
           text: `## Warning\nNo result returned by the API for: ${missingFormats.join(', ')}.`,
         });
       }
-      const aiOnly = params.formats.every(
-        (f) => f === 'json' || f === 'summary',
-      );
+      const skipPrimary =
+        params.formats.some((f) => f === 'json' || f === 'summary') &&
+        !params.formats.some(
+          (f) => f === 'markdown' || f === 'html' || f === 'rawText',
+        );
       // Primary text content: prefer markdown > rawText > string content > object content > diagnostic
       let textContent: string;
       if (response.markdown) {
@@ -258,7 +260,7 @@ export function registerSmartScraperTool(
       } else {
         textContent = `[No page content returned by the API. Strategy: ${response.strategy}, Status: ${response.statusCode}]`;
       }
-      if (!aiOnly) {
+      if (!skipPrimary) {
         blocks.push({ type: 'text' as const, text: textContent });
       }
       if (

@@ -328,6 +328,50 @@ describe('browserless_smartscraper tool', () => {
     expect(JSON.stringify(content)).not.to.include('## JSON');
   });
 
+  for (const formats of [
+    ['json', 'links'],
+    ['json', 'screenshot'],
+    ['summary', 'pdf'],
+    ['json', 'html'],
+    ['links'],
+  ]) {
+    it(`preserves requested text behavior for ${formats.join(' + ')}`, async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify(
+            makeSuccessResponse({
+              markdown: null,
+              content: '<html>Page content</html>',
+              json: { title: 'Example' },
+              summary: 'Page summary',
+            }),
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+      const execute = getToolExecute(
+        new FastMCP({ name: 'test', version: '0.1.0' }),
+      );
+      const result = await execute(
+        {
+          url: 'https://example.com',
+          formats,
+          ...(formats.includes('json')
+            ? { jsonOptions: { prompt: 'get title' } }
+            : {}),
+        },
+        mockContext,
+      );
+      const content = JSON.stringify(
+        (result as { content: Content[] }).content,
+      );
+      expect(content.includes('<html>Page content</html>')).to.equal(
+        formats.includes('html') || formats.length === 1,
+      );
+      expect(content).to.include('Example');
+    });
+  }
+
   for (const missing of ['json', 'summary'] as const) {
     it(`warns about missing ${missing} alongside a successful extraction`, async () => {
       fetchStub.resolves(
