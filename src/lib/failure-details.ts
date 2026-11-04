@@ -45,10 +45,13 @@ const statusCategories: Partial<Record<number, FailureCategory>> = {
 };
 
 // Generic codes that yield to a structured status but beat `unknown`.
-const fallbackCodeCategories: Partial<Record<string, FailureCategory>> = {
+const fallbackCodeCategories: Partial<Record<string, ErrorCategory>> = {
   INTERNAL_ERROR: 'SERVER_ERROR',
   TAB_NOT_FOUND: 'NOT_FOUND',
 };
+
+export const fallbackCodeCategory = (code: unknown) =>
+  typeof code === 'string' ? fallbackCodeCategories[code] : undefined;
 
 // Codes are untrusted text too. Only documented categories and transport codes
 // are safe to publish; an opaque provider code could itself contain a secret.
@@ -113,7 +116,7 @@ export function failureDetails(
     (code === undefined ? undefined : codeCategories[code]) ??
     (status === undefined ? undefined : statusCategories[status]) ??
     (status !== undefined && status >= 500 ? 'SERVER_ERROR' : undefined) ??
-    (code === undefined ? undefined : fallbackCodeCategories[code]) ??
+    fallbackCodeCategory(code) ??
     'UNKNOWN';
   const reason = reasons[category];
   const source =

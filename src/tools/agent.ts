@@ -48,7 +48,10 @@ import {
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import { failureDetails } from '../lib/failure-details.js';
+import {
+  failureDetails,
+  fallbackCodeCategory,
+} from '../lib/failure-details.js';
 import { defineTool, type ToolRunContext } from '../lib/define-tool.js';
 import {
   isPaymentStage,
@@ -1776,8 +1779,11 @@ export const runAgentCommands = async (
         }
 
         const classified = classifyAgentError({ err, cmd });
-        lastCategory = classified.category;
-        lastFailure = commandFailure(err, classified.category);
+        lastCategory =
+          classified.category === 'UNKNOWN'
+            ? (fallbackCodeCategory(err.code) ?? 'UNKNOWN')
+            : classified.category;
+        lastFailure = commandFailure(err, lastCategory);
 
         const prefix =
           commands.length > 1

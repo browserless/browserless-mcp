@@ -3719,6 +3719,35 @@ describe('browserless_agent _prompt capture', () => {
     });
   }
 
+  for (const [code, category] of [
+    ['INTERNAL_ERROR', 'api_error'],
+    ['TAB_NOT_FOUND', 'user_error'],
+  ]) {
+    it(`reports the ${code} fallback in the coarse category`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code, message: 'opaque' }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method: 'snapshot', params: {} },
+            { ...mockContext, sessionId: `diagnostic-category-${code}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({ error_category: category });
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
   it('clears failure metadata when a fatal command succeeds on retry', async () => {
     let calls = 0;
     const srv = await makeRespondingServer(() =>
