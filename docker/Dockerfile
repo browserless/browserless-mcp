@@ -1,4 +1,4 @@
-FROM node:24-slim AS builder
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY tsconfig.json ./
 COPY src/ src/
 RUN npm run build && npm prune --production
 
-FROM node:24-slim
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 
 LABEL org.opencontainers.image.source=https://github.com/browserless/browserless-mcp
 LABEL org.opencontainers.image.description="Browserless MCP Server"
