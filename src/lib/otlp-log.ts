@@ -1,6 +1,14 @@
 export type LogSeverity = 'INFO' | 'WARN' | 'ERROR';
 export type LogAttributes = Record<string, string | number | boolean>;
 
+/** Shared gate for SDK startup and the base-endpoint log fallback. */
+export const isHostedTelemetryEnabled = (
+  transport: string | undefined,
+): boolean =>
+  transport === 'httpStream' &&
+  process.env.OTEL_ENABLED === 'true' &&
+  process.env.OTEL_SDK_DISABLED?.trim().toLowerCase() !== 'true';
+
 let inFlight = 0;
 
 /** Best-effort OTLP/HTTP JSON shared by operator diagnostics. */
@@ -17,9 +25,7 @@ export const exportLogRecord = async ({
 }): Promise<void> => {
   const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const fallback =
-    base &&
-    process.env.OTEL_ENABLED === 'true' &&
-    process.env.TRANSPORT === 'httpStream'
+    base && isHostedTelemetryEnabled(process.env.TRANSPORT)
       ? `${base.replace(/\/+$/, '')}/v1/logs`
       : undefined;
   const endpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? fallback;

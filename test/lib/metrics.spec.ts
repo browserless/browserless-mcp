@@ -192,10 +192,9 @@ describe('metrics (OTLP telemetry)', () => {
 
   it('index.ts gates telemetry on OTEL_ENABLED + httpStream, guarded so it cannot crash boot', () => {
     const source = readFileSync('src/index.ts', 'utf8');
-    expect(source).to.include("config.transport === 'httpStream'");
-    // Master toggle matches the fleet convention (enterprise/workers).
-    expect(source).to.include("process.env.OTEL_ENABLED === 'true'");
-    expect(source).to.include('process.env.OTEL_SDK_DISABLED');
+    expect(source).to.include(
+      'if (isHostedTelemetryEnabled(config.transport) && otelEndpoint)',
+    );
     expect(source).not.to.include("from './lib/metrics.js'");
     expect(source).to.include("await import('./lib/metrics.js')");
     expect(source).to.include('initTelemetry(');

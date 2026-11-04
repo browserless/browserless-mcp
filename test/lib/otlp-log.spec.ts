@@ -10,6 +10,7 @@ describe('operator log transport', () => {
     delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
     delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     delete process.env.OTEL_ENABLED;
+    delete process.env.OTEL_SDK_DISABLED;
     delete process.env.TRANSPORT;
   });
   afterEach(() => {
@@ -78,6 +79,38 @@ describe('operator log transport', () => {
     await record();
     fetcher.restore();
     await record();
+  });
+
+  it('honors the normalized hosted opt-out for skill log fallback', async () => {
+    const fetcher = sinon
+      .stub(globalThis, 'fetch')
+      .resolves(new Response(null));
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:9/base/';
+    process.env.OTEL_ENABLED = 'true';
+    process.env.TRANSPORT = 'httpStream';
+    for (const disabled of ['true', 'TRUE', ' \tTrUe\n']) {
+      process.env.OTEL_SDK_DISABLED = disabled;
+      await logSkillEvent('skill.retrieval.failed', { domain: 'shop.example' });
+      await logSkillEvent('skill.telemetry.delivery_failed', {});
+      expect(fetcher.callCount, JSON.stringify(disabled)).to.equal(0);
+    }
+    for (const disabled of [undefined, 'false', '']) {
+      if (disabled === undefined) delete process.env.OTEL_SDK_DISABLED;
+      else process.env.OTEL_SDK_DISABLED = disabled;
+      await logSkillEvent('skill.retrieval.failed', {});
+      expect(fetcher.lastCall.args[0]).to.equal(
+        'http://127.0.0.1:9/base/v1/logs',
+      );
+    }
+    expect(fetcher.callCount).to.equal(3);
+
+    // The separately configured logs endpoint remains an independent opt-in.
+    process.env.OTEL_SDK_DISABLED = 'true';
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT =
+      'http://127.0.0.1:9/explicit';
+    await logSkillEvent('skill.retrieval.failed', {});
+    expect(fetcher.callCount).to.equal(4);
+    expect(fetcher.lastCall.args[0]).to.equal('http://127.0.0.1:9/explicit');
   });
 
   it('shares the sixteen-export limit with skill records and releases slots', async () => {
