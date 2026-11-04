@@ -21,6 +21,7 @@ import {
   startSessionReaper,
 } from './lib/session-reaper.js';
 import { AnalyticsHelper } from './lib/analytics.js';
+import { isHostedTelemetryEnabled } from './lib/otlp-log.js';
 import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
 import {
   admitSessionRequest,
@@ -230,12 +231,7 @@ registerSurface(server, config, analytics);
 // or crash the server.
 let telemetryShutdown: (() => Promise<void>) | undefined;
 const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-if (
-  config.transport === 'httpStream' &&
-  process.env.OTEL_ENABLED === 'true' &&
-  process.env.OTEL_SDK_DISABLED?.trim().toLowerCase() !== 'true' &&
-  otelEndpoint
-) {
+if (isHostedTelemetryEnabled(config.transport) && otelEndpoint) {
   try {
     const { initTelemetry } = await import('./lib/metrics.js');
     telemetryShutdown = initTelemetry({
