@@ -1,5 +1,8 @@
 import { expect } from 'chai';
-import { failureDetails } from '../../src/lib/failure-details.js';
+import {
+  failureDetails,
+  fallbackCodeCategory,
+} from '../../src/lib/failure-details.js';
 
 describe('failureDetails', () => {
   for (const [status, reason] of [
@@ -62,6 +65,12 @@ describe('failureDetails', () => {
       });
     });
   }
+
+  it('ignores inherited property names as fallback codes', () => {
+    for (const code of ['constructor', '__proto__', 'toString']) {
+      expect(fallbackCodeCategory(code)).to.equal(undefined);
+    }
+  });
 
   it('classifies an oversized script result as a script failure', () => {
     expect(failureDetails({ code: 'RESPONSE_TOO_LARGE' })).to.include({

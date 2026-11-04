@@ -51,7 +51,9 @@ const fallbackCodeCategories: Partial<Record<string, ErrorCategory>> = {
 };
 
 export const fallbackCodeCategory = (code: unknown) =>
-  typeof code === 'string' ? fallbackCodeCategories[code] : undefined;
+  typeof code === 'string' && Object.hasOwn(fallbackCodeCategories, code)
+    ? fallbackCodeCategories[code]
+    : undefined;
 
 // Codes are untrusted text too. Only documented categories and transport codes
 // are safe to publish; an opaque provider code could itself contain a secret.
