@@ -1,6 +1,7 @@
 import type { ErrorCategory } from '../@types/types.js';
 
-export type FailureCategory = ErrorCategory | 'RATE_LIMITED';
+export type FailureCategory =
+  ErrorCategory | 'RATE_LIMITED' | 'NO_RESULTS' | 'RESPONSE_TOO_LARGE';
 
 type Source =
   'validation' | 'script' | 'target_website' | 'api' | 'transport' | 'unknown';
@@ -18,6 +19,8 @@ const reasons = {
   NAVIGATION_FAILED: 'navigation_failed',
   TIMEOUT: 'timeout',
   RATE_LIMITED: 'rate_limited',
+  NO_RESULTS: 'no_results',
+  RESPONSE_TOO_LARGE: 'response_too_large',
   UNKNOWN: 'unknown',
 } satisfies Record<FailureCategory, string>;
 
@@ -32,11 +35,19 @@ const codeCategories: Partial<Record<string, FailureCategory>> = {
 };
 
 const statusCategories: Partial<Record<number, FailureCategory>> = {
+  400: 'INVALID_PARAMS',
   401: 'UNAUTHORIZED',
   403: 'FORBIDDEN',
   404: 'NOT_FOUND',
   408: 'TIMEOUT',
+  422: 'INVALID_PARAMS',
   429: 'RATE_LIMITED',
+};
+
+// Generic codes that yield to a structured status but beat `unknown`.
+const fallbackCodeCategories: Partial<Record<string, FailureCategory>> = {
+  INTERNAL_ERROR: 'SERVER_ERROR',
+  TAB_NOT_FOUND: 'NOT_FOUND',
 };
 
 // Codes are untrusted text too. Only documented categories and transport codes
@@ -101,7 +112,9 @@ export function failureDetails(
     options.category ??
     (code === undefined ? undefined : codeCategories[code]) ??
     (status === undefined ? undefined : statusCategories[status]) ??
-    (status !== undefined && status >= 500 ? 'SERVER_ERROR' : 'UNKNOWN');
+    (status !== undefined && status >= 500 ? 'SERVER_ERROR' : undefined) ??
+    (code === undefined ? undefined : fallbackCodeCategories[code]) ??
+    'UNKNOWN';
   const reason = reasons[category];
   const source =
     options.source ??
@@ -109,7 +122,9 @@ export function failureDetails(
       ? 'api'
       : code === 'INVALID_PARAMS' || code === 'UNKNOWN_METHOD'
         ? 'validation'
-        : 'unknown');
+        : code === 'RESPONSE_TOO_LARGE'
+          ? 'script'
+          : 'unknown');
   return {
     error_reason: reason,
     error_source: source,

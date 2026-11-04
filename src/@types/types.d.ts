@@ -492,6 +492,9 @@ export interface SearchResponse {
   data: SearchResponseData;
   totalResults: number;
   error?: string;
+  /** Machine-readable failure cause; also set on partial successful results. */
+  errorCode?: 'upstream_timeout' | 'upstream_unavailable' | 'no_results';
+  unresponsiveEngines?: { engine: string; reason?: string }[];
 }
 
 /* ------------------------------------------------------------------ */

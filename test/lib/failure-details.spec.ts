@@ -3,6 +3,8 @@ import { failureDetails } from '../../src/lib/failure-details.js';
 
 describe('failureDetails', () => {
   for (const [status, reason] of [
+    [400, 'invalid_params'],
+    [422, 'invalid_params'],
     [429, 'rate_limited'],
     [408, 'timeout'],
     [401, 'unauthorized'],
@@ -39,6 +41,35 @@ describe('failureDetails', () => {
       ).to.have.property('error_reason', 'script_error');
     });
   }
+
+  it('attributes an API 400 to invalid params', () => {
+    expect(failureDetails({ apiStatus: 400 })).to.include({
+      error_reason: 'invalid_params',
+      error_source: 'api',
+      error_status_code: 400,
+      error_status_origin: 'api',
+    });
+  });
+
+  for (const [code, reason] of [
+    ['INTERNAL_ERROR', 'server_error'],
+    ['TAB_NOT_FOUND', 'not_found'],
+  ] as const) {
+    it(`falls back to ${reason} for ${code} without a status`, () => {
+      expect(failureDetails({ code })).to.include({
+        error_code: code,
+        error_reason: reason,
+      });
+    });
+  }
+
+  it('classifies an oversized script result as a script failure', () => {
+    expect(failureDetails({ code: 'RESPONSE_TOO_LARGE' })).to.include({
+      error_code: 'RESPONSE_TOO_LARGE',
+      error_reason: 'response_too_large',
+      error_source: 'script',
+    });
+  });
 
   it('recognizes RATE_LIMITED without inventing a status', () => {
     expect(failureDetails({ code: 'RATE_LIMITED' })).to.deep.equal({
