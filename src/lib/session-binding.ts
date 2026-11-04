@@ -17,6 +17,32 @@ export const findLiveSession = (
     ? sessions.find((s) => s.sessionId === sessionId && s.auth !== undefined)
     : undefined;
 
+// Match mcp-proxy's legacy SSE routing and query parsing exactly.
+export const requestSessionId = (request: {
+  method?: string;
+  url?: string;
+  headers?: Record<string, string | string[] | undefined>;
+}): string | undefined => {
+  if (request.method === 'POST' && request.url?.startsWith('/messages'))
+    return (
+      new URL(request.url, 'https://example.com').searchParams.get(
+        'sessionId',
+      ) ?? undefined
+    );
+  const header = request.headers?.['mcp-session-id'];
+  return Array.isArray(header) ? header[0] : header;
+};
+
+// The transport supplies its opening session before fastmcp lists it.
+export const requestSessions = (
+  request: object,
+  sessions: readonly SessionLike[],
+): readonly SessionLike[] => {
+  const opening = (request as { browserlessSession?: SessionLike })
+    .browserlessSession;
+  return opening ? [...sessions, opening] : sessions;
+};
+
 export const sessionPrincipal = (auth: BrowserlessSession): string =>
   auth.authMethod === 'oauth' && auth.accountId && auth.userId
     ? `user:${auth.accountId}:${auth.userId}`
