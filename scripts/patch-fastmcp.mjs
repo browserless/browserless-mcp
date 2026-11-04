@@ -323,6 +323,23 @@ const handleStreamRequest = async ({`,
     to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
+  // Keep the opening session available before fastmcp lists it after initialize.
+  patch({
+    name: 'session request authentication SSE opener',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'activeTransports[transport.sessionId] = transport;',
+    to: 'activeTransports[transport.sessionId] = Object.assign(transport, { browserlessSession: server });',
+    required: false,
+  });
+  patch({
+    name: 'session request authentication SSE messages',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'if (sseEndpoint && await handleSSERequest({',
+    to: 'if (req.method === "POST" && req.url?.startsWith("/messages")) {\n\t\t\treq.browserlessSession = activeSSETransports[new URL(req.url, "https://example.com").searchParams.get("sessionId")]?.browserlessSession;\n\t\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return;\n\t\t}\n\t\tif (sseEndpoint && await handleSSERequest({',
+    required: false,
+  });
 }
 
 // Supply transport context alongside retained request history. Best-effort:

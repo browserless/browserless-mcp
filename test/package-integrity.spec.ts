@@ -189,7 +189,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     }
   });
 
-  it('authenticates streamable session GET and DELETE requests', () => {
+  it('authenticates session GET, DELETE and legacy SSE message requests', () => {
     const sources = mcpProxySources().filter((s) =>
       s.includes('const handleStreamRequest = async ({'),
     );
@@ -199,7 +199,11 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     ).to.have.length(2);
     expect(
       sources[0].split('await authenticateSessionRequest('),
-    ).to.have.length(3);
+    ).to.have.length(4);
+    expect(sources[0].split('browserlessSession: server')).to.have.length(2);
+    expect(
+      sources[0].split('req.browserlessSession = activeSSETransports['),
+    ).to.have.length(2);
   });
 
   it('exposes session auth in every Node session format', () => {
