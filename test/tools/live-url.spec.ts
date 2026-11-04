@@ -182,6 +182,34 @@ describe('browserless_live_url', () => {
     expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.equal({});
   });
 
+  it('defaults instructions only for interactive creates and preserves opt-outs', async () => {
+    fetchStub.callsFake(async () =>
+      jsonResponse({ liveURL: 'url', liveURLId: 'id' }),
+    );
+    for (const options of [
+      { interactable: true },
+      { interactable: false },
+      { interactable: true, instructions: '' },
+      { interactable: true, instructions: '   ' },
+      { interactable: true, instructions: 'Sign in, then click Done.' },
+      { interactable: true, instructions: { steps: ['Enter code'] } },
+    ]) {
+      await tool().execute(
+        { action: 'create', browserId: params.browserId, ...options },
+        mockContext,
+      );
+      expect(JSON.parse(fetchStub.lastCall.args[1].body)).to.deep.equal({
+        ...options,
+        ...(options.interactable && options.instructions === undefined
+          ? {
+              instructions:
+                'Complete the step shown on screen, then click Done.',
+            }
+          : {}),
+      });
+    }
+  });
+
   it('GETs encoded IDs and returns every status field, including ended links', async () => {
     for (const status of ['open', 'expired', 'closed']) {
       const response = {

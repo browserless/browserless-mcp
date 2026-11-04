@@ -6,7 +6,10 @@ import { prepareHandoff, findHandoff, readHandoff } from '../lib/handoff.js';
 import { VIEW_UNAVAILABLE } from '../lib/view-store.js';
 import { isCompliant } from './compliance.js';
 import type { PreparedView } from '../lib/view-schemas.js';
-import { LiveURLInstructionsSchema } from './schemas.js';
+import {
+  DEFAULT_LIVE_URL_INSTRUCTIONS,
+  LiveURLInstructionsSchema,
+} from './schemas.js';
 import type { AnalyticsHelper } from '../lib/analytics.js';
 import type {
   LiveURLCreated,
@@ -62,7 +65,7 @@ export const LiveURLParamsSchema = z.object({
   resizable: z.boolean().optional(),
   showBrowserInterface: z.boolean().optional(),
   instructions: LiveURLInstructionsSchema.optional().describe(
-    'Tell the person what to do, for example: Sign in, then click Done.',
+    'Tell the person what to do, for example: Sign in, then click Done. Interactive creates and handoffs default to a generic instruction when omitted. An empty string disables the card for create; inline handoff requires nonblank plain text.',
   ),
   instructionsTitle: z.string().trim().max(80).optional(),
   steps: stepsSchema.optional(),
@@ -88,6 +91,7 @@ export function registerLiveURLTool(
       'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown. ' +
       "Link lifetime defaults to 15 minutes, capped by your plan's maximum session time and remaining browser time; creating a link does not keep the browser alive. " +
       'For a human handoff, pass instructions explaining what to do and when to click Done. ' +
+      'Interactive creates and handoffs supply a generic instruction when omitted. For create, an empty string disables the card and Done button; view-only creates have no default instructions. ' +
       'Instructions accept a string or an object with layout, format, title, summary, steps, and currentStep. ' +
       'For string instructions use instructionsTitle, steps, currentStep, and instructionsFormat beside instructions. ' +
       'doneLabel, failLabel, and requesterName are always top-level options. ' +
@@ -114,6 +118,8 @@ export function registerLiveURLTool(
       uiEnabled,
     }) => {
       if (params.action === 'handoff') {
+        const instructions =
+          params.instructions ?? DEFAULT_LIVE_URL_INSTRUCTIONS;
         if (
           isCompliant(config) ||
           config.transport !== 'httpStream' ||
@@ -124,9 +130,9 @@ export function registerLiveURLTool(
           );
         if (
           !params.sessionId ||
-          typeof params.instructions !== 'string' ||
-          !params.instructions.trim() ||
-          params.instructions.length > 2000
+          typeof instructions !== 'string' ||
+          !instructions.trim() ||
+          instructions.length > 2000
         )
           throw new UserError(
             'Handoff requires an existing agent sessionId and plain-text instructions.',
@@ -142,7 +148,7 @@ export function registerLiveURLTool(
           session,
           viewOwner,
           client,
-          params.instructions.trim().slice(0, 2000),
+          instructions.trim().slice(0, 2000),
           params.timeout,
           session.apiUrl === config.browserlessApiUrl
             ? config.publicBrowserlessUrl
@@ -167,6 +173,12 @@ export function registerLiveURLTool(
           'browserId is required for create, status, and close.',
         );
       if (action === 'create') {
+        if (
+          options.interactable === true &&
+          options.instructions === undefined
+        ) {
+          options.instructions = DEFAULT_LIVE_URL_INSTRUCTIONS;
+        }
         if (
           options.type === 'png' &&
           options.quality !== undefined &&

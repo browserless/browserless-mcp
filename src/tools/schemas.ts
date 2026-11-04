@@ -454,6 +454,9 @@ const WaitForResponseCommandSchema = z.object({
   }),
 });
 
+export const DEFAULT_LIVE_URL_INSTRUCTIONS =
+  'Complete the step shown on screen, then click Done.';
+
 export const LiveURLInstructionsSchema = z.union([
   z.string(),
   z.object({
@@ -477,7 +480,7 @@ const LiveURLCommandSchema = z.object({
           'Link lifetime in ms (default 300000, five minutes), capped by the remaining browser session time.',
         ),
       instructions: LiveURLInstructionsSchema.optional().describe(
-        'Tell the person what to do, for example: Sign in, then click Done.',
+        'Tell the person what to do, for example: Sign in, then click Done. Interactive links default to a generic instruction when omitted; an empty string disables the card and Done button.',
       ),
       interactable: z
         .boolean()
