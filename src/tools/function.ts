@@ -97,12 +97,16 @@ export const formatFunctionContent = (
   if (response.data.length > MAX_TEXT_RESPONSE_CHARS) {
     const approxTokens = Math.round(response.data.length / 4);
     const capTokens = Math.round(MAX_TEXT_RESPONSE_CHARS / 4);
-    throw new UserError(
-      `Function returned ${response.data.length} chars (~${approxTokens} tokens), ` +
-        `exceeding the ${MAX_TEXT_RESPONSE_CHARS}-char (~${capTokens}-token) limit. ` +
-        `Either filter/summarize inside your function, or — for binary outputs — ` +
-        `return { type: "image/jpeg" } / "image/png" / "audio/mpeg" / "application/pdf" ` +
-        `from your function so the bytes come back as a proper content block instead of base64 text.`,
+    // The code tags analytics; the message still reaches the caller.
+    throw Object.assign(
+      new UserError(
+        `Function returned ${response.data.length} chars (~${approxTokens} tokens), ` +
+          `exceeding the ${MAX_TEXT_RESPONSE_CHARS}-char (~${capTokens}-token) limit. ` +
+          `Either filter/summarize inside your function, or — for binary outputs — ` +
+          `return { type: "image/jpeg" } / "image/png" / "audio/mpeg" / "application/pdf" ` +
+          `from your function so the bytes come back as a proper content block instead of base64 text.`,
+      ),
+      { code: 'RESPONSE_TOO_LARGE' },
     );
   }
 

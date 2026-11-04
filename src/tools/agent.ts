@@ -48,7 +48,10 @@ import {
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import { failureDetails } from '../lib/failure-details.js';
+import {
+  failureDetails,
+  fallbackCodeCategory,
+} from '../lib/failure-details.js';
 import { defineTool, type ToolRunContext } from '../lib/define-tool.js';
 import {
   isPaymentStage,
@@ -1253,6 +1256,10 @@ export const runAgentCommands = async (
     sessionAgeMs = ageMs;
   };
   let lastFailure: Record<string, unknown> | undefined;
+  const validationFailure = failureDetails(undefined, {
+    category: 'INVALID_PARAMS',
+    source: 'validation',
+  });
 
   const hasConnectedStripeLinkWallet = async (
     snapshot: SnapshotResult | undefined,
@@ -1309,10 +1316,7 @@ export const runAgentCommands = async (
   const proxyCmd = commands.find((c) => c.method === 'proxy');
   if (proxyCmd) {
     lastCategory = 'INVALID_PARAMS';
-    lastFailure = failureDetails(undefined, {
-      category: lastCategory,
-      source: 'validation',
-    });
+    lastFailure = validationFailure;
     sendAnalytics(false);
     throw new UserError(
       'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
@@ -1385,6 +1389,7 @@ export const runAgentCommands = async (
     validateSecretCaptureOrdering(commands);
   } catch (err) {
     lastCategory = 'INVALID_PARAMS';
+    lastFailure = validationFailure;
     sendAnalytics(false, err);
     throw new UserError(
       err instanceof Error ? err.message : 'Secret capture preflight failed.',
@@ -1564,7 +1569,8 @@ export const runAgentCommands = async (
     for (const [commandIndex, cmd] of commands.entries()) {
       const commandFailure = (err: unknown, category: ErrorCategory) => ({
         ...failureDetails(err, {
-          category,
+          // UNKNOWN defers to the error's structured code or status.
+          category: category === 'UNKNOWN' ? undefined : category,
           source:
             category === 'SCRIPT_ERROR'
               ? 'script'
@@ -1583,6 +1589,7 @@ export const runAgentCommands = async (
         validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
       } catch (err) {
         lastCategory = 'INVALID_PARAMS';
+        lastFailure = validationFailure;
         throw new UserError(
           err instanceof Error
             ? err.message
@@ -1772,8 +1779,11 @@ export const runAgentCommands = async (
         }
 
         const classified = classifyAgentError({ err, cmd });
-        lastCategory = classified.category;
-        lastFailure = commandFailure(err, classified.category);
+        lastCategory =
+          classified.category === 'UNKNOWN'
+            ? (fallbackCodeCategory(err.code) ?? 'UNKNOWN')
+            : classified.category;
+        lastFailure = commandFailure(err, lastCategory);
 
         const prefix =
           commands.length > 1
@@ -2255,12 +2265,20 @@ export const runAgentCommands = async (
     // Resolve any local upload paths to base64 once, before the (possibly
     // retried) send loop runs.
     for (const cmd of commands) {
-      await normalizeUploadCommand(
-        cmd,
-        config.transport,
-        config.mcpBaseUrl,
-        token,
-      );
+      try {
+        await normalizeUploadCommand(
+          cmd,
+          config.transport,
+          config.mcpBaseUrl,
+          token,
+        );
+      } catch (err) {
+        if (err instanceof UserError) {
+          lastCategory = 'INVALID_PARAMS';
+          lastFailure = validationFailure;
+        }
+        throw err;
+      }
     }
     const result = await runCommands(false);
     if (
