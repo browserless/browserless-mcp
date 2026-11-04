@@ -455,7 +455,7 @@ const WaitForResponseCommandSchema = z.object({
 });
 
 export const DEFAULT_LIVE_URL_INSTRUCTIONS =
-  'Complete the step shown on screen, then click Done.';
+  'Complete the step shown on screen, then use the completion button.';
 
 export const LiveURLInstructionsSchema = z.union([
   z.string(),

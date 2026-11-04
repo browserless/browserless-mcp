@@ -188,6 +188,7 @@ describe('browserless_live_url', () => {
     );
     for (const options of [
       { interactable: true },
+      { interactable: true, doneLabel: 'Continue' },
       { interactable: false },
       { interactable: true, instructions: '' },
       { interactable: true, instructions: '   ' },
@@ -203,7 +204,7 @@ describe('browserless_live_url', () => {
         ...(options.interactable && options.instructions === undefined
           ? {
               instructions:
-                'Complete the step shown on screen, then click Done.',
+                'Complete the step shown on screen, then use the completion button.',
             }
           : {}),
       });

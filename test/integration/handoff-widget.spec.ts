@@ -209,7 +209,7 @@ describe('direct agent human handoff over MCP', () => {
       assert.ok(!prepared.isError, text(prepared));
       assert.equal(
         liveOptions.at(-1)?.instructions,
-        'Complete the step shown on screen, then click Done.',
+        'Complete the step shown on screen, then use the completion button.',
       );
       const first = ref(prepared);
       assert.ok(first);

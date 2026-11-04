@@ -610,9 +610,9 @@ Set `action: "create"`, `browserId`, and `interactable: true` for a human handof
 ```
 
 Interactive `browserless_agent` live URLs and `browserless_live_url` interactive creates
-and inline handoffs default to "Complete the step shown on screen, then click Done."
-when `instructions` is omitted. Pass specific instructions when possible. Agent
-links with `interactable: false` and view-only REST creates have no default
+and inline handoffs default to "Complete the step shown on screen, then use the
+completion button." when `instructions` is omitted. Pass specific instructions
+when possible. Agent links with `interactable: false` and view-only REST creates have no default
 instructions. An explicit empty or whitespace-only string disables the card and
 Done button for agent links and REST creates. Inline `handoff` requires nonblank
 plain-text instructions when supplied; blank text is rejected.

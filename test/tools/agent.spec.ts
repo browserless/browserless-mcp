@@ -3459,7 +3459,7 @@ describe('browserless_agent live URL handoff', () => {
               params?.instructions === undefined
                 ? {
                     instructions:
-                      'Complete the step shown on screen, then click Done.',
+                      'Complete the step shown on screen, then use the completion button.',
                   }
                 : {}),
             });
