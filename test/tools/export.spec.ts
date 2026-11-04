@@ -115,7 +115,7 @@ describe('browserless_export tool', () => {
   });
 
   for (const [status, reason, category] of [
-    [400, 'unknown', 'user_error'],
+    [400, 'invalid_params', 'user_error'],
     [401, 'unauthorized', 'user_error'],
     [408, 'timeout', 'timeout'],
     [429, 'rate_limited', 'user_error'],

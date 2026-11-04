@@ -196,6 +196,11 @@ async function fixture() {
     initialize,
     get,
     track,
+    notifyStandalone: () =>
+      server.sessions[0].server.sendLoggingMessage({
+        level: 'info',
+        data: 'standalone probe',
+      }),
     calls: () => calls,
     remove: (sid: string, key?: string) =>
       fetch(url, { method: 'DELETE', headers: headers(sid, key) }),
@@ -231,11 +236,15 @@ describe('session request identity', () => {
       const denied = await f.get(sid, key, '_GET_stream_1_0_x');
       expect(denied.status).to.equal(status);
       expect(await denied.text()).not.to.include('data:');
-      await (
+      const result = await (
         await f.post(sid, A, 'tools/call', { name: 'probe', arguments: {} })
       ).text();
+      expect(result).to.include('"text":"ok"');
+      expect(result).to.include('probe ran');
+      // Tool logs now use the POST stream; probe the GET channel separately.
+      await f.notifyStandalone();
       await waitFor(() =>
-        live.frames.some((frame) => frame.data.includes('probe ran')),
+        live.frames.some((frame) => frame.data.includes('standalone probe')),
       );
     });
   }

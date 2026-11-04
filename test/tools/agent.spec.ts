@@ -3578,6 +3578,46 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
   });
 
+  for (const [label, params] of [
+    [
+      'secret capture ordering',
+      {
+        commands: [
+          {
+            method: 'loadSecret',
+            params: { ref: 'op://v/i/password', selector: '#password' },
+          },
+          { method: 'snapshot', params: {} },
+        ],
+      },
+    ],
+    [
+      'upload input',
+      {
+        method: 'uploadFile',
+        params: { selector: '#f', files: [{ handle: 'missing-handle' }] },
+      },
+    ],
+  ] as const) {
+    it(`reports rejected ${label} as invalid params`, async () => {
+      const { execute, fire } = registerWithAnalytics(mockConfig);
+      try {
+        await execute(params, {
+          ...mockContext,
+          sessionId: `diagnostic-${label}`,
+        });
+      } catch {
+        /* assert event */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'invalid_params',
+        error_source: 'validation',
+        error_category: 'user_error',
+      });
+    });
+  }
+
   it('does not label a failed connection without an HTTP response as an API response', async () => {
     const srv = await makeRejectingServer(403, 'unused');
     await srv.close();
@@ -3641,6 +3681,8 @@ describe('browserless_agent _prompt capture', () => {
     ['', 'goto', 'HTTP 403', 'forbidden'],
     ['', 'goto', 'HTTP 404', 'not_found'],
     ['', 'goto', 'HTTP 503', 'server_error'],
+    ['INTERNAL_ERROR', 'screenshot', 'internal', 'server_error'],
+    ['TAB_NOT_FOUND', 'switchTab', 'stale tab', 'not_found'],
     ['opaque-private-code', 'snapshot', 'unrecognized', 'unknown'],
   ]) {
     it(`preserves ${reason} as a detailed agent reason`, async () => {
@@ -3671,6 +3713,35 @@ describe('browserless_agent _prompt capture', () => {
         );
         if (reason === 'unknown')
           expect(fire.firstCall.args[2]).not.to.have.property('error_code');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const [code, category] of [
+    ['INTERNAL_ERROR', 'api_error'],
+    ['TAB_NOT_FOUND', 'user_error'],
+  ]) {
+    it(`reports the ${code} fallback in the coarse category`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code, message: 'opaque' }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method: 'snapshot', params: {} },
+            { ...mockContext, sessionId: `diagnostic-category-${code}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({ error_category: category });
       } finally {
         await srv.close();
       }

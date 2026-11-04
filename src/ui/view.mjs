@@ -112,9 +112,17 @@ function fail(error) {
       error.message || 'The performance audit could not be completed.';
     return;
   }
-  if (handoff) {
+  if (handoff || lastResult?.structuredContent?.kind === 'handoff') {
     clearTimeout(expiryTimer);
-    handoff.fail(error);
+    card.hidden = true;
+    handoffRoot.hidden = false;
+    if (handoff) handoff.fail(error);
+    else {
+      handoffRoot.innerHTML =
+        '<header><h1>Handoff unavailable</h1></header><p role="alert"></p><p class="handoff-hint">Return to the conversation to check the existing browser.</p>';
+      handoffRoot.querySelector('[role="alert"]').textContent =
+        error.message || 'Unable to load the human handoff.';
+    }
     return;
   }
   if (media) {

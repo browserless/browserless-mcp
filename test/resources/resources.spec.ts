@@ -37,6 +37,18 @@ describe('Resources', () => {
       expect(() => registerApiDocsResource(server, mockConfig)).to.not.throw();
     });
 
+    it('documents AI extraction formats and JSON options', async () => {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const addResource = sinon.spy(server, 'addResource');
+      registerApiDocsResource(server, mockConfig);
+      const resource = addResource.firstCall.args[0];
+      expect(resource.uri).to.equal('browserless://api-docs');
+      const result = await resource.load();
+      for (const field of ['"json"', '"summary"', 'jsonOptions']) {
+        expect((result as { text: string }).text).to.include(field);
+      }
+    });
+
     it('load returns markdown with API URL', async () => {
       const server = new FastMCP({ name: 'test', version: '0.1.0' });
       const addResourceSpy = sinon.spy(server, 'addResource');

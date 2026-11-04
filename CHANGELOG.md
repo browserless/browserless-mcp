@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.44.0](https://github.com/browserless/browserless-mcp/compare/v1.43.1...v1.44.0) (2026-11-03)
+
+
+### Features
+
+* add session request diagnostics ([#478](https://github.com/browserless/browserless-mcp/issues/478)) ([4f4c0d7](https://github.com/browserless/browserless-mcp/commit/4f4c0d7550e2528dc12100630917bab63603cca2))
+
+
+### Bug Fixes
+
+* liveurl handoff widget ui ([5f91ecc](https://github.com/browserless/browserless-mcp/commit/5f91ecc9e17bfc12e58db31a861f0d50834dd131))
+* tool descriptions for liveurl ([#477](https://github.com/browserless/browserless-mcp/issues/477)) ([aa433fb](https://github.com/browserless/browserless-mcp/commit/aa433fbbdc19030bd541abcbaa12e4e342b3ee88))
+
+## [1.43.1](https://github.com/browserless/browserless-mcp/compare/v1.43.0...v1.43.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* liveurl handoff ([964dce9](https://github.com/browserless/browserless-mcp/commit/964dce9aaa194c003734367c9507ac4c798dac73))
+
 ## [1.43.0](https://github.com/browserless/browserless-mcp/compare/v1.42.0...v1.43.0) (2026-11-02)
 
 

@@ -45,6 +45,31 @@ async function notFound(run: () => void) {
 describe('session binding', () => {
   afterEach(() => resetSessionReaperForTests());
 
+  it('observes refusal reasons without changing admission or responses', async () => {
+    const admit = admitSessionRequest;
+    const observed: unknown[] = [];
+    const observe = (reason: string, owner?: BrowserlessSession) =>
+      observed.push([reason, owner]);
+    admit(undefined, key, [], observe);
+    admit('S', key, [{ sessionId: 'S', auth: key }], observe);
+    expect(observed).to.deep.equal([]);
+    await notFound(() => admit('S', key, [], observe));
+    await notFound(() => admit('S', key, [{ sessionId: 'S' }], observe));
+    await notFound(() =>
+      admit('S', oauth, [{ sessionId: 'S', auth: key }], observe),
+    );
+    expect(observed).to.deep.equal([
+      ['unknown_session', undefined],
+      ['unknown_session', undefined],
+      ['principal_mismatch', key],
+    ]);
+    await notFound(() =>
+      admit('S', oauth, [{ sessionId: 'S', auth: key }], () => {
+        throw new Error('observer unavailable');
+      }),
+    );
+  });
+
   it('admits initialization, the same key through either source, and refreshed OAuth identities', () => {
     assertSessionPrincipal(undefined, key, []);
     for (const auth of [key, { ...key, authMethod: 'api_key_query' as const }])

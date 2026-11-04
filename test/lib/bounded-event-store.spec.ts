@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 import { BoundedEventStore } from '../../src/lib/bounded-event-store.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
@@ -7,6 +8,41 @@ function makeMessage(id: number): JSONRPCMessage {
 }
 
 describe('BoundedEventStore', () => {
+  it('observes missing request context without changing storage', async () => {
+    const observed: string[] = [];
+    const store = new BoundedEventStore(10, 1000, 4096, (stream) => {
+      observed.push(stream);
+      throw new Error('observer unavailable');
+    });
+    const id = await store.storeEvent('request', makeMessage(1));
+    await store.storeEvent('_GET_stream', makeMessage(2));
+    await store.storeEvent('request', makeMessage(3), 'A');
+    expect(observed).to.deep.equal(['request']);
+    expect(store.size).to.equal(2);
+    expect(
+      await store.replayEventsAfter(id, { send: async () => {} }),
+    ).to.equal('request');
+  });
+
+  it('looks up retained context without evicting expired entries', async () => {
+    const clock = sinon.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const store = new BoundedEventStore(10, 1000);
+      const id = await store.storeEvent('request', makeMessage(1), 'A');
+      clock.tick(999);
+      expect(store.cursorContext(id)).to.deep.equal({
+        sessionId: 'A',
+        ageMs: 999,
+      });
+      expect(store.cursorContext('unknown')).to.equal(undefined);
+      clock.tick(1);
+      expect(store.cursorContext(id)).to.equal(undefined);
+      expect(store.size).to.equal(1);
+    } finally {
+      clock.restore();
+    }
+  });
+
   it('retains request context within the shared event budget', async () => {
     const store = new BoundedEventStore(3);
     const first = await store.storeEvent('request', makeMessage(1), 'one');
