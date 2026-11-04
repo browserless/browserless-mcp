@@ -563,6 +563,7 @@ export interface CrawlStatusResponse {
 export interface SmartScrapeRequest {
   url: string;
   formats?: ScrapeFormat[];
+  jsonOptions?: { schema?: Record<string, unknown>; prompt?: string };
   timeout?: number;
   profile?: string;
   onlyMainContent?: boolean;

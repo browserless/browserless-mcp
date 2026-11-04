@@ -1,4 +1,9 @@
-import { compact, hashToken, isTextContentType } from './utils.js';
+import {
+  compact,
+  hashToken,
+  isTextContentType,
+  stableStringify,
+} from './utils.js';
 import type {
   ApiClient,
   CrawlCancelResponse,
@@ -460,6 +465,9 @@ export function createApiClient(
         headers: canonicalHeaders
           ? hashToken(JSON.stringify(canonicalHeaders))
           : null,
+        jsonOptions: params.jsonOptions
+          ? hashToken(stableStringify(params.jsonOptions))
+          : null,
       });
 
       const cached = _cache.get<SmartScraperResponse>(cacheKey);
@@ -479,11 +487,17 @@ export function createApiClient(
           excludeTags: params.excludeTags,
           headers: params.headers,
           waitFor: params.waitFor,
+          jsonOptions: params.jsonOptions,
         }),
         timeout,
         profile: params.profile,
       });
-      _cache.set(cacheKey, result);
+      if (
+        !(formats.includes('json') && result.json == null) &&
+        !(formats.includes('summary') && !result.summary)
+      ) {
+        _cache.set(cacheKey, result);
+      }
       return { ...result, cacheHit: false };
     },
 
