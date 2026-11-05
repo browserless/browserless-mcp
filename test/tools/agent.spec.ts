@@ -162,7 +162,7 @@ describe('browserless_agent PDF reading', () => {
       ],
       '',
       '',
-      { transport: 'stdio' },
+      { transport: 'stdio', sessionOpen: true },
     );
     const text = content
       .filter((c) => c.type === 'text')
@@ -2048,6 +2048,7 @@ describe('browserless_agent one-shot sessions', () => {
                         data: 'b2s=',
                         mimeType: 'text/plain',
                         size: 2,
+                        pdfDocumentId: 'expired-pdf-id',
                       },
                       { filename: 'pending.txt', inProgress: true },
                     ]
@@ -2073,6 +2074,8 @@ describe('browserless_agent one-shot sessions', () => {
         const stored = getDownload(id, downloadOwner('test-token'))!;
         expect(await fsReadFile(stored.path, 'utf8')).to.equal('ok');
         expect(result).to.include('Browser session closed (one-shot)');
+        expect(result).not.to.include('expired-pdf-id');
+        expect(result).to.include('PDF reading requires');
         for (let i = 0; !srv.closedConnections() && i < 100; i++) {
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
@@ -2450,7 +2453,15 @@ describe('browserless_agent one-shot sessions', () => {
         methods.push(method);
         return method === 'text'
           ? { text: 'finished result' }
-          : { downloads: [] };
+          : {
+              downloads: [
+                {
+                  filename: 'guide.pdf',
+                  error: 'Transfer unavailable',
+                  pdfDocumentId: 'retained-pdf-id',
+                },
+              ],
+            };
       });
       try {
         const analytics = new AnalyticsHelper(false);
@@ -2479,6 +2490,8 @@ describe('browserless_agent one-shot sessions', () => {
           expect(serialized).not.to.include('closed (one-shot)');
           expect(serialized).not.to.include('This browser stays open');
           expect(serialized).not.to.include('Omitting it opens a blank one');
+          expect(serialized).to.include('readPdf');
+          expect(serialized).to.include('retained-pdf-id');
           await execute({ method: 'text', sessionId: handle }, mockContext);
           expect(srv.hits()).to.equal(1);
         } else {
@@ -2491,6 +2504,9 @@ describe('browserless_agent one-shot sessions', () => {
           expect(serialized).to.include('FIRST call');
           expect(serialized).not.to.include('sessionId:');
           expect(serialized).not.to.include('reportSkillOutcome');
+          expect(serialized).not.to.include('retained-pdf-id');
+          expect(serialized).not.to.include('readPdf');
+          expect(serialized).to.include('PDF reading requires');
         }
       } finally {
         await srv.close();
