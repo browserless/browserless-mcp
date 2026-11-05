@@ -76,6 +76,38 @@ cross-worker reads. Restart or eviction makes a view unavailable and never
 reruns the original operation. Replay presentation tools/resources are absent
 from the compliant surface, whose existing tool list is unchanged.
 
+### Inline account usage and active sessions
+
+On the full surface, MCP Apps clients can display account snapshots:
+
+```text
+browserless_usage({ timeframe: "day" })
+browserless_show({ viewRef: "<returned-view-reference>" })
+
+browserless_sessions({ action: "active" })
+browserless_show({ viewRef: "<returned-view-reference>" })
+```
+
+Usage shows billed units against the plan allotment, highlights overage, and
+shows request counters when available. Billing-period units always cover the
+whole account; the hour/day/week selector applies only to request counters and
+preserves any API-key filter. Empty request counters never erase billed usage.
+Missing values remain unavailable.
+
+Active sessions shows the browser ID, browser name/type, start time, and elapsed
+time at the snapshot. The API does not provide page URLs. Refresh preserves the
+original limit/skip filters and never stops or reconnects a browser.
+
+Both controls call the original data tool through the widget bridge and update
+the mounted view without another chat turn or `browserless_show` call. Refresh
+errors preserve the last successful snapshot with a retry option. There is no
+automatic polling. Snapshots are independent, owned, bounded, and expire after
+15 minutes; refreshing prepares a new reference and never renews an old one.
+The mounted widget adopts the new snapshot's expiry after a successful refresh.
+Showing a snapshot rechecks account access under the current credential.
+Clients without MCP Apps retain their original text output. These tools and
+widgets remain absent from the compliant connector.
+
 ### Inline Lighthouse scorecard
 
 In MCP Apps clients, `browserless_performance` displays a scorecard directly
@@ -201,8 +233,11 @@ artifact until expiry; preview and Save requests are repeatable and do not
 consume the original single-use download.
 
 Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
-budget. A gallery shows the first 12 valid captures, each at most 50 MiB; its
-summary reports when more captures were returned. Invalid screenshots are
+budget. Each caller scope retains at most four views across usage, active
+sessions, replays, and media. New views evict that caller's oldest views;
+they never evict another caller's views. A gallery shows the first 12 valid
+captures, each at most 50 MiB; its summary reports when more captures were
+returned. Invalid screenshots are
 skipped without discarding valid captures. Preview files are removed on expiry
 or eviction. Before the first media view is created, cleanup removes stale
 files left by exited processes, including files with the current process's
@@ -635,15 +670,15 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI                    | Description                                                               |
-| ------------------------------- | ------------------------------------------------------------------------- |
-| `browserless://api-docs`        | Smart scraper API documentation                                           |
-| `browserless://status`          | Live service health status                                                |
-| `ui://browserless/view/v9.html` | Bundled replay, screenshot, video, and handoff widget (full surface only) |
+| Resource URI                     | Description                                                                                               |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `browserless://api-docs`         | Smart scraper API documentation                                                                           |
+| `browserless://status`           | Live service health status                                                                                |
+| `ui://browserless/view/v11.html` | Bundled replay, screenshot, video, handoff, account usage, and active sessions widget (full surface only) |
 
-The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v8.html`
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v10.html`
 resources remain readable as aliases of the current widget. Newly discovered
-tools advertise v9 so hosts do not reuse a cached pre-handoff v3 widget.
+tools advertise v11 so hosts discover the account usage and active sessions views.
 
 ## MCP Prompts
 
