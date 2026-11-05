@@ -136,6 +136,14 @@ const SECRET_SAFE_METHODS = new Set([
   // Not a page action; must be sendable right after a credential fill.
   'reportProfileAuthentication',
   'close',
+  // Armed tab replies are projected to identifiers below, never page metadata.
+  'getTabs',
+  'switchTab',
+  'goto',
+  'back',
+  'forward',
+  'reload',
+  'waitForNavigation',
 ]);
 // Commands after which a completed top-frame navigation has replaced the page.
 const TOP_FRAME_NAVIGATION_METHODS = new Set([
@@ -170,15 +178,12 @@ export const validateSecretCaptureOrdering = (
   for (const command of commands) {
     if (command.method === 'loadSecret') {
       secretVisible = true;
-    } else if (
-      command.method === 'clearSecrets' ||
-      TOP_FRAME_NAVIGATION_METHODS.has(command.method)
-    ) {
+    } else if (command.method === 'clearSecrets') {
       secretVisible = false;
     } else if (secretVisible && !SECRET_SAFE_METHODS.has(command.method)) {
       throw new Error(
         `${command.method} cannot run after loadSecret while a credential may be on-screen. ` +
-          `Move the capture before loadSecret, or run clearSecrets or a top-frame navigation first.`,
+          `Move the capture before loadSecret, or run clearSecrets after the fill completes and secret-bearing content is gone from all tabs. Navigation alone does not unlock backend captures.`,
       );
     }
   }
@@ -193,11 +198,8 @@ export const secretVisibleAfter = (
     return (result as { ok?: unknown } | null)?.ok === true ? true : visible;
   }
   if (
-    method === 'clearSecrets' ||
-    (TOP_FRAME_NAVIGATION_METHODS.has(method) &&
-      result !== null &&
-      typeof result === 'object' &&
-      (result as { rejected?: unknown }).rejected !== true)
+    method === 'clearSecrets' &&
+    (result as { ok?: unknown } | null)?.ok === true
   ) {
     return false;
   }
@@ -1698,6 +1700,9 @@ export const runAgentCommands = async (
         promptSent = true;
       }
 
+      const protectedTabOperation =
+        agentSession.secretVisible &&
+        (cmd.method === 'getTabs' || cmd.method === 'switchTab');
       let resp;
       try {
         if (
@@ -1716,6 +1721,11 @@ export const runAgentCommands = async (
           onSession,
         );
       } catch (sendErr: unknown) {
+        if (protectedTabOperation) {
+          throw new UserError(
+            `Protected tab operation failed. Do not clear protection to inspect the page.\n${sessionLine(agentSession, compliant)}`,
+          );
+        }
         if (sendErr instanceof HumanHandoffActiveError)
           throw new UserError(sendErr.message);
         destroySession(
@@ -1754,6 +1764,27 @@ export const runAgentCommands = async (
           }),
           { kind: 'transport', detail: errMessage },
         );
+      }
+
+      // Strip page-controlled data before error formatting, batch accumulation,
+      // profile bookkeeping or any text/structured response can observe it.
+      if (protectedTabOperation) {
+        const result = (
+          cmd.method === 'getTabs'
+            ? z.object({
+                tabs: z.array(
+                  z.object({ targetId: z.string(), active: z.boolean() }),
+                ),
+                activeTargetId: z.string().nullable(),
+              })
+            : z.object({ success: z.boolean(), targetId: z.string() })
+        ).safeParse(resp.result);
+        if (resp.error || !result.success) {
+          throw new UserError(
+            `Protected tab operation failed. Do not clear protection to inspect the page.\n${sessionLine(agentSession, compliant)}`,
+          );
+        }
+        resp.result = result.data;
       }
 
       if (resp.error) {
