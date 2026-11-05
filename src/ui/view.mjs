@@ -5,6 +5,7 @@ import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import { mountPerformance } from './performance.mjs';
+import { mountAccountView } from './account-view.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -34,6 +35,10 @@ let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
 const performanceRoot = byId('performance');
+let accountView;
+const accountRoot = byId('account-view');
+const isAccountView = () =>
+  ['usage', 'active-sessions'].includes(lastResult?.structuredContent?.kind);
 const isPerformanceView = () =>
   document.body.dataset.viewKind === 'performance' ||
   lastResult?.structuredContent?.kind === 'performance';
@@ -97,9 +102,24 @@ function dispose() {
   media = undefined;
   performanceReport?.dispose();
   performanceReport = undefined;
+  accountView?.dispose();
+  accountView = undefined;
+  accountRoot.hidden = true;
 }
 function fail(error) {
   loading.abort();
+  if (isAccountView()) {
+    clearTimeout(expiryTimer);
+    card.hidden = true;
+    accountRoot.hidden = false;
+    if (accountView) accountView.fail(error);
+    else {
+      accountRoot.innerHTML =
+        '<header><h1>Account view unavailable</h1></header><p role="alert"></p>';
+      accountRoot.querySelector('[role="alert"]').textContent = error.message;
+    }
+    return;
+  }
   if (isPerformanceView()) {
     dispose();
     card.hidden = true;
@@ -323,6 +343,11 @@ async function render(result) {
     }
     const view = ShowOutputSchema.parse(result.structuredContent);
     const expires = Date.parse(view.expiresAt);
+    if (['usage', 'active-sessions'].includes(view.kind)) {
+      accountView = mountAccountView(accountRoot, view, app);
+      card.hidden = true;
+      accountRoot.hidden = false;
+    }
     if (view.kind === 'handoff') {
       handoff = mountHandoff(
         handoffRoot,
@@ -334,13 +359,15 @@ async function render(result) {
       card.hidden = true;
       handoffRoot.hidden = false;
     }
-    if (expires <= Date.now())
-      throw new Error('This view has expired. Prepare a new replay.');
+    const expiredMessage = accountView
+      ? 'This view has expired. Request a new account snapshot.'
+      : 'This view has expired. Prepare a new replay.';
+    if (expires <= Date.now()) throw new Error(expiredMessage);
     expiryTimer = setTimeout(
-      () => fail(new Error('This view has expired. Prepare a new replay.')),
+      () => fail(new Error(expiredMessage)),
       expires - Date.now(),
     );
-    if (handoff) return;
+    if (handoff || accountView) return;
     if (view.kind === 'agent-media') {
       media = mountAgentMedia(
         mediaRoot,
@@ -441,9 +468,11 @@ app.ontoolcancelled = (params) => {
   generation++;
   fail(
     new Error(
-      isPerformanceView()
-        ? params?.reason || 'Performance audit was cancelled.'
-        : 'Replay loading was cancelled.',
+      isAccountView()
+        ? params?.reason || 'Account view was cancelled.'
+        : isPerformanceView()
+          ? params?.reason || 'Performance audit was cancelled.'
+          : 'Replay loading was cancelled.',
     ),
   );
 };
