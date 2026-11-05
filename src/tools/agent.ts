@@ -178,7 +178,7 @@ export const validateSecretCaptureOrdering = (
     } else if (secretVisible && !SECRET_SAFE_METHODS.has(command.method)) {
       throw new Error(
         `${command.method} cannot run after loadSecret while a credential may be on-screen. ` +
-          `Move the capture before loadSecret, or run clearSecrets or a top-frame navigation first.`,
+          `Move the capture before loadSecret, or run clearSecrets after the fill completes and secret-bearing content is gone from all tabs. Navigation alone does not unlock backend captures.`,
       );
     }
   }

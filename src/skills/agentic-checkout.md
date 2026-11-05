@@ -26,8 +26,8 @@ numbers, security codes, passwords, or one-time codes.
 4. Copy the latest `sessionId` returned by `browserless_agent`. Call
    `browserless_link_checkout` with `action: "create"`, that
    `browser_session_handle`, and the merchant/cart/total. Note the Pay/Submit
-   control for the later click — before the fill, or from the redacted snapshot
-   after it. Whenever the
+   control for the later click before the fill; snapshots are blocked while
+   capture protection is armed. Whenever the
    page shows a card form, copy the exact deep selectors for card number, CVC,
    combined expiry (or separate month/year), and any required postal/name fields
    into `selectors` — including Stripe-hosted checkout, whose Link CLI (one-time
