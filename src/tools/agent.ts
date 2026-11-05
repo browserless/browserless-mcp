@@ -298,6 +298,7 @@ type DownloadEntry = {
   error?: string;
   maxBytes?: number;
   sourceUrl?: string;
+  pdfDocumentId?: string;
   inProgress?: boolean;
   receivedBytes?: number;
   totalBytes?: number;
@@ -491,6 +492,11 @@ export const formatDownloads = async (
     lines.push(
       `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
     );
+    if (d.pdfDocumentId) {
+      lines.push(
+        `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is read.`,
+      );
+    }
   }
   const header =
     opts.transport === 'stdio'
