@@ -74,6 +74,7 @@ import {
   GenericCommandSchema,
   TypedAgentCommandSchema,
   isTypedAgentMethod,
+  DEFAULT_LIVE_URL_INSTRUCTIONS,
 } from './schemas.js';
 import {
   isCompliant,
@@ -1659,8 +1660,17 @@ export const runAgentCommands = async (
       agentSession.skillState.cmdIndex += 1;
 
       let outboundParams = cmd.params;
-      if (cmd.method === 'liveURL' && cmd.params.timeout === undefined) {
-        outboundParams = { ...cmd.params, timeout: 300_000 };
+      if (cmd.method === 'liveURL') {
+        outboundParams = {
+          ...cmd.params,
+          timeout: cmd.params.timeout ?? 300_000,
+        };
+        if (
+          cmd.params.interactable !== false &&
+          cmd.params.instructions === undefined
+        ) {
+          outboundParams.instructions = DEFAULT_LIVE_URL_INSTRUCTIONS;
+        }
       }
       // `toDisk` is a local directive (route the screenshot to the download
       // store); it's not a CDP screenshot param, so strip it before sending
