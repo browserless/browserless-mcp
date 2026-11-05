@@ -29,6 +29,7 @@ import {
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
+  AgentCommandSchema,
   AgentParamsSchema,
   AgentToolParamsSchema,
   CompliantAgentParamsSchema,
@@ -128,6 +129,57 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
+
+describe('browserless_agent PDF reading', () => {
+  it('validates page and offset on the full surface only', () => {
+    for (const params of [
+      {},
+      { documentId: 'pdf-id', page: 3, offset: 12000 },
+    ]) {
+      expect(
+        AgentCommandSchema.safeParse({ method: 'readPdf', params }).success,
+      ).to.equal(true);
+    }
+    for (const params of [
+      { page: 0 },
+      { page: 1.5 },
+      { offset: -1 },
+      { offset: 0.5 },
+      { url: 'https://example.com/a.pdf', documentId: 'pdf-id' },
+    ]) {
+      expect(
+        AgentCommandSchema.safeParse({ method: 'readPdf', params }).success,
+      ).to.equal(false);
+    }
+    expect(
+      CompliantAgentParamsSchema.safeParse({ method: 'readPdf', params: {} })
+        .success,
+    ).to.equal(false);
+  });
+
+  it('surfaces retained PDF IDs without putting file bytes in context', async () => {
+    const content = await formatDownloads(
+      [
+        {
+          filename: 'guide.pdf',
+          error: 'Transfer unavailable',
+          pdfDocumentId: 'pdf-id',
+        },
+      ],
+      '',
+      '',
+      { transport: 'stdio' },
+    );
+    const text = content
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text)
+      .join('\n');
+    expect(text)
+      .to.include('readPdf')
+      .and.include('pdf-id')
+      .and.include('session');
+  });
+});
 
 describe('browserless_agent reserved methods', () => {
   it('rejects Stripe Link checkout through single and batch schemas', () => {
