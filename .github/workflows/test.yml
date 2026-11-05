@@ -47,7 +47,7 @@ jobs:
       - name: Use Node.js 26
         uses: actions/setup-node@v7.1.0
         with:
-          node-version-file: .nvmrc
+          node-version-file: .node-version
           cache: npm
           check-latest: true
       - name: Ensure npm >= 11.10.0 (min-release-age support)

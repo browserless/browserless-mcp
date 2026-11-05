@@ -660,9 +660,9 @@ The test suite uses [Mocha](https://mochajs.org/) with [Chai](https://www.chaijs
 - `npm test` — compiles TypeScript and runs every `*.spec.js` under `build/test/`. No external services or `BROWSERLESS_TOKEN` are required; the API client is stubbed.
 - `npm run coverage` — runs the suite under [c8](https://github.com/bcoe/c8) with the thresholds configured in `package.json` (lines ≥ 80%, branches ≥ 70%, functions ≥ 80%).
 
-Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24 and 26.13.0. Use `nvm use` for the pinned development runtime. PRs must keep the suite green before they can merge.
+Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24.x and 26.x. Development and publishing use Node 26 from `.node-version`; with nvm, run `nvm use "$(cat .node-version)"`. PRs must keep the suite green before they can merge.
 
-The published package retains its Node.js >=24 engine requirement; Node 22 is not supported. Use an LTS release (24 or 26). Development, publishing, and Docker use Node 26.13.0. Official Linux Node 26 binaries require `libatomic`; the pinned Debian Trixie image includes `libatomic1`. Container publishing targets Linux amd64 and arm64.
+The published package retains its Node.js >=24 engine requirement; Node 22 is not supported. Use an LTS release (24 or 26). Docker uses a digest-pinned Node 26 Trixie image, with weekly Dependabot digest updates and Node-major upgrades excluded. Official Linux Node 26 binaries require `libatomic`; the image includes `libatomic1`. Container publishing targets Linux amd64 and arm64.
 
 ## API Token
 
