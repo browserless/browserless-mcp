@@ -132,6 +132,10 @@ describe('request-log explorer browser', () => {
           else form.elements.namedItem(key).value = Array.isArray(value) ? value.join(String.fromCharCode(10)) : String(value);
         }
         await apply(v);
+        const inputEnter = new v.doc.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        form.elements.namedItem('endpoint').dispatchEvent(inputEnter);
+        assert(inputEnter.defaultPrevented, 'Input Enter did not apply filters');
+        await until(v.doc, () => v.root.getAttribute('aria-busy') === 'false');
         const call = v.calls.at(-1);
         assert(call.name === 'browserless_logs' && call.arguments.cursor === undefined, 'Filter action fetched wrong tool or reused cursor');
         for (const [key, value] of Object.entries(filters)) assert(JSON.stringify(call.arguments[key]) === JSON.stringify(value), 'Lost filter: ' + key);
@@ -149,6 +153,12 @@ describe('request-log explorer browser', () => {
         assert(v.root.getBoundingClientRect().width <= 350, 'Narrow layout overflowed');
         assert(getComputedStyle(v.doc.documentElement).colorScheme.includes('light'), 'Host theme ignored');
         assert(v.root === root && document.querySelectorAll('iframe').length === 1, 'Updates remounted widget');
+        const textareaEnter = new v.doc.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        form.elements.namedItem('eventNames').dispatchEvent(textareaEnter);
+        assert(!textareaEnter.defaultPrevented, 'Textarea Enter was swallowed');
+        const clearEnter = new v.doc.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        role(v, 'clear').dispatchEvent(clearEnter);
+        assert(!clearEnter.defaultPrevented, 'Clear filters Enter activation was swallowed');
         v.mode('empty'); await click(v, 'clear');
         assert(rows(v).length === 0 && !role(v, 'empty').hidden, 'Missing empty-state recovery');
         assert(Object.keys(v.calls.at(-1).arguments).length === 0, 'Clear left filters behind');

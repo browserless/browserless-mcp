@@ -360,7 +360,7 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
   form.addEventListener(
     'keydown',
     (event) => {
-      if (event.key === 'Enter' && event.target.tagName !== 'TEXTAREA')
+      if (event.key === 'Enter' && event.target.tagName === 'INPUT')
         applyFilters(event);
     },
     { signal: controller.signal },

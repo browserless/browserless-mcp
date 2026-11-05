@@ -25,13 +25,13 @@ async function authorize(
   if (view.prepared.kind === 'request-logs') {
     try {
       const result = await accountQuery<{
-        accountSummary: { accountId: string | null } | null;
+        requestLogs: { nextCursor: string | null } | null;
       }>(
         config,
         ctx.token,
-        'query LogViewAccess($apiToken: String!) { accountSummary(apiToken: $apiToken) { accountId } }',
+        'query LogViewAccess($apiToken: String!) { requestLogs(apiToken: $apiToken, limit: 1) { nextCursor } }',
       );
-      if (!result.accountSummary) throw new Error('Unavailable');
+      if (!result.requestLogs) throw new Error('Unavailable');
     } catch {
       throw new UserError(VIEW_UNAVAILABLE);
     }

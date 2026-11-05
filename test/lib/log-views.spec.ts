@@ -44,6 +44,38 @@ describe('request log views', () => {
     );
   });
 
+  it('preserves long fields within the page byte limit without truncation', async () => {
+    const store = new ViewStore();
+    const entry = {
+      ...fixture.entries[0],
+      url: `https://example.test/?q=${'界'.repeat(5000)}`,
+      endpoint: `/${'x'.repeat(5000)}`,
+    };
+    try {
+      const prepared = store.prepareLogs('alice', {
+        entries: [entry],
+        filters: {},
+        nextCursor: null,
+      });
+      assert.ok(prepared);
+      const payload = LogPayloadSchema.parse(
+        store.show(prepared.viewRef, 'alice')._meta!.payload,
+      );
+      assert.equal(payload.entries[0].url, entry.url);
+      assert.equal(payload.entries[0].endpoint, entry.endpoint);
+      assert.equal(
+        store.prepareLogs('alice', {
+          entries: [{ ...entry, url: '界'.repeat(400000) }],
+          filters: {},
+          nextCursor: null,
+        }),
+        undefined,
+      );
+    } finally {
+      await store.clear();
+    }
+  });
+
   it('keeps rows, filters and cursors UI-only, immutable, authorized and subject to fixed expiry', async () => {
     let now = Date.now();
     const store = new ViewStore({ now: () => now });

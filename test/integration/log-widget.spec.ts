@@ -32,7 +32,10 @@ describe('request-log explorer over MCP HTTP', () => {
       const parsed = JSON.parse(body);
       requests.push(parsed);
       response.setHeader('content-type', 'application/json');
-      if (revoked || parsed.variables.startTime === '1900-01-01T00:00:00Z') {
+      if (
+        (revoked && parsed.query.includes('requestLogs')) ||
+        parsed.variables.startTime === '1900-01-01T00:00:00Z'
+      ) {
         response.end(
           JSON.stringify({
             errors: [{ message: revoked ? 'Access revoked' : retentionError }],
@@ -175,6 +178,11 @@ describe('request-log explorer over MCP HTTP', () => {
       assert.deepEqual(shown._meta!.payload, page);
       assert.equal(requests.length, beforeShow + 1);
       assert.ok(requests.at(-1)!.query.includes('LogViewAccess'));
+      assert.match(
+        requests.at(-1)!.query,
+        /requestLogs\(apiToken: \$apiToken, limit: 1\)/,
+      );
+      assert.ok(!requests.at(-1)!.query.includes('entries'));
       const beforeForeign = requests.length;
       const foreign = await bob.callTool({
         name: 'browserless_show',
@@ -229,11 +237,13 @@ describe('request-log explorer over MCP HTTP', () => {
       ])
         assert.ok(!telemetry.includes(value), value);
       revoked = true;
+      // Account identity remains valid; only request-log access has been lost.
       const denied = await alice.callTool({
         name: 'browserless_show',
         arguments: { viewRef: view.viewRef },
       });
       assert.equal(denied.isError, true);
+      assert.equal(denied._meta?.payload, undefined);
       const deniedRead = await alice.callTool({
         name: 'browserless_logs',
         arguments: filters,

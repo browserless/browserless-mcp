@@ -79,7 +79,8 @@ export type LogsParams = z.infer<typeof LogsParamsSchema>;
 export const LOG_PAGE_MAX_BYTES = 1024 * 1024;
 export const LOG_VIEW_MAX_BYTES = 2 * 1024 * 1024;
 export const LOG_VIEW_MAX_ENTRIES = 500;
-const text = z.string().max(4096).nullable().default(null);
+// The page byte limit bounds storage without silently truncating field values.
+const text = z.string().nullable().default(null);
 export const LogEntrySchema = z.object({
   timestamp: text,
   eventName: text,
