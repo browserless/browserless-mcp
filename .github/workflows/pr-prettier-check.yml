@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version-file: .node-version
+          node-version-file: .nvmrc
 
       # Runs the exact Prettier version from package-lock.json — the same one
       # devs get from `npm install` and the pre-commit hook uses — without
