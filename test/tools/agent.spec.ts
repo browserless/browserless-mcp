@@ -2489,6 +2489,132 @@ describe('browserless_agent one-shot sessions', () => {
     }
   });
 
+  it('rejects invalid direct PDF parameters before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ text: 'unexpected' }));
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const params of [
+        { page: 0 },
+        { offset: -1 },
+        { url: 'https://example.com/a.pdf', documentId: 'pdf-id' },
+      ]) {
+        let failure: unknown;
+        try {
+          await execute({ method: 'readPdf', params }, mockContext);
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).to.be.instanceOf(UserError);
+        expect((failure as { code?: string }).code).to.equal('INVALID_PARAMS');
+      }
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const compliant of [false, true]) {
+    it(`only advertises PDF reading on a supported surface, compliant=${compliant}`, async () => {
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads'
+          ? {
+              downloads: [{ filename: 'guide.pdf', pdfDocumentId: 'pdf-id' }],
+            }
+          : { text: 'done' },
+      );
+      try {
+        const result = JSON.stringify(
+          await getAgentExecute(
+            srv.url,
+            'stdio',
+            undefined,
+            compliant,
+          )({ method: 'text', keepSessionAlive: true }, mockContext),
+        );
+        expect(result).to.include('guide.pdf');
+        expect(result.includes('readPdf')).to.equal(!compliant);
+        expect(result.includes('pdf-id')).to.equal(!compliant);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const documentId of ['downloaded-pdf', 'other-pdf']) {
+    it(`only offers the retained PDF after a batch reads ${documentId}`, async () => {
+      let polls = 0;
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads'
+          ? {
+              downloads:
+                ++polls === 1
+                  ? [{ filename: 'guide.pdf', pdfDocumentId: 'downloaded-pdf' }]
+                  : [],
+            }
+          : { documentId, text: 'PDF evidence', page: 3 },
+      );
+      try {
+        const result = await getAgentExecute(srv.url)(
+          {
+            commands: [{ method: 'getDownloads' }, { method: 'readPdf' }],
+            keepSessionAlive: true,
+          },
+          mockContext,
+        );
+        const content = (result as { content: Content[] }).content;
+        const downloadNotice = content.find(
+          (item) => item.type === 'text' && item.text.includes('Downloads:'),
+        );
+        expect(JSON.stringify(downloadNotice)).to.include('guide.pdf');
+        expect(
+          JSON.stringify(downloadNotice).includes('downloaded-pdf'),
+        ).to.equal(documentId === 'downloaded-pdf');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('preserves downloaded files but not PDF continuation after fatal retries', async () => {
+    let polls = 0;
+    const srv = await makeRespondingServer((method) =>
+      method === 'getDownloads'
+        ? {
+            downloads:
+              ++polls === 1
+                ? [
+                    {
+                      filename: 'guide.pdf',
+                      data: 'c2FmZQ==',
+                      pdfDocumentId: 'crashed-pdf-id',
+                    },
+                  ]
+                : [],
+          }
+        : new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' }),
+    );
+    try {
+      let failure: unknown;
+      try {
+        await getAgentExecute(srv.url)(
+          {
+            commands: [{ method: 'getDownloads' }, { method: 'text' }],
+            keepSessionAlive: true,
+          },
+          mockContext,
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(UserError);
+      expect(String(failure)).to.include('crashed').and.include('guide.pdf');
+      expect(String(failure)).not.to.include('crashed-pdf-id');
+      expect(String(failure)).not.to.include('readPdf');
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const failure of ['command', 'poll']) {
     it(`preserves completed downloads when a later ${failure} fails`, async () => {
       let polls = 0;
