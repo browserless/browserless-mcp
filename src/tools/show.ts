@@ -37,6 +37,21 @@ async function authorize(
     }
     return;
   }
+  if (['usage', 'active-sessions'].includes(view.prepared.kind)) {
+    try {
+      const result = await accountQuery<{
+        accountSummary: { accountId: string | null } | null;
+      }>(
+        config,
+        ctx.token,
+        'query AccountViewAccess($apiToken: String!) { accountSummary(apiToken: $apiToken) { accountId } }',
+      );
+      if (!result.accountSummary) throw new Error('Unavailable');
+    } catch {
+      throw new UserError(VIEW_UNAVAILABLE);
+    }
+    return;
+  }
   try {
     const result = await accountQuery<{
       sessionReplayBySessionId: { sessionId: string } | null;
@@ -63,7 +78,7 @@ export function registerShowTools(
   defineTool(server, config, analytics, {
     name: 'browserless_show',
     description:
-      'Display a prepared Browserless replay, screenshot gallery, video, human handoff, or request-log explorer inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
+      'Display a prepared Browserless replay, screenshot gallery, video, human handoff, account usage, active sessions, or request-log explorer inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
     collectPrompt: false,
     parameters: ViewParams,
     outputSchema: ShowOutputSchema,

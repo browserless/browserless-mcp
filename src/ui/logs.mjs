@@ -305,7 +305,7 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
         );
       if (!response.structuredContent)
         throw new Error(
-          'The logs tool returned text because an inline explorer could not be prepared. Retry later for an inline result.',
+          'This update is available as text only. Ask in chat to show these logs as text. For large pages, narrow filters or reduce entries per page; an oversized entry may still require text.',
         );
       const next = ShowOutputSchema.parse(response.structuredContent);
       if (next.kind !== 'request-logs')

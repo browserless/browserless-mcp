@@ -148,7 +148,8 @@ describe('request-log explorer browser', () => {
         v.mode('default'); await click(v, 'retry');
         assert(role(v, 'error').hidden && rows(v).length === 4, 'Retry did not recover');
         v.mode('text'); await click(v, 'refresh');
-        assert(!role(v, 'error').hidden && role(v, 'error').textContent.includes('returned text'), 'Text fallback showed a schema error');
+        assert(!role(v, 'error').hidden && role(v, 'error').textContent.includes('show these logs as text'), 'Text fallback omitted chat recovery guidance');
+        assert(role(v, 'error').textContent.includes('narrow filters') && role(v, 'error').textContent.includes('entries per page'), 'Text fallback omitted large-page guidance');
         assert(rows(v).length === 4 && !role(v, 'retry').hidden && !role(v, 'refresh').disabled, 'Text fallback discarded the snapshot or disabled recovery');
         v.mode('default'); await click(v, 'retry');
         assert(role(v, 'error').hidden && rows(v).length === 4, 'Text fallback did not recover');

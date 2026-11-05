@@ -76,7 +76,7 @@ export function registerViewWidget(
               },
             },
             'openai/widgetDescription':
-              'Browserless replay, captured media, human handoff, and request-log explorer. Let the widget present its data; do not repeat its tables in chat unless asked for analysis or specific values.',
+              'Browserless replay, captured media, human handoff, account usage meter, active sessions table, and request-log explorer. Let the widget present its data; do not repeat its charts or tables in chat unless asked for analysis or specific values.',
           },
         };
       },

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { LogSummarySchema } from './log-view-schemas.js';
 
+import {
+  UsageSnapshotSchema,
+  ActiveSessionsSnapshotSchema,
+} from './account-view-schemas.js';
+
 export const VIEW_URI = 'ui://browserless/view/v12.html';
 // Cloud viewers include an encrypted worker-routing prefix.
 export const LIVE_VIEWER_PATH = /^\/(?:e\/[a-f0-9]+\/)?live(?:\/|$)/;
@@ -54,7 +59,14 @@ export const HandoffStateSchema = z.object({
 export const ShowOutputSchema = z
   .object({
     viewRef: z.string(),
-    kind: z.enum(['replay', 'handoff', 'agent-media', 'request-logs']),
+    kind: z.enum([
+      'replay',
+      'handoff',
+      'agent-media',
+      'usage',
+      'active-sessions',
+      'request-logs',
+    ]),
     summary: z.string(),
     expiresAt: z.string().datetime(),
     data: z.union([
@@ -62,6 +74,8 @@ export const ShowOutputSchema = z
       HandoffSummarySchema,
       MediaSummarySchema,
       LogSummarySchema,
+      UsageSnapshotSchema,
+      ActiveSessionsSnapshotSchema,
     ]),
   })
   .superRefine((value, ctx) => {
@@ -72,7 +86,11 @@ export const ShowOutputSchema = z
           ? HandoffSummarySchema
           : value.kind === 'agent-media'
             ? MediaSummarySchema
-            : LogSummarySchema;
+            : value.kind === 'request-logs'
+              ? LogSummarySchema
+              : value.kind === 'usage'
+                ? UsageSnapshotSchema
+                : ActiveSessionsSnapshotSchema;
     if (!schema.safeParse(value.data).success)
       ctx.addIssue({
         code: 'custom',

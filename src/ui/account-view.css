@@ -1,0 +1,162 @@
+.account-view {
+  background: var(--surface);
+  color: var(--text);
+  padding: 22px 16px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.account-view[hidden],
+.account-view [hidden] {
+  display: none !important;
+}
+.account-view header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.account-view header > div {
+  flex: 1;
+}
+.account-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  background: var(--accent);
+  color: white;
+  border-radius: 10px;
+  font-size: 23px;
+}
+.account-view h1 {
+  font-size: 16px;
+  margin: 0;
+}
+.account-view h2 {
+  font-size: 13px;
+  margin: 0 0 5px;
+}
+.account-view header p,
+.account-muted,
+.account-view footer {
+  color: var(--muted);
+  font-size: 11px;
+}
+.account-view header p {
+  margin: 3px 0 0;
+}
+.account-view label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.account-view button,
+.account-view select {
+  padding: 7px 10px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+.account-view section {
+  margin-top: 22px;
+}
+.account-unit-total {
+  margin: 12px 0;
+  color: var(--muted);
+}
+.account-unit-total strong {
+  color: var(--text);
+  font-size: 30px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.account-view progress {
+  display: block;
+  width: 100%;
+  height: 10px;
+  accent-color: var(--accent);
+}
+.account-view .overage progress {
+  accent-color: light-dark(#946000, #f4c366);
+}
+.account-overage {
+  color: light-dark(#946000, #f4c366);
+}
+.account-counters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 12px 0;
+}
+.account-counters > div {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.account-counters dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.account-counters dd {
+  margin: 4px 0 0;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+.account-view table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.account-view th {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+  font-weight: 500;
+}
+.account-view th,
+.account-view td {
+  padding: 12px 10px 12px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.account-view td:first-child {
+  font-family: monospace;
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+.account-view td {
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+.account-table-scroll {
+  overflow-x: auto;
+  margin-top: 18px;
+}
+.account-empty {
+  padding: 30px 0;
+  color: var(--muted);
+}
+.account-view [role='alert'] {
+  color: light-dark(#a22b3a, #ff959b);
+}
+.account-view footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+@media (max-width: 480px) {
+  .account-counters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .account-view header {
+    flex-wrap: wrap;
+  }
+  .account-view .account-unit-total strong {
+    font-size: 26px;
+  }
+}

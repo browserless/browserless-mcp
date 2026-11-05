@@ -11,6 +11,7 @@ import type { MediaInput } from './agent-media.js';
 import { LogPayloadSchema, LOG_PAGE_MAX_BYTES } from './log-view-schemas.js';
 import {
   ReplayPayloadSchema,
+  ShowOutputSchema,
   VIEW_CHUNK_MAX_BYTES,
   VIEW_DATA_MAX_BYTES,
   VIEW_RESULT_MAX_BYTES,
@@ -254,6 +255,43 @@ export class ViewStore {
     return true;
   }
 
+  prepareSnapshot(
+    owner: string,
+    kind: 'usage' | 'active-sessions',
+    summary: string,
+    data: unknown,
+  ): PreparedView | undefined {
+    const viewRef = `view_${randomUUID()}`;
+    const expires = this.now() + VIEW_TTL_MS;
+    const parsed = ShowOutputSchema.safeParse({
+      viewRef,
+      kind,
+      summary,
+      data,
+      expiresAt: new Date(expires).toISOString(),
+    });
+    if (!parsed.success) return;
+    const json = Buffer.from(JSON.stringify(parsed.data));
+    if (
+      json.length > VIEW_RESULT_MAX_BYTES / 2 ||
+      !this.room(json.length, owner)
+    )
+      return;
+    const timer = setTimeout(() => this.drop(viewRef), VIEW_TTL_MS);
+    timer.unref?.();
+    this.views.set(viewRef, {
+      prepared: parsed.data,
+      owner,
+      sessionId: '',
+      expires,
+      json,
+      timer,
+      cursors: {},
+    });
+    this.bytes += json.length;
+    return structuredClone(parsed.data);
+  }
+
   prepare(owner: string, artifact: ReplayArtifact): PreparedView | undefined {
     if (!ReplayPayloadSchema.safeParse(artifact).success) return undefined;
     const json = Buffer.from(JSON.stringify(artifact));
@@ -353,6 +391,11 @@ export class ViewStore {
         content: [{ type: 'text', text: view.prepared.summary }],
         structuredContent: structuredClone(view.prepared),
         _meta: { payload: JSON.parse(view.json.toString('utf8')) },
+      };
+    if (['usage', 'active-sessions'].includes(view.prepared.kind))
+      return {
+        content: [{ type: 'text', text: view.prepared.summary }],
+        structuredContent: structuredClone(view.prepared),
       };
     if (view.media) {
       if (!origin) throw new UserError(VIEW_UNAVAILABLE);
