@@ -34,7 +34,7 @@ Use the hosted server at `https://mcp.browserless.io/mcp`. No local install need
 
 If the user needs a local-only / air-gapped install, use the npm package over stdio.
 
-1. **Ensure Node.js >= 18 is installed.**
+1. **Ensure Node.js 24 or 26 LTS is installed (26.13.0 recommended).**
 2. **Get the user's `BROWSERLESS_TOKEN`** (see above).
 3. **Add to the MCP client config:**
 
