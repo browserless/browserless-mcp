@@ -192,6 +192,14 @@ describe('owned replay view snapshots', () => {
     expect(store.prepare('b', artifact)).not.to.equal(undefined);
   });
 
+  it('does not consume another owner slot when caching gzip at the owner limit', async () => {
+    const views = Array.from({ length: 4 }, () => store.prepare('a', fixture)!);
+    await store.read(views[0].viewRef, 'a', 'gzip');
+    for (const view of views)
+      expect(store.show(view.viewRef, 'a')).to.have.property('content');
+    expect(store.prepare('b', fixture)).not.to.equal(undefined);
+  });
+
   it('never evicts another owner or the requested view to cache gzip', async () => {
     const artifact = {
       ...fixture,

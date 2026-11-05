@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   ViewStore,
   VIEW_TTL_MS,
@@ -9,6 +10,19 @@ import {
   ActiveSessionsSnapshotSchema,
 } from '../../src/lib/account-view-schemas.js';
 import { ShowOutputSchema } from '../../src/lib/view-schemas.js';
+import type { ReplayArtifact } from '../../src/lib/session-replay-artifact.js';
+
+const replay = JSON.parse(
+  readFileSync('test/fixtures/replay-widget.json', 'utf8'),
+) as ReplayArtifact;
+const media = {
+  type: 'image' as const,
+  mimeType: 'image/png' as const,
+  body: Buffer.from('synthetic-capture'),
+  label: 'Capture',
+  rationale: '',
+  commandIndex: 1,
+};
 
 const usage = () => ({
   timeframe: 'day' as const,
@@ -19,6 +33,72 @@ const usage = () => ({
 });
 
 describe('account view snapshots', () => {
+  for (const flood of [
+    'usage',
+    'active-sessions',
+    'replay',
+    'media',
+    'mixed',
+  ]) {
+    it(`bounds ${flood} views per owner so other owners can still prepare every kind`, async () => {
+      const store = new ViewStore();
+      const sessions = {
+        fetchedAt: new Date().toISOString(),
+        count: 0,
+        limit: 50,
+        skip: 0,
+        sessions: [],
+      };
+      const prepare = (owner: string, kind: string) => {
+        if (kind === 'usage')
+          return store.prepareSnapshot(owner, 'usage', 'Usage', usage());
+        if (kind === 'active-sessions')
+          return store.prepareSnapshot(
+            owner,
+            'active-sessions',
+            'Sessions',
+            sessions,
+          );
+        if (kind === 'replay') return store.prepare(owner, replay);
+        return store.prepareMedia(owner, [media]);
+      };
+      try {
+        const kinds = ['usage', 'active-sessions', 'replay', 'media'];
+        const refs: string[] = [];
+        for (let index = 0; index < 16; index++) {
+          const view = await prepare(
+            'alice',
+            flood === 'mixed' ? kinds[index % kinds.length] : flood,
+          );
+          assert.ok(view);
+          refs.push(view.viewRef);
+        }
+        const retained = refs.filter((ref) => {
+          try {
+            store.require(ref, 'alice');
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        assert.deepEqual(retained, refs.slice(-4));
+        const other = [];
+        for (const kind of kinds) {
+          const view = await prepare('bob', kind);
+          assert.ok(view, `${kind} was crowded out`);
+          other.push(view.viewRef);
+        }
+        await prepare('alice', 'usage');
+        for (const ref of other)
+          assert.ok(store.show(ref, 'bob', 'https://mcp.example'));
+        for (const ref of retained.slice(1))
+          assert.ok(store.require(ref, 'alice'));
+      } finally {
+        await store.clear();
+      }
+    });
+  }
+
   it('preserves null, zero, empty counters and zero allotments without copying extra fields', () => {
     const value = UsageSnapshotSchema.parse({
       ...usage(),

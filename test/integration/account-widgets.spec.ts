@@ -230,12 +230,44 @@ describe('account widgets over real MCP HTTP', () => {
         blocks(legacySessions)[0].text,
         'No browsers are running on this account right now.',
       );
-      revoked = true;
-      const denied = await alice.callTool({
+      // Ordinary refresh/timeframe calls must not consume every shared slot.
+      for (let index = 0; index < 16; index++) {
+        const refreshed = await alice.callTool({
+          name: 'browserless_usage',
+          arguments: { timeframe: index % 2 ? 'day' : 'week' },
+        });
+        assert.equal(
+          ShowOutputSchema.parse(refreshed.structuredContent).kind,
+          'usage',
+        );
+      }
+      const otherUsage = await bob.callTool({
+        name: 'browserless_usage',
+        arguments: {},
+      });
+      assert.equal(
+        ShowOutputSchema.parse(otherUsage.structuredContent).kind,
+        'usage',
+      );
+      const otherSessions = await bob.callTool({
+        name: 'browserless_sessions',
+        arguments: { action: 'active' },
+      });
+      const otherView = ShowOutputSchema.parse(otherSessions.structuredContent);
+      assert.equal(otherView.kind, 'active-sessions');
+      const displayed = await bob.callTool({
         name: 'browserless_show',
-        arguments: { viewRef: first.viewRef },
+        arguments: { viewRef: otherView.viewRef },
+      });
+      assert.deepEqual(displayed.structuredContent, otherView);
+      revoked = true;
+      const beforeRevocationCheck = requests.length;
+      const denied = await bob.callTool({
+        name: 'browserless_show',
+        arguments: { viewRef: otherView.viewRef },
       });
       assert.equal(denied.isError, true);
+      assert.equal(requests.length, beforeRevocationCheck + 1);
     } finally {
       await Promise.allSettled(clients.map((client) => client.close()));
       await server.stop();

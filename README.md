@@ -233,8 +233,11 @@ artifact until expiry; preview and Save requests are repeatable and do not
 consume the original single-use download.
 
 Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
-budget. A gallery shows the first 12 valid captures, each at most 50 MiB; its
-summary reports when more captures were returned. Invalid screenshots are
+budget. Each caller scope retains at most four views across usage, active
+sessions, replays, and media. New views evict that caller's oldest views;
+they never evict another caller's views. A gallery shows the first 12 valid
+captures, each at most 50 MiB; its summary reports when more captures were
+returned. Invalid screenshots are
 skipped without discarding valid captures. Preview files are removed on expiry
 or eviction. Before the first media view is created, cleanup removes stale
 files left by exited processes, including files with the current process's
