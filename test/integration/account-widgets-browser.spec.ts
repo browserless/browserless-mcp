@@ -61,7 +61,7 @@ describe('account widget browser controls', () => {
         const result = (kind, data, expires = Date.now() + 60000) => ({ content: [], structuredContent: {
           kind, data, viewRef: 'view-browser-' + Math.random(), summary: 'Account snapshot', expiresAt: new Date(expires).toISOString(),
         } });
-        async function mount(kind, data) {
+        async function mount(kind, data, lifetime = 60000) {
           const frame = document.createElement('iframe');
           frame.sandbox = 'allow-scripts allow-same-origin';
           document.body.append(frame);
@@ -78,7 +78,7 @@ describe('account widget browser controls', () => {
           await bridge.connect(new PostMessageTransport(frame.contentWindow, frame.contentWindow));
           frame.src = '/widget';
           await ready;
-          await bridge.sendToolResult(result(kind, data));
+          await bridge.sendToolResult(result(kind, data, Date.now() + lifetime));
           const doc = frame.contentDocument;
           await until(doc, () => !doc.querySelector('#account-view').hidden);
           const root = doc.querySelector('#account-view');
@@ -106,7 +106,10 @@ describe('account widget browser controls', () => {
           await switchTo(a, 'week');
           assert(role(a, 'body').textContent.includes('70'), 'Timeframe did not update');
           assert(select(b).value === 'day' && b.calls.length === 0, 'Other widget was mutated');
-          assert(JSON.stringify(a.calls[0]) === JSON.stringify({ name: 'browserless_usage', arguments: { timeframe: 'week', apiKeyIds: ['key-a'] } }), 'Usage filters changed');
+          assert(a.calls[0].name === 'browserless_usage'
+            && a.calls[0].arguments.timeframe === 'week'
+            && a.calls[0].arguments.apiKeyIds.length === 1
+            && a.calls[0].arguments.apiKeyIds[0] === 'key-a', 'Usage filters changed');
           a.reject(true);
           await switchTo(a, 'hour');
           assert(!role(a, 'error').hidden && select(a).value === 'week', 'Failed refresh lost timeframe');
@@ -119,7 +122,10 @@ describe('account widget browser controls', () => {
           role(s, 'refresh').click();
           await until(s.doc, () => s.root.getAttribute('aria-busy') === 'false');
           assert(!s.root.querySelector('table') && s.root.textContent.includes('No browsers on this page'), 'Sessions refresh did not show empty page');
-          assert(JSON.stringify(s.calls[0]) === JSON.stringify({ name: 'browserless_sessions', arguments: { action: 'active', limit: 2, skip: 3 } }), 'Session pagination changed');
+          assert(s.calls[0].name === 'browserless_sessions'
+            && s.calls[0].arguments.action === 'active'
+            && s.calls[0].arguments.limit === 2
+            && s.calls[0].arguments.skip === 3, 'Session pagination changed');
           s.reject(true);
           role(s, 'refresh').click();
           await until(s.doc, () => s.root.getAttribute('aria-busy') === 'false');
@@ -130,6 +136,26 @@ describe('account widget browser controls', () => {
           assert(s.root.querySelectorAll('tbody tr').length === 1, 'Sessions retry did not restore table');
           assert(a.doc.querySelector('#account-view') === a.root && document.querySelectorAll('iframe').length === 3, 'Refresh remounted a widget');
           assert(a.calls.every(call => call.name === 'browserless_usage') && s.calls.every(call => call.name === 'browserless_sessions'), 'Refresh called show or controlled browser');
+          for (const kind of ['usage', 'active-sessions']) {
+            const renewed = await mount(kind, kind === 'usage' ? usage() : sessions(), 1000);
+            if (kind === 'usage') await switchTo(renewed, 'week');
+            else {
+              role(renewed, 'refresh').click();
+              await until(renewed.doc, () => renewed.root.getAttribute('aria-busy') === 'false');
+            }
+            await new Promise(resolve => setTimeout(resolve, 1200));
+            assert(role(renewed, 'error').hidden && !select(renewed).disabled,
+              'Refreshed ' + kind + ' widget expired at its original deadline');
+            if (kind === 'usage') await switchTo(renewed, 'hour');
+            else {
+              role(renewed, 'refresh').click();
+              await until(renewed.doc, () => renewed.root.getAttribute('aria-busy') === 'false');
+            }
+            assert(renewed.calls.length === 2 && role(renewed, 'error').hidden,
+              'Refresh guard still used original ' + kind + ' expiry');
+            await renewed.bridge.teardownResource({});
+            renewed.frame.remove();
+          }
           await b.bridge.sendToolResult(result('usage', usage('day', 'key-b', false), Date.now() - 1));
           await until(b.doc, () => !role(b, 'error').hidden);
           assert(b.doc.querySelector('.replay-card').hidden && !b.root.textContent.toLowerCase().includes('replay'), 'Expiry showed replay recovery');

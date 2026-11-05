@@ -103,6 +103,7 @@ the mounted view without another chat turn or `browserless_show` call. Refresh
 errors preserve the last successful snapshot with a retry option. There is no
 automatic polling. Snapshots are independent, owned, bounded, and expire after
 15 minutes; refreshing prepares a new reference and never renews an old one.
+The mounted widget adopts the new snapshot's expiry after a successful refresh.
 Showing a snapshot rechecks account access under the current credential.
 Clients without MCP Apps retain their original text output. These tools and
 widgets remain absent from the compliant connector.

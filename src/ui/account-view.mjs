@@ -27,6 +27,7 @@ export function mountAccountView(root, view, app) {
     disposed = false,
     pending = false;
   let retryTimeframe;
+  let expiryTimer;
   const controller = new AbortController();
   root.innerHTML = `<header><span class="account-icon" aria-hidden="true"></span><div><h1></h1><p data-role="scope"></p></div><label data-role="timeframe-label">Request window<select aria-label="Request timeframe"><option value="hour">Last hour</option><option value="day">Last day</option><option value="week">Last week</option></select></label><button data-role="refresh">Refresh</button></header><div data-role="body"></div><p data-role="error" role="alert" hidden></p><button data-role="retry" hidden>Retry update</button><footer><span data-role="updated"></span><span>Browserless</span></footer>`;
   const $ = (role) => root.querySelector(`[data-role="${role}"]`);
@@ -243,9 +244,11 @@ export function mountAccountView(root, view, app) {
       const next = ShowOutputSchema.parse(result.structuredContent);
       if (next.kind !== view.kind) throw new Error('Unexpected result.');
       data = schema.parse(next.data);
+      view = next;
       render();
       $('error').hidden = true;
       $('retry').hidden = true;
+      scheduleExpiry();
     } catch {
       if (disposed) return;
       select.value = data.timeframe ?? 'day';
@@ -267,6 +270,7 @@ export function mountAccountView(root, view, app) {
     signal: controller.signal,
   });
   function fail(error) {
+    clearTimeout(expiryTimer);
     disposed = true;
     controller.abort();
     busy(true);
@@ -275,10 +279,20 @@ export function mountAccountView(root, view, app) {
     $('error').hidden = false;
     $('retry').hidden = true;
   }
+  function scheduleExpiry() {
+    clearTimeout(expiryTimer);
+    const remaining = Date.parse(view.expiresAt) - Date.now();
+    const expire = () =>
+      fail(new Error('This view has expired. Request a new account snapshot.'));
+    if (remaining <= 0) expire();
+    else expiryTimer = setTimeout(expire, remaining);
+  }
   render();
+  scheduleExpiry();
   return {
     fail,
     dispose() {
+      clearTimeout(expiryTimer);
       disposed = true;
       controller.abort();
       root.replaceChildren();

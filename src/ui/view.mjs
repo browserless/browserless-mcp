@@ -347,6 +347,7 @@ async function render(result) {
       accountView = mountAccountView(accountRoot, view, app);
       card.hidden = true;
       accountRoot.hidden = false;
+      return;
     }
     if (view.kind === 'handoff') {
       handoff = mountHandoff(
@@ -359,15 +360,13 @@ async function render(result) {
       card.hidden = true;
       handoffRoot.hidden = false;
     }
-    const expiredMessage = accountView
-      ? 'This view has expired. Request a new account snapshot.'
-      : 'This view has expired. Prepare a new replay.';
+    const expiredMessage = 'This view has expired. Prepare a new replay.';
     if (expires <= Date.now()) throw new Error(expiredMessage);
     expiryTimer = setTimeout(
       () => fail(new Error(expiredMessage)),
       expires - Date.now(),
     );
-    if (handoff || accountView) return;
+    if (handoff) return;
     if (view.kind === 'agent-media') {
       media = mountAgentMedia(
         mediaRoot,
