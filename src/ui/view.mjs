@@ -5,6 +5,7 @@ import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import { mountPerformance } from './performance.mjs';
+import { mountLogs } from './logs.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -34,6 +35,9 @@ let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
 const performanceRoot = byId('performance');
+let logs;
+const logsRoot = byId('request-logs');
+const isLogsView = () => lastResult?.structuredContent?.kind === 'request-logs';
 const isPerformanceView = () =>
   document.body.dataset.viewKind === 'performance' ||
   lastResult?.structuredContent?.kind === 'performance';
@@ -42,6 +46,7 @@ function updateHost(context) {
   if (context.theme) applyDocumentTheme(context.theme);
   handoff?.updateHost(context);
   media?.updateHost(context);
+  logs?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -97,9 +102,23 @@ function dispose() {
   media = undefined;
   performanceReport?.dispose();
   performanceReport = undefined;
+  logs?.dispose();
+  logs = undefined;
+  logsRoot.hidden = true;
 }
 function fail(error) {
   loading.abort();
+  if (isLogsView()) {
+    card.hidden = true;
+    logsRoot.hidden = false;
+    if (logs) logs.fail(error);
+    else {
+      logsRoot.innerHTML =
+        '<header><h1>Request logs unavailable</h1></header><p role="alert"></p>';
+      logsRoot.querySelector('[role="alert"]').textContent = error.message;
+    }
+    return;
+  }
   if (isPerformanceView()) {
     dispose();
     card.hidden = true;
@@ -322,6 +341,12 @@ async function render(result) {
       return;
     }
     const view = ShowOutputSchema.parse(result.structuredContent);
+    if (view.kind === 'request-logs') {
+      logs = mountLogs(logsRoot, result._meta?.payload, view, app, hostContext);
+      card.hidden = true;
+      logsRoot.hidden = false;
+      return;
+    }
     const expires = Date.parse(view.expiresAt);
     if (view.kind === 'handoff') {
       handoff = mountHandoff(
@@ -441,9 +466,11 @@ app.ontoolcancelled = (params) => {
   generation++;
   fail(
     new Error(
-      isPerformanceView()
-        ? params?.reason || 'Performance audit was cancelled.'
-        : 'Replay loading was cancelled.',
+      isLogsView()
+        ? params?.reason || 'Request log loading was cancelled.'
+        : isPerformanceView()
+          ? params?.reason || 'Performance audit was cancelled.'
+          : 'Replay loading was cancelled.',
     ),
   );
 };

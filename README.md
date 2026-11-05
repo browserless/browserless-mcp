@@ -76,6 +76,45 @@ cross-worker reads. Restart or eviction makes a view unavailable and never
 reruns the original operation. Replay presentation tools/resources are absent
 from the compliant surface, whose existing tool list is unchanged.
 
+### Inline request-log explorer
+
+On the full surface, MCP Apps clients can inspect logs without copying the
+complete result into the conversation:
+
+```text
+browserless_logs({ levels: ["ERROR", "WARN"], limit: 50 })
+browserless_show({ viewRef: "<returned-view-reference>" })
+```
+
+The explorer shows timestamp, severity, endpoint/event, outcome/status,
+category/reason, duration, units, and region. Expand a row for every returned
+field, including the complete message, target URL, request ID, and session ID.
+IDs have Copy buttons when the host grants clipboard write access. URLs remain
+plain text and never open automatically.
+
+Filters cover the tool's existing time range, severity, endpoint, outcome,
+category, reason, request ID, target URL, event names, API key, page size, and
+ordering. Omitted time bounds use the account plan's server-defined window;
+retention errors appear in the widget. Refresh, Apply filters, and Load more
+call the authorized read-only logs tool through the bridge, without a new chat
+turn or another widget. Overlapping pages are deduplicated. Loaded entries are
+bounded to 500 rows and 2 MiB; each result page is limited to 100 rows and 1 MiB.
+Oversized pages are rejected with guidance to reduce the page size.
+
+Rows, filter values, and opaque pagination cursors travel in widget-only
+metadata. Model-visible results contain a compact summary and view reference.
+Prompt text and filter values are excluded from logs-tool analytics. Existing
+Markdown output is unchanged for clients without MCP Apps. The compliant
+connector remains unchanged.
+
+Snapshots expire after 15 minutes and share the existing bounded, process-local
+view store. Display rechecks account access. Refresh and pagination prepare a
+new snapshot; the mounted explorer adopts its expiry while older references
+keep their original deadline. Errors preserve the last successful result;
+expiry, cancellation, and loss of access stop further reads. Host locale and
+timezone control displayed timestamps. The optional model-diagnosis handoff is
+not included.
+
 ### Inline Lighthouse scorecard
 
 In MCP Apps clients, `browserless_performance` displays a scorecard directly
@@ -635,15 +674,15 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI                    | Description                                                               |
-| ------------------------------- | ------------------------------------------------------------------------- |
-| `browserless://api-docs`        | Smart scraper API documentation                                           |
-| `browserless://status`          | Live service health status                                                |
-| `ui://browserless/view/v9.html` | Bundled replay, screenshot, video, and handoff widget (full surface only) |
+| Resource URI                     | Description                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `browserless://api-docs`         | Smart scraper API documentation                                                                 |
+| `browserless://status`           | Live service health status                                                                      |
+| `ui://browserless/view/v12.html` | Bundled replay, screenshot, video, handoff, and request-log explorer widget (full surface only) |
 
-The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v8.html`
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v11.html`
 resources remain readable as aliases of the current widget. Newly discovered
-tools advertise v9 so hosts do not reuse a cached pre-handoff v3 widget.
+tools advertise v12 so hosts discover the request-log explorer.
 
 ## MCP Prompts
 

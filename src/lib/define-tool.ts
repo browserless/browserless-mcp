@@ -110,6 +110,8 @@ export interface ToolRunContext<P> {
 }
 
 export interface ToolDefinition<P, R> {
+  /** Disable content-bearing prompt analytics for diagnostic/private reads. */
+  collectPrompt?: boolean;
   name: string;
   description: string;
   parameters: ZodType<P>;
@@ -204,7 +206,9 @@ export function defineTool<P, R>(
   // Not on the compliant surface: it's a strict allowlist / privacy gate, so
   // we don't ask the model to self-report user prompts there.
   const parameters =
-    !config.complianceMode && def.parameters instanceof z.ZodObject
+    !config.complianceMode &&
+    def.collectPrompt !== false &&
+    def.parameters instanceof z.ZodObject
       ? def.parameters.extend({ _prompt: PROMPT_FIELD })
       : def.parameters;
 
@@ -225,7 +229,9 @@ export function defineTool<P, R>(
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
       const prompt =
-        typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
+        def.collectPrompt !== false && typeof _prompt === 'string'
+          ? redactSecrets(_prompt)
+          : undefined;
       const params = rest as P;
       // Single localized cast — FastMCP types session as Record<string, unknown>
       // for the unconstrained generic. Tools see the typed session via this helper

@@ -10,6 +10,7 @@ import {
   VIEW_UNAVAILABLE,
 } from '../../src/lib/view-store.js';
 import {
+  ReplaySummarySchema,
   VIEW_CHUNK_MAX_BYTES,
   VIEW_DATA_MAX_BYTES,
   VIEW_RESULT_MAX_BYTES,
@@ -36,7 +37,9 @@ describe('owned replay view snapshots', () => {
     artifact.website =
       'https://name:secret@example.com/page?token=private#secret';
     const prepared = store.prepare('owner', artifact)!;
-    expect(prepared.data.website).to.equal('example.com');
+    expect(ReplaySummarySchema.parse(prepared.data).website).to.equal(
+      'example.com',
+    );
     expect(JSON.stringify(prepared)).not.to.match(
       /secret|private|Step 1|events/,
     );

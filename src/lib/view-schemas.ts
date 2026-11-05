@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { LogSummarySchema } from './log-view-schemas.js';
 
-export const VIEW_URI = 'ui://browserless/view/v10.html';
+export const VIEW_URI = 'ui://browserless/view/v12.html';
 // Cloud viewers include an encrypted worker-routing prefix.
 export const LIVE_VIEWER_PATH = /^\/(?:e\/[a-f0-9]+\/)?live(?:\/|$)/;
 export const VIEW_UNAVAILABLE =
@@ -53,13 +54,14 @@ export const HandoffStateSchema = z.object({
 export const ShowOutputSchema = z
   .object({
     viewRef: z.string(),
-    kind: z.enum(['replay', 'handoff', 'agent-media']),
+    kind: z.enum(['replay', 'handoff', 'agent-media', 'request-logs']),
     summary: z.string(),
     expiresAt: z.string().datetime(),
     data: z.union([
       ReplaySummarySchema,
       HandoffSummarySchema,
       MediaSummarySchema,
+      LogSummarySchema,
     ]),
   })
   .superRefine((value, ctx) => {
@@ -68,7 +70,9 @@ export const ShowOutputSchema = z
         ? ReplaySummarySchema
         : value.kind === 'handoff'
           ? HandoffSummarySchema
-          : MediaSummarySchema;
+          : value.kind === 'agent-media'
+            ? MediaSummarySchema
+            : LogSummarySchema;
     if (!schema.safeParse(value.data).success)
       ctx.addIssue({
         code: 'custom',
