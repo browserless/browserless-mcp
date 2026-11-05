@@ -71,6 +71,7 @@ describe('request-log explorer browser', () => {
           if (mode === 'defer') await new Promise(resolve => { release = resolve; deferred(); });
           if (mode === 'retention') return { isError: true, content: [{ type: 'text', text: 'Request logs for this plan are limited to the last 8 hours.' }] };
           if (mode === 'unavailable') return { isError: true, content: [{ type: 'text', text: '403 Access revoked' }] };
+          if (mode === 'text') return { content: [{ type: 'text', text: '## Request logs (1)' }] };
           const { cursor, ...filters } = call.arguments;
           if (mode === 'empty') return result([], filters, null);
           if (cursor === 'opaque-log-page-2') return result([fixture.entries[0], { ...fixture.entries[0], requestId: 'request-next' }], filters, 'opaque-log-page-3');
@@ -146,6 +147,11 @@ describe('request-log explorer browser', () => {
         assert(rows(v).length === 4, 'Error discarded last result');
         v.mode('default'); await click(v, 'retry');
         assert(role(v, 'error').hidden && rows(v).length === 4, 'Retry did not recover');
+        v.mode('text'); await click(v, 'refresh');
+        assert(!role(v, 'error').hidden && role(v, 'error').textContent.includes('returned text'), 'Text fallback showed a schema error');
+        assert(rows(v).length === 4 && !role(v, 'retry').hidden && !role(v, 'refresh').disabled, 'Text fallback discarded the snapshot or disabled recovery');
+        v.mode('default'); await click(v, 'retry');
+        assert(role(v, 'error').hidden && rows(v).length === 4, 'Text fallback did not recover');
         const lightTime = new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'medium', timeZone: 'America/New_York' }).format(new Date(fixture.entries[0].timestamp));
         v.frame.style.width = '350px';
         v.bridge.setHostContext({ theme: 'light', locale: 'en-US', timeZone: 'America/New_York', containerDimensions: { width: 350 } });

@@ -1,4 +1,4 @@
-import { FastMCP, UserError } from 'fastmcp';
+import { FastMCP } from 'fastmcp';
 
 import { accountQuery } from '../lib/account-api.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
@@ -138,7 +138,7 @@ export function registerLogsTool(
       'what it cost. This is the tool for diagnosing a run that failed on the ' +
       'Browserless side rather than in your own code. The window available ' +
       'depends on the account plan; the server reports the limit if a range is ' +
-      'refused. Read-only. MCP Apps clients receive a viewRef; use browserless_show to display the request-log explorer. Rows and pagination cursors stay in widget-only metadata.',
+      'refused. Read-only. When an inline view can be prepared, MCP Apps clients receive a viewRef; use browserless_show to display the request-log explorer. Its rows and pagination cursors stay in widget-only metadata. Otherwise returns the standard Markdown result.',
     collectPrompt: false,
     parameters: LogsParamsSchema,
     annotations: {
@@ -177,20 +177,17 @@ export function registerLogsTool(
           filters,
           nextCursor: result?.nextCursor ?? null,
         });
-        if (!view)
-          throw new UserError(
-            'The request-log result is unavailable or too large for the explorer. Reduce limit and retry.',
-          );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `${view.summary} Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to inspect it inline.`,
-            },
-          ],
-          structuredContent: view,
-          _meta: replayViews.show(view.viewRef, viewOwner)._meta,
-        };
+        if (view)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `${view.summary} Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to inspect it inline.`,
+              },
+            ],
+            structuredContent: view,
+            _meta: replayViews.show(view.viewRef, viewOwner)._meta,
+          };
       }
       const entries = result?.entries ?? [];
 

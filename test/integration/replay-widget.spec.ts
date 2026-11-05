@@ -277,7 +277,7 @@ describe('production replay tools over real MCP HTTP', () => {
       // Both unsupported clients and failed view preparation retain legacy output.
       replayViews.clear();
       for (let index = 0; index < 16; index++)
-        replayViews.prepare('another-owner', fixture);
+        replayViews.prepare(`another-owner-${Math.floor(index / 4)}`, fixture);
       for (const client of [noUi, alice]) {
         const legacy = await client.callTool({
           name: 'browserless_sessions',

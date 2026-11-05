@@ -16,12 +16,16 @@ import { LogPayloadSchema } from '../../src/lib/log-view-schemas.js';
 const fixture = JSON.parse(
   readFileSync('test/fixtures/request-logs.json', 'utf8'),
 );
+const replay = JSON.parse(
+  readFileSync('test/fixtures/replay-widget.json', 'utf8'),
+);
 const content = (result: Record<string, unknown>) =>
   JSON.stringify(result.content);
 describe('request-log explorer over MCP HTTP', () => {
   it('keeps rows/cursors UI-only, forwards all filters, isolates owners, rechecks access, and preserves text fallback', async () => {
     let revoked = false,
-      empty = false;
+      empty = false,
+      oversized = false;
     const requests: Array<{ query: string; variables: Record<string, any> }> =
       [];
     const retentionError =
@@ -47,7 +51,19 @@ describe('request-log explorer over MCP HTTP', () => {
         JSON.stringify({
           data: {
             accountSummary: { accountId: 'account-a' },
-            requestLogs: empty ? { entries: [], nextCursor: null } : fixture,
+            requestLogs: oversized
+              ? {
+                  entries: [
+                    {
+                      ...fixture.entries[0],
+                      message: 'x'.repeat(128 * 1024 + 1),
+                    },
+                  ],
+                  nextCursor: null,
+                }
+              : empty
+                ? { entries: [], nextCursor: null }
+                : fixture,
           },
         }),
       );
@@ -249,6 +265,56 @@ describe('request-log explorer over MCP HTTP', () => {
         arguments: filters,
       });
       assert.equal(deniedRead.isError, true);
+      revoked = false;
+      empty = false;
+      // Fill every global slot using distinct owners, even with an owner quota.
+      for (const kind of ['request-logs', 'replay']) {
+        await replayViews.clear();
+        for (let index = 0; index < 16; index++) {
+          const owner = `other-owner-${Math.floor(index / 4)}`;
+          const occupied =
+            kind === 'replay'
+              ? replayViews.prepare(owner, replay)
+              : replayViews.prepareLogs(owner, { ...fixture, filters: {} });
+          assert.ok(occupied);
+        }
+        const full = await bob.callTool({
+          name: 'browserless_logs',
+          arguments: {},
+        });
+        assert.ok(
+          !full.isError,
+          'Full store turned a successful log read into an error',
+        );
+        assert.equal(full.structuredContent, undefined);
+        assert.deepEqual(full.content, fallback.content);
+        empty = true;
+        const noEntries = await bob.callTool({
+          name: 'browserless_logs',
+          arguments: {},
+        });
+        assert.ok(!noEntries.isError);
+        assert.ok(
+          content(noEntries).includes('No request log entries matched'),
+        );
+        empty = false;
+      }
+      await replayViews.clear();
+      oversized = true;
+      const large = await alice.callTool({
+        name: 'browserless_logs',
+        arguments: {},
+      });
+      const largeLegacy = await legacy.callTool({
+        name: 'browserless_logs',
+        arguments: {},
+      });
+      assert.ok(
+        !large.isError,
+        'Rejected view turned a successful log read into an error',
+      );
+      assert.equal(large.structuredContent, undefined);
+      assert.deepEqual(large.content, largeLegacy.content);
     } finally {
       await Promise.allSettled(clients.map((client) => client.close()));
       await server.stop();

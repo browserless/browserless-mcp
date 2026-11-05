@@ -303,6 +303,10 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
           response.content?.find((item) => item.type === 'text')?.text ||
             'Request log update failed.',
         );
+      if (!response.structuredContent)
+        throw new Error(
+          'The logs tool returned text because an inline explorer could not be prepared. Retry later for an inline result.',
+        );
       const next = ShowOutputSchema.parse(response.structuredContent);
       if (next.kind !== 'request-logs')
         throw new Error('Unexpected log response.');

@@ -99,10 +99,14 @@ retention errors appear in the widget. Refresh, Apply filters, and Load more
 call the authorized read-only logs tool through the bridge, without a new chat
 turn or another widget. Overlapping pages are deduplicated. Loaded entries are
 bounded to 500 rows and 2 MiB; each result page is limited to 100 rows and 1 MiB.
-Oversized pages are rejected with guidance to reduce the page size.
+If a result cannot fit in a view or storage is full, the tool returns its
+existing Markdown result instead of failing the log read.
 
-Rows, filter values, and opaque pagination cursors travel in widget-only
-metadata. Model-visible results contain a compact summary and view reference.
+When a view is prepared, rows, filter values, and opaque pagination cursors
+travel in widget-only metadata. Model-visible results contain a compact
+summary and view reference. The Markdown fallback includes entries and the
+next-page cursor as before. A mounted explorer that receives this fallback
+keeps its last successful snapshot and offers Retry.
 Prompt text and filter values are excluded from logs-tool analytics. Existing
 Markdown output is unchanged for clients without MCP Apps. The compliant
 connector remains unchanged.
@@ -240,8 +244,11 @@ artifact until expiry; preview and Save requests are repeatable and do not
 consume the original single-use download.
 
 Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
-budget. A gallery shows the first 12 valid captures, each at most 50 MiB; its
-summary reports when more captures were returned. Invalid screenshots are
+budget. Each caller scope retains at most four views across replays, media,
+and request logs. New views evict that caller's oldest views; they never evict
+another caller's views. A gallery shows the first 12 valid captures, each at
+most 50 MiB; its summary reports when more captures were returned. Invalid
+screenshots are
 skipped without discarding valid captures. Preview files are removed on expiry
 or eviction. Before the first media view is created, cleanup removes stale
 files left by exited processes, including files with the current process's

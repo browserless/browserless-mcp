@@ -20,7 +20,48 @@ import {
 const fixture = JSON.parse(
   readFileSync('test/fixtures/request-logs.json', 'utf8'),
 );
+const replay = JSON.parse(
+  readFileSync('test/fixtures/replay-widget.json', 'utf8'),
+);
 describe('request log views', () => {
+  for (const kind of ['request-logs', 'replay', 'mixed']) {
+    it(`caps ${kind} traffic per owner across view kinds`, async () => {
+      const store = new ViewStore();
+      try {
+        const refs: string[] = [];
+        for (let index = 0; index < 16; index++) {
+          const view =
+            kind === 'replay' || (kind === 'mixed' && index % 2)
+              ? store.prepare('alice', replay)
+              : store.prepareLogs('alice', { ...fixture, filters: {} });
+          assert.ok(view);
+          refs.push(view.viewRef);
+        }
+        assert.throws(() => store.require(refs[11], 'alice'));
+        for (const ref of refs.slice(-4))
+          assert.ok(store.require(ref, 'alice'));
+        assert.ok(store.prepareLogs('bob', { ...fixture, filters: {} }));
+        assert.ok(store.prepare('bob', replay));
+        assert.ok(
+          await store.prepareMedia('bob', [
+            {
+              type: 'image',
+              mimeType: 'image/png',
+              body: Buffer.from('capture'),
+              label: 'Capture',
+              rationale: '',
+              commandIndex: 1,
+            },
+          ]),
+        );
+        for (const ref of refs.slice(-4))
+          assert.ok(store.require(ref, 'alice'));
+      } finally {
+        await store.clear();
+      }
+    });
+  }
+
   it('validates nullable fields, preserves zero and fractional cost, and drops unselected fields', () => {
     const parsed = LogPayloadSchema.parse({
       ...fixture,
@@ -158,7 +199,7 @@ describe('request log views', () => {
     );
   });
 
-  it('rejects oversized results instead of leaking a raw fallback and enforces owner-scoped storage limits', async () => {
+  it('rejects oversized stored payloads and enforces owner-scoped storage limits', async () => {
     const store = new ViewStore({ maxEntries: 1 });
     try {
       const oversized = {
