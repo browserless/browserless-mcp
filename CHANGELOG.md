@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.45.0](https://github.com/browserless/browserless-mcp/compare/v1.44.0...v1.45.0) (2026-11-05)
+
+
+### Features
+
+* add json and summary formats to browserless_smartscraper ([#491](https://github.com/browserless/browserless-mcp/issues/491)) ([0f629b3](https://github.com/browserless/browserless-mcp/commit/0f629b3c72b7ab03784ea58d646756374a52102d))
+
+
+### Bug Fixes
+
+* add default handoff instructions for liveURL AUTO-696 ([#502](https://github.com/browserless/browserless-mcp/issues/502)) ([63bf31d](https://github.com/browserless/browserless-mcp/commit/63bf31d492087dc44cd05dfe45f4632435924012))
+* align shared OTLP fallback with telemetry opt-out ([#495](https://github.com/browserless/browserless-mcp/issues/495)) ([053a5d8](https://github.com/browserless/browserless-mcp/commit/053a5d87dcba9ba30f0c62cb789f803914768a69))
+* classify remaining unknown tool failure reasons ([#492](https://github.com/browserless/browserless-mcp/issues/492)) ([272b68b](https://github.com/browserless/browserless-mcp/commit/272b68bb7d7aea8ba0207b3bed4eee6c4ee3969e))
+* collect no usage analytics in compliance mode ([#504](https://github.com/browserless/browserless-mcp/issues/504)) ([cc3a179](https://github.com/browserless/browserless-mcp/commit/cc3a179c0262723ef78e6fcee3f39af31563b09b))
+* preserve capture protection through navigation ([#505](https://github.com/browserless/browserless-mcp/issues/505)) ([4ca153a](https://github.com/browserless/browserless-mcp/commit/4ca153a4653bcbbabf04fdccda9c4a626179ca53))
+
 ## [1.44.0](https://github.com/browserless/browserless-mcp/compare/v1.43.1...v1.44.0) (2026-11-03)
 
 
