@@ -1,4 +1,4 @@
-FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS builder
+FROM node:26-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY tsconfig.json ./
 COPY src/ src/
 RUN npm run build && npm prune --production
 
-FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39
+FROM node:26-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072
 
 LABEL org.opencontainers.image.source=https://github.com/browserless/browserless-mcp
 LABEL org.opencontainers.image.description="Browserless MCP Server"
