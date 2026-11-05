@@ -51,20 +51,21 @@ numbers, security codes, passwords, or one-time codes.
    card with an email header replaced the card form. It waits a bounded time
    and retries once with a fresh token; no transition returns `blocked` and
    cancels the checkout. Do not submit unless the result is `filled`.
-   Pixel captures (screenshot, PDF, live URL) and `evaluate` stay blocked until
-   the checkout reaches a terminal result, but a structured `snapshot` stays
-   available after the fill — the registered card values are redacted from it —
-   so use it to locate the Pay/Submit control, then use `browserless_agent` to
-   click that selector once. Never clear secret gates before a terminal result
+   Pixel captures (screenshot, PDF, live URL), `snapshot`, and `evaluate` stay
+   blocked while capture protection is armed. Use `browserless_agent` to click
+   the Pay/Submit selector noted before the fill once; do not take a post-fill
+   snapshot to find it. Never clear secret gates before a terminal result
    or invent a readiness predicate. Then call checkout with
    `action: "report", outcome: "success"` to request backend confirmation, not
    to assert the payment succeeded. A returned `succeeded` is a Link-confirmed
    payment (Link Pay Token path). A returned `submitted` is the terminal result
    for a one-time card: Link cannot confirm the merchant's charge, so success is
-   confirmable only on the merchant side. Read the merchant's own confirmation
-   or receipt page from a `snapshot` — card values stay redacted, so no gate
-   clear is needed to read it — and tell the user what it shows. Never resume or
-   resubmit after `submitted`. While the
+   confirmable only on the merchant side. After a terminal result, confirm the
+   fill has completed and secret-bearing content is gone from every tab,
+   including hidden fields, before calling `clearSecrets`. If that cannot be
+   confirmed, do not clear or capture. Otherwise request a fresh `snapshot` of
+   the merchant's confirmation or receipt page and tell the user what it shows.
+   Never resume or resubmit after `submitted`. While the
    result is still resumable (`_next.action: "resume"`), follow it for pending
    confirmation; never submit again. If blocked or abandoned, report that
    outcome instead. Use `action: "cancel"` if the user abandons before fill.
