@@ -492,6 +492,7 @@ type FormatOpts = {
   sessionId?: string;
   mcpBaseUrl?: string;
   token?: string;
+  sessionOpen?: boolean;
 };
 
 // stdio: file is already on the local disk → return its path (reuse as
@@ -543,7 +544,9 @@ export const formatDownloads = async (
     );
     if (d.pdfDocumentId) {
       lines.push(
-        `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is read.`,
+        opts.sessionOpen
+          ? `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is read.`
+          : '  PDF reading requires `keepSessionAlive: true` on the initial call; this browser session is closed and its PDF ID has expired.',
       );
     }
   }
@@ -2209,6 +2212,11 @@ export const runAgentCommands = async (
       extraText ? `${base}\n\n${extraText}` : base;
 
     const skillsText = extraText;
+    const sessionOpen =
+      !closedDuringBatch &&
+      Boolean(
+        keepAlive || downloadsPending || createProfile || attachSessionId,
+      );
     let baseContent: Content[];
 
     if (lastSnapshot) {
@@ -2285,6 +2293,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        sessionOpen,
       });
     } else if (last.method === 'stopRecording') {
       // Video is never inlined → always a single-use download handle.
@@ -2343,6 +2352,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        sessionOpen,
       });
       baseContent = [...baseContent, ...notice];
     }
@@ -2446,6 +2456,7 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          sessionOpen: options.closeAfter !== 'always' && !!lastSession,
         });
         err.message += `\n\n${files
           .filter((content) => content.type === 'text')
