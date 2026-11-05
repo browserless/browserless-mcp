@@ -105,6 +105,7 @@ describe('direct live viewer over MCP HTTP', () => {
     registerSurface(server, {
       ...getConfig(),
       browserlessApiUrl: base,
+      publicBrowserlessUrl: undefined,
       transport: 'httpStream',
       complianceMode: false,
       analyticsEnabled: false,
