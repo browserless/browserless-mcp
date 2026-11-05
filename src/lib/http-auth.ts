@@ -20,10 +20,14 @@ export interface AuthInput {
   requestPath?: string;
 }
 
+const tokenFromAuthHeader = (header?: string): string | undefined =>
+  header
+    ?.trim()
+    .replace(/^Bearer(?:\s+|$)/i, '')
+    .trim() || undefined;
+
 export const presentsCredential = (input: AuthInput): boolean => {
-  const headerToken = input.authHeader?.startsWith('Bearer ')
-    ? input.authHeader.slice(7)
-    : input.authHeader;
+  const headerToken = tokenFromAuthHeader(input.authHeader);
   return Boolean(headerToken || input.tokenQuery);
 };
 
@@ -81,9 +85,7 @@ export const resolveBrowserlessAuth = async (
   // Analytics-only origin tag set by our own callers; absent for external LLMs.
   const source = input.sourceHeader ?? input.sourceQuery;
 
-  const headerToken = input.authHeader?.startsWith('Bearer ')
-    ? input.authHeader.slice(7)
-    : input.authHeader;
+  const headerToken = tokenFromAuthHeader(input.authHeader);
 
   // JWTs have 3 dot-separated base64url segments; plain API keys do not.
   const isJwt = headerToken ? headerToken.split('.').length === 3 : false;
