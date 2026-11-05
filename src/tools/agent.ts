@@ -1769,27 +1769,22 @@ export const runAgentCommands = async (
       // Strip page-controlled data before error formatting, batch accumulation,
       // profile bookkeeping or any text/structured response can observe it.
       if (protectedTabOperation) {
-        if (resp.error) {
+        const result = (
+          cmd.method === 'getTabs'
+            ? z.object({
+                tabs: z.array(
+                  z.object({ targetId: z.string(), active: z.boolean() }),
+                ),
+                activeTargetId: z.string().nullable(),
+              })
+            : z.object({ success: z.boolean(), targetId: z.string() })
+        ).safeParse(resp.result);
+        if (resp.error || !result.success) {
           throw new UserError(
             `Protected tab operation failed. Do not clear protection to inspect the page.\n${sessionLine(agentSession, compliant)}`,
           );
         }
-        if (cmd.method === 'getTabs') {
-          const result = resp.result as {
-            tabs: Array<{ targetId: string; active: boolean }>;
-            activeTargetId: string | null;
-          };
-          resp.result = {
-            tabs: result.tabs.map(({ targetId, active }) => ({
-              targetId,
-              active,
-            })),
-            activeTargetId: result.activeTargetId,
-          };
-        } else {
-          const result = resp.result as { success: boolean; targetId: string };
-          resp.result = { success: result.success, targetId: result.targetId };
-        }
+        resp.result = result.data;
       }
 
       if (resp.error) {

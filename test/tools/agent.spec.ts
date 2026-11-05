@@ -2959,9 +2959,12 @@ describe('browserless_agent integration binding guard', () => {
     let failSwitch = false;
     let clearBusy = true;
     let hiddenFieldPresent = true;
+    let malformedTab: { value: unknown } | undefined;
     const sent: string[] = [];
     const srv = await makeRespondingServer((method, params) => {
       sent.push(method);
+      if (malformedTab && (method === 'getTabs' || method === 'switchTab'))
+        return malformedTab.value;
       if (method === 'loadSecret') return { ok: true };
       if (method === 'waitForNavigation')
         return { url: 'https://example.com/orders', status: 200 };
@@ -3076,6 +3079,37 @@ describe('browserless_agent integration binding guard', () => {
         );
       }
       failSwitch = false;
+      for (const method of ['getTabs', 'switchTab']) {
+        for (const value of [
+          null,
+          {
+            tabs: [{ targetId: 'other', active: { secret } }],
+            activeTargetId: 'other',
+            success: { secret },
+            targetId: 'other',
+          },
+        ]) {
+          malformedTab = { value };
+          try {
+            await execute(
+              {
+                method,
+                params:
+                  method === 'switchTab' ? { targetId: 'destination' } : {},
+                sessionId: handle,
+              },
+              context,
+            );
+            expect.fail('expected invalid protected reply rejection');
+          } catch (err) {
+            expect((err as Error).message).to.include(
+              'Protected tab operation failed',
+            );
+            expect((err as Error).message).not.to.include(secret);
+          }
+        }
+      }
+      malformedTab = undefined;
       for (const method of ['clearSecrets', 'snapshot']) {
         try {
           await execute({ method, sessionId: handle }, context);
