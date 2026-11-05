@@ -5,6 +5,7 @@ import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import { mountPerformance } from './performance.mjs';
+import { mountLogs } from './logs.mjs';
 import { mountAccountView } from './account-view.mjs';
 import {
   ReplayPayloadSchema,
@@ -35,6 +36,9 @@ let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
 const performanceRoot = byId('performance');
+let logs;
+const logsRoot = byId('request-logs');
+const isLogsView = () => lastResult?.structuredContent?.kind === 'request-logs';
 let accountView;
 const accountRoot = byId('account-view');
 const isAccountView = () =>
@@ -47,6 +51,7 @@ function updateHost(context) {
   if (context.theme) applyDocumentTheme(context.theme);
   handoff?.updateHost(context);
   media?.updateHost(context);
+  logs?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -105,6 +110,9 @@ function dispose() {
   accountView?.dispose();
   accountView = undefined;
   accountRoot.hidden = true;
+  logs?.dispose();
+  logs = undefined;
+  logsRoot.hidden = true;
 }
 function fail(error) {
   loading.abort();
@@ -117,6 +125,17 @@ function fail(error) {
       accountRoot.innerHTML =
         '<header><h1>Account view unavailable</h1></header><p role="alert"></p>';
       accountRoot.querySelector('[role="alert"]').textContent = error.message;
+    }
+    return;
+  }
+  if (isLogsView()) {
+    card.hidden = true;
+    logsRoot.hidden = false;
+    if (logs) logs.fail(error);
+    else {
+      logsRoot.innerHTML =
+        '<header><h1>Request logs unavailable</h1></header><p role="alert"></p>';
+      logsRoot.querySelector('[role="alert"]').textContent = error.message;
     }
     return;
   }
@@ -342,6 +361,12 @@ async function render(result) {
       return;
     }
     const view = ShowOutputSchema.parse(result.structuredContent);
+    if (view.kind === 'request-logs') {
+      logs = mountLogs(logsRoot, result._meta?.payload, view, app, hostContext);
+      card.hidden = true;
+      logsRoot.hidden = false;
+      return;
+    }
     const expires = Date.parse(view.expiresAt);
     if (['usage', 'active-sessions'].includes(view.kind)) {
       accountView = mountAccountView(accountRoot, view, app);
@@ -467,11 +492,13 @@ app.ontoolcancelled = (params) => {
   generation++;
   fail(
     new Error(
-      isAccountView()
-        ? params?.reason || 'Account view was cancelled.'
-        : isPerformanceView()
-          ? params?.reason || 'Performance audit was cancelled.'
-          : 'Replay loading was cancelled.',
+      isLogsView()
+        ? params?.reason || 'Request log loading was cancelled.'
+        : isAccountView()
+          ? params?.reason || 'Account view was cancelled.'
+          : isPerformanceView()
+            ? params?.reason || 'Performance audit was cancelled.'
+            : 'Replay loading was cancelled.',
     ),
   );
 };

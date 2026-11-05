@@ -1,86 +1,14 @@
 import { FastMCP } from 'fastmcp';
-import { z } from 'zod';
 
 import { accountQuery } from '../lib/account-api.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import type { McpConfig } from '../@types/types.js';
+import { replayViews } from '../lib/view-store.js';
+import { isCompliant } from './compliance.js';
 
-export const LogsParamsSchema = z.object({
-  startTime: z
-    .string()
-    .optional()
-    .describe(
-      'Inclusive RFC 3339 start time. Omit to let the account’s plan decide how ' +
-        'far back to look — the available window is plan-dependent and the ' +
-        'server rejects a range that exceeds it.',
-    ),
-  endTime: z
-    .string()
-    .optional()
-    .describe('Exclusive RFC 3339 end time. Defaults to now when omitted.'),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .optional()
-    .describe('Maximum entries to return, 1-100. Defaults to 50.'),
-  requestId: z
-    .string()
-    .optional()
-    .describe('Return only entries for one request id.'),
-  url: z
-    .string()
-    .optional()
-    .describe('Filter by the target URL of the request.'),
-  eventNames: z
-    .array(z.string())
-    .max(20)
-    .optional()
-    .describe(
-      'Filter by lifecycle event name, e.g. `request.failed`, `bql.*.failed`.',
-    ),
-  outcome: z
-    .string()
-    .optional()
-    .describe('Filter by request outcome, e.g. `failed` or `succeeded`.'),
-  apiKeyId: z
-    .string()
-    .optional()
-    .describe(
-      'Restrict to one API key, by id. Get ids from browserless_account with action "keys".',
-    ),
-  endpoint: z
-    .string()
-    .optional()
-    .describe('Filter by endpoint, e.g. `/chromium/bql` or `/screenshot`.'),
-  category: z
-    .string()
-    .optional()
-    .describe(
-      'Filter by failure category, e.g. `browserless_refused`, ' +
-        '`browserless_killed`, `target_error`.',
-    ),
-  reason: z
-    .string()
-    .optional()
-    .describe('Filter by the specific failure reason within a category.'),
-  levels: z
-    .array(z.enum(['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']))
-    .optional()
-    .describe('Severity levels to include. Omit for all levels.'),
-  order: z
-    .enum(['asc', 'desc'])
-    .optional()
-    .describe('Timestamp order. Defaults to newest first.'),
-  cursor: z
-    .string()
-    .optional()
-    .describe('Opaque cursor returned as `nextCursor` by the previous page.'),
-});
-
-export type LogsParams = z.infer<typeof LogsParamsSchema>;
+export { LogsParamsSchema, type LogsParams } from '../lib/log-view-schemas.js';
+import { LogsParamsSchema, type LogsParams } from '../lib/log-view-schemas.js';
 
 interface LogEntry {
   timestamp: string | null;
@@ -210,7 +138,8 @@ export function registerLogsTool(
       'what it cost. This is the tool for diagnosing a run that failed on the ' +
       'Browserless side rather than in your own code. The window available ' +
       'depends on the account plan; the server reports the limit if a range is ' +
-      'refused. Read-only.',
+      'refused. Read-only. When an inline view can be prepared, MCP Apps clients receive a viewRef; use browserless_show to display the request-log explorer. Its rows and pagination cursors stay in widget-only metadata. Otherwise returns the standard Markdown result.',
+    collectPrompt: false,
     parameters: LogsParamsSchema,
     annotations: {
       title: 'Browserless Request Logs',
@@ -237,10 +166,29 @@ export function registerLogsTool(
     analyticsProps: (params, result) => ({
       entry_count: result?.entries?.length ?? 0,
       had_cursor: Boolean(params.cursor),
-      filtered_by_outcome: params.outcome ?? undefined,
-      filtered_by_endpoint: params.endpoint ?? undefined,
+      filter_count: Object.keys(params).filter((key) => key !== 'cursor')
+        .length,
     }),
-    format: (result) => {
+    format: (result, params, { uiEnabled, viewOwner }) => {
+      if (uiEnabled && !isCompliant(config)) {
+        const { cursor: _cursor, ...filters } = params;
+        const view = replayViews.prepareLogs(viewOwner, {
+          entries: result?.entries ?? [],
+          filters,
+          nextCursor: result?.nextCursor ?? null,
+        });
+        if (view)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `${view.summary} Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to inspect it inline.`,
+              },
+            ],
+            structuredContent: view,
+            _meta: replayViews.show(view.viewRef, viewOwner)._meta,
+          };
+      }
       const entries = result?.entries ?? [];
 
       if (!entries.length) {

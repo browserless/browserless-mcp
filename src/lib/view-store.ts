@@ -8,6 +8,7 @@ import { UserError } from 'fastmcp';
 import type { ContentResult } from 'fastmcp';
 import type { ReplayArtifact } from './session-replay-artifact.js';
 import type { MediaInput } from './agent-media.js';
+import { LogPayloadSchema, LOG_PAGE_MAX_BYTES } from './log-view-schemas.js';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -335,6 +336,41 @@ export class ViewStore {
     return structuredClone(prepared);
   }
 
+  prepareLogs(owner: string, rawPayload: unknown): PreparedView | undefined {
+    const parsed = LogPayloadSchema.safeParse(rawPayload);
+    if (!parsed.success) return;
+    const json = Buffer.from(JSON.stringify(parsed.data));
+    if (json.length > LOG_PAGE_MAX_BYTES || !this.room(json.length, owner))
+      return;
+    const now = this.now();
+    const expires = now + VIEW_TTL_MS;
+    const viewRef = `view_${randomUUID()}`;
+    const prepared: PreparedView = {
+      viewRef,
+      kind: 'request-logs',
+      summary: `Request log explorer: ${parsed.data.entries.length} entries.`,
+      expiresAt: new Date(expires).toISOString(),
+      data: {
+        fetchedAt: new Date(now).toISOString(),
+        entryCount: parsed.data.entries.length,
+        hasMore: Boolean(parsed.data.nextCursor),
+      },
+    };
+    const timer = setTimeout(() => this.drop(viewRef), VIEW_TTL_MS);
+    timer.unref?.();
+    this.views.set(viewRef, {
+      prepared,
+      owner,
+      sessionId: '',
+      expires,
+      json,
+      timer,
+      cursors: {},
+    });
+    this.bytes += json.length;
+    return structuredClone(prepared);
+  }
+
   require(ref: string, owner: string): StoredView {
     const view = this.views.get(ref);
     if (view && view.expires <= this.now()) this.drop(ref);
@@ -350,6 +386,12 @@ export class ViewStore {
 
   show(ref: string, owner: string, origin?: string): ContentResult {
     const view = this.require(ref, owner);
+    if (view.prepared.kind === 'request-logs')
+      return {
+        content: [{ type: 'text', text: view.prepared.summary }],
+        structuredContent: structuredClone(view.prepared),
+        _meta: { payload: JSON.parse(view.json.toString('utf8')) },
+      };
     if (['usage', 'active-sessions'].includes(view.prepared.kind))
       return {
         content: [{ type: 'text', text: view.prepared.summary }],

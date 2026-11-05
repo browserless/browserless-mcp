@@ -1,0 +1,224 @@
+.logs-view {
+  background: var(--surface);
+  color: var(--text);
+  padding: 20px 16px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.logs-view[hidden],
+.logs-view [hidden] {
+  display: none !important;
+}
+.logs-view header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logs-view header > div {
+  flex: 1;
+  min-width: 0;
+}
+.logs-view h1 {
+  margin: 0;
+  font-size: 16px;
+}
+.logs-view header p {
+  color: var(--muted);
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.logs-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  font-size: 25px;
+}
+.logs-view button,
+.logs-view input,
+.logs-view select,
+.logs-view textarea {
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  padding: 7px 9px;
+}
+.logs-view label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+}
+.logs-view textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+.logs-view fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.logs-filters {
+  margin-top: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.logs-filters > summary {
+  cursor: pointer;
+  font-weight: 550;
+}
+.logs-filters form > fieldset {
+  display: grid;
+  gap: 12px;
+}
+.logs-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.logs-view input,
+.logs-view textarea,
+.logs-view select {
+  min-width: 0;
+  width: 100%;
+}
+.logs-view .logs-levels {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.logs-levels legend {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.logs-levels label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.logs-levels input {
+  width: auto;
+}
+.logs-filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.logs-table-scroll {
+  overflow-x: auto;
+}
+.logs-view table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+.logs-view th {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: left;
+  font-weight: 500;
+}
+.logs-view th,
+.logs-view td {
+  padding: 11px 8px 11px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  max-width: 160px;
+}
+.logs-view td small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.logs-view .logs-row-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+}
+.logs-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  background: var(--raised);
+}
+.logs-chip.bad {
+  color: light-dark(#a52e3b, #ff959b);
+}
+.logs-chip.warn {
+  color: light-dark(#865800, #f4c366);
+}
+.logs-chip.good {
+  color: light-dark(#157345, #75d4a2);
+}
+.logs-view dl {
+  margin: 10px 0;
+}
+.logs-view dl > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 120px) minmax(0, 1fr);
+  gap: 12px;
+  margin: 7px 0;
+}
+.logs-view dt {
+  color: var(--muted);
+}
+.logs-view dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.logs-view dd button {
+  margin-left: 10px;
+  padding: 2px 7px;
+}
+.logs-detail {
+  background: var(--raised);
+}
+.logs-detail td {
+  padding: 10px;
+  max-width: none;
+}
+.logs-view [data-role='empty'] {
+  padding: 25px 0;
+  color: var(--muted);
+}
+.logs-view [role='alert'] {
+  color: light-dark(#a52e3b, #ff959b);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.logs-view [data-role='status'] {
+  color: var(--muted);
+  margin: 12px 0;
+}
+.logs-view [data-role='more'] {
+  margin-top: 12px;
+}
+.logs-view footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  margin-top: 18px;
+  padding-top: 10px;
+  font-size: 10px;
+}
+@media (max-width: 480px) {
+  .logs-filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .logs-view {
+    padding: 16px 12px;
+  }
+}

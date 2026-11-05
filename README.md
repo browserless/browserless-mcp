@@ -76,6 +76,51 @@ cross-worker reads. Restart or eviction makes a view unavailable and never
 reruns the original operation. Replay presentation tools/resources are absent
 from the compliant surface, whose existing tool list is unchanged.
 
+### Inline request-log explorer
+
+On the full surface, MCP Apps clients can inspect logs without copying the
+complete result into the conversation:
+
+```text
+browserless_logs({ levels: ["ERROR", "WARN"], limit: 50 })
+browserless_show({ viewRef: "<returned-view-reference>" })
+```
+
+The explorer shows timestamp, severity, endpoint/event, outcome/status,
+category/reason, duration, units, and region. Expand a row for every returned
+field, including the complete message, target URL, request ID, and session ID.
+IDs have Copy buttons when the host grants clipboard write access. URLs remain
+plain text and never open automatically.
+
+Filters cover the tool's existing time range, severity, endpoint, outcome,
+category, reason, request ID, target URL, event names, API key, page size, and
+ordering. Omitted time bounds use the account plan's server-defined window;
+retention errors appear in the widget. Refresh, Apply filters, and Load more
+call the authorized read-only logs tool through the bridge, without a new chat
+turn or another widget. Overlapping pages are deduplicated. Loaded entries are
+bounded to 500 rows and 2 MiB; each result page is limited to 100 rows and 1 MiB.
+If a result cannot fit in a view or storage is full, the tool returns its
+existing Markdown result instead of failing the log read.
+
+When a view is prepared, rows, filter values, and opaque pagination cursors
+travel in widget-only metadata. Model-visible results contain a compact
+summary and view reference. The Markdown fallback includes entries and the
+next-page cursor as before. A mounted explorer that receives this fallback
+keeps its last successful snapshot and offers Retry.
+It also explains how to request the logs as text in chat and suggests narrower
+filters or fewer entries for large pages.
+Prompt text and filter values are excluded from logs-tool analytics. Existing
+Markdown output is unchanged for clients without MCP Apps. The compliant
+connector remains unchanged.
+
+Snapshots expire after 15 minutes and share the existing bounded, process-local
+view store. Display rechecks account access. Refresh and pagination prepare a
+new snapshot; the mounted explorer adopts its expiry while older references
+keep their original deadline. Errors preserve the last successful result;
+expiry, cancellation, and loss of access stop further reads. Host locale and
+timezone control displayed timestamps. The optional model-diagnosis handoff is
+not included.
+
 ### Inline account usage and active sessions
 
 On the full surface, MCP Apps clients can display account snapshots:
@@ -233,11 +278,10 @@ artifact until expiry; preview and Save requests are repeatable and do not
 consume the original single-use download.
 
 Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
-budget. Each caller scope retains at most four views across usage, active
-sessions, replays, and media. New views evict that caller's oldest views;
-they never evict another caller's views. A gallery shows the first 12 valid
-captures, each at most 50 MiB; its summary reports when more captures were
-returned. Invalid screenshots are
+budget. Each caller scope retains at most four views across widget kinds. New
+views evict that caller's oldest views; they never evict another caller's
+views. A gallery shows the first 12 valid captures, each at most 50 MiB; its
+summary reports when more captures were returned. Invalid screenshots are
 skipped without discarding valid captures. Preview files are removed on expiry
 or eviction. Before the first media view is created, cleanup removes stale
 files left by exited processes, including files with the current process's
@@ -670,15 +714,15 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI                     | Description                                                                                               |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `browserless://api-docs`         | Smart scraper API documentation                                                                           |
-| `browserless://status`           | Live service health status                                                                                |
-| `ui://browserless/view/v11.html` | Bundled replay, screenshot, video, handoff, account usage, and active sessions widget (full surface only) |
+| Resource URI                     | Description                                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `browserless://api-docs`         | Smart scraper API documentation                                                                                                 |
+| `browserless://status`           | Live service health status                                                                                                      |
+| `ui://browserless/view/v12.html` | Bundled replay, screenshot, video, handoff, account usage, active sessions, and request-log explorer widget (full surface only) |
 
-The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v10.html`
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v11.html`
 resources remain readable as aliases of the current widget. Newly discovered
-tools advertise v11 so hosts discover the account usage and active sessions views.
+tools advertise v12 so hosts discover the request-log explorer.
 
 ## MCP Prompts
 
