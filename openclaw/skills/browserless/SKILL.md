@@ -43,9 +43,10 @@ what the task needs.
   elements the snapshot misses, call `browserless_skill` to load the matching
   recipe before improvising.
 - Solve captchas with the agent's `solve` command, not by clicking the widget.
-- When a human has to step in (MFA, an unusual challenge), create a live URL
-  for the running browser with `browserless_live_url`, include instructions
-  saying what to do, and hand the link to the user.
+- When a human has to step in (MFA, an unusual challenge), keep the session
+  open and send the agent's `liveURL` command with `interactable: true` and
+  instructions saying what to do. Hand the link to the user, wait for them, then
+  continue in the same session with a fresh snapshot.
 
 ## Credentials and safety
 
@@ -70,3 +71,8 @@ an authorization error, tell the user to either:
 - configure an API token as described in the plugin README.
 
 Do not try to work around missing authorization.
+
+## More
+
+- Browserless MCP documentation: https://docs.browserless.io/mcp/overview
+- Source and issues: https://github.com/browserless/browserless-mcp

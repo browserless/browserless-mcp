@@ -153,6 +153,23 @@ Tools appear in OpenClaw with the server prefix, for example
 `browserless__browserless_smartscraper`. To expose only some of them, see
 [Shared credentials](#shared-credentials).
 
+## Task skills
+
+Three standalone skills in `clawhub-skills/` add step-by-step workflows and
+example prompts for common jobs. They are published to ClawHub separately and
+are not part of the plugin package. Each one uses the plugin's tools and tells
+the agent to ask for the plugin when the tools are missing.
+
+| Skill                            | For                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `browserless-web-scraper`        | Reading pages, web research, finding pages on a site, crawling a section     |
+| `browserless-browser-automation` | Logins, forms, multi-step flows, captchas, downloads, handing off to a human |
+| `browserless-site-audit`         | Lighthouse audits, accessibility and SEO checks, PDFs, screenshots, archives |
+
+```bash
+openclaw skills install @browserless/browserless-web-scraper
+```
+
 ## Network access
 
 The plugin connects to these Browserless endpoints:
@@ -188,7 +205,20 @@ clawhub package publish ./openclaw
 
 `clawhub package validate` writes reports to `openclaw/reports/`. They are
 excluded from git by `.gitignore` and from the published package by
-`.clawhubignore`.
+`.clawhubignore`, which also keeps `clawhub-skills/` out of the package.
+
+Publish each task skill under the same owner, with the source linked:
+
+```bash
+clawhub skill publish ./openclaw/clawhub-skills/browserless-web-scraper \
+  --owner browserless --source-repo browserless/browserless-mcp \
+  --source-commit "$(git rev-parse HEAD)" \
+  --source-path openclaw/clawhub-skills/browserless-web-scraper
+```
+
+Repeat for `browserless-browser-automation` and `browserless-site-audit`. Add
+`--dry-run` first to preview. Skills get the next patch version unless you pass
+`--version`.
 
 Keep in mind:
 
