@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "browserless": {
+      "type": "http",
+      "url": "https://mcp.browserless.io/mcp",
+      "auth": "oauth",
+      "requestTimeoutMs": 360000
+    }
+  }
+}

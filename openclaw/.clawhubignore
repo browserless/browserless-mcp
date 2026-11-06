@@ -1,0 +1,5 @@
+# Keep validation output and repo housekeeping out of the published package.
+reports/
+clawhub-skills/
+.gitignore
+.clawhubignore
