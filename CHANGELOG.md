@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.46.0](https://github.com/browserless/browserless-mcp/compare/v1.45.0...v1.46.0) (2026-11-06)
+
+
+### Features
+
+* usage and active session widgets ([#507](https://github.com/browserless/browserless-mcp/issues/507)) ([a73f478](https://github.com/browserless/browserless-mcp/commit/a73f47889f9281937cde3333f5c7d320049e17e6))
+* widget to render logs dynamically ([#508](https://github.com/browserless/browserless-mcp/issues/508)) ([0e50644](https://github.com/browserless/browserless-mcp/commit/0e506440880b683470cf2115495465bf05c9337d))
+
+
+### Bug Fixes
+
+* preserve MCP replay across reconnects ([#514](https://github.com/browserless/browserless-mcp/issues/514)) ([8a316b1](https://github.com/browserless/browserless-mcp/commit/8a316b1a4e63bae15842ec13563883c98bb3f1f7))
+
 ## [1.45.0](https://github.com/browserless/browserless-mcp/compare/v1.44.0...v1.45.0) (2026-11-05)
 
 
