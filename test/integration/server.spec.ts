@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -23,6 +24,7 @@ import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { defineTool } from '../../src/lib/define-tool.js';
 import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
@@ -301,9 +303,31 @@ describe('MCP Server Integration', () => {
     });
   }
 
-  it('preserves OAuth registration bodies and limits only POSTs per address', async () => {
+  it('preserves OAuth refresh and registration bodies and limits only registration POSTs per address', async () => {
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
+    let refreshInputs: Record<string, string> | undefined;
+    const upstream = createHttpServer(async (req, res) => {
+      if (req.method !== 'POST' || req.url !== '/auth/v1/oauth/token') {
+        res.writeHead(404).end();
+        return;
+      }
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      refreshInputs = Object.fromEntries(new URLSearchParams(body));
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({
+          access_token: 'refreshed-access-token',
+          refresh_token: 'rotated-refresh-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+          scope: 'email profile',
+        }),
+      );
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const upstreamPort = (upstream.address() as { port: number }).port;
     const child = spawn(process.execPath, ['build/src/index.js'], {
       env: {
         ...process.env,
@@ -311,7 +335,7 @@ describe('MCP Server Integration', () => {
         PORT: String(port),
         OAUTH_ENABLED: 'true',
         MCP_BASE_URL: base,
-        SUPABASE_URL: 'http://127.0.0.1:9',
+        SUPABASE_URL: `http://127.0.0.1:${upstreamPort}`,
         SUPABASE_OAUTH_CLIENT_ID: 'test',
         SUPABASE_OAUTH_CLIENT_SECRET: 'test',
         REDIS_URL: '',
@@ -325,6 +349,7 @@ describe('MCP Server Integration', () => {
     const post = (ip: string) =>
       fetch(`${base}/oauth/register`, {
         method: 'POST',
+        signal: AbortSignal.timeout(3000),
         headers: { 'content-type': 'application/json', 'x-real-ip': ip },
         body: JSON.stringify({
           redirect_uris: ['http://localhost:33418/cb'],
@@ -343,6 +368,29 @@ describe('MCP Server Integration', () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       expect(ready, 'OAuth server starts').to.equal(true);
+      const refreshed = await fetch(`${base}/oauth/token`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(3000),
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: 'refresh+token/with=reserved&characters',
+          client_id: 'integration-client',
+          scope: 'email profile',
+        }),
+      });
+      expect(refreshed.status).to.equal(200);
+      expect(await refreshed.json()).to.deep.equal({
+        access_token: 'refreshed-access-token',
+        refresh_token: 'rotated-refresh-token',
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: 'email profile',
+      });
+      expect(refreshInputs).to.deep.equal({
+        grant_type: 'refresh_token',
+        refresh_token: 'refresh+token/with=reserved&characters',
+        scope: 'email profile',
+      });
       for (let i = 0; i < 3; i++)
         await fetch(`${base}/oauth/register`, {
           headers: { 'x-real-ip': '9.9.9.9' },
@@ -365,6 +413,56 @@ describe('MCP Server Integration', () => {
     } finally {
       child.kill('SIGTERM');
       await exited;
+      await new Promise<void>((resolve, reject) => {
+        upstream.close((error) => (error ? reject(error) : resolve()));
+        upstream.closeAllConnections();
+      });
+    }
+  });
+
+  it('preserves legacy SSE initialization and tool POST bodies', async () => {
+    const port = await freePort();
+    server = new FastMCP({ name: 'legacy-sse-test', version: '1.0.0' });
+    server.addTool({
+      name: 'echo',
+      description: 'Returns the submitted value',
+      parameters: z.object({ value: z.string() }),
+      execute: async ({ value }) => value,
+    });
+    const client = new Client({ name: 'legacy-sse-client', version: '1.0.0' });
+    try {
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port, host: '127.0.0.1' },
+      });
+      await client.connect(
+        new SSEClientTransport(new URL(`http://127.0.0.1:${port}/sse`), {
+          fetch: (url, init) =>
+            fetch(url, {
+              ...init,
+              signal:
+                init?.method === 'POST'
+                  ? AbortSignal.any([
+                      ...(init?.signal ? [init.signal] : []),
+                      AbortSignal.timeout(3000),
+                    ])
+                  : init?.signal,
+            }),
+        }),
+        { timeout: 3000 },
+      );
+      expect(client.getServerVersion()?.name).to.equal('legacy-sse-test');
+      expect(
+        await client.callTool({
+          name: 'echo',
+          arguments: { value: 'legacy POST body + & = ✓' },
+        }),
+      ).to.deep.equal({
+        content: [{ type: 'text', text: 'legacy POST body + & = ✓' }],
+      });
+    } finally {
+      await client.close();
+      await server.stop();
     }
   });
 
