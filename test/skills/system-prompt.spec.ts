@@ -9,6 +9,31 @@ import {
   serverInstructions,
 } from '../../src/skills/system-prompt.js';
 
+it('documents liveURL tab selection and handoff in both prompt variants', () => {
+  for (const prompt of [AGENT_SYSTEM_PROMPT, COMPLIANT_AGENT_SYSTEM_PROMPT]) {
+    const bullet = prompt
+      .split('\n')
+      .find((line) => line.startsWith('- **liveURL**'));
+    for (const text of [
+      '{ targetId?, mode?, timeout?, instructions? }',
+      'streams the active tab',
+      'pass targetId from getTabs to stream another without switching',
+      '300000ms (five minutes)',
+      "server caps the requested lifetime at your plan's maximum session time and remaining browser time",
+      'instructions explaining what to do and when to click Done',
+      'Interactive links supply generic instructions when omitted',
+      'an empty string disables the card and Done button',
+      'keepSessionAlive: true',
+      'reuse the returned `sessionId`',
+      'close the browser when the overall task finishes',
+      'Creating a link does not extend the browser deadline',
+      'keeping the browser open remains billed',
+    ]) {
+      expect(bullet).to.include(text);
+    }
+  }
+});
+
 describe('profile import discovery', () => {
   it('provides bounded full-only initialization instructions', () => {
     const text = serverInstructions(false)!;

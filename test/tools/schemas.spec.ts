@@ -17,6 +17,26 @@ import {
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
 
+describe('liveURL tab selection', () => {
+  for (const schema of [AgentCommandSchema, CompliantAgentCommandSchema]) {
+    it('retains optional target and mode and rejects unsupported values', () => {
+      for (const mode of ['follow', 'tab']) {
+        const command = { method: 'liveURL', params: { targetId: 'T1', mode } };
+        expect(schema.parse(command)).to.deep.equal(command);
+      }
+      expect(schema.safeParse({ method: 'liveURL' }).success).to.equal(true);
+      expect(
+        schema.safeParse({ method: 'liveURL', params: { mode: 'full' } })
+          .success,
+      ).to.equal(false);
+      expect(
+        schema.safeParse({ method: 'liveURL', params: { targetId: '' } })
+          .success,
+      ).to.equal(false);
+    });
+  }
+});
+
 describe('credential command schema dispatch', () => {
   it('points saved profile users at profile import', () => {
     expect(profileField('x').description).to.include('profile-import');
