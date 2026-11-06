@@ -63,7 +63,7 @@ below.
 Until you connect, OpenClaw leaves the Browserless tools out of sessions
 instead of failing them. Credentials are stored in OpenClaw's owner-only state
 database and are shared by the Gateway's operator-managed sessions (see
-[Shared credentials](#shared-credentials)).
+[Sharing a Gateway](#sharing-a-gateway)).
 
 To sign in from a terminal, add a matching server entry, which lets the CLI see
 it, then log in. The Gateway must be stopped while `login` runs:
@@ -119,7 +119,7 @@ OAuth definition, but it removes the whole entry, including any tool filter.
 
 `openclaw mcp set` replaces the whole `browserless` entry. Each time you run
 it, keep `"requestTimeoutMs":360000` in the JSON, and re-apply any tool filter
-from [Shared credentials](#shared-credentials) afterwards. Crawls can run for
+from [Sharing a Gateway](#sharing-a-gateway) afterwards. Crawls can run for
 up to five minutes and Lighthouse audits for up to two, so a shorter request
 timeout cuts them off.
 
@@ -129,41 +129,32 @@ To route requests through a specific Browserless region, add the
 `x-browserless-api-url` header to your server entry, for example
 `"x-browserless-api-url": "https://production-lon.browserless.io"`.
 
-### Shared credentials
+### Sharing a Gateway
 
-By default, one Browserless sign-in (or one API token) serves the whole
-Gateway. Anyone who can message your agent, on any connected channel, can use
-that account's units, saved login profiles, session replays and Stripe Link
-checkouts. Link checkouts still need your approval in Link, but the request is
-made.
+The Browserless connection belongs to the Gateway, so everyone who can message
+your agent uses the same Browserless account: its units, saved login profiles
+and session recordings. That suits a personal assistant or a team that shares
+one account.
 
-On a Gateway that other people can message, consider hiding the tools that act
-on your account rather than on a web page. First add the server entry from
-[Authentication](#authentication) (the OAuth or the token version), then:
+To narrow what a shared agent can do with the account, remove the tools it
+doesn't need. First add the server entry from [Authentication](#authentication),
+then, for example:
 
 ```bash
-openclaw mcp tools browserless --exclude 'browserless_link_connect,browserless_link_checkout,browserless_profiles,browserless_sessions,browserless_function'
+openclaw mcp tools browserless --exclude 'browserless_link_connect,browserless_link_checkout,browserless_sessions,browserless_function'
 ```
 
-Hiding `browserless_profiles` only hides the list of saved logins.
-`browserless_agent` and `browserless_crawl` still accept a profile name, so
-anyone who knows or guesses one can browse as that login. When people who
-message the agent must not reach your saved logins, give them a separate
-Browserless account (per-requester OAuth below, or a different API token), or
-also exclude `browserless_agent` and `browserless_crawl`.
-
-To give each sender their own Browserless account, use per-requester OAuth.
-It needs `gateway.publicOrigin` set to the Gateway's public HTTPS address:
+Saved login profiles are part of the account, so any tool that accepts a
+`profile` can use them. To give each person their own Browserless account and
+saved logins, use OpenClaw's per-requester sign-in. It needs
+`gateway.publicOrigin` set to the Gateway's public HTTPS address:
 
 ```bash
 openclaw mcp set browserless '{"url":"https://mcp.browserless.io/mcp","transport":"streamable-http","auth":"oauth","oauth":{"identity":"per-requester"},"requestTimeoutMs":360000}'
 ```
 
-Each sender then gets a sign-in link the first time they use a Browserless
-tool. Anyone who opens that link connects their own account to that sender, so
-only use per-requester OAuth in channels where the people present trust each
-other. See OpenClaw's
-[MCP transports](https://docs.openclaw.ai/cli/mcp/transports) docs.
+See OpenClaw's [MCP transports](https://docs.openclaw.ai/cli/mcp/transports)
+docs for how per-requester sign-in works.
 
 ## What's included
 
@@ -176,7 +167,7 @@ other. See OpenClaw's
 
 Tools appear in OpenClaw with the server prefix, for example
 `browserless__browserless_smartscraper`. To expose only some of them, see
-[Shared credentials](#shared-credentials).
+[Sharing a Gateway](#sharing-a-gateway).
 
 ## Task skills
 
