@@ -158,7 +158,8 @@ const scenarios = {
     await update(usage, { locale: 'de-DE' });
     equal(select.value, 'week', 'formatting update reset timeframe');
     finish({ content: [], isError: true });
-    await tick();
+    for (let attempt = 0; select.disabled && attempt < 100; attempt++) await tick();
+    assert(!select.disabled, 'refresh did not settle');
     equal(select.value, 'day', 'failed refresh did not restore snapshot timeframe');
     await close(usage);
   `,
