@@ -145,6 +145,104 @@ if (mcpProxyEntry) {
     to: 'else reader.read().then(flow, handleStreamError);',
     required: false,
   });
+  // Authentication may finish after the socket has already emitted close.
+  // Installing a listener then is not enough: cancel the unread response too.
+  patch({
+    name: 'SSE already-closed socket',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'writable.on("error", cancel);',
+    to: 'writable.on("error", cancel);\n\tif (writable.destroyed || writable.closed) cancel();',
+    required: false,
+  });
+  // mcp-proxy 6.5.1 leaves cancelled replay controllers registered, so the
+  // next cursorless GET gets a permanent 409. A resumed stream may replace a
+  // half-open one: only the controller that still owns the entry may delete it.
+  // Like the writer patch, skip unknown consumer builds; HTTP integration
+  // tests exercise the pinned hosted transport and its replacement races.
+  patch({
+    name: 'SSE replay cancellation',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'cancel: () => {}\n\t\t\t});\n\t\t\tconst replayedStreamId =',
+    to: `cancel: () => {
+                    const stream = this._streamMapping.get(replayedStreamId);
+                    if (stream?.controller === streamController) stream.cleanup();
+                }\n\t\t\t});\n\t\t\tconst replayedStreamId =`,
+    required: false,
+  });
+  // Close displaced connections, and finish replay responses once all their
+  // requests have completed. Standalone notification streams stay open.
+  patch({
+    name: 'SSE displaced stream closure',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'this._streamMapping.set(replayedStreamId, {',
+    to: `try { this._streamMapping.get(replayedStreamId)?.controller?.close(); } catch {}
+            if (replayedStreamId && replayedStreamId !== this._standaloneSseStreamId && !Array.from(this._requestToStreamMapping.values()).includes(replayedStreamId)) {
+                this._streamMapping.get(replayedStreamId)?.cleanup();
+                try { streamController.close(); } catch {}
+                return new Response(readable, { headers });
+            }
+            this._streamMapping.set(replayedStreamId, {`,
+    required: false,
+  });
+  for (const id of ['this._standaloneSseStreamId', 'replayedStreamId']) {
+    patch({
+      name: `SSE cleanup ownership (${id})`,
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `this._streamMapping.delete(${id});`,
+      to: `if (this._streamMapping.get(${id})?.controller === streamController) this._streamMapping.delete(${id});`,
+      required: false,
+    });
+  }
+  // POST request streams can also be replaced by replay. Match only their
+  // SSE cancel/cleanup callbacks, not the separate JSON-response cleanup.
+  for (const from of [
+    'cancel: () => {\n\t\t\t\t\tthis._streamMapping.delete(streamId);',
+    'this._streamMapping.delete(streamId);\n\t\t\t\t\t\ttry {',
+  ]) {
+    patch({
+      name: 'SSE request cleanup ownership',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from,
+      to: from.replace(
+        'this._streamMapping.delete(streamId);',
+        'if (this._streamMapping.get(streamId)?.controller === streamController) this._streamMapping.delete(streamId);',
+      ),
+      required: false,
+    });
+  }
+  // Retain request results even between connections. The existing bounded,
+  // session-scoped store owns replay; completed request bookkeeping can still
+  // be released without a live response. JSON responses and no-store servers
+  // retain their existing missing-connection error.
+  for (const [from, to] of [
+    [
+      'if (!this._enableJsonResponse && stream?.controller && stream?.encoder) {',
+      'if (!this._enableJsonResponse && (this._eventStore || (stream?.controller && stream?.encoder))) {',
+    ],
+    [
+      'this.writeSSEEvent(stream.controller, stream.encoder, message, eventId);',
+      'if (stream?.controller && stream?.encoder) this.writeSSEEvent(stream.controller, stream.encoder, message, eventId);',
+    ],
+    [
+      'if (!stream) throw new Error(`No connection established for request ID: ${String(requestId)}`);',
+      'if (!stream && (this._enableJsonResponse || !this._eventStore)) throw new Error(`No connection established for request ID: ${String(requestId)}`);',
+    ],
+    ['} else stream.cleanup();', '} else stream?.cleanup();'],
+  ]) {
+    patch({
+      name: 'SSE disconnected result retention',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from,
+      to,
+      required: false,
+    });
+  }
   patch({
     name: 'session request authentication',
     dist: dirname(mcpProxyEntry),

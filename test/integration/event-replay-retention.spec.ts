@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import type { IncomingMessage } from 'node:http';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FastMCP } from 'fastmcp';
@@ -57,6 +58,7 @@ const readFrames = (response: Response) => {
   })();
   return {
     frames,
+    done,
     close: async () => {
       await reader.cancel();
       await done;
@@ -64,9 +66,21 @@ const readFrames = (response: Response) => {
   };
 };
 
-async function fixture(store = new BoundedEventStore()) {
+async function fixture(
+  store = new BoundedEventStore(),
+  authenticate?: (request: IncomingMessage) => Promise<void>,
+) {
   const port = await freePort();
-  const server = new FastMCP({ name: 'event-retention', version: '1.0.0' });
+  const server = new FastMCP({
+    name: 'event-retention',
+    version: '1.0.0',
+    authenticate:
+      authenticate &&
+      (async (request) => {
+        await authenticate(request);
+        return {};
+      }),
+  });
   for (const name of ['noop', 'slow'])
     server.addTool({
       name,
@@ -281,35 +295,227 @@ describe('event store retention', () => {
     }
   });
 
-  it('replays a dropped request stream', async () => {
+  for (const replayed of [false, true]) {
+    it(`releases a ${replayed ? 'replay' : 'GET'} aborted during authentication`, async () => {
+      let block = false;
+      let enter!: () => void;
+      let disconnect!: () => void;
+      let release!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const disconnected = new Promise<void>((resolve) => {
+        disconnect = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const f = await fixture(undefined, async (request) => {
+        if (block && request.method === 'GET') {
+          block = false;
+          request.socket.once('close', disconnect);
+          enter();
+          await released;
+        }
+      });
+      try {
+        const session = await f.initialize();
+        let cursor: string | undefined;
+        if (replayed) {
+          const original = await f.get(session);
+          await f.server.sessions[0].server.sendLoggingMessage({
+            level: 'info',
+            data: 'cursor',
+          });
+          await waitFor(() => original.frames.some((frame) => frame.id));
+          cursor = original.frames[0].id;
+          await original.close();
+        }
+        block = true;
+        const abort = new AbortController();
+        const request = fetch(f.url, {
+          signal: abort.signal,
+          headers: {
+            ...f.headers(session),
+            ...(cursor ? { 'Last-Event-ID': cursor } : {}),
+          },
+        }).catch((error: Error) => error);
+        await entered;
+        abort.abort();
+        await disconnected;
+        expect(await request).to.be.instanceOf(Error);
+        release();
+        // Let the abandoned request finish installing its response writer.
+        await delay(100);
+        const fresh = await f.get(session);
+        await f.server.sessions[0].server.sendLoggingMessage({
+          level: 'info',
+          data: 'after aborted auth',
+        });
+        await waitFor(() => fresh.frames.length > 0);
+        expect(fresh.frames[0].data.params).to.deep.equal({
+          level: 'info',
+          data: 'after aborted auth',
+        });
+      } finally {
+        release();
+        await f.close();
+      }
+    });
+  }
+
+  it('ends displaced and current streams when the session is deleted', async () => {
     const f = await fixture();
     try {
       const session = await f.initialize();
-      const original = f.track(
-        await f.post(session, 'tools/call', 42, {
-          name: 'slow',
-          arguments: {},
-        }),
-      );
+      const original = await f.get(session);
+      await f.server.sessions[0].server.sendLoggingMessage({
+        level: 'info',
+        data: 'cursor',
+      });
       await waitFor(() => original.frames.some((frame) => frame.id));
-      const cursor = original.frames[0].id!;
-      await original.close();
-      const resumed = await f.get(session, cursor);
-      await waitFor(
-        () => resumed.frames.some((frame) => frame.data.id === 42),
-        5000,
+      const replacement = await f.get(session, original.frames[0].id);
+      const deleted = await fetch(f.url, {
+        method: 'DELETE',
+        headers: f.headers(session),
+      });
+      expect(deleted.status).to.equal(200);
+      await deleted.text();
+      const closed = await Promise.race([
+        Promise.all([original.done, replacement.done]).then(() => true),
+        delay(2000).then(() => false),
+      ]);
+      expect(closed, 'both SSE responses end after session deletion').to.equal(
+        true,
       );
-      expect(
-        resumed.frames.find((frame) => frame.data.id === 42)!.data.result,
-      ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
     } finally {
       await f.close();
     }
   });
 
-  for (const settled of [false, true]) {
-    it(`keeps request cursor context when settled=${settled}`, async () => {
+  it('releases a cancelled replay so a cursorless client can reconnect', async () => {
+    const f = await fixture();
+    try {
+      const session = await f.initialize();
+      const original = await f.get(session);
+      await f.server.sessions[0].server.sendLoggingMessage({
+        level: 'info',
+        data: 'cursor',
+      });
+      await waitFor(() => original.frames.some((frame) => frame.id));
+      const cursor = original.frames[0].id!;
+      await original.close();
+      const resumed = await f.get(session, cursor);
+      await f.server.sessions[0].server.sendLoggingMessage({
+        level: 'info',
+        data: 'resumed',
+      });
+      await waitFor(() => resumed.frames.length > 0);
+      await resumed.close();
+
+      // Client cancellation reaches the server asynchronously. Only a 409 is
+      // retryable here; a stale replay mapping must not survive the deadline.
+      let response: Response;
+      const deadline = Date.now() + 2000;
+      do {
+        response = await fetch(f.url, { headers: f.headers(session) });
+        if (response.status !== 409) break;
+        await response.text();
+        await delay(20);
+      } while (Date.now() < deadline);
+      const fresh = f.track(response);
+      await f.server.sessions[0].server.sendLoggingMessage({
+        level: 'info',
+        data: 'fresh',
+      });
+      await waitFor(() => fresh.frames.length > 0);
+      expect(fresh.frames[0].data.params).to.deep.equal({
+        level: 'info',
+        data: 'fresh',
+      });
+      const listed = await f.post(session, 'tools/list', 8);
+      expect(listed.status).to.equal(200);
+      expect(await listed.text()).to.include('noop');
+    } finally {
+      await f.close();
+    }
+  });
+
+  for (const replayed of [false, true]) {
+    it(`keeps the replacement stream when an older ${replayed ? 'replay' : 'GET'} closes`, async () => {
       const f = await fixture();
+      try {
+        const session = await f.initialize();
+        let older = await f.get(session);
+        await f.server.sessions[0].server.sendLoggingMessage({
+          level: 'info',
+          data: 'cursor',
+        });
+        await waitFor(() => older.frames.some((frame) => frame.id));
+        const cursor = older.frames[0].id!;
+        if (replayed) {
+          await older.close();
+          older = await f.get(session, cursor);
+        }
+        const replacement = await f.get(session, cursor);
+        // Replacement must finish the old response, rather than relying on
+        // an arbitrary delay for the old socket's cancellation to arrive.
+        await older.done;
+        await older.close();
+        const concurrent = await fetch(f.url, {
+          headers: f.headers(session),
+        });
+        if (concurrent.status === 200) f.track(concurrent);
+        else await concurrent.text();
+        expect(concurrent.status).to.equal(409);
+        await f.server.sessions[0].server.sendLoggingMessage({
+          level: 'info',
+          data: 'replacement still owns the stream',
+        });
+        await waitFor(() => replacement.frames.length > 0);
+        expect(replacement.frames[0].data.params).to.deep.equal({
+          level: 'info',
+          data: 'replacement still owns the stream',
+        });
+      } finally {
+        await f.close();
+      }
+    });
+  }
+
+  for (const lateClose of [false, true]) {
+    it(`replays a request stream when the original closes ${lateClose ? 'after' : 'before'} reattachment`, async () => {
+      const f = await fixture();
+      try {
+        const session = await f.initialize();
+        const original = f.track(
+          await f.post(session, 'tools/call', 42, {
+            name: 'slow',
+            arguments: {},
+          }),
+        );
+        await waitFor(() => original.frames.some((frame) => frame.id));
+        const cursor = original.frames[0].id!;
+        if (!lateClose) await original.close();
+        const resumed = await f.get(session, cursor);
+        if (lateClose) await original.close();
+        await waitFor(
+          () => resumed.frames.some((frame) => frame.data.id === 42),
+          5000,
+        );
+        expect(
+          resumed.frames.find((frame) => frame.data.id === 42)!.data.result,
+        ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+      } finally {
+        await f.close();
+      }
+    });
+  }
+
+  for (const settled of [false, true, 'offline'] as const) {
+    it(`keeps request cursor context when settled=${settled}`, async () => {
+      const store = new BoundedEventStore();
+      const f = await fixture(store);
       try {
         const first = await f.initialize();
         const second = await f.initialize();
@@ -321,11 +527,14 @@ describe('event store retention', () => {
         );
         await waitFor(() => original.frames.some((frame) => frame.id));
         const cursor = original.frames[0].id!;
-        if (settled)
+        if (settled === true)
           await waitFor(() =>
             original.frames.some((frame) => frame.data.id === 42),
           );
+        const retained = store.size;
         await original.close();
+        // Resume only after the result is retained, not merely after a delay.
+        if (settled === 'offline') await waitFor(() => store.size > retained);
         const alternate = await f.get(second, cursor);
         const resumed = await f.get(first, cursor);
         await waitFor(() =>
@@ -336,6 +545,15 @@ describe('event store retention', () => {
         expect(
           resumed.frames.find((frame) => frame.data.id === 42)!.data.result,
         ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+        if (settled) {
+          expect(
+            await Promise.race([
+              resumed.done.then(() => true),
+              delay(1000).then(() => false),
+            ]),
+            'completed replay ends its HTTP response',
+          ).to.equal(true);
+        }
       } finally {
         await f.close();
       }
