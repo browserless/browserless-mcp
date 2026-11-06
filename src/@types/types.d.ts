@@ -756,6 +756,8 @@ export interface StripeLinkCheckoutResponse {
 }
 
 export interface LiveURLOptions {
+  targetId?: string;
+  mode?: 'follow' | 'tab';
   interactable?: boolean;
   timeout?: number;
   quality?: number;
@@ -784,6 +786,22 @@ export interface LiveURLOptions {
 export interface LiveURLCreated {
   liveURL: string;
   liveURLId: string;
+  targetId?: string;
+}
+
+export interface BrowserPage {
+  targetId: string;
+  url: string;
+  title: string;
+  active: boolean;
+  browserContextId: string;
+  liveURL?: string;
+  liveURLId?: string;
+  interactable?: boolean;
+}
+
+export interface BrowserPages {
+  pages: BrowserPage[];
 }
 
 export interface LiveURLState {
@@ -801,6 +819,7 @@ export interface LiveURLState {
 }
 
 export interface ApiClient {
+  listPages(browserId: string, mint?: boolean): Promise<BrowserPages>;
   getBrowserIdForTarget(targetId: string): Promise<string | undefined>;
   createLiveURL(
     browserId: string,

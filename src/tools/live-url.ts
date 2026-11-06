@@ -12,6 +12,7 @@ import {
 } from './schemas.js';
 import type { AnalyticsHelper } from '../lib/analytics.js';
 import type {
+  BrowserPages,
   LiveURLCreated,
   LiveURLState,
   McpConfig,
@@ -22,7 +23,14 @@ const currentStepSchema = z.number().int().min(1).max(10);
 const instructionsFormatSchema = z.enum(['text', 'markdown']);
 
 export const LiveURLParamsSchema = z.object({
-  action: z.enum(['create', 'status', 'close', 'handoff', 'handoff_status']),
+  action: z.enum([
+    'create',
+    'status',
+    'close',
+    'pages',
+    'handoff',
+    'handoff_status',
+  ]),
   browserId: z
     .string()
     .trim()
@@ -51,6 +59,26 @@ export const LiveURLParamsSchema = z.object({
     .min(1)
     .optional()
     .describe('Required for status and close.'),
+  targetId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'For create: a targetId from action pages; the link stays on that tab unless mode is follow.',
+    ),
+  mode: z
+    .enum(['follow', 'tab'])
+    .optional()
+    .describe(
+      'For create: tab stays on one tab (default with targetId); follow jumps to new tabs (default without targetId).',
+    ),
+  mint: z
+    .boolean()
+    .optional()
+    .describe(
+      'For pages: also return a view-only liveURL per tab. A tab that already has a link returns it unchanged, with interactable.',
+    ),
   interactable: z.boolean().optional(),
   timeout: z
     .number()
@@ -83,12 +111,18 @@ export function registerLiveURLTool(
 ): void {
   defineTool<
     z.infer<typeof LiveURLParamsSchema>,
-    LiveURLCreated | LiveURLState | PreparedView | { closed: true }
+    | LiveURLCreated
+    | LiveURLState
+    | BrowserPages
+    | PreparedView
+    | { closed: true }
   >(server, config, analytics, {
     name: 'browserless_live_url',
     description:
       'Create, inspect, or close a live viewer link for an existing browser through REST, without an agent connection. ' +
-      'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown. ' +
+      'Use pages to list browser tabs; mint=true adds per-tab live links. Reused links may be interactive, while new bulk links are view-only and pinned to their tabs. ' +
+      'Pages returns targetId, url, title, active, and browserContextId. Create accepts targetId to stream a specific tab; mode follow jumps to new tabs, while tab stays on one tab. ' +
+      'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown (hidden with targetId). ' +
       "Link lifetime defaults to 15 minutes, capped by your plan's maximum session time and remaining browser time; creating a link does not keep the browser alive. " +
       'For a human handoff, pass instructions explaining what to do and when to click Done. ' +
       'Interactive creates and handoffs supply a generic instruction when omitted. For create, an empty string disables the card and Done button; view-only creates have no default instructions. ' +
@@ -164,14 +198,16 @@ export function registerLiveURLTool(
         action,
         browserId,
         liveURLId,
+        mint,
         sessionId: _sessionId,
         viewRef: _viewRef,
         ...options
       } = LiveURLParamsSchema.parse(params);
       if (!browserId)
         throw new UserError(
-          'browserId is required for create, status, and close.',
+          'browserId is required for create, status, close, and pages.',
         );
+      if (action === 'pages') return client.listPages(browserId, mint);
       if (action === 'create') {
         if (
           options.interactable === true &&
