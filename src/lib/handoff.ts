@@ -7,12 +7,9 @@ import {
   startHumanHandoff,
   releaseHumanHandoff,
 } from './agent-client.js';
-import {
-  HandoffStateSchema,
-  LIVE_VIEWER_PATH,
-  type PreparedView,
-} from './view-schemas.js';
+import { HandoffStateSchema, type PreparedView } from './view-schemas.js';
 import { VIEW_UNAVAILABLE } from './view-store.js';
+import { publicViewerOrigin, verifiedLiveViewerURL } from './live-url-view.js';
 
 const MintedSchema = z.object({
   browserId: z.string().min(1).max(256),
@@ -116,21 +113,10 @@ export async function prepareHandoff(
   publicUrl?: string,
 ) {
   let publicOrigin: URL | undefined;
-  if (publicUrl) {
-    publicOrigin = new URL(publicUrl);
-    const local = ['localhost', '127.0.0.1', '[::1]'].includes(
-      publicOrigin.hostname,
-    );
-    if (
-      publicOrigin.username ||
-      publicOrigin.password ||
-      publicOrigin.search ||
-      publicOrigin.hash ||
-      publicOrigin.pathname !== '/' ||
-      (publicOrigin.protocol !== 'https:' &&
-        !(local && publicOrigin.protocol === 'http:'))
-    )
-      throw new UserError('Invalid public Browserless origin.');
+  try {
+    if (publicUrl) publicOrigin = publicViewerOrigin(publicUrl);
+  } catch {
+    throw new UserError('Invalid public Browserless origin.');
   }
   for (const [ref, view] of views)
     if (view.expires <= Date.now() || view.closed) views.delete(ref);
@@ -225,26 +211,12 @@ export async function prepareHandoff(
   let minted: z.infer<typeof MintedSchema>;
   try {
     minted = MintedSchema.parse(response.result);
-    const url = new URL(minted.liveURL);
-    const api = new URL(session.apiUrl);
-    if (
-      url.origin !== api.origin ||
-      url.username ||
-      url.password ||
-      (url.protocol !== 'https:' &&
-        !(
-          url.protocol === 'http:' &&
-          ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-        )) ||
-      !LIVE_VIEWER_PATH.test(url.pathname) ||
-      url.searchParams.get('i') !== minted.liveURLId
-    )
-      throw new Error('Invalid live viewer URL');
-    if (publicOrigin) {
-      url.protocol = publicOrigin.protocol;
-      url.hostname = publicOrigin.hostname;
-      url.port = publicOrigin.port;
-    }
+    const url = verifiedLiveViewerURL(
+      minted.liveURL,
+      session.apiUrl,
+      minted.liveURLId,
+      publicOrigin,
+    );
     const expires = Math.min(
       started + minted.timeout,
       minted.browserExpiresAt ?? Infinity,

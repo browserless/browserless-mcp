@@ -3,6 +3,7 @@ import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
 import { mountHandoff } from './handoff.mjs';
+import { mountLiveURL } from './live-url.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import { mountPerformance } from './performance.mjs';
 import { mountLogs } from './logs.mjs';
@@ -32,6 +33,9 @@ const textBytes = new TextEncoder();
 let hostContext = {};
 let handoff;
 const handoffRoot = byId('handoff');
+let liveURL;
+const liveURLRoot = byId('live-url');
+const isLiveURLView = () => document.body.dataset.viewKind === 'live-url';
 let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
@@ -103,6 +107,9 @@ function dispose() {
   enable(false);
   handoff?.dispose();
   handoff = undefined;
+  liveURL?.dispose();
+  liveURL = undefined;
+  liveURLRoot.hidden = true;
   media?.dispose();
   media = undefined;
   performanceReport?.dispose();
@@ -116,6 +123,13 @@ function dispose() {
 }
 function fail(error) {
   loading.abort();
+  if (isLiveURLView()) {
+    card.hidden = true;
+    liveURLRoot.hidden = false;
+    liveURL ??= mountLiveURL(liveURLRoot, { isError: true }, app);
+    liveURL.fail(error);
+    return;
+  }
   if (isAccountView()) {
     clearTimeout(expiryTimer);
     card.hidden = true;
@@ -344,6 +358,12 @@ async function render(result) {
   progress('Loading your recording…');
   byId('state').textContent = 'Loading';
   try {
+    if (isLiveURLView()) {
+      liveURL = mountLiveURL(liveURLRoot, result, app);
+      card.hidden = true;
+      liveURLRoot.hidden = !liveURL;
+      return;
+    }
     if (result.isError)
       throw new Error(
         result.content?.find((item) => item.type === 'text')?.text ||
@@ -498,7 +518,9 @@ app.ontoolcancelled = (params) => {
           ? params?.reason || 'Account view was cancelled.'
           : isPerformanceView()
             ? params?.reason || 'Performance audit was cancelled.'
-            : 'Replay loading was cancelled.',
+            : isLiveURLView()
+              ? params?.reason || 'Live viewer was cancelled.'
+              : 'Replay loading was cancelled.',
     ),
   );
 };
