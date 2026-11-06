@@ -20,7 +20,7 @@ const chrome =
   ['/usr/bin/google-chrome', '/usr/bin/chromium'].find(existsSync);
 
 describe('direct live viewer over MCP HTTP', () => {
-  it('renders create independently of the store and keeps lifecycle calls and legacy output URL-only', async function () {
+  async function checkLiveViewer(this: Mocha.Context, browser?: string) {
     this.timeout(30000);
     let creates = 0;
     let invalid = false;
@@ -228,7 +228,7 @@ describe('direct live viewer over MCP HTTP', () => {
       assert.equal(rejected._meta?.payload, undefined);
       assert.equal((rejected.structuredContent as any)?.action, 'unavailable');
       results.push(rejected);
-      if (chrome) {
+      if (browser) {
         const built = await build({
           stdin: {
             resolveDir: process.cwd(),
@@ -255,16 +255,32 @@ describe('direct live viewer over MCP HTTP', () => {
                 throw new Error('Replay UI leaked into live viewer');
               if (new URL(viewer.src).pathname !== '/e/abcdef/live/index.html')
                 throw new Error('Worker route lost');
+              const now = frame.contentWindow.Date.now;
+              for (const skew of [-86400000, 86400000]) {
+                frame.contentWindow.Date.now = () => now() + skew;
+                root = await show(results[0]);
+                if (!root.querySelector('iframe[src]')) throw new Error('Client clock skew rejected a valid viewer');
+              }
+              frame.contentWindow.Date.now = now;
               for (const result of results.slice(1)) {
                 root = await show(result);
-                if (root.hidden || root.querySelector('iframe[src]') || !root.querySelector('iframe').hidden)
-                  throw new Error('Non-create result opened a viewer');
+                if (['status', 'close'].includes(result.structuredContent.action)) {
+                  if (!root.hidden || root.childNodes.length) throw new Error('Lifecycle result displayed a card');
+                } else if (root.querySelector('iframe[src]')) throw new Error('Unavailable result opened a viewer');
+              }
+              for (const action of ['handoff', 'handoff_status']) {
+                root = await show({ content: [], structuredContent: { kind: 'live-url', action } });
+                if (!root.hidden || root.childNodes.length) throw new Error('Handoff action displayed an extra card');
               }
               const expired = structuredClone(results[0]);
               expired.structuredContent.expiresAt = new Date(Date.now() - 1).toISOString();
+              expired.structuredContent.remainingMs = 0;
               root = await show(expired);
               if (root.querySelector('iframe[src]') || !root.textContent.includes('expired'))
                 throw new Error('Expired viewer was embedded');
+              root = await show({ content: [], structuredContent: { kind: 'live-url', action: 'expired' } });
+              if (!root.textContent.includes('expired') || root.textContent.includes('Use the URL'))
+                throw new Error('Expired result suggested opening the expired URL');
               const invalid = structuredClone(results[0]);
               invalid._meta.payload.liveURL = 'javascript:alert(1)';
               root = await show(invalid);
@@ -275,6 +291,7 @@ describe('direct live viewer over MCP HTTP', () => {
               if (root.querySelector('iframe[src]')) throw new Error('Cancelled viewer stayed connected');
               const timed = structuredClone(results[0]);
               timed.structuredContent.expiresAt = new Date(Date.now() + 300).toISOString();
+              timed.structuredContent.remainingMs = 300;
               root = await show(timed);
               await new Promise(resolve => setTimeout(resolve, 400));
               if (root.querySelector('iframe[src]') || !root.textContent.includes('expired'))
@@ -293,7 +310,7 @@ describe('direct live viewer over MCP HTTP', () => {
         const directory = await mkdtemp(join(tmpdir(), 'live-url-browser-'));
         try {
           const { stdout } = await promisify(execFile)(
-            chrome,
+            browser,
             [
               '--headless',
               '--no-sandbox',
@@ -321,5 +338,16 @@ describe('direct live viewer over MCP HTTP', () => {
       backend.closeAllConnections();
       await new Promise<void>((resolve) => backend.close(() => resolve()));
     }
+  }
+
+  it('creates independently of the store and preserves lifecycle and legacy output', async function () {
+    await checkLiveViewer.call(this);
   });
+
+  (chrome ? it : it.skip)(
+    'mounts only create results and handles clock skew, expiry and cancellation in Chromium',
+    async function () {
+      await checkLiveViewer.call(this, chrome);
+    },
+  );
 });

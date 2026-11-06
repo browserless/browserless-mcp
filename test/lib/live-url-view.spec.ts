@@ -66,7 +66,10 @@ describe('direct live viewer capabilities', () => {
         Date.now() - (index === 5 ? 20_000 : 0),
       );
       assert.equal(view._meta, undefined);
-      assert.equal(view.structuredContent!.action, 'unavailable');
+      assert.equal(
+        view.structuredContent!.action,
+        index === 5 ? 'expired' : 'unavailable',
+      );
       assert.deepEqual(
         JSON.parse((view.content[0] as { text: string }).text),
         result,

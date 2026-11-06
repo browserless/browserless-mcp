@@ -361,7 +361,7 @@ async function render(result) {
     if (isLiveURLView()) {
       liveURL = mountLiveURL(liveURLRoot, result, app);
       card.hidden = true;
-      liveURLRoot.hidden = false;
+      liveURLRoot.hidden = !liveURL;
       return;
     }
     if (result.isError)

@@ -4,7 +4,7 @@ import type { LiveURLCreated } from '../@types/types.js';
 import { LIVE_VIEWER_PATH } from './view-schemas.js';
 
 export const LIVE_URL_URI = 'ui://browserless/live-url/v1.html';
-export const LiveViewerURLSchema = z
+const ViewerURLSchema = z
   .string()
   .url()
   .max(4096)
@@ -14,10 +14,41 @@ export const LiveViewerURLSchema = z
     return (
       !url.username &&
       !url.password &&
-      (url.protocol === 'https:' || (local && url.protocol === 'http:')) &&
-      LIVE_VIEWER_PATH.test(url.pathname)
+      (url.protocol === 'https:' || (local && url.protocol === 'http:'))
     );
   });
+export const LiveViewerURLSchema = ViewerURLSchema.refine((value) =>
+  LIVE_VIEWER_PATH.test(new URL(value).pathname),
+);
+
+export function publicViewerOrigin(value: string): URL {
+  const origin = new URL(ViewerURLSchema.parse(value));
+  if (origin.search || origin.hash || origin.pathname !== '/')
+    throw new Error('Invalid public Browserless origin.');
+  return origin;
+}
+
+export function verifiedLiveViewerURL(
+  value: string,
+  apiUrl: string,
+  liveURLId: string,
+  publicOrigin?: URL,
+): URL {
+  const url = new URL(LiveViewerURLSchema.parse(value));
+  if (
+    url.origin !== new URL(apiUrl).origin ||
+    url.searchParams.get('i') !== liveURLId
+  )
+    throw new Error('Invalid viewer origin or ID');
+  if (publicOrigin) {
+    url.protocol = publicOrigin.protocol;
+    url.hostname = publicOrigin.hostname;
+    url.port = publicOrigin.port;
+    LiveViewerURLSchema.parse(url.href);
+  }
+  return url;
+}
+
 export const LiveURLViewSchema = z.object({
   kind: z.literal('live-url'),
   action: z.literal('create'),
@@ -27,9 +58,10 @@ export const LiveURLViewSchema = z.object({
   browserExpiresAt: z.number().finite().positive().nullable().optional(),
   targetId: z.string().optional(),
   expiresAt: z.string().datetime().optional(),
+  remainingMs: z.number().finite().nonnegative().max(900_000),
 });
 
-// Direct viewers carry their capability only in this tool result, not a store.
+// Direct viewers carry their URL in this tool result, not a store.
 export function liveURLView(
   result: LiveURLCreated,
   browserId: string,
@@ -37,35 +69,24 @@ export function liveURLView(
   started: number,
   publicUrl?: string,
 ): ContentResult {
+  let fallbackAction = 'unavailable';
   try {
-    const url = new URL(LiveViewerURLSchema.parse(result.liveURL));
-    if (
-      url.origin !== new URL(apiUrl).origin ||
-      url.searchParams.get('i') !== result.liveURLId
-    )
-      throw new Error('Invalid viewer origin or ID');
-    if (publicUrl) {
-      const publicOrigin = new URL(publicUrl);
-      if (
-        publicOrigin.username ||
-        publicOrigin.password ||
-        publicOrigin.search ||
-        publicOrigin.hash ||
-        publicOrigin.pathname !== '/'
-      )
-        throw new Error('Invalid public origin');
-      url.protocol = publicOrigin.protocol;
-      url.hostname = publicOrigin.hostname;
-      url.port = publicOrigin.port;
-      LiveViewerURLSchema.parse(url.href);
-    }
+    const url = verifiedLiveViewerURL(
+      result.liveURL,
+      apiUrl,
+      result.liveURLId,
+      publicUrl ? publicViewerOrigin(publicUrl) : undefined,
+    );
     const expires = Math.min(
       started + 900_000,
       started + (result.timeout ?? 900_000),
       result.browserExpiresAt ?? Infinity,
     );
-    if (!Number.isFinite(expires) || expires <= Date.now())
+    const remainingMs = expires - Date.now();
+    if (remainingMs <= 0) {
+      fallbackAction = 'expired';
       throw new Error('Expired viewer');
+    }
     const view = LiveURLViewSchema.parse({
       kind: 'live-url',
       action: 'create',
@@ -75,6 +96,7 @@ export function liveURLView(
       browserExpiresAt: result.browserExpiresAt,
       targetId: result.targetId,
       expiresAt: new Date(expires).toISOString(),
+      remainingMs,
     });
     return {
       content: [
@@ -91,7 +113,7 @@ export function liveURLView(
     // error (and encourage the caller to create another viewer).
     return {
       content: [{ type: 'text', text: JSON.stringify(result) }],
-      structuredContent: { kind: 'live-url', action: 'unavailable' },
+      structuredContent: { kind: 'live-url', action: fallbackAction },
     };
   }
 }
