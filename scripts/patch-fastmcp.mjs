@@ -164,13 +164,41 @@ if (mcpProxyEntry) {
     name: 'SSE replay cancellation',
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
-    from: 'cancel: () => {}\n\t\t\t});\n\t\t\tconst replayedStreamId =',
+    from: 'cancel: () => {}\n\t\t\t});',
     to: `cancel: () => {
                     const stream = this._streamMapping.get(replayedStreamId);
                     if (stream?.controller === streamController) stream.cleanup();
-                }\n\t\t\t});\n\t\t\tconst replayedStreamId =`,
+                }\n\t\t\t});`,
     required: false,
   });
+  // BoundedEventStore can catch up synchronously after the awaited snapshot.
+  // Keep that catch-up and live registration in one turn; async-only stores
+  // retain their upstream behavior rather than invoking a second async replay.
+  for (const [from, to] of [
+    [
+      'const replayedStreamId = await this._eventStore.replayEventsAfter',
+      `let lastReplayedEventId = lastEventId;
+            const replayEvent = (eventId, message) => {
+                const written = this.writeSSEEvent(streamController, encoder, message, eventId);
+                if (written) lastReplayedEventId = eventId;
+                return written;
+            };
+            const replayedStreamId = await this._eventStore.replayEventsAfter`,
+    ],
+    [
+      'if (!this.writeSSEEvent(streamController, encoder, message, eventId)) {',
+      'if (!replayEvent(eventId, message)) {',
+    ],
+  ]) {
+    patch({
+      name: 'SSE replay cursor tracking',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from,
+      to,
+      required: false,
+    });
+  }
   // Close displaced connections, and finish replay responses once all their
   // requests have completed. Standalone notification streams stay open.
   patch({
@@ -178,7 +206,12 @@ if (mcpProxyEntry) {
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
     from: 'this._streamMapping.set(replayedStreamId, {',
-    to: `try { this._streamMapping.get(replayedStreamId)?.controller?.close(); } catch {}
+    to: `// Do not await between catch-up and live registration or terminal close.
+            if (replayedStreamId && replayedStreamId !== this._standaloneSseStreamId) this._eventStore.replayEventsAfterSync?.(lastReplayedEventId, {
+                sessionId: this.sessionId,
+                send: replayEvent
+            });
+            try { this._streamMapping.get(replayedStreamId)?.controller?.close(); } catch {}
             if (replayedStreamId && replayedStreamId !== this._standaloneSseStreamId && !Array.from(this._requestToStreamMapping.values()).includes(replayedStreamId)) {
                 this._streamMapping.get(replayedStreamId)?.cleanup();
                 try { streamController.close(); } catch {}
@@ -232,7 +265,12 @@ if (mcpProxyEntry) {
       'if (!stream) throw new Error(`No connection established for request ID: ${String(requestId)}`);',
       'if (!stream && (this._enableJsonResponse || !this._eventStore)) throw new Error(`No connection established for request ID: ${String(requestId)}`);',
     ],
-    ['} else stream.cleanup();', '} else stream?.cleanup();'],
+    // A result stored before catch-up is replayed, not live-written again.
+    // Its completion must still close the newly registered replacement.
+    [
+      '} else stream.cleanup();',
+      '} else this._streamMapping.get(streamId)?.cleanup();',
+    ],
   ]) {
     patch({
       name: 'SSE disconnected result retention',

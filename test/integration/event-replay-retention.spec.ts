@@ -69,6 +69,7 @@ const readFrames = (response: Response) => {
 async function fixture(
   store = new BoundedEventStore(),
   authenticate?: (request: IncomingMessage) => Promise<void>,
+  finishSlow: () => Promise<void> = () => delay(1500),
 ) {
   const port = await freePort();
   const server = new FastMCP({
@@ -87,7 +88,7 @@ async function fixture(
       description: name,
       parameters: z.object({}),
       execute: async () => {
-        if (name === 'slow') await delay(1500);
+        if (name === 'slow') await finishSlow();
         return 'ok';
       },
     });
@@ -507,6 +508,141 @@ describe('event store retention', () => {
           resumed.frames.find((frame) => frame.data.id === 42)!.data.result,
         ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
       } finally {
+        await f.close();
+      }
+    });
+  }
+
+  for (const mode of ['terminal', 'batch', 'cleanup'] as const) {
+    it(`delivers a result completed while replaying retained progress (${mode})`, async () => {
+      const batch = mode === 'batch';
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      let finishSecond!: () => void;
+      const secondPending = new Promise<void>((resolve) => {
+        finishSecond = resolve;
+      });
+      let calls = 0;
+      let completedDuringReplay = false;
+      let finishStore!: () => void;
+      const storePending = new Promise<void>((resolve) => {
+        finishStore = resolve;
+      });
+      class CompletingStore extends BoundedEventStore {
+        override async storeEvent(
+          ...args: Parameters<BoundedEventStore['storeEvent']>
+        ) {
+          const id = await super.storeEvent(...args);
+          if (mode === 'cleanup' && 'id' in args[1] && args[1].id === 42) {
+            // Retain the result before catch-up, but finish send() only after
+            // the replacement has been registered. This must close it once.
+            await storePending;
+          }
+          return id;
+        }
+        override replayEventsAfterSync(
+          ...args: Parameters<BoundedEventStore['replayEventsAfterSync']>
+        ) {
+          const streamId = super.replayEventsAfterSync(...args);
+          if (completedDuringReplay) finishStore();
+          return streamId;
+        }
+        override async replayEventsAfter(
+          ...args: Parameters<BoundedEventStore['replayEventsAfter']>
+        ) {
+          const before = this.size;
+          const replay = super.replayEventsAfter(...args);
+          // Complete the real tool after the snapshot, without inserting any
+          // timers or I/O into the store or its send callback.
+          finish();
+          const streamId = await replay;
+          completedDuringReplay = this.size > before;
+          return streamId;
+        }
+      }
+      const f = await fixture(new CompletingStore(), undefined, async () => {
+        if (calls++ === 0) {
+          await pending;
+          throw new Error('controlled failure');
+        }
+        await secondPending;
+      });
+      try {
+        const session = await f.initialize();
+        const original = f.track(
+          batch
+            ? await fetch(f.url, {
+                method: 'POST',
+                headers: f.headers(session),
+                body: JSON.stringify(
+                  [42, 43].map((id) => ({
+                    jsonrpc: '2.0',
+                    id,
+                    method: 'tools/call',
+                    params: { name: 'slow', arguments: {} },
+                  })),
+                ),
+              })
+            : await f.post(session, 'tools/call', 42, {
+                name: 'slow',
+                arguments: {},
+              }),
+        );
+        await waitFor(() => original.frames.some((frame) => frame.id));
+        const cursor = original.frames[0].id!;
+        for (let progress = 0; progress < 32; progress++) {
+          await f.server.sessions[0].server.notification(
+            {
+              method: 'notifications/progress',
+              params: { progressToken: 'work', progress },
+            },
+            { relatedRequestId: 42 },
+          );
+        }
+        await original.close();
+        const resumed = await f.get(session, cursor);
+        if (batch) {
+          await waitFor(() =>
+            resumed.frames.some((frame) => frame.data.id === 42),
+          );
+          expect(resumed.frames.some((frame) => frame.data.id === 43)).to.equal(
+            false,
+          );
+          finishSecond();
+        }
+        await resumed.done;
+        expect(
+          completedDuringReplay,
+          'the result completed inside replay',
+        ).to.equal(true);
+        expect(
+          resumed.frames
+            .filter((frame) => frame.data.id === 42)
+            .map((frame) => frame.data.result),
+        ).to.deep.equal([
+          {
+            content: [
+              {
+                type: 'text',
+                text: "Tool 'slow' execution failed: controlled failure",
+              },
+            ],
+            isError: true,
+          },
+        ]);
+        if (batch) {
+          expect(
+            resumed.frames
+              .filter((frame) => frame.data.id === 43)
+              .map((frame) => frame.data.result),
+          ).to.deep.equal([{ content: [{ type: 'text', text: 'ok' }] }]);
+        }
+      } finally {
+        finish();
+        finishSecond();
+        finishStore();
         await f.close();
       }
     });
