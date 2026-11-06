@@ -48,7 +48,10 @@ import {
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import { failureDetails } from '../lib/failure-details.js';
+import {
+  failureDetails,
+  fallbackCodeCategory,
+} from '../lib/failure-details.js';
 import { defineTool, type ToolRunContext } from '../lib/define-tool.js';
 import {
   isPaymentStage,
@@ -71,6 +74,7 @@ import {
   GenericCommandSchema,
   TypedAgentCommandSchema,
   isTypedAgentMethod,
+  DEFAULT_LIVE_URL_INSTRUCTIONS,
 } from './schemas.js';
 import {
   isCompliant,
@@ -133,6 +137,14 @@ const SECRET_SAFE_METHODS = new Set([
   // Not a page action; must be sendable right after a credential fill.
   'reportProfileAuthentication',
   'close',
+  // Armed tab replies are projected to identifiers below, never page metadata.
+  'getTabs',
+  'switchTab',
+  'goto',
+  'back',
+  'forward',
+  'reload',
+  'waitForNavigation',
 ]);
 // Commands after which a completed top-frame navigation has replaced the page.
 const TOP_FRAME_NAVIGATION_METHODS = new Set([
@@ -167,15 +179,12 @@ export const validateSecretCaptureOrdering = (
   for (const command of commands) {
     if (command.method === 'loadSecret') {
       secretVisible = true;
-    } else if (
-      command.method === 'clearSecrets' ||
-      TOP_FRAME_NAVIGATION_METHODS.has(command.method)
-    ) {
+    } else if (command.method === 'clearSecrets') {
       secretVisible = false;
     } else if (secretVisible && !SECRET_SAFE_METHODS.has(command.method)) {
       throw new Error(
         `${command.method} cannot run after loadSecret while a credential may be on-screen. ` +
-          `Move the capture before loadSecret, or run clearSecrets or a top-frame navigation first.`,
+          `Move the capture before loadSecret, or run clearSecrets after the fill completes and secret-bearing content is gone from all tabs. Navigation alone does not unlock backend captures.`,
       );
     }
   }
@@ -190,11 +199,8 @@ export const secretVisibleAfter = (
     return (result as { ok?: unknown } | null)?.ok === true ? true : visible;
   }
   if (
-    method === 'clearSecrets' ||
-    (TOP_FRAME_NAVIGATION_METHODS.has(method) &&
-      result !== null &&
-      typeof result === 'object' &&
-      (result as { rejected?: unknown }).rejected !== true)
+    method === 'clearSecrets' &&
+    (result as { ok?: unknown } | null)?.ok === true
   ) {
     return false;
   }
@@ -1254,6 +1260,10 @@ export const runAgentCommands = async (
     sessionAgeMs = ageMs;
   };
   let lastFailure: Record<string, unknown> | undefined;
+  const validationFailure = failureDetails(undefined, {
+    category: 'INVALID_PARAMS',
+    source: 'validation',
+  });
 
   const hasConnectedStripeLinkWallet = async (
     snapshot: SnapshotResult | undefined,
@@ -1310,10 +1320,7 @@ export const runAgentCommands = async (
   const proxyCmd = commands.find((c) => c.method === 'proxy');
   if (proxyCmd) {
     lastCategory = 'INVALID_PARAMS';
-    lastFailure = failureDetails(undefined, {
-      category: lastCategory,
-      source: 'validation',
-    });
+    lastFailure = validationFailure;
     sendAnalytics(false);
     throw new UserError(
       'Invalid command: "proxy" is not a BQL mutation. Proxy config is a top-level `proxy` object and is read once at session creation. ' +
@@ -1386,6 +1393,7 @@ export const runAgentCommands = async (
     validateSecretCaptureOrdering(commands);
   } catch (err) {
     lastCategory = 'INVALID_PARAMS';
+    lastFailure = validationFailure;
     sendAnalytics(false, err);
     throw new UserError(
       err instanceof Error ? err.message : 'Secret capture preflight failed.',
@@ -1565,7 +1573,8 @@ export const runAgentCommands = async (
     for (const [commandIndex, cmd] of commands.entries()) {
       const commandFailure = (err: unknown, category: ErrorCategory) => ({
         ...failureDetails(err, {
-          category,
+          // UNKNOWN defers to the error's structured code or status.
+          category: category === 'UNKNOWN' ? undefined : category,
           source:
             category === 'SCRIPT_ERROR'
               ? 'script'
@@ -1584,6 +1593,7 @@ export const runAgentCommands = async (
         validateSecretCaptureOrdering([cmd], agentSession.secretVisible);
       } catch (err) {
         lastCategory = 'INVALID_PARAMS';
+        lastFailure = validationFailure;
         throw new UserError(
           err instanceof Error
             ? err.message
@@ -1651,8 +1661,17 @@ export const runAgentCommands = async (
       agentSession.skillState.cmdIndex += 1;
 
       let outboundParams = cmd.params;
-      if (cmd.method === 'liveURL' && cmd.params.timeout === undefined) {
-        outboundParams = { ...cmd.params, timeout: 300_000 };
+      if (cmd.method === 'liveURL') {
+        outboundParams = {
+          ...cmd.params,
+          timeout: cmd.params.timeout ?? 300_000,
+        };
+        if (
+          cmd.params.interactable !== false &&
+          cmd.params.instructions === undefined
+        ) {
+          outboundParams.instructions = DEFAULT_LIVE_URL_INSTRUCTIONS;
+        }
       }
       // `toDisk` is a local directive (route the screenshot to the download
       // store); it's not a CDP screenshot param, so strip it before sending
@@ -1692,6 +1711,9 @@ export const runAgentCommands = async (
         promptSent = true;
       }
 
+      const protectedTabOperation =
+        agentSession.secretVisible &&
+        (cmd.method === 'getTabs' || cmd.method === 'switchTab');
       let resp;
       try {
         if (
@@ -1710,6 +1732,11 @@ export const runAgentCommands = async (
           onSession,
         );
       } catch (sendErr: unknown) {
+        if (protectedTabOperation) {
+          throw new UserError(
+            `Protected tab operation failed. Do not clear protection to inspect the page.\n${sessionLine(agentSession, compliant)}`,
+          );
+        }
         if (sendErr instanceof HumanHandoffActiveError)
           throw new UserError(sendErr.message);
         destroySession(
@@ -1750,6 +1777,27 @@ export const runAgentCommands = async (
         );
       }
 
+      // Strip page-controlled data before error formatting, batch accumulation,
+      // profile bookkeeping or any text/structured response can observe it.
+      if (protectedTabOperation) {
+        const result = (
+          cmd.method === 'getTabs'
+            ? z.object({
+                tabs: z.array(
+                  z.object({ targetId: z.string(), active: z.boolean() }),
+                ),
+                activeTargetId: z.string().nullable(),
+              })
+            : z.object({ success: z.boolean(), targetId: z.string() })
+        ).safeParse(resp.result);
+        if (resp.error || !result.success) {
+          throw new UserError(
+            `Protected tab operation failed. Do not clear protection to inspect the page.\n${sessionLine(agentSession, compliant)}`,
+          );
+        }
+        resp.result = result.data;
+      }
+
       if (resp.error) {
         const err = resp.error;
         const fatal = !!err.code && FATAL_CODES.has(err.code);
@@ -1773,8 +1821,11 @@ export const runAgentCommands = async (
         }
 
         const classified = classifyAgentError({ err, cmd });
-        lastCategory = classified.category;
-        lastFailure = commandFailure(err, classified.category);
+        lastCategory =
+          classified.category === 'UNKNOWN'
+            ? (fallbackCodeCategory(err.code) ?? 'UNKNOWN')
+            : classified.category;
+        lastFailure = commandFailure(err, lastCategory);
 
         const prefix =
           commands.length > 1
@@ -2256,12 +2307,20 @@ export const runAgentCommands = async (
     // Resolve any local upload paths to base64 once, before the (possibly
     // retried) send loop runs.
     for (const cmd of commands) {
-      await normalizeUploadCommand(
-        cmd,
-        config.transport,
-        config.mcpBaseUrl,
-        token,
-      );
+      try {
+        await normalizeUploadCommand(
+          cmd,
+          config.transport,
+          config.mcpBaseUrl,
+          token,
+        );
+      } catch (err) {
+        if (err instanceof UserError) {
+          lastCategory = 'INVALID_PARAMS';
+          lastFailure = validationFailure;
+        }
+        throw err;
+      }
     }
     const result = await runCommands(false);
     if (

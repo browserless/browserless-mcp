@@ -140,8 +140,9 @@ describe('browserless_function tool', () => {
       success: false,
       ok: true,
       status_code: 200,
-      error_reason: 'unknown',
-      error_source: 'unknown',
+      error_reason: 'response_too_large',
+      error_source: 'script',
+      error_code: 'RESPONSE_TOO_LARGE',
       error_category: 'user_error',
     });
     expect(props).not.to.have.property('error_status_code');

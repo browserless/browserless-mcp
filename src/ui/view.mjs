@@ -5,6 +5,8 @@ import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import { mountPerformance } from './performance.mjs';
+import { mountLogs } from './logs.mjs';
+import { mountAccountView } from './account-view.mjs';
 import {
   ReplayPayloadSchema,
   ShowOutputSchema,
@@ -34,6 +36,13 @@ let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
 const performanceRoot = byId('performance');
+let logs;
+const logsRoot = byId('request-logs');
+const isLogsView = () => lastResult?.structuredContent?.kind === 'request-logs';
+let accountView;
+const accountRoot = byId('account-view');
+const isAccountView = () =>
+  ['usage', 'active-sessions'].includes(lastResult?.structuredContent?.kind);
 const isPerformanceView = () =>
   document.body.dataset.viewKind === 'performance' ||
   lastResult?.structuredContent?.kind === 'performance';
@@ -42,6 +51,7 @@ function updateHost(context) {
   if (context.theme) applyDocumentTheme(context.theme);
   handoff?.updateHost(context);
   media?.updateHost(context);
+  logs?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -97,9 +107,38 @@ function dispose() {
   media = undefined;
   performanceReport?.dispose();
   performanceReport = undefined;
+  accountView?.dispose();
+  accountView = undefined;
+  accountRoot.hidden = true;
+  logs?.dispose();
+  logs = undefined;
+  logsRoot.hidden = true;
 }
 function fail(error) {
   loading.abort();
+  if (isAccountView()) {
+    clearTimeout(expiryTimer);
+    card.hidden = true;
+    accountRoot.hidden = false;
+    if (accountView) accountView.fail(error);
+    else {
+      accountRoot.innerHTML =
+        '<header><h1>Account view unavailable</h1></header><p role="alert"></p>';
+      accountRoot.querySelector('[role="alert"]').textContent = error.message;
+    }
+    return;
+  }
+  if (isLogsView()) {
+    card.hidden = true;
+    logsRoot.hidden = false;
+    if (logs) logs.fail(error);
+    else {
+      logsRoot.innerHTML =
+        '<header><h1>Request logs unavailable</h1></header><p role="alert"></p>';
+      logsRoot.querySelector('[role="alert"]').textContent = error.message;
+    }
+    return;
+  }
   if (isPerformanceView()) {
     dispose();
     card.hidden = true;
@@ -112,9 +151,17 @@ function fail(error) {
       error.message || 'The performance audit could not be completed.';
     return;
   }
-  if (handoff) {
+  if (handoff || lastResult?.structuredContent?.kind === 'handoff') {
     clearTimeout(expiryTimer);
-    handoff.fail(error);
+    card.hidden = true;
+    handoffRoot.hidden = false;
+    if (handoff) handoff.fail(error);
+    else {
+      handoffRoot.innerHTML =
+        '<header><h1>Handoff unavailable</h1></header><p role="alert"></p><p class="handoff-hint">Return to the conversation to check the existing browser.</p>';
+      handoffRoot.querySelector('[role="alert"]').textContent =
+        error.message || 'Unable to load the human handoff.';
+    }
     return;
   }
   if (media) {
@@ -314,7 +361,19 @@ async function render(result) {
       return;
     }
     const view = ShowOutputSchema.parse(result.structuredContent);
+    if (view.kind === 'request-logs') {
+      logs = mountLogs(logsRoot, result._meta?.payload, view, app, hostContext);
+      card.hidden = true;
+      logsRoot.hidden = false;
+      return;
+    }
     const expires = Date.parse(view.expiresAt);
+    if (['usage', 'active-sessions'].includes(view.kind)) {
+      accountView = mountAccountView(accountRoot, view, app);
+      card.hidden = true;
+      accountRoot.hidden = false;
+      return;
+    }
     if (view.kind === 'handoff') {
       handoff = mountHandoff(
         handoffRoot,
@@ -326,10 +385,10 @@ async function render(result) {
       card.hidden = true;
       handoffRoot.hidden = false;
     }
-    if (expires <= Date.now())
-      throw new Error('This view has expired. Prepare a new replay.');
+    const expiredMessage = 'This view has expired. Prepare a new replay.';
+    if (expires <= Date.now()) throw new Error(expiredMessage);
     expiryTimer = setTimeout(
-      () => fail(new Error('This view has expired. Prepare a new replay.')),
+      () => fail(new Error(expiredMessage)),
       expires - Date.now(),
     );
     if (handoff) return;
@@ -433,9 +492,13 @@ app.ontoolcancelled = (params) => {
   generation++;
   fail(
     new Error(
-      isPerformanceView()
-        ? params?.reason || 'Performance audit was cancelled.'
-        : 'Replay loading was cancelled.',
+      isLogsView()
+        ? params?.reason || 'Request log loading was cancelled.'
+        : isAccountView()
+          ? params?.reason || 'Account view was cancelled.'
+          : isPerformanceView()
+            ? params?.reason || 'Performance audit was cancelled.'
+            : 'Replay loading was cancelled.',
     ),
   );
 };

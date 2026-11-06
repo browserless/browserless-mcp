@@ -19,13 +19,13 @@ it('documents liveURL tab selection and handoff in both prompt variants', () => 
       'streams the active tab',
       'pass targetId from getTabs to stream another without switching',
       '300000ms (five minutes)',
-      'explicit timeout wins, capped by remaining browser session time',
+      "server caps the requested lifetime at your plan's maximum session time and remaining browser time",
       'instructions explaining what to do and when to click Done',
+      'Interactive links supply generic instructions when omitted',
+      'an empty string disables the card and Done button',
       'keepSessionAlive: true',
       'reuse the returned `sessionId`',
-      prompt === AGENT_SYSTEM_PROMPT
-        ? 'close the browser when the overall task finishes'
-        : 'close the browser after the person finishes',
+      'close the browser when the overall task finishes',
       'Creating a link does not extend the browser deadline',
       'keeping the browser open remains billed',
     ]) {
@@ -236,10 +236,17 @@ describe('agent system prompt contextual snapshot guidance', () => {
     });
   }
 
-  it('guides full-mode agents through SPA capture recovery after loadSecret', () => {
+  it('guides full-mode agents through safe capture recovery after loadSecret', () => {
     expect(AGENT_SYSTEM_PROMPT).to.include('clearSecrets');
-    expect(AGENT_SYSTEM_PROMPT).to.include('single-page app');
-    expect(AGENT_SYSTEM_PROMPT).to.include('CaptureBlockedError');
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'Navigation alone does not unlock backend captures',
+    );
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'secret-bearing content is gone from all tabs, including hidden fields',
+    );
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'request a new snapshot after unlocking',
+    );
     expect(AGENT_SYSTEM_PROMPT).to.include('screenshot');
     expect(AGENT_SYSTEM_PROMPT).to.include('liveURL');
     expect(AGENT_SYSTEM_PROMPT).to.include('PDF');

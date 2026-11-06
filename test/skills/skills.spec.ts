@@ -204,6 +204,19 @@ describe('skills/registry', () => {
     expect(login).not.to.include('Never attempt SMS/email/WebAuthn');
   });
 
+  it('allows markerless redirects to reach safe destination verification', () => {
+    for (const id of ['autonomous-login', 'autonomous-registration'] as const) {
+      const body = renderSkill(id, false);
+      expect(body).to.include(
+        'A completed redirect does not require a signed-in marker',
+      );
+      expect(body).to.include('getTabs');
+      expect(body).to.include('switchTab');
+      expect(body).to.include('including hidden fields');
+      expect(body).to.include('do not clear');
+    }
+  });
+
   it('checks verification before success and keeps confirmation optional', () => {
     const body = renderSkill('autonomous-registration', false);
     const verify = body

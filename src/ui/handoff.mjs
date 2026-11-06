@@ -1,6 +1,7 @@
 import {
   HandoffStateSchema,
   HandoffSummarySchema,
+  LIVE_VIEWER_PATH,
   VIEW_UNAVAILABLE,
 } from '../lib/view-schemas.js';
 import './handoff.css';
@@ -30,7 +31,7 @@ export function mountHandoff(root, payload, view, app, initialHost) {
       (viewer.protocol === 'http:' && !local) ||
       viewer.username ||
       viewer.password ||
-      !/^\/live(?:\/|$)/.test(viewer.pathname)
+      !LIVE_VIEWER_PATH.test(viewer.pathname)
     )
       throw new Error('Invalid handoff viewer.');
     iframe.src = viewer.href;

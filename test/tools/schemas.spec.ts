@@ -936,7 +936,9 @@ describe('clearSecrets command', () => {
   it('describes when clearSecrets is needed in the published command schema', () => {
     const schema = JSON.stringify(AgentCommandSchema.toJSONSchema());
     expect(schema).to.include('clearSecrets');
-    expect(schema).to.include('single-page apps');
+    expect(schema).to.include('Re-enable snapshot');
+    expect(schema).to.include('secret-bearing content is gone from all tabs');
+    expect(schema).to.include('Navigation alone does not unlock captures');
     expect(schema).to.include('replay remains masked');
   });
 });

@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import {
@@ -6,6 +8,11 @@ import {
   classifyComplianceInput,
   DEFAULT_API_SERVER_URL,
 } from '../../src/config.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
+import { initializeAmplitudeAnalytics } from '../../src/lib/amplitude-analytics.js';
+
+// send() rejects tokens shorter than 20 chars
+const TOKEN = 'test-token-0123456789abcdef';
 
 const ENV_KEY = 'OAUTH_ADDITIONAL_REDIRECT_URI_PATTERNS';
 const BASELINE_PATTERNS = [
@@ -234,5 +241,68 @@ describe('config.apiServerUrl', () => {
       if (previous === undefined) delete process.env.BROWSERLESS_API_URL;
       else process.env.BROWSERLESS_API_URL = previous;
     }
+  });
+});
+
+describe('config analytics in compliance mode', () => {
+  const KEYS = [
+    'MCP_COMPLIANCE_MODE',
+    'ANALYTICS_ENABLED',
+    'AMPLITUDE_API_KEY',
+    'SQS_QUEUE_URL',
+    'SQS_REGION',
+  ] as const;
+  const original: Partial<Record<(typeof KEYS)[number], string>> = {};
+  let sqsSendStub: sinon.SinonStub;
+
+  beforeEach(() => {
+    for (const key of KEYS) original[key] = process.env[key];
+    process.env.ANALYTICS_ENABLED = 'true';
+    process.env.AMPLITUDE_API_KEY = 'amplitude-key';
+    process.env.SQS_QUEUE_URL = 'https://sqs.example.com/queue';
+    process.env.SQS_REGION = 'us-east-1';
+    sqsSendStub = sinon.stub(SQSClient.prototype, 'send');
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    for (const key of KEYS) {
+      if (original[key] === undefined) delete process.env[key];
+      else process.env[key] = original[key];
+    }
+  });
+
+  it('sends nothing to SQS or Amplitude on the compliant surface', async () => {
+    process.env.MCP_COMPLIANCE_MODE = 'true';
+    const config = getConfig();
+    const helper = new AnalyticsHelper(
+      config.analyticsEnabled,
+      config.sqsQueueUrl,
+      config.sqsRegion,
+    );
+    let amplitudeConstructed = false;
+    const amplitude = initializeAmplitudeAnalytics(
+      config.amplitudeApiKey,
+      '1.0.0',
+      () => {
+        amplitudeConstructed = true;
+        throw new Error('Amplitude must not initialize in compliance mode');
+      },
+    );
+
+    expect(await helper.send('MCP Tool Request', 1, { token: TOKEN })).to.equal(
+      false,
+    );
+    expect(sqsSendStub.called).to.equal(false);
+    expect(amplitude).to.equal(undefined);
+    expect(amplitudeConstructed).to.equal(false);
+  });
+
+  it('keeps analytics on for the full surface', () => {
+    delete process.env.MCP_COMPLIANCE_MODE;
+    const config = getConfig();
+    expect(config.analyticsEnabled).to.equal(true);
+    expect(config.amplitudeApiKey).to.equal('amplitude-key');
+    expect(config.sqsQueueUrl).to.equal('https://sqs.example.com/queue');
   });
 });
