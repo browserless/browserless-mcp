@@ -12,6 +12,8 @@ import { downloadOwner, storeDownload } from '../lib/download-store.js';
 import { describeReadyDownload } from './agent.js';
 import {
   PERFORMANCE_URI,
+  LighthouseCategorySchema,
+  LighthouseDeviceSchema,
   summarizePerformance,
 } from '../lib/performance-summary.js';
 import { registerPerformanceWidget } from '../resources/view-widget.js';
@@ -21,15 +23,7 @@ import type {
   PerformanceResponse,
 } from '../@types/types.js';
 
-export const LighthouseCategorySchema = z.enum([
-  'accessibility',
-  'best-practices',
-  'performance',
-  'pwa',
-  'seo',
-]);
-
-export const LighthouseDeviceSchema = z.enum(['mobile', 'desktop']);
+export { LighthouseCategorySchema, LighthouseDeviceSchema };
 
 export const PerformanceParamsSchema = z.object({
   url: z.url().describe('The URL to audit (must be http or https)'),
