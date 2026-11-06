@@ -492,6 +492,9 @@ export interface SearchResponse {
   data: SearchResponseData;
   totalResults: number;
   error?: string;
+  /** Machine-readable failure cause; also set on partial successful results. */
+  errorCode?: 'upstream_timeout' | 'upstream_unavailable' | 'no_results';
+  unresponsiveEngines?: { engine: string; reason?: string }[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -563,6 +566,7 @@ export interface CrawlStatusResponse {
 export interface SmartScrapeRequest {
   url: string;
   formats?: ScrapeFormat[];
+  jsonOptions?: { schema?: Record<string, unknown>; prompt?: string };
   timeout?: number;
   profile?: string;
   onlyMainContent?: boolean;

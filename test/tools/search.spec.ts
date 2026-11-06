@@ -130,6 +130,73 @@ describe('browserless_search tool', () => {
     expect(fire.firstCall.args[2].error_message).not.to.include('Unclassified');
   });
 
+  async function searchEvent(body: Record<string, unknown>) {
+    fetchStub.resolves(new Response(JSON.stringify(body)));
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const spy = sinon.spy(server, 'addTool');
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    registerSearchTool(server, mockConfig, analytics);
+    try {
+      await spy.firstCall.args[0].execute({ query: 'test' }, mockContext);
+    } catch {
+      /* assert event */
+    }
+    expect(fire.calledOnce).to.equal(true);
+    return fire.firstCall.args[2];
+  }
+
+  for (const [errorCode, reason] of [
+    ['upstream_timeout', 'timeout'],
+    ['upstream_unavailable', 'server_error'],
+    ['no_results', 'no_results'],
+  ] as const) {
+    it(`classifies backend errorCode ${errorCode} as ${reason}`, async () => {
+      const props = await searchEvent({
+        success: false,
+        totalResults: 0,
+        data: {},
+        errorCode,
+        error: 'private prose',
+        unresponsiveEngines: [{ engine: 'private-engine', reason: 'timeout' }],
+      });
+      expect(props).to.include({
+        success: false,
+        error_reason: reason,
+        error_source: 'api',
+        error_code: errorCode,
+      });
+      expect(JSON.stringify(props)).not.to.match(/private/);
+    });
+  }
+
+  it('ignores errorCode on partial successful results', async () => {
+    const props = await searchEvent({
+      success: true,
+      totalResults: 1,
+      data: { web: [{ title: 'A', url: 'https://example.com' }] },
+      errorCode: 'upstream_unavailable',
+      error: 'partial',
+    });
+    expect(props.success).to.equal(true);
+    expect(props).not.to.have.property('error_reason');
+    expect(props).not.to.have.property('error_code');
+  });
+
+  it('ignores an errorCode outside the documented set', async () => {
+    const props = await searchEvent({
+      success: false,
+      totalResults: 0,
+      data: {},
+      errorCode: 'private-opaque-code',
+    });
+    expect(props).to.include({
+      error_reason: 'unknown',
+      error_message: 'Unclassified search failure.',
+    });
+    expect(props).not.to.have.property('error_code');
+  });
+
   it('returns web search results', async () => {
     fetchStub.resolves(
       new Response(

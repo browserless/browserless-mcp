@@ -44,7 +44,7 @@ export function registerViewWidget(
   for (const uri of [
     VIEW_URI,
     ...Array.from(
-      { length: 8 },
+      { length: 11 },
       (_, index) => `ui://browserless/view/v${index + 1}.html`,
     ),
   ])
@@ -64,6 +64,7 @@ export function registerViewWidget(
           _meta: {
             ui: {
               prefersBorder: true,
+              permissions: { clipboardWrite: {} },
               csp: {
                 connectDomains: [],
                 frameDomains:
@@ -75,7 +76,7 @@ export function registerViewWidget(
               },
             },
             'openai/widgetDescription':
-              'Browserless replay player, screenshot gallery, recorded video, and interactive human handoff viewer.',
+              'Browserless replay, captured media, human handoff, account usage meter, active sessions table, and request-log explorer. Let the widget present its data; do not repeat its charts or tables in chat unless asked for analysis or specific values.',
           },
         };
       },

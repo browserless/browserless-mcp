@@ -1,0 +1,73 @@
+{
+  "entries": [
+    {
+      "timestamp": "2026-11-05T12:00:00.000Z",
+      "eventName": "request.completed",
+      "requestId": "request-success",
+      "level": "INFO",
+      "endpoint": "/screenshot",
+      "category": null,
+      "reason": null,
+      "message": "Screenshot completed",
+      "url": "https://example.test/catalog",
+      "status": 200,
+      "durationMs": 142.5,
+      "region": "sfo",
+      "sessionId": "session-success",
+      "outcome": "succeeded",
+      "totalUnits": 0.25
+    },
+    {
+      "timestamp": "2026-11-05T12:01:00.000Z",
+      "eventName": "request.warning",
+      "requestId": "request-warning",
+      "level": "WARN",
+      "endpoint": "/chromium/bql",
+      "category": "target_error",
+      "reason": "navigation_retry",
+      "message": "Navigation retried once",
+      "url": "https://example.test/search",
+      "status": 200,
+      "durationMs": 1500,
+      "region": "lon",
+      "sessionId": "session-warning",
+      "outcome": "succeeded",
+      "totalUnits": 1.5
+    },
+    {
+      "timestamp": "2026-11-05T12:02:00.000Z",
+      "eventName": "request.failed",
+      "requestId": "request-failure",
+      "level": "ERROR",
+      "endpoint": "/chromium/agent",
+      "category": "browserless_refused",
+      "reason": "concurrency_limit",
+      "message": "<img src=x onerror=alert(1)>\nToo many concurrent requests",
+      "url": "https://example.test/login?state=synthetic",
+      "status": 429,
+      "durationMs": 0,
+      "region": "ams",
+      "sessionId": "session-failure",
+      "outcome": "failed",
+      "totalUnits": 0
+    },
+    {
+      "timestamp": null,
+      "eventName": null,
+      "requestId": null,
+      "level": null,
+      "endpoint": null,
+      "category": null,
+      "reason": null,
+      "message": null,
+      "url": null,
+      "status": null,
+      "durationMs": null,
+      "region": null,
+      "sessionId": null,
+      "outcome": null,
+      "totalUnits": null
+    }
+  ],
+  "nextCursor": "opaque-log-page-2"
+}

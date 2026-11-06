@@ -183,7 +183,7 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
-  it('allows a protected navigation wait before a snapshot', () => {
+  it('keeps capture blocked after a protected navigation wait', () => {
     expect(() =>
       validateSecretCaptureOrdering([
         { method: 'loadSecret' },
@@ -191,7 +191,7 @@ describe('agent secret-capture preflight', () => {
         { method: 'waitForNavigation' },
         { method: 'snapshot' },
       ]),
-    ).not.to.throw();
+    ).to.throw('snapshot cannot run after loadSecret');
   });
 
   it('allows response waits without allowing subsequent page reads', () => {
@@ -300,20 +300,33 @@ describe('agent secret-capture preflight', () => {
     }
   });
 
-  it('allows capture after clearSecrets or navigation', () => {
-    for (const method of ['clearSecrets', 'goto']) {
+  it('allows capture only after explicit clear, not navigation', () => {
+    for (const method of [
+      'goto',
+      'back',
+      'forward',
+      'reload',
+      'waitForNavigation',
+    ]) {
       expect(() =>
         validateSecretCaptureOrdering([
           { method: 'loadSecret', params: { ref: 'password' } },
           { method, params: {} },
           { method: 'screenshot', params: {} },
         ]),
-      ).not.to.throw();
+      ).to.throw('screenshot cannot run after loadSecret');
     }
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'clearSecrets' },
+        { method: 'snapshot' },
+      ]),
+    ).not.to.throw();
   });
 
   it('rejects unclassified readbacks after loadSecret', () => {
-    for (const method of ['getTabs', 'querySelectorAll', 'title', 'url']) {
+    for (const method of ['querySelectorAll', 'title', 'url']) {
       expect(() =>
         validateSecretCaptureOrdering([{ method: 'loadSecret' }, { method }]),
       ).to.throw(`${method} cannot run after loadSecret`);
@@ -330,14 +343,14 @@ describe('secretVisibleAfter', () => {
     [false, 'loadSecret', { ok: 'true' }, false],
     [false, 'loadSecret', undefined, false],
     [true, 'clearSecrets', { ok: true }, false],
-    [true, 'goto', { url: 'https://example.com' }, false],
+    [true, 'goto', { url: 'https://example.com' }, true],
     [true, 'goto', { rejected: true }, true],
     [true, 'goto', null, true],
     [
       true,
       'waitForNavigation',
       { url: 'https://example.com/', status: 200 },
-      false,
+      true,
     ],
     [true, 'waitForNavigation', { rejected: true }, true],
     [
@@ -2940,6 +2953,217 @@ describe('browserless_agent integration binding guard', () => {
     }
   });
 
+  it('checks protected tabs after a markerless redirect without exposing metadata or unlocking captures', async () => {
+    const secret = 'SYNTHETIC-TAB-SECRET';
+    let active = 'destination';
+    let failSwitch = false;
+    let clearBusy = true;
+    let hiddenFieldPresent = true;
+    let malformedTab: { value: unknown } | undefined;
+    const sent: string[] = [];
+    const srv = await makeRespondingServer((method, params) => {
+      sent.push(method);
+      if (malformedTab && (method === 'getTabs' || method === 'switchTab'))
+        return malformedTab.value;
+      if (method === 'loadSecret') return { ok: true };
+      if (method === 'waitForNavigation')
+        return { url: 'https://example.com/orders', status: 200 };
+      if (method === 'getTabs')
+        return {
+          tabs: ['destination', 'other'].map((targetId) => ({
+            targetId,
+            active: targetId === active,
+            title: secret,
+            url: `https://example.com/${secret}`,
+            extra: secret,
+          })),
+          activeTargetId: active,
+          extra: secret,
+        };
+      if (method === 'switchTab') {
+        if (failSwitch)
+          return new AgentErrorFrame({
+            code: 'TAB_ERROR',
+            message: secret,
+            suggestion: secret,
+          });
+        active = (params as { targetId: string }).targetId;
+        return {
+          success: true,
+          targetId: active,
+          title: secret,
+          url: `https://example.com/${secret}`,
+        };
+      }
+      if (
+        method === 'waitForSelector' &&
+        active === 'other' &&
+        hiddenFieldPresent
+      )
+        return new AgentErrorFrame({
+          code: 'TIMEOUT',
+          message: 'Hidden filled field still present',
+        });
+      if (method === 'snapshot')
+        return {
+          url: 'https://example.com/orders',
+          title: 'Orders',
+          elements: [],
+        };
+      if (method === 'clearSecrets') {
+        if (clearBusy)
+          return new AgentErrorFrame({
+            code: 'BUSY',
+            message: 'Fill in progress',
+          });
+        return { ok: true };
+      }
+      return {};
+    });
+    const execute = getAgentExecute(srv.url);
+    const context = { ...mockContext, sessionId: 'protected-tab-verification' };
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        {
+          commands: [
+            { method: 'loadSecret', params: { ref: 'password' } },
+            { method: 'waitForNavigation' },
+          ],
+          keepSessionAlive: true,
+        },
+        context,
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+      expect(handle).to.match(/^s:/);
+      for (const command of [
+        { method: 'getTabs' },
+        { method: 'switchTab', params: { targetId: 'other' } },
+      ]) {
+        const result = await execute(
+          { ...command, sessionId: handle },
+          context,
+        );
+        expect(JSON.stringify(result)).not.to.include(secret);
+        expect(JSON.stringify(result)).to.include('other');
+      }
+      try {
+        await execute(
+          {
+            method: 'waitForSelector',
+            params: { selector: 'body:not(:has(input[type="password"]))' },
+            sessionId: handle,
+          },
+          context,
+        );
+        expect.fail('expected hidden field to prevent verification');
+      } catch (err) {
+        expect((err as Error).message).to.include('Hidden filled field');
+      }
+      expect(sent).not.to.include('clearSecrets');
+      failSwitch = true;
+      try {
+        await execute(
+          {
+            method: 'switchTab',
+            params: { targetId: 'destination' },
+            sessionId: handle,
+          },
+          context,
+        );
+        expect.fail('expected protected tab failure');
+      } catch (err) {
+        expect((err as Error).message).not.to.include(secret);
+        expect((err as Error).message).to.include(
+          'Protected tab operation failed',
+        );
+      }
+      failSwitch = false;
+      for (const method of ['getTabs', 'switchTab']) {
+        for (const value of [
+          null,
+          {
+            tabs: [{ targetId: 'other', active: { secret } }],
+            activeTargetId: 'other',
+            success: { secret },
+            targetId: 'other',
+          },
+        ]) {
+          malformedTab = { value };
+          try {
+            await execute(
+              {
+                method,
+                params:
+                  method === 'switchTab' ? { targetId: 'destination' } : {},
+                sessionId: handle,
+              },
+              context,
+            );
+            expect.fail('expected invalid protected reply rejection');
+          } catch (err) {
+            expect((err as Error).message).to.include(
+              'Protected tab operation failed',
+            );
+            expect((err as Error).message).not.to.include(secret);
+          }
+        }
+      }
+      malformedTab = undefined;
+      for (const method of ['clearSecrets', 'snapshot']) {
+        try {
+          await execute({ method, sessionId: handle }, context);
+          expect.fail('expected capture guard');
+        } catch (err) {
+          expect((err as Error).message).to.match(
+            /Fill in progress|snapshot cannot run after loadSecret/,
+          );
+        }
+      }
+      expect(sent).not.to.include('snapshot');
+      hiddenFieldPresent = false;
+      const verified = await execute(
+        {
+          commands: [
+            { method: 'getTabs' },
+            { method: 'switchTab', params: { targetId: 'other' } },
+            {
+              method: 'waitForSelector',
+              params: { selector: 'body:not(:has(input[type="password"]))' },
+            },
+            { method: 'switchTab', params: { targetId: 'destination' } },
+            {
+              method: 'waitForSelector',
+              params: { selector: 'body:not(:has(input[type="password"]))' },
+            },
+          ],
+          sessionId: handle,
+        },
+        context,
+      );
+      expect(JSON.stringify(verified)).not.to.include(secret);
+      clearBusy = false;
+      const destination = await execute(
+        {
+          commands: [{ method: 'clearSecrets' }, { method: 'snapshot' }],
+          sessionId: handle,
+        },
+        context,
+      );
+      expect(JSON.stringify(destination)).to.include('Orders');
+      expect(sent).to.include('snapshot');
+      const unprotected = await execute(
+        { method: 'getTabs', sessionId: handle },
+        context,
+      );
+      expect(JSON.stringify(unprotected)).to.include(secret);
+    } finally {
+      if (handle)
+        await execute({ method: 'close', sessionId: handle }, context);
+      await srv.close();
+    }
+  });
+
   it('does not recommend capture recovery after a secret-backed selector miss', async () => {
     const captureBlocked =
       'CaptureBlocked: screenshots and page-content reads are disabled after a secret has been filled in this session.';
@@ -3409,7 +3633,7 @@ describe('browserless_agent live URL handoff', () => {
 
   for (const complianceMode of [false, true]) {
     for (const batched of [false, true]) {
-      it(`defaults live URL timeout and preserves instructions (compliant=${complianceMode}, batch=${batched})`, async () => {
+      it(`defaults interactive live URL instructions and timeout (compliant=${complianceMode}, batch=${batched})`, async () => {
         const sent: Array<Record<string, unknown>> = [];
         const srv = await makeRespondingServer((method, params) => {
           if (method === 'liveURL') {
@@ -3435,6 +3659,11 @@ describe('browserless_agent live URL handoff', () => {
           for (const params of [
             undefined,
             {},
+            { timeout: 120_000 },
+            { interactable: true },
+            { interactable: false },
+            { instructions: '' },
+            { instructions: '   ' },
             { instructions },
             { timeout: 120_000, instructions: 'Sign in, then click Done.' },
             { timeout: 600_000, instructions },
@@ -3450,6 +3679,13 @@ describe('browserless_agent live URL handoff', () => {
             expect(sent.at(-1)).to.deep.equal({
               ...params,
               timeout: params?.timeout ?? 300_000,
+              ...(params?.interactable !== false &&
+              params?.instructions === undefined
+                ? {
+                    instructions:
+                      'Complete the step shown on screen, then use the completion button.',
+                  }
+                : {}),
             });
             expect(JSON.stringify(result)).not.to.include('closed (one-shot)');
             const handle = /sessionId: (\S+) /.exec(JSON.stringify(result))![1];
@@ -3578,6 +3814,46 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
   });
 
+  for (const [label, params] of [
+    [
+      'secret capture ordering',
+      {
+        commands: [
+          {
+            method: 'loadSecret',
+            params: { ref: 'op://v/i/password', selector: '#password' },
+          },
+          { method: 'snapshot', params: {} },
+        ],
+      },
+    ],
+    [
+      'upload input',
+      {
+        method: 'uploadFile',
+        params: { selector: '#f', files: [{ handle: 'missing-handle' }] },
+      },
+    ],
+  ] as const) {
+    it(`reports rejected ${label} as invalid params`, async () => {
+      const { execute, fire } = registerWithAnalytics(mockConfig);
+      try {
+        await execute(params, {
+          ...mockContext,
+          sessionId: `diagnostic-${label}`,
+        });
+      } catch {
+        /* assert event */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'invalid_params',
+        error_source: 'validation',
+        error_category: 'user_error',
+      });
+    });
+  }
+
   it('does not label a failed connection without an HTTP response as an API response', async () => {
     const srv = await makeRejectingServer(403, 'unused');
     await srv.close();
@@ -3641,6 +3917,8 @@ describe('browserless_agent _prompt capture', () => {
     ['', 'goto', 'HTTP 403', 'forbidden'],
     ['', 'goto', 'HTTP 404', 'not_found'],
     ['', 'goto', 'HTTP 503', 'server_error'],
+    ['INTERNAL_ERROR', 'screenshot', 'internal', 'server_error'],
+    ['TAB_NOT_FOUND', 'switchTab', 'stale tab', 'not_found'],
     ['opaque-private-code', 'snapshot', 'unrecognized', 'unknown'],
   ]) {
     it(`preserves ${reason} as a detailed agent reason`, async () => {
@@ -3671,6 +3949,35 @@ describe('browserless_agent _prompt capture', () => {
         );
         if (reason === 'unknown')
           expect(fire.firstCall.args[2]).not.to.have.property('error_code');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const [code, category] of [
+    ['INTERNAL_ERROR', 'api_error'],
+    ['TAB_NOT_FOUND', 'user_error'],
+  ]) {
+    it(`reports the ${code} fallback in the coarse category`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code, message: 'opaque' }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method: 'snapshot', params: {} },
+            { ...mockContext, sessionId: `diagnostic-category-${code}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({ error_category: category });
       } finally {
         await srv.close();
       }

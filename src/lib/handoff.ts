@@ -7,7 +7,11 @@ import {
   startHumanHandoff,
   releaseHumanHandoff,
 } from './agent-client.js';
-import { HandoffStateSchema, type PreparedView } from './view-schemas.js';
+import {
+  HandoffStateSchema,
+  LIVE_VIEWER_PATH,
+  type PreparedView,
+} from './view-schemas.js';
 import { VIEW_UNAVAILABLE } from './view-store.js';
 
 const MintedSchema = z.object({
@@ -232,7 +236,7 @@ export async function prepareHandoff(
           url.protocol === 'http:' &&
           ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
         )) ||
-      !/^\/live(?:\/|$)/.test(url.pathname) ||
+      !LIVE_VIEWER_PATH.test(url.pathname) ||
       url.searchParams.get('i') !== minted.liveURLId
     )
       throw new Error('Invalid live viewer URL');

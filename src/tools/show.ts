@@ -22,6 +22,36 @@ async function authorize(
   const view = replayViews.require(ctx.params.viewRef, ctx.viewOwner);
   // Captured media is an owned snapshot, independent of the live browser/replay API.
   if (view.prepared.kind === 'agent-media') return;
+  if (view.prepared.kind === 'request-logs') {
+    try {
+      const result = await accountQuery<{
+        requestLogs: { nextCursor: string | null } | null;
+      }>(
+        config,
+        ctx.token,
+        'query LogViewAccess($apiToken: String!) { requestLogs(apiToken: $apiToken, limit: 1) { nextCursor } }',
+      );
+      if (!result.requestLogs) throw new Error('Unavailable');
+    } catch {
+      throw new UserError(VIEW_UNAVAILABLE);
+    }
+    return;
+  }
+  if (['usage', 'active-sessions'].includes(view.prepared.kind)) {
+    try {
+      const result = await accountQuery<{
+        accountSummary: { accountId: string | null } | null;
+      }>(
+        config,
+        ctx.token,
+        'query AccountViewAccess($apiToken: String!) { accountSummary(apiToken: $apiToken) { accountId } }',
+      );
+      if (!result.accountSummary) throw new Error('Unavailable');
+    } catch {
+      throw new UserError(VIEW_UNAVAILABLE);
+    }
+    return;
+  }
   try {
     const result = await accountQuery<{
       sessionReplayBySessionId: { sessionId: string } | null;
@@ -48,7 +78,8 @@ export function registerShowTools(
   defineTool(server, config, analytics, {
     name: 'browserless_show',
     description:
-      'Display a prepared Browserless replay, screenshot gallery, video, or human handoff inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
+      'Display a prepared Browserless replay, screenshot gallery, video, human handoff, account usage, active sessions, or request-log explorer inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
+    collectPrompt: false,
     parameters: ViewParams,
     outputSchema: ShowOutputSchema,
     annotations: {

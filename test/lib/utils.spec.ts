@@ -1,5 +1,38 @@
 import { expect } from 'chai';
-import { resolveMcpSource } from '../../src/lib/utils.js';
+import { resolveMcpSource, stableStringify } from '../../src/lib/utils.js';
+
+describe('stableStringify', () => {
+  it('sorts object keys', () => {
+    expect(stableStringify({ b: 1, a: 2 })).to.equal('{"a":2,"b":1}');
+    expect(stableStringify({ a: 2, b: 1 })).to.equal('{"a":2,"b":1}');
+  });
+
+  it('sorts nested object keys including objects inside arrays', () => {
+    const expected = '{"x":{"a":[{"c":2,"d":1}],"b":1}}';
+    expect(stableStringify({ x: { b: 1, a: [{ d: 1, c: 2 }] } })).to.equal(
+      expected,
+    );
+    expect(stableStringify({ x: { a: [{ c: 2, d: 1 }], b: 1 } })).to.equal(
+      expected,
+    );
+  });
+
+  it('preserves array order', () => {
+    expect(stableStringify([1, 2])).to.equal('[1,2]');
+    expect(stableStringify([2, 1])).to.equal('[2,1]');
+  });
+
+  it('omits undefined object properties', () => {
+    expect(stableStringify({ a: undefined, b: 1 })).to.equal('{"b":1}');
+    expect(stableStringify({ b: 1 })).to.equal('{"b":1}');
+  });
+
+  it('serializes primitive JSON values', () => {
+    for (const value of ['s', 1, null, true]) {
+      expect(stableStringify(value)).to.equal(JSON.stringify(value));
+    }
+  });
+});
 
 describe('resolveMcpSource', () => {
   it('trusts the explicit header source over clientInfo', () => {

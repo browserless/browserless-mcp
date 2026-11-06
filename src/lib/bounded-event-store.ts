@@ -30,6 +30,7 @@ export class BoundedEventStore implements EventStore {
     private readonly maxEvents = 10_000,
     private readonly maxAgeMs = 10 * 60_000,
     private readonly maxBytes = 64 * 1024 * 1024,
+    private readonly onMissingContext?: (streamId: string) => void,
   ) {}
 
   get size(): number {
@@ -48,6 +49,14 @@ export class BoundedEventStore implements EventStore {
     // Keep standalone cursors for reattachment without retaining keepalives.
     if (streamId === STANDALONE_STREAM_ID)
       return this.generateEventId(streamId);
+
+    if (sessionId === undefined) {
+      try {
+        this.onMissingContext?.(streamId);
+      } catch {
+        // Observation does not affect retention.
+      }
+    }
 
     const now = Date.now();
     this.evictExpired(now);
@@ -75,6 +84,17 @@ export class BoundedEventStore implements EventStore {
     }
 
     return eventId;
+  }
+
+  cursorContext(
+    eventId: string,
+  ): { sessionId?: string; ageMs: number } | undefined {
+    const event = this.events.get(eventId);
+    if (!event) return undefined;
+    const ageMs = Date.now() - event.storedAt;
+    return ageMs < this.maxAgeMs
+      ? { sessionId: event.sessionId, ageMs }
+      : undefined;
   }
 
   async replayEventsAfter(

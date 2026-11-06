@@ -269,10 +269,11 @@ const ClearSecretsCommandSchema = z.object({
   method: z
     .literal('clearSecrets')
     .describe(
-      'Re-enable screenshot, PDF, liveURL, and page-content-read captures ' +
-        '(evaluate/html/text/querySelector/cookies) after a loadSecret login ' +
-        'once the credential is no longer visible. Required for single-page apps ' +
-        'that do not navigate; replay remains masked.',
+      'Re-enable snapshot, screenshot, PDF, liveURL, and page-content reads ' +
+        '(evaluate/html/text/querySelector/cookies) after a secret fill completes ' +
+        'and secret-bearing content is gone from all tabs. Hidden fields still ' +
+        'carry values. Navigation alone does not unlock captures. After an ' +
+        'accepted clear, request a fresh snapshot; replay remains masked.',
     ),
   params: z.object({}).strict().optional().default({}),
 });
@@ -454,6 +455,9 @@ const WaitForResponseCommandSchema = z.object({
   }),
 });
 
+export const DEFAULT_LIVE_URL_INSTRUCTIONS =
+  'Complete the step shown on screen, then use the completion button.';
+
 export const LiveURLInstructionsSchema = z.union([
   z.string(),
   z.object({
@@ -477,7 +481,7 @@ const LiveURLCommandSchema = z.object({
           'Link lifetime in ms (default 300000, five minutes), capped by the remaining browser session time.',
         ),
       instructions: LiveURLInstructionsSchema.optional().describe(
-        'Tell the person what to do, for example: Sign in, then click Done.',
+        'Tell the person what to do, for example: Sign in, then click Done. Interactive links default to a generic instruction when omitted; an empty string disables the card and Done button.',
       ),
       interactable: z
         .boolean()
