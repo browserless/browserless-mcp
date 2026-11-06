@@ -1,5 +1,6 @@
 {
-  "name": "browserless",
+  "name": "@browserless/clawhub",
+  "displayName": "Browserless",
   "version": "1.0.0",
   "description": "Browserless for OpenClaw: registers the hosted Browserless MCP server and a usage skill.",
   "type": "module",

@@ -20,7 +20,7 @@ If no `browserless__` tools are available, tell the user to install the
 Browserless plugin and connect their account, then start a new session:
 
 ```bash
-openclaw plugins install clawhub:browserless
+openclaw plugins install clawhub:@browserless/clawhub
 ```
 
 They connect from the Browserless plugin page in the OpenClaw Control UI
