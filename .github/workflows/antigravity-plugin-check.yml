@@ -1,0 +1,64 @@
+name: Antigravity plugin
+
+on:
+  pull_request:
+    paths:
+      - 'antigravity/**'
+      - 'scripts/ci/verify-antigravity-plugin*'
+      - '.github/workflows/antigravity-plugin-check.yml'
+      - 'release-please-config.json'
+      - 'LICENSE'
+  push:
+    branches: [main]
+    paths:
+      - 'antigravity/**'
+      - 'scripts/ci/verify-antigravity-plugin*'
+      - '.github/workflows/antigravity-plugin-check.yml'
+      - 'release-please-config.json'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Verify self-contained bundle and release isolation
+        run: |
+          node --test scripts/ci/verify-antigravity-plugin.test.mjs
+          node scripts/ci/verify-antigravity-plugin.mjs
+      - name: Download checksum-pinned official Antigravity CLI
+        run: |
+          curl --fail --silent --show-error --location \
+            https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.2-4951595792859136/linux-x64/cli_linux_x64.tar.gz \
+            --output "$RUNNER_TEMP/agy.tar.gz"
+          echo 'aa876c0813572efaf85ed47983cc937414705d40490cbdb54f6e255656a4f8744ae38e457823e924fa8270b348124e0521d3cda3fec6824bb2d14b98a7a05baa'"  $RUNNER_TEMP/agy.tar.gz" | sha512sum --check -
+          mkdir "$RUNNER_TEMP/agy-bin"
+          tar -xzf "$RUNNER_TEMP/agy.tar.gz" -C "$RUNNER_TEMP/agy-bin" antigravity
+      - name: Run strict validation and isolated install discovery
+        env:
+          AGY_CLI_DISABLE_AUTO_UPDATE: 'true'
+        run: |
+          export HOME="$RUNNER_TEMP/agy-home"
+          mkdir -p "$HOME"
+          "$RUNNER_TEMP/agy-bin/antigravity" plugin validate --strict ./antigravity
+          "$RUNNER_TEMP/agy-bin/antigravity" plugin install ./antigravity
+          "$RUNNER_TEMP/agy-bin/antigravity" plugin list --json > "$RUNNER_TEMP/installed.json"
+          node --input-type=module - "$RUNNER_TEMP/installed.json" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const plugins = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          assert.equal(plugins.length, 1);
+          assert.equal(plugins[0].name, 'browserless');
+          assert.equal(plugins[0].enabled, false);
+          assert.deepEqual(plugins[0].skills, ['browserless']);
+          assert.deepEqual(plugins[0].mcpServers, ['browserless']);
+          NODE
