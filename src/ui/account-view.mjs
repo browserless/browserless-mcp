@@ -295,8 +295,24 @@ export function mountAccountView(root, view, app, initialHost = {}) {
     fail,
     updateHost(context) {
       if (disposed) return;
-      host = { ...host, ...context };
+      const next = { ...host, ...context };
+      const changed =
+        next.locale !== host.locale || next.timeZone !== host.timeZone;
+      host = next;
+      if (!changed) return;
+      const scroll = root.querySelector('.account-table-scroll');
+      const focused = scroll && root.ownerDocument.activeElement === scroll;
+      const left = scroll?.scrollLeft,
+        top = scroll?.scrollTop;
+      const timeframe = select.value;
       render();
+      if (pending) select.value = timeframe;
+      if (scroll) {
+        const replacement = root.querySelector('.account-table-scroll');
+        if (focused) replacement.focus({ preventScroll: true });
+        replacement.scrollLeft = left;
+        replacement.scrollTop = top;
+      }
     },
     dispose() {
       clearTimeout(expiryTimer);

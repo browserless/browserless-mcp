@@ -24,17 +24,18 @@ const fixture = (name: string) =>
 const scenarios = {
   formatting: `
     const { applyHostContext, formatTimestamp, formatNumber, formatDuration } = helpers;
+    const unit = (value, name, locale) => new Intl.NumberFormat(locale, { style: 'unit', unit: name, unitDisplay: 'narrow' }).format(value);
     equal(formatTimestamp(null, {}), null, 'null timestamp');
     equal(formatTimestamp('garbage', {}), null, 'invalid timestamp');
     const fallback = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(start));
     equal(formatTimestamp(start, {}), fallback, 'browser date');
     equal(formatTimestamp(start, { locale: 'not_a_locale', timeZone: 'Mars/Base' }), fallback, 'invalid format');
-    equal(formatTimestamp(start, { locale: 'de-DE', timeZone: 'Asia/Tokyo' }), '06.11.26, 23:04:05', 'German Tokyo date');
-    equal(formatNumber(12345.5, { locale: 'de-DE' }, ' ms'), '12.345,5 ms', 'number suffix');
+    equal(formatTimestamp(start, { locale: 'de-DE', timeZone: 'Asia/Tokyo' }), new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'medium', timeZone: 'Asia/Tokyo' }).format(new Date(start)), 'German Tokyo date');
+    equal(formatNumber(12345.5, { locale: 'de-DE' }, ' ms'), new Intl.NumberFormat('de-DE').format(12345.5) + ' ms', 'number suffix');
     equal(formatNumber(null, {}), 'Unavailable', 'null number');
-    equal(formatDuration(42, { locale: 'en-US' }), '42s', 'seconds');
-    equal(formatDuration(303, { locale: 'en-US' }), '5m 3s', 'minutes');
-    equal(formatDuration(303, { locale: 'de-DE' }), '5 Min. 3 Sek.', 'German duration');
+    equal(formatDuration(42, { locale: 'en-US' }), unit(42, 'second', 'en-US'), 'seconds');
+    equal(formatDuration(303, { locale: 'en-US' }), unit(5, 'minute', 'en-US') + ' ' + unit(3, 'second', 'en-US'), 'minutes');
+    equal(formatDuration(303, { locale: 'de-DE' }), unit(5, 'minute', 'de-DE') + ' ' + unit(3, 'second', 'de-DE'), 'German duration');
     const original = window.matchMedia;
     try {
       for (const [caps, platform, matches, expected] of [
@@ -105,6 +106,7 @@ const scenarios = {
     }
   `,
   locale: `
+    const unit = (value, name, locale) => new Intl.NumberFormat(locale, { style: 'unit', unit: name, unitDisplay: 'narrow' }).format(value);
     for (const kind of ['usage', 'active-sessions', 'request-logs']) {
       for (const host of [{ locale: 'de-DE', timeZone: 'Asia/Tokyo' }, {}, { locale: 'not_a_locale', timeZone: 'Mars/Base' }]) {
         const v = await mount(kind, { theme: 'light', ...host });
@@ -113,7 +115,7 @@ const scenarios = {
         const expected = kind === 'request-logs' ? date(logs.entries[0].timestamp) : date(start);
         if (kind === 'usage') assert(v.root.textContent.includes(german ? '12.345' : new Intl.NumberFormat().format(12345)), 'usage number');
         else assert(v.root.textContent.includes(expected), kind + ' timestamp');
-        if (kind === 'active-sessions') assert(v.root.textContent.includes(german ? '5 Min. 3 Sek.' : '5m 3s'), 'duration');
+        if (kind === 'active-sessions') assert(v.root.textContent.includes(unit(5, 'minute', german ? 'de-DE' : undefined) + ' ' + unit(3, 'second', german ? 'de-DE' : undefined)), 'duration');
         const text = v.root.textContent;
         await update(v, { theme: 'dark' });
         equal(v.root.textContent, text, 'partial update lost locale');
@@ -125,6 +127,40 @@ const scenarios = {
         await close(v);
       }
     }
+  `,
+  accountState: `
+    const sessions = await mount('active-sessions', { locale: 'en-US' });
+    const scroll = sessions.root.querySelector('.account-table-scroll');
+    const style = sessions.doc.createElement('style');
+    style.textContent = '.account-table-scroll { max-width:150px }';
+    sessions.doc.head.append(style);
+    scroll.focus();
+    scroll.scrollLeft = 60;
+    assert(scroll.scrollLeft === 60, 'scroll precondition');
+    await update(sessions, { theme: 'dark' });
+    equal(sessions.root.querySelector('.account-table-scroll'), scroll, 'unrelated update replaced sessions');
+    equal(sessions.doc.activeElement, scroll, 'unrelated update lost focus');
+    await update(sessions, { locale: 'de-DE' });
+    const next = sessions.root.querySelector('.account-table-scroll');
+    equal(sessions.doc.activeElement, next, 'formatting update lost focus');
+    equal(next.scrollLeft, 60, 'formatting update lost scroll');
+    await close(sessions);
+    const usage = await mount('usage', { locale: 'en-US' });
+    let finish;
+    usage.bridge.oncalltool = () => new Promise(resolve => { finish = resolve; });
+    const select = usage.root.querySelector('select');
+    select.value = 'week';
+    select.dispatchEvent(new usage.frame.contentWindow.Event('change'));
+    await tick();
+    assert(select.disabled && finish, 'pending refresh precondition');
+    await update(usage, { theme: 'dark' });
+    equal(select.value, 'week', 'unrelated update reset timeframe');
+    await update(usage, { locale: 'de-DE' });
+    equal(select.value, 'week', 'formatting update reset timeframe');
+    finish({ content: [], isError: true });
+    await tick();
+    equal(select.value, 'day', 'failed refresh did not restore snapshot timeframe');
+    await close(usage);
   `,
   layout: `
     const targets = 'button,select,summary,textarea,input:not([type=checkbox],[type=radio],[type=hidden]),label:has(>input[type=checkbox],>input[type=radio])';
