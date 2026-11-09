@@ -1,6 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
@@ -385,12 +386,43 @@ export const normalizeUploadCommand = async (
             'the HTTP /upload staging flow and pass the returned handle.',
         );
       }
-      buf = await readFile(path).catch((e: unknown) => {
+      try {
+        // Nonblocking open lets us reject FIFOs without waiting for a writer.
+        const file = await open(
+          path,
+          constants.O_RDONLY | constants.O_NONBLOCK,
+        );
+        try {
+          const stat = await file.stat();
+          if (!stat.isFile()) throw new Error('Upload must be a regular file.');
+          if (stat.size > FILE_TRANSFER_MAX_BYTES) {
+            throw new Error(`Upload file is over the 50MB limit.`);
+          }
+          const chunks: Buffer[] = [];
+          let size = 0;
+          // Inclusive end: at most one overflow byte, even if the file grows.
+          const stream = file.createReadStream({
+            autoClose: false,
+            start: 0,
+            end: FILE_TRANSFER_MAX_BYTES,
+          });
+          for await (const chunk of stream) {
+            size += chunk.length;
+            if (size > FILE_TRANSFER_MAX_BYTES) {
+              throw new Error('Upload file is over the 50MB limit.');
+            }
+            chunks.push(chunk);
+          }
+          buf = Buffer.concat(chunks, size);
+        } finally {
+          await file.close();
+        }
+      } catch (e: unknown) {
         throw new UserError(
           `Failed to read upload file "${path}": ` +
             (e instanceof Error ? e.message : String(e)),
         );
-      });
+      }
       defaultName = basename(path);
       delete f.path;
     } else {

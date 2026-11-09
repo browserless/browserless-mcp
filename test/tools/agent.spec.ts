@@ -34,9 +34,11 @@ import {
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile as fsReadFile,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -890,7 +892,9 @@ describe('normalizeUploadCommand', () => {
 
   it('retains the size cap for an allowed local file', async () => {
     const path = join(allowed, 'large.bin');
-    await writeFile(path, Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1));
+    await writeFile(path, '');
+    // Sparse: exceeds readFile's own ceiling without allocating gigabytes.
+    await truncate(path, 2 ** 31 + 1);
     const file: Record<string, unknown> = { path };
     const error = await normalizeUploadCommand(
       { method: 'uploadFile', params: { files: [file] } },
@@ -901,6 +905,66 @@ describe('normalizeUploadCommand', () => {
       () => undefined,
       (error: unknown) => error,
     );
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.include('50MB limit');
+    expect(file).not.to.have.property('content');
+  });
+
+  it('rejects directories as non-regular upload files', async () => {
+    const path = join(allowed, 'directory');
+    await mkdir(path);
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).catch((error: unknown) => error);
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.include('regular file');
+    expect(file).not.to.have.property('content');
+  });
+
+  for (const size of [0, 50 * 1024 * 1024 - 1, 50 * 1024 * 1024]) {
+    it(`accepts a local file of ${size} bytes`, async () => {
+      const path = join(allowed, 'boundary.bin');
+      await writeFile(path, '');
+      await truncate(path, size);
+      const file: Record<string, unknown> = { path };
+      await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'stdio',
+        undefined,
+        'test-token',
+      );
+      const result = Buffer.from(file.content as string, 'base64');
+      expect(result.length).to.equal(size);
+      expect(result.every((byte) => byte === 0)).to.equal(true);
+      expect(file.name).to.equal('boundary.bin');
+      expect(file).not.to.have.property('path');
+    });
+  }
+
+  it('rejects a file that grows over the cap after descriptor inspection', async () => {
+    const path = join(allowed, 'growing.bin');
+    await writeFile(path, 'initial');
+    const probe = await open(path, 'r');
+    const prototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const stat = prototype.stat;
+    // Keep real descriptor I/O; inject growth at the otherwise racy boundary.
+    sinon.stub(prototype, 'stat').callsFake(async function (this: unknown) {
+      const result = await stat.call(this);
+      await truncate(path, 50 * 1024 * 1024 + 1);
+      return result;
+    });
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).catch((error: unknown) => error);
     expect(error).to.be.instanceOf(UserError);
     expect((error as Error).message).to.include('50MB limit');
     expect(file).not.to.have.property('content');
