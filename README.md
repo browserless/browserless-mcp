@@ -673,11 +673,13 @@ before treating these properties as available in production.
 
 `browserless_live_url` creates viewer links over REST for an existing browser.
 On the full HTTP surface, `action: "create"` opens an inline live viewer for
-clients that advertise MCP Apps support. The viewer URL stays in result
-`_meta`; IDs and lifetime metadata are available in `structuredContent`. Direct
-viewers do not use the shared snapshot store, and other clients retain JSON
-output. If a successful create cannot be embedded, its JSON URL is returned
-instead of failing the mutation or creating another link.
+clients that advertise MCP Apps support. The original JSON result, including
+the viewer URL, remains in `content` for clients that advertise Apps support
+but do not render widgets. The widget reads its viewer URL from `_meta`; IDs
+and lifetime metadata are available in `structuredContent`. Direct viewers do
+not use the shared snapshot store. If a successful create cannot be embedded,
+its JSON result is still returned instead of failing the mutation or creating
+another link.
 
 Non-create actions render no widget content. The viewer's local disconnect timer
 uses the server-reported remaining duration, not the client's wall clock. The

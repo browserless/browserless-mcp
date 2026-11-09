@@ -99,12 +99,7 @@ export function liveURLView(
       remainingMs,
     });
     return {
-      content: [
-        {
-          type: 'text',
-          text: `Live viewer created for browser ${browserId}. Viewer ID: ${result.liveURLId}. Creating a viewer does not keep the browser alive or pause automation.`,
-        },
-      ],
+      content: [{ type: 'text', text: JSON.stringify(result) }],
       structuredContent: view,
       _meta: { payload: { liveURL: url.href } },
     };

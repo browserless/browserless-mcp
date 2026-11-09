@@ -18,6 +18,11 @@ describe('direct live viewer capabilities', () => {
       started,
       'https://viewer.example',
     );
+    assert.deepEqual(
+      JSON.parse((view.content[0] as { text: string }).text),
+      result,
+      'content-only clients retain the original result even when the widget URL is rewritten',
+    );
     assert.equal(
       (view._meta!.payload as any).liveURL,
       'https://viewer.example/e/abcdef/live/index.html?i=viewer-id',

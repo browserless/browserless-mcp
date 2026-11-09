@@ -190,11 +190,12 @@ describe('direct live viewer over MCP HTTP', () => {
         (created._meta?.payload as any)?.liveURL,
         `${base}/e/abcdef/live/index.html?i=live-1`,
       );
-      assert.ok(
-        !JSON.stringify([created.content, created.structuredContent]).includes(
-          '/live/',
-        ),
+      assert.equal(
+        JSON.parse((created.content as any)[0].text).liveURL,
+        `${base}/e/abcdef/live/index.html?i=live-1`,
+        'Apps-capable clients that only consume content must retain the viewer URL',
       );
+      assert.ok(!JSON.stringify(created.structuredContent).includes('/live/'));
       assert.ok(!JSON.stringify(created).includes('fixture-token'));
       assert.equal(creates, 1);
       for (const action of ['status', 'close']) {
