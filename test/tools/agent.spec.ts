@@ -1602,6 +1602,41 @@ const getAgentExecute = (
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
 
+describe('browserless_agent session diagnostics', () => {
+  afterEach(() => sinon.restore());
+
+  for (const echoed of [true, false]) {
+    it(`escapes ${echoed ? 'echoed' : 'fallback MCP'} session controls without rejecting execution`, async () => {
+      const sessionId =
+        's:\n\r\t\u001b[31m\u007f\u0085\u009b\u2028\u2029"\\end';
+      const stderr = sinon.spy(process.stderr, 'write');
+      // Closing an absent session reaches the diagnostics without a connection.
+      const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
+      const result = await execute(
+        AgentToolParamsSchema.parse({
+          method: 'close',
+          ...(echoed ? { sessionId } : {}),
+        }),
+        { ...mockContext, sessionId },
+      );
+      expect(JSON.stringify(result)).to.include('Browser session closed.');
+      const lines = stderr.getCalls().map((call) => String(call.args[0]));
+      const diagnostic = lines.find((line) =>
+        line.startsWith('[agent] handle '),
+      );
+      expect(diagnostic).to.be.a('string');
+      expect(diagnostic!.slice(0, -1)).not.to.match(
+        // eslint-disable-next-line no-control-regex -- Detect raw diagnostic controls.
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/,
+      );
+      const encoded = echoed
+        ? diagnostic!.slice('[agent] handle echoed='.length, -1)
+        : diagnostic!.slice('[agent] handle absent (mcp='.length, -2);
+      expect(JSON.parse(encoded)).to.equal(sessionId);
+    });
+  }
+});
+
 describe('browserless_agent close reminder surface', () => {
   afterEach(() => sinon.restore());
 
@@ -3304,6 +3339,7 @@ describe('browserless_agent persona creation guard', () => {
         's:foreign',
         '',
         'x'.repeat(1024),
+        's:\n\r\u001b[31m\u0085\u2028\u2029"\\end',
       ];
       for (const echo of echoes) {
         warn.resetHistory();
@@ -3316,9 +3352,17 @@ describe('browserless_agent persona creation guard', () => {
         );
         expect(server.upgradeUrls()).to.have.length(1);
         expect(warn.calledOnce).to.equal(true);
-        expect(warn.firstCall.args[0]).to.equal(
-          `[agent] attach handle mismatch ignored: echoed=${echo.slice(0, 24)}… canonical=attach:existing-browser`,
+        const warning = warn.firstCall.args[0] as string;
+        expect(warning).not.to.match(
+          // eslint-disable-next-line no-control-regex -- Detect raw diagnostic controls.
+          /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/,
         );
+        const fields =
+          /^\[agent\] attach handle mismatch ignored: echoed=(.*)… canonical=(.*)$/.exec(
+            warning,
+          )!;
+        expect(JSON.parse(fields[1])).to.equal(echo.slice(0, 24));
+        expect(JSON.parse(fields[2])).to.equal('attach:existing-browser');
         expect(warn.firstCall.args[0]).to.not.include('test-token');
       }
       warn.resetHistory();
