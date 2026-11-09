@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import sinon from 'sinon';
 import http from 'node:http';
 import {
@@ -43,6 +45,37 @@ import {
   createSyncInstruments,
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
+
+describe('agent-client response containment', () => {
+  for (const frame of [
+    'null',
+    '{invalid',
+    'true',
+    '42',
+    '"text"',
+    '[]',
+    '{}',
+    '{"id":null}',
+    '{"id":"1"}',
+    '{"id":1e999}',
+    'valid',
+  ]) {
+    it(`contains malformed frames to their connection (${frame})`, () => {
+      const child = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(
+            new URL('../fixtures/agent-malformed-response.js', import.meta.url),
+          ),
+          frame,
+        ],
+        { encoding: 'utf8', timeout: 5000 },
+      );
+      assert.ifError(child.error);
+      assert.equal(child.status, 0, child.stderr || child.stdout);
+    });
+  }
+});
 
 describe('agent-client explicit close during human handoff', () => {
   it('blocks scope and source changes until the handoff is released', async () => {

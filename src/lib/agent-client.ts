@@ -1186,14 +1186,25 @@ const sendMessage = (
 
     const handler = (data: WebSocket.RawData) => {
       let response: AgentResponse;
-      const raw = data.toString('utf8');
       try {
-        response = JSON.parse(raw) as AgentResponse;
+        const parsed: unknown = JSON.parse(data.toString('utf8'));
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed) ||
+          !('id' in parsed) ||
+          typeof parsed.id !== 'number' ||
+          !Number.isFinite(parsed.id)
+        ) {
+          throw new Error('Invalid response envelope');
+        }
+        response = parsed as AgentResponse;
       } catch {
-        console.error(
-          '[agent-client] dropping unparseable WS frame:',
-          raw.slice(0, 200),
-        );
+        cleanup();
+        reject(new Error('Agent WebSocket received a malformed response'));
+        // Termination also rejects other commands awaiting this socket, without
+        // waiting for a close handshake with the malformed peer.
+        ws.terminate();
         return;
       }
       // Only accept the response whose id matches the request we sent.
