@@ -453,10 +453,28 @@ class Mux:
             await self._deliver(client, {"id": cmid, "sessionId": sid,
                                          "error": {"code": -32001, "message": "Session with given id not found."}})
             return
-        if not sid and method in LOCAL_NOOP:
+        if method in LOCAL_NOOP:
             self.stats["browser_close_swallowed"] += 1
             await reply({})
             return
+        # Legacy envelopes must not hide browser-wide lifecycle commands. Reject the
+        # envelope explicitly: a successful outer reply would leave the inner call waiting.
+        nested = msg
+        while isinstance(nested, dict) and nested.get("method") == "Target.sendMessageToTarget":
+            nested_params = nested.get("params")
+            if not isinstance(nested_params, dict):
+                break
+            try:
+                nested = json.loads(nested_params.get("message"))
+            except (TypeError, ValueError):
+                break  # leave malformed commands to upstream CDP validation
+            nested_method = nested.get("method") if isinstance(nested, dict) else None
+            if isinstance(nested_method, str) and nested_method in LOCAL_NOOP:
+                client.responses += 1
+                await self._deliver(client, {"id": cmid, **({"sessionId": sid} if sid else {}),
+                                             "error": {"code": -32000,
+                                                       "message": "Browser lifecycle is managed by the provider."}})
+                return
         if not sid and method == "Target.setDiscoverTargets":
             want = bool(params.get("discover"))
             client.discover = want
