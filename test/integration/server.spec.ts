@@ -304,114 +304,145 @@ describe('MCP Server Integration', () => {
   }
 
   for (const oauth of [false, true]) {
-    it(`binds built-server legacy SSE posts with OAuth=${oauth}`, async () => {
-      const port = await freePort();
-      const base = `http://127.0.0.1:${port}`;
-      const keys = ['a'.repeat(24), 'b'.repeat(24)];
-      const child = spawn(process.execPath, ['build/src/index.js'], {
-        env: {
-          ...process.env,
-          TRANSPORT: 'httpStream',
-          PORT: String(port),
-          BROWSERLESS_API_SERVER: 'http://127.0.0.1:9',
-          BROWSERLESS_API_URL: 'http://127.0.0.1:9',
-          BROWSERLESS_MAX_RETRIES: '0',
-          OAUTH_ENABLED: String(oauth),
-          MCP_BASE_URL: base,
-          SUPABASE_URL: 'http://127.0.0.1:9',
-          SUPABASE_OAUTH_CLIENT_ID: 'test',
-          SUPABASE_OAUTH_CLIENT_SECRET: 'test',
-          REDIS_URL: '',
-          AMPLITUDE_API_KEY: '',
-          ANALYTICS_ENABLED: 'false',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let output = '';
-      child.stdout.on('data', (chunk) => {
-        output += chunk;
-      });
-      child.stderr.on('data', (chunk) => {
-        output += chunk;
-      });
-      const exited = once(child, 'exit');
-      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-      try {
-        let ready = false;
-        for (let i = 0; i < 100; i++) {
-          try {
-            ready = (await fetch(`${base}/health`)).ok;
-          } catch {
-            /* starting */
-          }
-          if (ready || child.exitCode !== null) break;
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        expect(ready).to.equal(true);
-        const stream = await fetch(`${base}/sse`, {
-          headers: { Authorization: `Bearer ${keys[0]}` },
-          signal: AbortSignal.timeout(10000),
+    for (const queryAuth of [false, true]) {
+      it(`binds built-server legacy SSE posts with OAuth=${oauth}, queryAuth=${queryAuth}`, async () => {
+        const port = await freePort();
+        const base = `http://127.0.0.1:${port}`;
+        const keys = ['a'.repeat(24) + '+&=%/#', 'b'.repeat(24)];
+        const child = spawn(process.execPath, ['build/src/index.js'], {
+          env: {
+            ...process.env,
+            TRANSPORT: 'httpStream',
+            PORT: String(port),
+            BROWSERLESS_API_SERVER: 'http://127.0.0.1:9',
+            BROWSERLESS_API_URL: 'http://127.0.0.1:9',
+            BROWSERLESS_MAX_RETRIES: '0',
+            OAUTH_ENABLED: String(oauth),
+            MCP_BASE_URL: base,
+            SUPABASE_URL: 'http://127.0.0.1:9',
+            SUPABASE_OAUTH_CLIENT_ID: 'test',
+            SUPABASE_OAUTH_CLIENT_SECRET: 'test',
+            REDIS_URL: '',
+            AMPLITUDE_API_KEY: '',
+            ANALYTICS_ENABLED: 'false',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
-        expect(stream.status).to.equal(200);
-        reader = stream.body!.getReader();
-        let frames = '';
-        const until = async (value: string) => {
-          while (!frames.includes(value)) {
-            const chunk = await reader!.read();
-            expect(chunk.done).to.equal(false);
-            frames += new TextDecoder().decode(chunk.value);
+        let output = '';
+        child.stdout.on('data', (chunk) => {
+          output += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+          output += chunk;
+        });
+        const exited = once(child, 'exit');
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        try {
+          let ready = false;
+          for (let i = 0; i < 100; i++) {
+            try {
+              ready = (await fetch(`${base}/health`)).ok;
+            } catch {
+              /* starting */
+            }
+            if (ready || child.exitCode !== null) break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
           }
-        };
-        await until('\n\n');
-        const endpoint = new URL(frames.match(/data: (.+)/)![1], base);
-        const post = (key?: string, method = 'initialize') =>
-          fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          expect(ready).to.equal(true);
+          const stream = await fetch(
+            `${base}/sse?token=${encodeURIComponent(queryAuth ? keys[0] : keys[1])}`,
+            {
+              headers: queryAuth ? {} : { Authorization: `Bearer ${keys[0]}` },
+              signal: AbortSignal.timeout(10000),
             },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: method === 'initialize' ? 1 : 2,
-              method,
-              params:
-                method === 'initialize'
-                  ? {
-                      protocolVersion: '2025-11-25',
-                      capabilities: {},
-                      clientInfo: { name: 'sse', version: '1' },
-                    }
-                  : {},
-            }),
-          });
-        const missing = await post();
-        expect(missing.status).to.equal(401);
-        expect(await missing.json()).to.have.nested.property(
-          'error.code',
-          -32000,
-        );
-        if (oauth)
-          expect(missing.headers.get('www-authenticate')).to.include(
-            'resource_metadata=',
           );
-        const other = await post(keys[1]);
-        expect(other.status).to.equal(404);
-        expect(await other.text()).to.equal(
-          '{"error":{"code":-32001,"message":"Session not found"},"id":null,"jsonrpc":"2.0"}',
-        );
-        expect((await post(keys[0])).status).to.equal(202);
-        await until('"id":1');
-        expect((await post(keys[0], 'tools/list')).status).to.equal(202);
-        await until('"tools"');
-      } finally {
-        await reader?.cancel().catch(() => {});
-        child.kill('SIGTERM');
-        await exited;
-      }
-      for (const key of keys) expect(output).not.to.include(key);
-      expect(output).not.to.include('key:');
-    });
+          expect(stream.status).to.equal(200);
+          reader = stream.body!.getReader();
+          let frames = '';
+          const until = async (value: string) => {
+            while (!frames.includes(value)) {
+              const chunk = await reader!.read();
+              expect(chunk.done).to.equal(false);
+              frames += new TextDecoder().decode(chunk.value);
+            }
+          };
+          await until('\n\n');
+          const endpoint = new URL(frames.match(/data: (.+)/)![1], base);
+          expect(endpoint.searchParams.get('token')).to.equal(
+            queryAuth ? keys[0] : null,
+          );
+          const bareEndpoint = new URL(endpoint);
+          bareEndpoint.searchParams.delete('token');
+          const post = (
+            key?: string,
+            method = 'initialize',
+            target = bareEndpoint,
+          ) =>
+            fetch(target, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(key ? { Authorization: `Bearer ${key}` } : {}),
+              },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: method === 'initialize' ? 1 : 2,
+                method,
+                params:
+                  method === 'initialize'
+                    ? {
+                        protocolVersion: '2025-11-25',
+                        capabilities: {},
+                        clientInfo: { name: 'sse', version: '1' },
+                      }
+                    : {},
+              }),
+            });
+          const missing = await post();
+          expect(missing.status).to.equal(401);
+          expect(await missing.json()).to.have.nested.property(
+            'error.code',
+            -32000,
+          );
+          if (oauth)
+            expect(missing.headers.get('www-authenticate')).to.include(
+              'resource_metadata=',
+            );
+          const other = await post(keys[1]);
+          expect(other.status).to.equal(404);
+          expect(await other.text()).to.equal(
+            '{"error":{"code":-32001,"message":"Session not found"},"id":null,"jsonrpc":"2.0"}',
+          );
+          expect(
+            (
+              await post(
+                queryAuth ? undefined : keys[0],
+                'initialize',
+                endpoint,
+              )
+            ).status,
+          ).to.equal(202);
+          await until('"id":1');
+          expect(
+            (
+              await post(
+                queryAuth ? undefined : keys[0],
+                'tools/list',
+                endpoint,
+              )
+            ).status,
+          ).to.equal(202);
+          await until('"tools"');
+        } finally {
+          await reader?.cancel().catch(() => {});
+          child.kill('SIGTERM');
+          await exited;
+        }
+        for (const key of keys) expect(output).not.to.include(key);
+        expect(output).not.to.include(encodeURIComponent(keys[0]));
+        expect(output).not.to.include('key:');
+      });
+    }
   }
 
   it('preserves OAuth refresh and registration bodies and limits only registration POSTs per address', async () => {

@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { BrowserlessSession } from '../../src/@types/types.js';
 import {
@@ -399,6 +400,24 @@ describe('session request identity', () => {
     }
   });
 
+  it('supports a standard query-authenticated SSE client without header injection', async () => {
+    const client = new Client({ name: 'sse-query', version: '1' });
+    try {
+      await client.connect(
+        new SSEClientTransport(
+          new URL(f.url.replace('/mcp', `/sse?token=${A}`)),
+        ),
+      );
+      expect(
+        (await client.listTools()).tools.map((tool) => tool.name),
+      ).to.include('probe');
+      await client.callTool({ name: 'probe', arguments: {} });
+      expect(f.calls()).to.equal(1);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('requires the opening identity for legacy SSE message posts', async () => {
     const stream = f.track(
       await fetch(f.url.replace('/mcp', `/sse?token=${A}`)),
@@ -410,6 +429,9 @@ describe('session request identity', () => {
       stream.frames.find((frame) => frame.event === 'endpoint')!.data,
       f.url,
     );
+    const advertisedEndpoint = new URL(endpoint);
+    expect(endpoint.searchParams.get('token')).to.equal(A);
+    endpoint.searchParams.delete('token');
     const denied = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -457,11 +479,10 @@ describe('session request identity', () => {
       ],
       [2, 'tools/list', {}],
     ] as const) {
-      const response = await fetch(endpoint, {
+      const response = await fetch(advertisedEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${A}`,
         },
         body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
       });

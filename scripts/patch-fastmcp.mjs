@@ -323,6 +323,24 @@ const handleStreamRequest = async ({`,
     to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
+  // Query-authenticated clients follow this endpoint verbatim. Header clients
+  // keep credentials out of the URL; the SDK appends sessionId when starting.
+  patch({
+    name: 'SSE query credential endpoint',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'const transport = new SSEServerTransport("/messages", res);',
+    to: 'const openerToken = req.headers.authorization ? null : new URL(req.url, "http://localhost").searchParams.get("token");\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\tconst transport = new SSEServerTransport(messageEndpoint, res);',
+    required: false,
+  });
+  patch({
+    name: 'SSE connection error privacy',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'console.error("[mcp-proxy] error connecting to server", error$1);',
+    to: 'console.error("[mcp-proxy] error connecting to server");',
+    required: false,
+  });
   // Keep the opening session available before fastmcp lists it after initialize.
   patch({
     name: 'session request authentication SSE opener',

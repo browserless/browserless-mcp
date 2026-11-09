@@ -204,6 +204,15 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     expect(
       sources[0].split('req.browserlessSession = activeSSETransports['),
     ).to.have.length(2);
+    expect(sources[0]).to.include(
+      'new SSEServerTransport(messageEndpoint, res)',
+    );
+    expect(sources[0]).to.include(
+      'new URLSearchParams({ token: openerToken })',
+    );
+    expect(sources[0]).not.to.include(
+      'console.error("[mcp-proxy] error connecting to server", error$1)',
+    );
   });
 
   it('exposes session auth in every Node session format', () => {
