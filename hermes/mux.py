@@ -113,7 +113,9 @@ class Mux:
         except BaseException:
             await self._shutdown_upstream()
             raise
-        self._server = await websockets.serve(self._serve_client, self.host, self.port, max_size=None,
+        # Bound local commands before JSON parsing; browser responses aren't subject to this limit.
+        self._server = await websockets.serve(self._serve_client, self.host, self.port,
+                                              max_size=16 * 1024 * 1024, compression=None,
                                               ping_interval=None, close_timeout=2, process_request=self._http)
         if not self.port:
             self.port = self._server.sockets[0].getsockname()[1]
