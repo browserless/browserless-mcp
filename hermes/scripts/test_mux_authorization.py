@@ -143,14 +143,45 @@ class MuxAuthorizationTests(unittest.IsolatedAsyncioTestCase):
                     await self.assert_rejected(command, code=-32700)
 
     async def test_invalid_outer_session_selectors_do_not_close_socket(self):
-        for selected in (["session"], 17, {}, [], 0, False, None, ""):
+        for selected in (["session"], 17, {}, [], 0, False):
             with self.subTest(selected=selected):
                 await self.assert_rejected({"method": "Runtime.enable", "sessionId": selected})
+
+    async def test_null_and_empty_outer_sessions_behave_as_absent(self):
+        own, foreign = self.sessions
+        for selected in (None, ""):
+            with self.subTest(selected=selected):
+                for command in (
+                    {"method": "Runtime.enable", "sessionId": selected},
+                    {"method": "Target.sendMessageToTarget", "sessionId": selected,
+                     "params": {"sessionId": own, "message": '{"id": 9, "method": "Runtime.enable"}'}},
+                ):
+                    self.assertIn("result", await self.request(self.clients[0], command))
+                    self.assertEqual({k: v for k, v in self.forwarded[-1].items() if k != "id"}, command)
+                await self.assert_rejected({"method": "Target.detachFromTarget", "sessionId": selected,
+                                            "params": {"sessionId": foreign}})
+
+    async def test_excessively_nested_messages_preserve_socket_and_owned_session(self):
+        own = self.sessions[0]
+        message = ('{"id":9,"method":"Runtime.enable","params":{"value":'
+                   + '[' * 200000 + '0' + ']' * 200000 + '}}')
+        for depth in (1, 3):
+            with self.subTest(depth=depth):
+                command = {"method": "Target.sendMessageToTarget", "params": {
+                    "sessionId": own, "message": message}}
+                for _ in range(depth - 1):
+                    command = {"method": "Target.sendMessageToTarget", "params": {
+                        "sessionId": own, "message": json.dumps({"id": 9, **command})}}
+                await self.assert_rejected(command, code=-32700)
+                self.assertIn("result", await self.request(self.clients[0], {
+                    "method": "Runtime.enable", "sessionId": own}))
 
     async def test_nested_commands_cannot_hide_foreign_selectors(self):
         own, foreign = self.sessions
         commands = [
             {"method": "Runtime.enable", "sessionId": foreign},
+            {"method": "Runtime.enable", "sessionId": None},
+            {"method": "Runtime.enable", "sessionId": ""},
             {"method": "Runtime.enable", "sessionId": []},
             {"method": "Runtime.enable", "sessionId": 17},
             {"method": "Target.detachFromTarget", "params": {"sessionId": foreign}},

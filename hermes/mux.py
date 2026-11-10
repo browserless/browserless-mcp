@@ -456,7 +456,7 @@ class Mux:
 
         if client.generation != self.generation or not self.ready.is_set():
             return  # stale client from before an upstream reconnect; it is being closed
-        if "sessionId" in msg and (not isinstance(sid, str) or self.owner.get(sid) is not client):
+        if sid not in (None, "") and (not isinstance(sid, str) or self.owner.get(sid) is not client):
             await reject(sid)
             return
         if method in LOCAL_NOOP:
@@ -470,7 +470,7 @@ class Mux:
         while isinstance(nested, dict):
             nested_method = nested.get("method")
             nested_params = nested.get("params") or {}
-            references = [nested["sessionId"]] if "sessionId" in nested else []
+            references = [nested["sessionId"]] if nested is not msg and "sessionId" in nested else []
             if nested_method in ("Target.detachFromTarget", "Target.sendMessageToTarget") and isinstance(nested_params, dict):
                 references.append(nested_params.get("sessionId"))
             for ref in references:
@@ -485,7 +485,7 @@ class Mux:
                 nested = json.loads(nested_params.get("message"))
             except TypeError:
                 break  # leave non-string messages to upstream CDP validation
-            except ValueError:
+            except (ValueError, RecursionError):
                 # Upstream parsers may accept syntax Python rejects; never forward it unchecked.
                 await reject(None, -32700, "Invalid nested message.")
                 return
@@ -497,8 +497,12 @@ class Mux:
                 return
         # Forward exactly the parsed values we authorized, never ambiguous duplicate keys.
         # Rebuild inner envelopes first so deeper normalization reaches the wire too.
-        for envelope_params, command in reversed(envelopes):
-            envelope_params["message"] = json.dumps(command)
+        try:
+            for envelope_params, command in reversed(envelopes):
+                envelope_params["message"] = json.dumps(command)
+        except RecursionError:
+            await reject(None, -32700, "Invalid nested message.")
+            return
         if not sid and method == "Target.setDiscoverTargets":
             want = bool(params.get("discover"))
             client.discover = want
