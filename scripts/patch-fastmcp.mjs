@@ -323,14 +323,14 @@ const handleStreamRequest = async ({`,
     to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
-  // Query-authenticated clients follow this endpoint verbatim. Header clients
-  // keep credentials out of the URL; the SDK appends sessionId when starting.
+  // Wait for authentication to select the credential before constructing the
+  // endpoint. A present header can still fall back to query authentication.
   patch({
     name: 'SSE query credential endpoint',
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
-    from: 'const transport = new SSEServerTransport("/messages", res);',
-    to: 'const openerToken = req.headers.authorization ? null : new URL(req.url, "http://localhost").searchParams.get("token");\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\tconst transport = new SSEServerTransport(messageEndpoint, res);',
+    from: 'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;',
+    to: 'let transport;\n\t\tlet server;',
     required: false,
   });
   patch({
@@ -347,7 +347,7 @@ const handleStreamRequest = async ({`,
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
     from: 'activeTransports[transport.sessionId] = transport;',
-    to: 'activeTransports[transport.sessionId] = Object.assign(transport, { browserlessSession: server });',
+    to: 'const openerToken = server.auth?.authMethod === "api_key_query" ? server.auth.token : null;\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\ttransport = new SSEServerTransport(messageEndpoint, res);\n\t\tactiveTransports[transport.sessionId] = Object.assign(transport, { browserlessSession: server });',
     required: false,
   });
   patch({

@@ -304,11 +304,25 @@ describe('MCP Server Integration', () => {
   }
 
   for (const oauth of [false, true]) {
-    for (const queryAuth of [false, true]) {
-      it(`binds built-server legacy SSE posts with OAuth=${oauth}, queryAuth=${queryAuth}`, async () => {
+    for (const opener of [
+      'header',
+      'query',
+      'empty-bearer',
+      'jwt-with-query',
+    ]) {
+      it(`binds built-server legacy SSE posts with OAuth=${oauth}, opener=${opener}`, async () => {
+        const queryAuth = opener !== 'header';
         const port = await freePort();
         const base = `http://127.0.0.1:${port}`;
         const keys = ['a'.repeat(24) + '+&=%/#', 'b'.repeat(24)];
+        const authorization =
+          opener === 'header'
+            ? `Bearer ${keys[0]}`
+            : opener === 'empty-bearer'
+              ? 'Bearer '
+              : opener === 'jwt-with-query'
+                ? 'Bearer e30.e30.test'
+                : undefined;
         const child = spawn(process.execPath, ['build/src/index.js'], {
           env: {
             ...process.env,
@@ -352,7 +366,7 @@ describe('MCP Server Integration', () => {
           const stream = await fetch(
             `${base}/sse?token=${encodeURIComponent(queryAuth ? keys[0] : keys[1])}`,
             {
-              headers: queryAuth ? {} : { Authorization: `Bearer ${keys[0]}` },
+              headers: authorization ? { Authorization: authorization } : {},
               signal: AbortSignal.timeout(10000),
             },
           );
