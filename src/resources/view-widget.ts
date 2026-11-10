@@ -44,7 +44,7 @@ export function registerViewWidget(
   for (const uri of [
     VIEW_URI,
     ...Array.from(
-      { length: 11 },
+      { length: 12 },
       (_, index) => `ui://browserless/view/v${index + 1}.html`,
     ),
   ])

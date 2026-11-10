@@ -11,6 +11,44 @@
 .performance-report[hidden] {
   display: none !important;
 }
+.perf-preview [data-role='target'] {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-preview [data-role='categories'],
+.perf-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+.perf-progress {
+  height: 3px;
+  margin-top: 22px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--border);
+}
+.perf-progress::after {
+  content: '';
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  animation: perf-progress 1.6s ease-in-out infinite;
+}
+@keyframes perf-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .perf-progress::after {
+    animation: none;
+  }
+}
 .perf-heading {
   display: flex;
   align-items: center;

@@ -6,7 +6,7 @@ import {
   ActiveSessionsSnapshotSchema,
 } from './account-view-schemas.js';
 
-export const VIEW_URI = 'ui://browserless/view/v12.html';
+export const VIEW_URI = 'ui://browserless/view/v13.html';
 // Cloud viewers include an encrypted worker-routing prefix.
 export const LIVE_VIEWER_PATH = /^\/(?:e\/[a-f0-9]+\/)?live(?:\/|$)/;
 export const VIEW_UNAVAILABLE =
