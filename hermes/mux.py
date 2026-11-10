@@ -457,11 +457,25 @@ class Mux:
             self.stats["browser_close_swallowed"] += 1
             await reply({})
             return
-        # Legacy envelopes must not hide browser-wide lifecycle commands. Reject the
-        # envelope explicitly: a successful outer reply would leave the inner call waiting.
+        # Authorize parameter selectors and every command inside legacy envelopes.
+        # targetId selectors aren't supported: targets don't identify a unique owned session.
         nested = msg
-        while isinstance(nested, dict) and nested.get("method") == "Target.sendMessageToTarget":
-            nested_params = nested.get("params")
+        while isinstance(nested, dict):
+            nested_method = nested.get("method")
+            nested_params = nested.get("params") or {}
+            references = [nested["sessionId"]] if nested.get("sessionId") else []
+            unsupported = False
+            if nested_method in ("Target.detachFromTarget", "Target.sendMessageToTarget") and isinstance(nested_params, dict):
+                references.append(nested_params.get("sessionId"))
+                unsupported = "targetId" in nested_params
+            if unsupported or any(not isinstance(ref, str) or self.owner.get(ref) is not client for ref in references):
+                self.stats["foreign_session_rejected"] += 1
+                client.responses += 1
+                await self._deliver(client, {"id": cmid, **({"sessionId": sid} if sid else {}),
+                                             "error": {"code": -32001, "message": "Session with given id not found."}})
+                return
+            if nested_method != "Target.sendMessageToTarget":
+                break
             if not isinstance(nested_params, dict):
                 break
             try:
@@ -469,6 +483,7 @@ class Mux:
             except (TypeError, ValueError):
                 break  # leave malformed commands to upstream CDP validation
             nested_method = nested.get("method") if isinstance(nested, dict) else None
+            # A successful outer reply would leave a hidden lifecycle call waiting.
             if isinstance(nested_method, str) and nested_method in LOCAL_NOOP:
                 client.responses += 1
                 await self._deliver(client, {"id": cmid, **({"sessionId": sid} if sid else {}),
