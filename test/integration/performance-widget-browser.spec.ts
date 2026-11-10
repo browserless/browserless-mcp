@@ -27,6 +27,53 @@ const chrome =
   ].find((path) => existsSync(path));
 
 const previewCases = {
+  'pending audit cancel button aborts the request': `
+    await pending();
+    await wait(() => auditCalls === 1);
+    $('[data-role="cancel-audit"]').click();
+    await wait(() => text('[role="alert"]').includes('Performance audit was cancelled.'));
+    await wait(() => auditAborted);
+    check(!$('.perf-preview') && !$('.perf-progress'), 'cancel button retained progress');
+  `,
+  'pending audit completes once and updates model context': `
+    await pending();
+    await wait(() => auditCalls === 1);
+    check($('.perf-preview') && $('.perf-progress'), 'missing loading shell while request pending');
+    check(text('[data-role="target"]') === 'example.com' && text('[data-role="device"]') === 'Mobile', 'missing pending input');
+    await pending();
+    await theme('dark');
+    check(auditCalls === 1, 'duplicate notification repeated audit');
+    resolveAudit({ content: [], structuredContent: report });
+    await wait(() => $('.perf-scores') && contexts.length === 1);
+    check(!$('.perf-preview') && !$('.perf-progress'), 'loader survived result');
+    check(JSON.stringify(contexts).includes('auditRef'), 'model context missing audit reference');
+  `,
+  'pending audit execution error removes loading state': `
+    await pending();
+    await wait(() => auditCalls === 1);
+    resolveAudit({ isError: true, content: [{ type: 'text', text: 'Audit backend unavailable' }] });
+    await wait(() => text('[role="alert"]').includes('Audit backend unavailable'));
+    check(!$('.perf-preview') && !$('.perf-progress') && contexts.length === 0, 'failed audit retained progress');
+  `,
+  'pending audit cancellation ignores late results': `
+    await pending();
+    await wait(() => auditCalls === 1);
+    await bridge.sendToolCancelled({ reason: 'Audit cancelled by user' });
+    await wait(() => text('[role="alert"]').includes('Audit cancelled by user'));
+    await wait(() => auditAborted);
+    resolveAudit({ content: [], structuredContent: report });
+    await theme('dark');
+    check(!$('.perf-preview') && !$('.perf-scores') && contexts.length === 0, 'late result revived cancelled audit');
+  `,
+  'pending audit teardown aborts the request': `
+    await pending();
+    await wait(() => auditCalls === 1);
+    await bridge.teardownResource({});
+    await wait(() => auditAborted);
+    resolveAudit({ content: [], structuredContent: report });
+    await theme('dark');
+    check(!$('#performance').childElementCount && contexts.length === 0, 'late result revived disposed audit');
+  `,
   'shell before input': `
     await wait(() => $('.perf-preview'));
     check(!$('#performance').hidden && $('.replay-card').hidden, 'shell visibility');
@@ -129,9 +176,11 @@ describe('performance widget input preview', () => {
           contents: `
           import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
           const output = document.querySelector('pre');
-          const calls = [], errors = [];
+          const calls = [], errors = [], contexts = [];
+          const report = ${JSON.stringify(report)};
+          let auditCalls = 0, resolveAudit, auditAborted = false;
           let frame, bridge;
-          const check = (condition, message) => { if (!condition) throw new Error(message); };
+          const check = (condition, message) => { if (!condition) throw new Error(message + '; widget alert: ' + (frame?.contentDocument.querySelector('[role="alert"]')?.textContent ?? 'none')); };
           const $ = selector => frame.contentDocument.querySelector(selector);
           const text = selector => $(selector)?.textContent ?? '';
           const wait = predicate => new Promise((resolve, reject) => {
@@ -146,9 +195,19 @@ describe('performance widget input preview', () => {
             frame = document.createElement('iframe');
             frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
             document.body.append(frame);
-            bridge = new AppBridge(null, { name: 'Browser check', version: '1.0.0' }, {});
+            bridge = new AppBridge(null, { name: 'Browser check', version: '1.0.0' }, { serverTools: {} });
             for (const handler of ['oncalltool', 'onopenlink', 'ondownloadfile', 'onmessage'])
               bridge[handler] = async () => { calls.push(handler); return {}; };
+            bridge.oncalltool = async (params, extra) => {
+              calls.push(params.name);
+              if (params.name !== 'browserless_performance_run') throw new Error('Unexpected tool');
+              auditCalls++;
+              return new Promise((resolve, reject) => {
+                resolveAudit = resolve;
+                extra.mcpReq.signal.addEventListener('abort', () => { auditAborted = true; reject(new Error('Aborted')); }, { once: true });
+              });
+            };
+            bridge.onupdatemodelcontext = async params => { contexts.push(params); return {}; };
             const ready = new Promise(resolve => { bridge.oninitialized = resolve; });
             await bridge.connect(new PostMessageTransport(frame.contentWindow, frame.contentWindow));
             frame.src = '/widget';
@@ -159,6 +218,10 @@ describe('performance widget input preview', () => {
           const partial = args => bridge.sendToolInputPartial({ arguments: args });
           const complete = args => bridge.sendToolInput({ arguments: args });
           const result = () => bridge.sendToolResult({ content: [], structuredContent: ${JSON.stringify(report)} });
+          const pending = () => bridge.sendToolResult({ content: [], structuredContent: {
+            kind: 'performance-pending', auditRef: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', requestTimeoutMs: 20000,
+            input: { url: 'https://example.com', device: 'mobile', categories: ['performance'] },
+          } });
           const theme = async value => {
             bridge.setHostContext({ theme: value });
             await wait(() => frame.contentDocument.documentElement.dataset.theme === value);
@@ -167,7 +230,7 @@ describe('performance widget input preview', () => {
             await open();
             ${scenario}
             await theme(frame.contentDocument.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-            check(calls.length === 0, 'Unexpected host action: ' + calls.join(','));
+            check(${name.startsWith('pending audit') ? "calls.length === 1 && calls[0] === 'browserless_performance_run'" : 'calls.length === 0'}, 'Unexpected host action: ' + calls.join(','));
             check(errors.length === 0, 'Browser error: ' + errors.join(','));
             output.textContent = 'PASS';
           } catch (error) { output.textContent = 'FAIL: ' + error.message; }

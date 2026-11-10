@@ -383,6 +383,12 @@ async function render(result) {
       performanceReport = mountPerformance(
         performanceRoot,
         result.structuredContent,
+        app,
+        (reply) => {
+          if (current !== generation) return;
+          lastResult = reply;
+          void render(reply);
+        },
       );
       card.hidden = true;
       performanceRoot.hidden = false;
@@ -515,6 +521,7 @@ byId('retry').onclick = () => {
 app.ontoolinputpartial = (params) => acceptInput(params?.arguments, false);
 app.ontoolinput = (params) => acceptInput(params?.arguments, true);
 app.ontoolresult = (result) => {
+  if (performanceReport?.acceptResult?.(result)) return;
   lastResult = result;
   void render(result);
 };

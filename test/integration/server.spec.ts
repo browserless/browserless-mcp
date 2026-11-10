@@ -170,13 +170,15 @@ describe('MCP Server Integration', () => {
           'browserless_export',
           'browserless_map',
           'browserless_performance',
+          'browserless_performance_result',
+          'browserless_performance_run',
           'browserless_read_page',
           'browserless_search',
         ];
         if (compliant) {
           expect(names).to.deep.equal(connectorNames);
         } else {
-          expect(names).to.have.length(21);
+          expect(names).to.have.length(23);
           expect(names).not.to.include('browserless_read_page');
           expect(names).to.include.members([
             ...connectorNames.filter(

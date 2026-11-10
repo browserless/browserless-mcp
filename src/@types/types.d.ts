@@ -814,7 +814,10 @@ export interface ApiClient {
   exportPage(params: ExportRequest): Promise<GenericApiResult>;
   search(params: SearchRequest): Promise<SearchResponse>;
   map(params: MapRequest): Promise<MapResponse>;
-  performance(params: PerformanceRequest): Promise<PerformanceResponse>;
+  performance(
+    params: PerformanceRequest,
+    signal?: AbortSignal,
+  ): Promise<PerformanceResponse>;
   crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;

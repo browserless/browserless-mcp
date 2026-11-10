@@ -9,28 +9,37 @@ import { PERFORMANCE_URI } from '../lib/performance-summary.js';
 
 // Performance is self-contained and needs no media, frame, or network origins.
 export function registerPerformanceWidget(server: FastMCP): void {
-  server.addResource({
-    uri: PERFORMANCE_URI,
-    name: 'Browserless Lighthouse scorecard',
-    mimeType: RESOURCE_MIME_TYPE,
-    async load() {
-      return {
-        // Errors/cancellations may not include a structured result discriminator.
-        text: readFileSync(
-          new URL('../ui/view.html', import.meta.url),
-          'utf8',
-        ).replace('<body>', '<body data-view-kind="performance">'),
-        _meta: {
-          ui: {
-            prefersBorder: true,
-            csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
+  // Keep the previous resource readable during host metadata refreshes.
+  for (const uri of [PERFORMANCE_URI, 'ui://browserless/performance/v3.html'])
+    server.addResource({
+      uri,
+      name:
+        uri === PERFORMANCE_URI
+          ? 'Browserless Lighthouse scorecard'
+          : 'Browserless Lighthouse scorecard (v3 compatibility)',
+      mimeType: RESOURCE_MIME_TYPE,
+      async load() {
+        return {
+          // Errors/cancellations may not include a structured result discriminator.
+          text: readFileSync(
+            new URL('../ui/view.html', import.meta.url),
+            'utf8',
+          ).replace('<body>', '<body data-view-kind="performance">'),
+          _meta: {
+            ui: {
+              prefersBorder: true,
+              csp: {
+                connectDomains: [],
+                resourceDomains: [],
+                frameDomains: [],
+              },
+            },
+            'openai/widgetDescription':
+              'Lighthouse loading card that becomes an interactive scorecard with category scores, lab metrics, and failing audits. A pending audit has no scores yet. Let the widget finish; do not poll or repeat the audit. Do not recreate its charts or tables in chat. Use the completed audit reference for follow-up analysis.',
           },
-          'openai/widgetDescription':
-            'Interactive Lighthouse scorecard already displaying category score gauges, lab metrics, and expandable failing audits. Do not recreate these charts or repeat the score and metric tables in chat. Reply briefly unless the user explicitly requests analysis, comparison, or specific values.',
-        },
-      };
-    },
-  });
+        };
+      },
+    });
 }
 
 export function registerViewWidget(

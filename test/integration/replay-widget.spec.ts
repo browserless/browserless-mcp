@@ -322,6 +322,9 @@ describe('production replay tools over real MCP HTTP', () => {
     expect(tools).not.to.include('browserless_show');
     expect(tools).not.to.include('browserless_view_data');
     expect(resources).not.to.include(VIEW_URI);
-    expect(resources).to.deep.equal([PERFORMANCE_URI]);
+    expect(resources).to.deep.equal([
+      PERFORMANCE_URI,
+      'ui://browserless/performance/v3.html',
+    ]);
   });
 });
