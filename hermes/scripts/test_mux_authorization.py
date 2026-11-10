@@ -59,10 +59,10 @@ class MuxAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply["id"], mid)
         return reply
 
-    async def assert_rejected(self, command):
+    async def assert_rejected(self, command, code=-32001):
         before = len(self.forwarded)
         reply = await self.request(self.clients[0], command)
-        self.assertEqual(reply.get("error", {}).get("code"), -32001, reply)
+        self.assertEqual(reply.get("error", {}).get("code"), code, reply)
         self.assertEqual(reply.get("sessionId"), command.get("sessionId"))
         # A later reply is a wire-order barrier: the rejected command must not have
         # crossed the shared upstream connection, even if it got a local error too.
@@ -128,6 +128,19 @@ class MuxAuthorizationTests(unittest.IsolatedAsyncioTestCase):
                             raw_params = dict(pairs).get("params", [])
                             self.assertEqual(len(raw_params), len(dict(raw_params)), raw_params)
                     self.assertEqual(nested, json.loads(message))
+
+    async def test_unparseable_nested_strings_never_reach_upstream(self):
+        own, foreign = self.sessions
+        for message in ("not-json", '{"id":9,\v"method":"Runtime.enable","sessionId":"%s"}' % foreign,
+                        '{"id":9,\f"method":"Runtime.enable","sessionId":"%s"}' % foreign):
+            for depth in (1, 3):
+                with self.subTest(message=message, depth=depth):
+                    command = {"method": "Target.sendMessageToTarget", "params": {
+                        "sessionId": own, "message": message}}
+                    for _ in range(depth - 1):
+                        command = {"method": "Target.sendMessageToTarget", "params": {
+                            "sessionId": own, "message": json.dumps({"id": 9, **command})}}
+                    await self.assert_rejected(command, code=-32700)
 
     async def test_invalid_outer_session_selectors_do_not_close_socket(self):
         for selected in (["session"], 17, {}, [], 0, False, None, ""):

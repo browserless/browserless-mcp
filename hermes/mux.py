@@ -483,8 +483,12 @@ class Mux:
                 break
             try:
                 nested = json.loads(nested_params.get("message"))
-            except (TypeError, ValueError):
-                break  # leave malformed commands to upstream CDP validation
+            except TypeError:
+                break  # leave non-string messages to upstream CDP validation
+            except ValueError:
+                # Upstream parsers may accept syntax Python rejects; never forward it unchecked.
+                await reject(None, -32700, "Invalid nested message.")
+                return
             envelopes.append((nested_params, nested))
             nested_method = nested.get("method") if isinstance(nested, dict) else None
             # A successful outer reply would leave a hidden lifecycle call waiting.
