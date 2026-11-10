@@ -7,6 +7,7 @@ import http from 'node:http';
 import {
   buildAgentWsUrl,
   closeSession,
+  closeSessionByHandle,
   createRepeatState,
   detectRepetition,
   getActiveSessionByHandle,
@@ -224,6 +225,48 @@ describe('agent-client response containment', () => {
       },
     });
     assert.equal(Object.getPrototypeOf(response.error), Object.prototype);
+  });
+
+  it('preserves the connection after an error with no id key', async () => {
+    peer.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const { id, method } = JSON.parse(data.toString());
+        ws.send(
+          JSON.stringify(
+            method === 'getCookies'
+              ? { error: { message: 'Invalid JSON' } }
+              : { id, result: 'same browser' },
+          ),
+        );
+      });
+    });
+    const session = await open();
+    const socket = session.ws;
+    assert.deepEqual(await send(session, 'getCookies', {}, 1500), {
+      id: 1,
+      error: { message: 'Invalid JSON' },
+    });
+    assert.equal((await send(session, 'snapshot')).result, 'same browser');
+    assert.equal(session.ws, socket);
+  });
+
+  it('accepts an in-flight reply while the session is closing normally', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const [ws] = await connected;
+    const received = once(ws, 'message');
+    const response = send(session, 'getCookies', {}, 1500);
+    const [data] = await received;
+    const { id } = JSON.parse(data.toString());
+    const closed = once(session.ws, 'close');
+    assert.equal(
+      await closeSessionByHandle(session.handle, 'fixture-token'),
+      true,
+    );
+    assert.equal(session.ws.readyState, WebSocket.CLOSING);
+    ws.send(JSON.stringify({ id, result: { cookies: [] } }));
+    assert.deepEqual(await response, { id, result: { cookies: [] } });
+    await closed;
   });
 
   it('ignores and logs id-less event frames while idle and during a command', async () => {

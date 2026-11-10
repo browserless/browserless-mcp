@@ -1101,9 +1101,10 @@ const connect = (
     const ws = new WebSocket(wsUrl, { headers });
     const requests = new Map<number, PendingResponse>();
     pendingResponses.set(ws, requests);
+    let terminated = false;
     // Validate once per socket, including frames received between commands.
     ws.on('message', (data: WebSocket.RawData) => {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (terminated) return;
       const raw = data.toString('utf8');
       let response: AgentResponse;
       try {
@@ -1126,8 +1127,7 @@ const connect = (
         // exactly one is pending. Resolve it through the normal error path
         // so callers do not discard the browser and replay the command.
         if (
-          'id' in parsed &&
-          parsed.id === null &&
+          (!('id' in parsed) || parsed.id === null) &&
           'error' in parsed &&
           typeof parsed.error === 'object' &&
           parsed.error !== null &&
@@ -1178,6 +1178,7 @@ const connect = (
             ),
           );
         }
+        terminated = true;
         ws.terminate();
         return;
       }
