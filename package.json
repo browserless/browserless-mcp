@@ -94,7 +94,7 @@
     "@opentelemetry/sdk-metrics": "3.0.0",
     "@opentelemetry/sdk-node": "0.301.0",
     "@opentelemetry/semantic-conventions": "1.44.0",
-    "fastmcp": "4.23.9",
+    "fastmcp": "4.24.5",
     "ioredis": "^5.10.1",
     "ipaddr.js": "2.5.0",
     "rrweb-player": "2.2.0",
