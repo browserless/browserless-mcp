@@ -20,6 +20,7 @@ class MuxLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.forwarded = []
 
         async def serve(ws):
+            self.upstream_ws = ws
             async for raw in ws:
                 msg = json.loads(raw)
                 self.forwarded.append(msg)
@@ -59,6 +60,54 @@ class MuxLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def attach(self):
         result = await self.request("Target.attachToBrowserTarget")
         return result["result"]["sessionId"]
+
+    async def test_legacy_events_follow_nested_session_owner(self):
+        async with websockets.connect(self.mux.url) as other:
+            sessions = []
+            for client, target in ((self.client, "target-a"), (other, "target-b")):
+                response = await self.request("Target.attachToTarget", {
+                    "targetId": target, "flatten": False}, client=client)
+                sessions.append(response["result"]["sessionId"])
+            for owner, peer, sid, parent in ((self.client, other, sessions[0], sessions[1]),
+                                             (other, self.client, sessions[1], sessions[0])):
+                for payload in ({"id": 9, "result": {"value": "owner-only"}},
+                                {"method": "Runtime.consoleAPICalled", "params": {"args": []}}):
+                    for outer in (None, parent):
+                        with self.subTest(sid=sid, payload=payload, outer=outer):
+                            event = {"method": "Target.receivedMessageFromTarget", "params": {
+                                "sessionId": sid, "message": json.dumps(payload), "targetId": "target"}}
+                            if outer:
+                                event["sessionId"] = outer
+                            await self.upstream_ws.send(json.dumps(event))
+                            self.assertEqual(json.loads(await asyncio.wait_for(owner.recv(), 2)), event)
+                            # A later response is a wire-order barrier: no event may precede it on the peer.
+                            self.assertEqual(await self.request("Browser.getVersion", client=peer),
+                                             {"id": 37, "result": {}})
+
+            for sid in (None, "", "unknown-session"):
+                for outer in (None, sessions[0]):
+                    with self.subTest(unowned=sid, outer=outer):
+                        params = {"message": '{"id": 9, "result": {}}'}
+                        if sid is not None:
+                            params["sessionId"] = sid
+                        event = {"method": "Target.receivedMessageFromTarget", "params": params}
+                        if outer:
+                            event["sessionId"] = outer
+                        await self.upstream_ws.send(json.dumps(event))
+                        for client in (self.client, other):
+                            self.assertEqual(await self.request("Browser.getVersion", client=client),
+                                             {"id": 37, "result": {}})
+
+            # Controls: ordinary flat events stay private; browser-wide events still broadcast.
+            flat = {"method": "Runtime.executionContextCreated", "sessionId": sessions[0],
+                    "params": {"context": {"id": 1}}}
+            await self.upstream_ws.send(json.dumps(flat))
+            self.assertEqual(json.loads(await asyncio.wait_for(self.client.recv(), 2)), flat)
+            self.assertEqual(await self.request("Browser.getVersion", client=other), {"id": 37, "result": {}})
+            broadcast = {"method": "Browser.downloadProgress", "params": {"guid": "download"}}
+            await self.upstream_ws.send(json.dumps(broadcast))
+            for client in (self.client, other):
+                self.assertEqual(json.loads(await asyncio.wait_for(client.recv(), 2)), broadcast)
 
     async def test_direct_lifecycle_is_local_at_root_and_on_owned_session(self):
         sid = await self.attach()

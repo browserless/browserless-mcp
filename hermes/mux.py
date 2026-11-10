@@ -352,6 +352,12 @@ class Mux:
         method = msg.get("method")
         sid = msg.get("sessionId")
         params = msg.get("params") or {}
+        if method == "Target.receivedMessageFromTarget":
+            # Legacy envelopes identify their recipient inside params, not the outer session.
+            owner = self.owner.get(params.get("sessionId"))
+            if owner is not None:
+                await self._deliver(owner, msg)
+            return
         if sid:
             owner = self.owner.get(sid)
             if owner is None:
