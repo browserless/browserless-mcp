@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { once } from 'node:events';
+import { WebSocketServer } from 'ws';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
@@ -1470,12 +1472,12 @@ describe('formatErrorMessage', () => {
     const out = formatErrorMessage({
       category: 'SESSION_LOST',
       prefix: 'click failed: ',
-      message: 'WebSocket closed while waiting for "click" response',
+      message: 'Agent WebSocket closed while waiting for "click" response',
       recovery: 'A fresh session was opened automatically.',
     });
     expect(out).to.match(/^Category: SESSION_LOST\n\n/);
     expect(out).to.include(
-      'click failed: WebSocket closed while waiting for "click" response',
+      'click failed: Agent WebSocket closed while waiting for "click" response',
     );
     expect(out).to.not.include('[');
     expect(out).to.include('Recovery: A fresh session was opened');
@@ -1728,6 +1730,81 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent null-ID protocol errors', () => {
+  it('keeps the same browser and does not replay a command after a protocol error', async () => {
+    const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+    const address = peer.address();
+    if (!address || typeof address === 'string')
+      throw new Error('Missing port');
+    const url = `http://127.0.0.1:${address.port}`;
+    let connections = 0;
+    let rejectedCommands = 0;
+    peer.on('connection', (ws) => {
+      connections++;
+      ws.on('message', (data) => {
+        const { id, method } = JSON.parse(data.toString());
+        if (method === 'getCookies') {
+          rejectedCommands++;
+          ws.send(
+            JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+          );
+        } else {
+          ws.send(
+            JSON.stringify({
+              id,
+              result:
+                method === 'snapshot'
+                  ? {
+                      url: 'https://example.com',
+                      title: 'Example',
+                      elements: [],
+                      time: 0,
+                    }
+                  : { text: 'original browser state' },
+            }),
+          );
+        }
+      });
+    });
+    try {
+      const execute = getAgentExecute(url);
+      const first = JSON.stringify(
+        await execute({ method: 'text', keepSessionAlive: true }, mockContext),
+      );
+      const sessionId = /sessionId:\s*(\S+)/.exec(first)?.[1];
+      expect(sessionId).to.be.a('string');
+      const session = getActiveSessionByHandle(sessionId!, url, 'test-token');
+      expect(session).to.not.equal(undefined);
+      let error: unknown;
+      try {
+        await execute(
+          { sessionId, method: 'getCookies', keepSessionAlive: true },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error)?.message).to.include('Invalid JSON');
+      expect(rejectedCommands).to.equal(1);
+      expect(getActiveSessionByHandle(sessionId!, url, 'test-token')).to.equal(
+        session,
+      );
+      const next = JSON.stringify(
+        await execute(
+          { sessionId, method: 'text', keepSessionAlive: true },
+          mockContext,
+        ),
+      );
+      expect(next).to.include('original browser state');
+      expect(connections).to.equal(1);
+    } finally {
+      for (const ws of peer.clients) ws.terminate();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  });
+});
 
 describe('browserless_agent close reminder surface', () => {
   afterEach(() => sinon.restore());
