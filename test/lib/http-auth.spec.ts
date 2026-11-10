@@ -23,6 +23,10 @@ describe('resolveBrowserlessAuth', () => {
     for (const [input, expected] of [
       [{}, false],
       [{ authHeader: 'Bearer ' }, false],
+      [{ authHeader: 'Bearer' }, false],
+      [{ authHeader: 'bearer' }, false],
+      [{ authHeader: ' \tBeArEr\t ' }, false],
+      [{ authHeader: '   ' }, false],
       [{ authHeader: 'Bearer abc' }, true],
       [{ authHeader: 'abc' }, true],
       [{ tokenQuery: 'x' }, true],
@@ -33,8 +37,15 @@ describe('resolveBrowserlessAuth', () => {
 
   for (const [input, token, authMethod] of [
     [{ authHeader: 'Bearer header-key' }, 'header-key', 'api_key_header'],
+    [{ authHeader: ' bearer\theader-key ' }, 'header-key', 'api_key_header'],
+    [{ authHeader: 'BearerPrefix-key' }, 'BearerPrefix-key', 'api_key_header'],
     [{ authHeader: 'header-key' }, 'header-key', 'api_key_header'],
     [{ tokenQuery: 'query-key' }, 'query-key', 'api_key_query'],
+    [
+      { authHeader: 'Bearer', tokenQuery: 'query-key' },
+      'query-key',
+      'api_key_query',
+    ],
     [
       { authHeader: 'Bearer header-key', tokenQuery: 'query-key' },
       'header-key',
@@ -241,6 +252,25 @@ describe('resolveBrowserlessAuth', () => {
     }
     expect(threw).to.be.true;
   });
+
+  for (const authHeader of [
+    'Bearer',
+    'Bearer ',
+    'bearer',
+    ' \tBeArEr\t ',
+    '   ',
+  ]) {
+    it(`rejects an empty credential ${JSON.stringify(authHeader)}`, async () => {
+      let error: unknown;
+      try {
+        await resolveBrowserlessAuth({ authHeader }, config);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(Error);
+      expect((error as Error).message).to.match(/No Browserless API token/);
+    });
+  }
 });
 
 describe('authInputFromRequest', () => {
