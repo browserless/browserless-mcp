@@ -33,6 +33,12 @@ const AGENT_TOOL_NAME = 'browserless_agent';
 
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
+type PendingResponse = {
+  resolve: (response: AgentResponse) => void;
+  reject: (error: Error) => void;
+};
+const pendingResponses = new WeakMap<WebSocket, Map<number, PendingResponse>>();
+
 // Count of agent commands awaiting a response per session. A command may run
 // past the idle TTL (an explicit long timeoutMs), so the sweep must not evict a
 // session with work still in flight — doing so would send `close` on the same
@@ -1092,6 +1098,71 @@ const connect = (
     if (source) headers['x-browserless-mcp-source'] = source;
     if (handle) headers['x-browserless-agent-session'] = handle;
     const ws = new WebSocket(wsUrl, { headers });
+    const requests = new Map<number, PendingResponse>();
+    pendingResponses.set(ws, requests);
+    // Validate once per socket, including frames received between commands.
+    ws.on('message', (data: WebSocket.RawData) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const raw = data.toString('utf8');
+      let response: AgentResponse;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          throw new Error('Invalid response envelope');
+        }
+        // The server cannot echo an ID when it rejects an invalid command
+        // envelope. With no correlation ID, fail only the oldest pending
+        // command; never destroy the browser for a protocol-level error.
+        if (
+          'id' in parsed &&
+          parsed.id === null &&
+          'error' in parsed &&
+          typeof parsed.error === 'object' &&
+          parsed.error !== null &&
+          !Array.isArray(parsed.error) &&
+          'message' in parsed.error &&
+          typeof parsed.error.message === 'string'
+        ) {
+          requests
+            .values()
+            .next()
+            .value?.reject(
+              Object.assign(new Error(parsed.error.message), parsed.error),
+            );
+          return;
+        }
+        if (
+          !('id' in parsed) ||
+          typeof parsed.id !== 'number' ||
+          !Number.isFinite(parsed.id)
+        ) {
+          throw new Error('Invalid response envelope');
+        }
+        response = parsed as AgentResponse;
+      } catch {
+        console.error('[agent-client] malformed WS frame:', raw.slice(0, 200));
+        for (const request of requests.values()) {
+          request.reject(
+            new Error('Agent WebSocket closed after a malformed response'),
+          );
+        }
+        ws.terminate();
+        return;
+      }
+      // Well-formed replies for unknown or expired IDs are harmless.
+      requests.get(response.id)?.resolve(response);
+    });
+    ws.on('close', () => {
+      for (const request of requests.values()) {
+        request.reject(
+          new Error('Agent WebSocket closed while waiting for response'),
+        );
+      }
+    });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -1160,10 +1231,10 @@ const sendMessage = (
   timeoutMs: number = DEFAULT_TIMEOUT,
 ): Promise<AgentResponse> =>
   new Promise((resolve, reject) => {
+    const requests = pendingResponses.get(ws)!;
     const cleanup = () => {
       clearTimeout(timeout);
-      ws.off('message', handler);
-      ws.off('close', closeHandler);
+      requests.delete(msg.id);
     };
 
     const timeout = setTimeout(() => {
@@ -1175,47 +1246,22 @@ const sendMessage = (
       );
     }, timeoutMs);
 
-    const closeHandler = () => {
-      cleanup();
-      reject(
-        new Error(
-          `WebSocket closed while waiting for "${msg.method}" response`,
-        ),
-      );
-    };
-
-    const handler = (data: WebSocket.RawData) => {
-      let response: AgentResponse;
-      try {
-        const parsed: unknown = JSON.parse(data.toString('utf8'));
-        if (
-          typeof parsed !== 'object' ||
-          parsed === null ||
-          Array.isArray(parsed) ||
-          !('id' in parsed) ||
-          typeof parsed.id !== 'number' ||
-          !Number.isFinite(parsed.id)
-        ) {
-          throw new Error('Invalid response envelope');
-        }
-        response = parsed as AgentResponse;
-      } catch {
+    requests.set(msg.id, {
+      resolve: (response) => {
         cleanup();
-        reject(new Error('Agent WebSocket received a malformed response'));
-        // Termination also rejects other commands awaiting this socket, without
-        // waiting for a close handshake with the malformed peer.
-        ws.terminate();
-        return;
-      }
-      // Only accept the response whose id matches the request we sent.
-      if (response.id !== msg.id) return;
+        resolve(response);
+      },
+      reject: (error) => {
+        cleanup();
+        reject(error);
+      },
+    });
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch (error) {
       cleanup();
-      resolve(response);
-    };
-
-    ws.on('message', handler);
-    ws.on('close', closeHandler);
-    ws.send(JSON.stringify(msg));
+      reject(error);
+    }
   });
 
 export const getOrCreateSession = async (

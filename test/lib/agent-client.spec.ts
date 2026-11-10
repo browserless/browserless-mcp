@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
+import { WebSocketServer } from 'ws';
 import sinon from 'sinon';
 import http from 'node:http';
 import {
@@ -45,8 +45,28 @@ import {
   createSyncInstruments,
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
+import { classifyAgentError } from '../../src/lib/error-classifier.js';
 
 describe('agent-client response containment', () => {
+  let peer: WebSocketServer;
+  beforeEach(async () => {
+    peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+  });
+  afterEach(async () => {
+    for (const ws of peer.clients) ws.terminate();
+    await new Promise<void>((resolve) => peer.close(() => resolve()));
+  });
+  const open = () => {
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    return getOrCreateSession(
+      'response-containment',
+      `http://127.0.0.1:${address.port}`,
+      'fixture-token',
+    );
+  };
+
   for (const frame of [
     'null',
     '{invalid',
@@ -58,23 +78,159 @@ describe('agent-client response containment', () => {
     '{"id":null}',
     '{"id":"1"}',
     '{"id":1e999}',
-    'valid',
+    '{"id":null,"error":{}}',
   ]) {
-    it(`contains malformed frames to their connection (${frame})`, () => {
-      const child = spawnSync(
-        process.execPath,
-        [
-          fileURLToPath(
-            new URL('../fixtures/agent-malformed-response.js', import.meta.url),
-          ),
-          frame,
-        ],
-        { encoding: 'utf8', timeout: 5000 },
-      );
-      assert.ifError(child.error);
-      assert.equal(child.status, 0, child.stderr || child.stdout);
+    it(`contains malformed frames to their connection (${frame})`, async () => {
+      peer.on('connection', (ws) => {
+        let count = 0;
+        ws.on('message', () => {
+          if (++count === 2) ws.send(frame);
+        });
+      });
+      const healthyPeer = await makeRespondingServer(() => ({ healthy: true }));
+      try {
+        const failed = await open();
+        const healthy = await getOrCreateSession(
+          'healthy-containment',
+          healthyPeer.url,
+          'fixture-token',
+        );
+        assert.deepEqual((await send(healthy, 'snapshot')).result, {
+          healthy: true,
+        });
+        const closed = once(failed.ws, 'close');
+        const results = await Promise.allSettled([
+          send(failed, 'evaluate', {}, 1500),
+          send(failed, 'getCookies', {}, 1500),
+          send(healthy, 'snapshot', {}, 1500),
+        ]);
+        for (const result of results.slice(0, 2)) {
+          assert.equal(result.status, 'rejected');
+          if (result.status === 'rejected') {
+            const classified = classifyAgentError({
+              err: result.reason,
+              cmd: { method: 'evaluate', params: {} },
+            });
+            assert.equal(classified.category, 'SESSION_LOST');
+            assert.match(classified.recovery, /goto.*snapshot/i);
+          }
+        }
+        await closed;
+        assert.equal(results[2].status, 'fulfilled');
+        assert.deepEqual((await send(healthy, 'snapshot')).result, {
+          healthy: true,
+        });
+      } finally {
+        await healthyPeer.close();
+      }
     });
   }
+
+  it('contains and logs a malformed frame even between commands', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const [ws] = await connected;
+    const closed = once(session.ws, 'close');
+    const log = sinon.stub(console, 'error');
+    const raw = 'bad-frame-' + 'x'.repeat(300);
+    try {
+      ws.send(raw);
+      await closed;
+      const diagnostic = log.args.find(([message]) =>
+        String(message).includes('malformed WS frame'),
+      );
+      assert(diagnostic, 'missing malformed-frame diagnostic');
+      assert.equal(diagnostic[1], raw.slice(0, 200));
+    } finally {
+      log.restore();
+    }
+  });
+
+  it('rejects only the oldest pending command for a null-ID protocol error', async () => {
+    peer.on('connection', (ws) => {
+      const ids: number[] = [];
+      ws.on('message', (data) => {
+        const { id } = JSON.parse(data.toString());
+        ids.push(id);
+        if (ids.length === 2) {
+          ws.send(
+            JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+          );
+          ws.send(JSON.stringify({ id: ids[1], result: 'second command' }));
+        } else if (ids.length > 2) {
+          ws.send(JSON.stringify({ id, result: 'same browser' }));
+        }
+      });
+    });
+    const session = await open();
+    const results = await Promise.allSettled([
+      send(session, 'snapshot', {}, 1500),
+      send(session, 'getCookies', {}, 1500),
+    ]);
+    assert.equal(results[0].status, 'rejected');
+    if (results[0].status === 'rejected')
+      assert.equal(results[0].reason.message, 'Invalid JSON');
+    assert.deepEqual(results[1], {
+      status: 'fulfilled',
+      value: { id: 2, result: 'second command' },
+    });
+    assert.equal((await send(session, 'snapshot')).result, 'same browser');
+    assert.equal(peer.clients.size, 1);
+  });
+
+  it('ignores idle protocol errors and removes timed-out requests before matching errors', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const socket = session.ws;
+    const [ws] = await connected;
+    const received = once(socket, 'message');
+    ws.send(JSON.stringify({ id: null, error: { message: 'Idle error' } }));
+    await received;
+    ws.on('message', (data: Buffer) => {
+      const { id } = JSON.parse(data.toString());
+      if (id === 2)
+        ws.send(
+          JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+        );
+      if (id === 3) ws.send(JSON.stringify({ id, result: 'still usable' }));
+    });
+    await assert.rejects(send(session, 'snapshot', {}, 20), /timed out/);
+    await assert.rejects(
+      send(session, 'getCookies', {}, 1500),
+      /^Error: Invalid JSON$/,
+    );
+    assert.equal((await send(session, 'snapshot')).result, 'still usable');
+    assert.equal(session.ws, socket);
+  });
+
+  it('keeps ping/pong, unmatched IDs, and out-of-order results compatible', async () => {
+    let pongs = 0;
+    peer.on('connection', (ws) => {
+      const ids: number[] = [];
+      ws.on('pong', () => {
+        if (++pongs !== 2) return;
+        ws.send(JSON.stringify({ id: 999, result: 'unrelated' }));
+        ws.send(JSON.stringify({ id: ids[1], error: { message: 'rejected' } }));
+        ws.send(JSON.stringify({ id: ids[0], result: null, extra: true }));
+      });
+      ws.on('message', (data) => {
+        ids.push(JSON.parse(data.toString()).id);
+        ws.ping('not JSON');
+      });
+    });
+    const session = await open();
+    assert.deepEqual(
+      await Promise.all([
+        send(session, 'snapshot', {}, 1500),
+        send(session, 'getCookies', {}, 1500),
+      ]),
+      [
+        { id: 1, result: null, extra: true },
+        { id: 2, error: { message: 'rejected' } },
+      ],
+    );
+    assert.equal(pongs, 2);
+  });
 });
 
 describe('agent-client explicit close during human handoff', () => {
