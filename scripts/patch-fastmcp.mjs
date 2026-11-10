@@ -323,34 +323,48 @@ const handleStreamRequest = async ({`,
     to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
-  patch({
-    name: 'SSE connection error privacy',
-    dist: dirname(mcpProxyEntry),
-    files: /\.(mjs|js)$/,
-    from: 'console.error("[mcp-proxy] error connecting to server", error$1);',
-    to: 'console.error("[mcp-proxy] error connecting to server");',
-    required: false,
-  });
+  for (const errorName of ['error$1', 'error']) {
+    patch({
+      name: 'SSE connection error privacy',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `console.error("[mcp-proxy] error connecting to server", ${errorName});`,
+      to: 'console.error("[mcp-proxy] error connecting to server");',
+      required: false,
+    });
+  }
   // Move construction after authentication and retain the opener in one patch.
   // Unmatched proxy layouts must keep their original transport construction.
   const sseServerCreation =
     'let server;\n\t\ttry {\n\t\t\tserver = await createServer(req);\n\t\t} catch (error$1) {\n\t\t\tif (await handleResponseError(error$1, res)) return true;\n\t\t\tres.writeHead(500).end("Error creating server");\n\t\t\treturn true;\n\t\t}';
-  patch({
-    name: 'session request authentication SSE opener',
-    dist: dirname(mcpProxyEntry),
-    files: /\.(mjs|js)$/,
-    from: `const transport = new SSEServerTransport("/messages", res);\n\t\t${sseServerCreation}\n\t\tactiveTransports[transport.sessionId] = transport;`,
-    to:
-      sseServerCreation +
-      '\n\t\tconst openerToken = server.auth?.authMethod === "api_key_query" ? server.auth.token : null;\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\tconst transport = new SSEServerTransport(messageEndpoint, res);\n\t\tactiveTransports[transport.sessionId] = Object.assign(transport, { browserlessSession: server });',
-    required: false,
-  });
+  // Older proxies store the transport; newer ones retain { server, transport }.
+  for (const [errorName, record] of [
+    ['error$1', 'transport'],
+    ['error', '{\n\t\t\tserver,\n\t\t\ttransport\n\t\t}'],
+  ]) {
+    const creation = sseServerCreation.replaceAll('error$1', errorName);
+    const retainedRecord =
+      record === 'transport'
+        ? 'Object.assign(transport, { browserlessSession: server })'
+        : record;
+    patch({
+      name: 'session request authentication SSE opener',
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `const transport = new SSEServerTransport("/messages", res);\n\t\t${creation}\n\t\tactiveTransports[transport.sessionId] = ${record};`,
+      to:
+        creation +
+        '\n\t\tconst openerToken = server.auth?.authMethod === "api_key_query" ? server.auth.token : null;\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\tconst transport = new SSEServerTransport(messageEndpoint, res);\n\t\t' +
+        `activeTransports[transport.sessionId] = ${retainedRecord};`,
+      required: false,
+    });
+  }
   patch({
     name: 'session request authentication SSE messages',
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
     from: 'if (sseEndpoint && await handleSSERequest({',
-    to: 'if (req.method === "POST" && req.url?.startsWith("/messages")) {\n\t\t\treq.browserlessSession = activeSSETransports[new URL(req.url, "https://example.com").searchParams.get("sessionId")]?.browserlessSession;\n\t\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return;\n\t\t}\n\t\tif (sseEndpoint && await handleSSERequest({',
+    to: 'if (req.method === "POST" && req.url?.startsWith("/messages")) {\n\t\t\tconst activeSSESession = activeSSETransports[new URL(req.url, "https://example.com").searchParams.get("sessionId")];\n\t\t\treq.browserlessSession = activeSSESession?.browserlessSession ?? activeSSESession?.server;\n\t\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return;\n\t\t}\n\t\tif (sseEndpoint && await handleSSERequest({',
     required: false,
   });
 }

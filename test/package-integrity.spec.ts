@@ -12,6 +12,12 @@ import {
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import { runInNewContext } from 'node:vm';
+import {
+  admitSessionRequest,
+  requestSessionId,
+  requestSessions,
+} from '../src/lib/session-binding.js';
 
 const root = process.cwd();
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -140,36 +146,94 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     );
   });
 
-  it('leaves SSE construction intact when the proxy session record does not match', () => {
-    const fixture = mkdtempSync(join(tmpdir(), 'sse-patch-'));
-    try {
-      for (const name of ['fastmcp', 'mcp-proxy']) {
-        const dir = join(fixture, 'node_modules', name);
-        mkdirSync(dir, { recursive: true });
+  for (const supported of [false, true]) {
+    it(`handles an SSE session-record fixture with supported=${supported}`, async () => {
+      const fixture = mkdtempSync(join(tmpdir(), 'sse-patch-'));
+      try {
+        for (const name of ['fastmcp', 'mcp-proxy']) {
+          const dir = join(fixture, 'node_modules', name);
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(
+            join(dir, 'package.json'),
+            JSON.stringify({ main: 'index.js' }),
+          );
+        }
         writeFileSync(
-          join(dir, 'package.json'),
-          JSON.stringify({ main: 'index.js' }),
+          join(fixture, 'node_modules/fastmcp/index.js'),
+          'this.#capabilities.tools = {};\n  updateAuth(auth) {',
         );
+        // Match the 6.8.0 opener and request-dispatch anchors, not just construction.
+        const source = supported
+          ? 'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;\n\t\ttry {\n\t\t\tserver = await createServer(req);\n\t\t} catch (error) {\n\t\t\tif (await handleResponseError(error, res)) return true;\n\t\t\tres.writeHead(500).end("Error creating server");\n\t\t\treturn true;\n\t\t}\n\t\tactiveTransports[transport.sessionId] = {\n\t\t\tserver,\n\t\t\ttransport\n\t\t};\nif (sseEndpoint && await handleSSERequest({ req, res })) return;'
+          : 'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;\n\t\tserver = await createServer(req);\n\t\tactiveTransports[transport.sessionId] = { server, transport };';
+        const proxy = join(fixture, 'node_modules/mcp-proxy/index.js');
+        writeFileSync(proxy, source);
+        const script = join(fixture, 'patch-fastmcp.mjs');
+        copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+        let patched = source;
+        for (let run = 0; run < 2; run++) {
+          execFileSync(process.execPath, [script], { stdio: 'pipe' });
+          const output = readFileSync(proxy, 'utf8');
+          if (!supported || run === 1) expect(output).to.equal(patched);
+          patched = output;
+        }
+        if (supported) {
+          const auth = {
+            token: 'fixture+&key',
+            apiUrl: 'http://127.0.0.1:9',
+            authMethod: 'api_key_query' as const,
+          };
+          const session = { sessionId: 'fixture', auth };
+          const records = {};
+          const request = {
+            method: 'POST',
+            url: '/messages?sessionId=fixture',
+          };
+          const authenticate = () =>
+            admitSessionRequest(
+              requestSessionId(request),
+              auth,
+              requestSessions(request, []),
+            );
+          const transport = await runInNewContext(
+            `(async () => { ${patched}\nreturn transport; })()`,
+            {
+              URL,
+              URLSearchParams,
+              req: request,
+              res: {},
+              activeTransports: records,
+              activeSSETransports: records,
+              sseEndpoint: '/sse',
+              oauth: undefined,
+              authenticate,
+              createServer: async () => session,
+              SSEServerTransport: class {
+                sessionId = 'fixture';
+                constructor(readonly endpoint: string) {}
+              },
+              authenticateSessionRequest: async () => {
+                authenticate();
+                return false;
+              },
+              // Native message authentication must also succeed before registration.
+              handleSSERequest: async () => {
+                authenticate();
+                return false;
+              },
+            },
+          );
+          expect(
+            new URL(transport.endpoint, 'http://localhost').searchParams.get(
+              'token',
+            ),
+          ).to.equal(auth.token);
+        }
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
       }
-      writeFileSync(
-        join(fixture, 'node_modules/fastmcp/index.js'),
-        'this.#capabilities.tools = {};\n  updateAuth(auth) {',
-      );
-      // Newer proxies retain a session record instead of the transport itself.
-      const source =
-        'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;\n\t\tserver = await createServer(req);\n\t\tactiveTransports[transport.sessionId] = { server, transport };';
-      const proxy = join(fixture, 'node_modules/mcp-proxy/index.js');
-      writeFileSync(proxy, source);
-      const script = join(fixture, 'patch-fastmcp.mjs');
-      copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
-      for (let run = 0; run < 2; run++) {
-        execFileSync(process.execPath, [script], { stdio: 'pipe' });
-        expect(readFileSync(proxy, 'utf8')).to.equal(source);
-      }
-    } finally {
-      rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+    });
+  }
 
   it("has unchained mcp-proxy's bundled SSE stream writer", () => {
     const sources = mcpProxySources();
@@ -233,7 +297,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     ).to.have.length(4);
     expect(sources[0].split('browserlessSession: server')).to.have.length(2);
     expect(
-      sources[0].split('req.browserlessSession = activeSSETransports['),
+      sources[0].split('const activeSSESession = activeSSETransports['),
     ).to.have.length(2);
     expect(sources[0]).to.include(
       'new SSEServerTransport(messageEndpoint, res)',
