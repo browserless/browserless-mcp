@@ -113,6 +113,42 @@ try {
   );
 }
 if (mcpProxyEntry) {
+  // Keep the SDK-compatible transport pin. Session identifiers are untrusted:
+  // neither SSE nor Streamable HTTP may resolve an Object.prototype member.
+  // As with the other transport patches, consumer versions are best-effort;
+  // child-process integration tests guard the pinned hosted tree.
+  for (const registry of ['activeSSETransports', 'activeStreamTransports']) {
+    patch({
+      name: `${registry} membership`,
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `const ${registry} = {};`,
+      to: `const ${registry} = Object.create(null);`,
+      required: false,
+    });
+  }
+  // Node ignores a request listener's returned promise. Contain rejections at
+  // that boundary for both HTTP and HTTPS, without a global rejection handler.
+  for (const createServer of [
+    'http.createServer(',
+    'https.createServer(options, ',
+  ]) {
+    patch({
+      name: `${createServer}request rejection containment`,
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `${createServer}requestListener)`,
+      to: `${createServer}(req, res) => {
+        requestListener(req, res).catch((error) => {
+          console.error("[mcp-proxy] error handling request", error);
+          if (res.writableEnded || res.destroyed) return;
+          if (res.headersSent) res.end();
+          else res.writeHead(500).end("Internal Server Error");
+        });
+      })`,
+      required: false,
+    });
+  }
   // Backport mcp-proxy's RFC 9728 URL construction without its SDK v2 upgrade.
   // Insert the well-known segment before the resource path, preserving query
   // components. Cover both HTTP and middleware (401/403) challenge builders.

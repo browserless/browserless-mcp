@@ -420,6 +420,75 @@ describe('MCP Server Integration', () => {
     }
   });
 
+  for (const scenario of ['registry', 'rejection', 'partial response']) {
+    it(`contains transport request failures: ${scenario}`, async () => {
+      const port = await freePort();
+      // A child with Node's default rejection policy must survive the request;
+      // an in-process test runner could mask an unhandled listener rejection.
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+          import assert from 'node:assert/strict';
+          import { createRequire } from 'node:module';
+          const require = createRequire(import.meta.url);
+          const { startHTTPServer } = await import(
+            createRequire(require.resolve('fastmcp')).resolve('mcp-proxy')
+          );
+          const base = 'http://127.0.0.1:${port}';
+          const scenario = ${JSON.stringify(scenario)};
+          const server = await startHTTPServer({
+            host: '127.0.0.1', port: ${port},
+            createServer: async () => { throw new Error('unexpected session'); },
+            onUnhandledRequest: async (req, res) => {
+              if (req.url !== '/fail') return;
+              if (scenario === 'partial response') res.write('partial');
+              throw new Error('local request failure');
+            },
+          });
+          try {
+            if (scenario === 'registry') {
+              for (const id of ['constructor', '__proto__', 'toString', 'unknown-session']) {
+                const response = await fetch(base + '/messages?sessionId=' + id, {
+                  method: 'POST', body: '{}', signal: AbortSignal.timeout(2000),
+                });
+                assert.equal(response.status, 400);
+                assert.equal(await response.text(), 'No active transport');
+                for (const method of ['POST', 'GET', 'DELETE']) {
+                  const stream = await fetch(base + '/mcp', {
+                    method,
+                    headers: {
+                      'mcp-session-id': id,
+                      'content-type': 'application/json',
+                      accept: 'application/json, text/event-stream',
+                    },
+                    ...(method === 'POST' ? { body: '{}' } : {}),
+                    signal: AbortSignal.timeout(2000),
+                  });
+                  assert.equal(stream.status, method === 'POST' ? 404 : 400);
+                  await stream.text();
+                }
+              }
+            } else {
+              const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
+              assert.equal(response.status, scenario === 'rejection' ? 500 : 200);
+              assert.equal(await response.text(), scenario === 'rejection' ? 'Internal Server Error' : 'partial');
+            }
+            const ping = await fetch(base + '/ping', { signal: AbortSignal.timeout(2000) });
+            assert.equal(ping.status, 200);
+            assert.equal(await ping.text(), 'pong');
+            console.log('survived');
+          } finally { await server.close(); }
+          `,
+        ],
+        { timeout: 10000 },
+      );
+      expect(stdout).to.include('survived');
+    });
+  }
+
   it('preserves legacy SSE initialization and tool POST bodies', async () => {
     const port = await freePort();
     server = new FastMCP({ name: 'legacy-sse-test', version: '1.0.0' });
