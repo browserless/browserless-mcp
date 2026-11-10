@@ -45,6 +45,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   clearSession,
+  consumeDownload,
   downloadOwner,
   downloadUri,
   FILE_TRANSFER_MAX_BYTES,
@@ -906,8 +907,70 @@ describe('normalizeUploadCommand', () => {
       (error: unknown) => error,
     );
     expect(error).to.be.instanceOf(UserError);
-    expect((error as Error).message).to.include('50MB limit');
+    expect((error as Error).message)
+      .to.include('"large.bin"')
+      .and.include(`${2 ** 31 + 1} bytes, over the 50MB limit`);
     expect(file).not.to.have.property('content');
+  });
+
+  it('bounds an oversized stored handle before reading it', async () => {
+    const token = 'handle-cap-token';
+    const record = await storeDownload(
+      'huge.bin',
+      'application/octet-stream',
+      Buffer.from('small'),
+      downloadOwner(token),
+    );
+    try {
+      // Sparse growth after staging: the handle branch must not buffer it all.
+      await truncate(record.path, 2 ** 31 + 1);
+      const file: Record<string, unknown> = { handle: downloadUri(record.id) };
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'httpStream',
+        undefined,
+        token,
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include('"huge.bin"')
+        .and.include(`${2 ** 31 + 1} bytes, over the 50MB limit`);
+      expect(file).not.to.have.property('content');
+    } finally {
+      consumeDownload(downloadUri(record.id), downloadOwner(token));
+    }
+  });
+
+  it('reports an expired stored handle without exposing the server path', async () => {
+    const token = 'expired-handle-token';
+    const record = await storeDownload(
+      'gone.bin',
+      'application/octet-stream',
+      Buffer.from('bytes'),
+      downloadOwner(token),
+    );
+    try {
+      await rm(record.path);
+      const handle = downloadUri(record.id);
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [{ handle }] } },
+        'httpStream',
+        undefined,
+        token,
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include('could not be read')
+        .and.not.include(record.path);
+    } finally {
+      consumeDownload(downloadUri(record.id), downloadOwner(token));
+    }
   });
 
   it('rejects directories as non-regular upload files', async () => {
