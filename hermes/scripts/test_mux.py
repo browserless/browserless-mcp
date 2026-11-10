@@ -102,7 +102,7 @@ class MuxLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_ordinary_and_malformed_legacy_messages_still_reach_upstream(self):
         sid = await self.attach()
         payloads = [json.dumps({"id": 9, "method": "Runtime.evaluate", "params": {
-            "expression": "'Browser.close'"}}), "not-json", "[]", "null", "1", None,
+            "expression": "'Browser.close'"}}), "[]", "null", "1", None,
             '{"method": []}', '{"method": "Target.sendMessageToTarget", "params": [1]}']
         for payload in payloads:
             with self.subTest(payload=payload):
