@@ -85,15 +85,61 @@ class MuxAuthorizationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_target_selectors_are_not_forwarded(self):
         for method in ("Target.detachFromTarget", "Target.sendMessageToTarget"):
-            for params in ({}, {"targetId": "peer-target"},
-                           {"targetId": "peer-target", "sessionId": self.sessions[0]}):
+            for params in ({}, {"targetId": "peer-target"}):
                 with self.subTest(method=method, params=params):
                     await self.assert_rejected({"method": method, "params": params})
+
+    async def test_owned_sessions_allow_additional_target_selectors(self):
+        own = self.sessions[0]
+        for method in ("Target.detachFromTarget", "Target.sendMessageToTarget"):
+            with self.subTest(method=method):
+                inner = {"method": method, "params": {"sessionId": own, "targetId": "peer-target"}}
+                if method == "Target.sendMessageToTarget":
+                    inner["params"]["message"] = '{"id": 10, "method": "Runtime.enable"}'
+                for command in (inner, {"method": "Target.sendMessageToTarget", "params": {
+                        "sessionId": own, "message": json.dumps({"id": 9, **inner})}}):
+                    self.assertIn("result", await self.request(self.clients[0], command))
+                    self.assertEqual({k: v for k, v in self.forwarded[-1].items() if k != "id"}, command)
+
+    async def test_duplicate_nested_keys_are_not_forwarded_ambiguously(self):
+        own, foreign = self.sessions
+        messages = [
+            '{"id":9,"method":"Runtime.enable","sessionId":"%s","sessionId":"%s"}' % (foreign, own),
+            '{"id":9,"method":"Target.detachFromTarget","method":"Runtime.enable","params":{"sessionId":"%s"}}' % foreign,
+            '{"id":9,"method":"Target.detachFromTarget","params":{"sessionId":"%s","sessionId":"%s"}}' % (foreign, own),
+        ]
+        for message in messages:
+            for depth in (1, 3):
+                with self.subTest(message=message, depth=depth):
+                    command = {"method": "Target.sendMessageToTarget", "params": {
+                        "sessionId": own, "message": message}}
+                    for _ in range(depth - 1):
+                        command = {"method": "Target.sendMessageToTarget", "params": {
+                            "sessionId": own, "message": json.dumps({"id": 9, **command})}}
+                    reply = await self.request(self.clients[0], command)
+                    self.assertIn("result", reply)
+                    nested = self.forwarded[-1]
+                    while nested.get("method") == "Target.sendMessageToTarget":
+                        pairs = json.loads(nested["params"]["message"], object_pairs_hook=list)
+                        self.assertEqual(len(pairs), len(dict(pairs)), pairs)
+                        nested = json.loads(nested["params"]["message"])
+                        if isinstance(nested.get("params"), dict):
+                            # Inspect parameter keys separately, before dict conversion hides duplicates.
+                            raw_params = dict(pairs).get("params", [])
+                            self.assertEqual(len(raw_params), len(dict(raw_params)), raw_params)
+                    self.assertEqual(nested, json.loads(message))
+
+    async def test_invalid_outer_session_selectors_do_not_close_socket(self):
+        for selected in (["session"], 17, {}, [], 0, False, None, ""):
+            with self.subTest(selected=selected):
+                await self.assert_rejected({"method": "Runtime.enable", "sessionId": selected})
 
     async def test_nested_commands_cannot_hide_foreign_selectors(self):
         own, foreign = self.sessions
         commands = [
             {"method": "Runtime.enable", "sessionId": foreign},
+            {"method": "Runtime.enable", "sessionId": []},
+            {"method": "Runtime.enable", "sessionId": 17},
             {"method": "Target.detachFromTarget", "params": {"sessionId": foreign}},
             {"method": "Target.sendMessageToTarget", "params": {
                 "sessionId": foreign, "message": '{"id": 9, "method": "Runtime.enable"}'}},
