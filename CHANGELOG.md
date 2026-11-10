@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.47.1](https://github.com/browserless/browserless-mcp/compare/v1.47.0...v1.47.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* contain malformed agent WebSocket responses ([#523](https://github.com/browserless/browserless-mcp/issues/523)) ([ca73c7e](https://github.com/browserless/browserless-mcp/commit/ca73c7e99fe2319a1b2d26fb121a538386e4e2f6))
+* render direct live URLs inline for MCP Apps ([#511](https://github.com/browserless/browserless-mcp/issues/511)) ([0517169](https://github.com/browserless/browserless-mcp/commit/0517169b277b77317c5f43452519071f407877a6))
+* show loading UI before Lighthouse audits ([7a4556a](https://github.com/browserless/browserless-mcp/commit/7a4556a6157408b290f728b1c862bef76a45bba1))
+
 ## [1.47.0](https://github.com/browserless/browserless-mcp/compare/v1.46.0...v1.47.0) (2026-11-10)
 
 
