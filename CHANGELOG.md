@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.47.0](https://github.com/browserless/browserless-mcp/compare/v1.46.0...v1.47.0) (2026-11-10)
+
+
+### Features
+
+* adopt host styling and responsive context in widgets ([#517](https://github.com/browserless/browserless-mcp/issues/517)) ([3a2d5c7](https://github.com/browserless/browserless-mcp/commit/3a2d5c7fc761469d3b864be4d25147d0fa8001a6))
+* show progressive input while performance audits run ([#516](https://github.com/browserless/browserless-mcp/issues/516)) ([5d50d7d](https://github.com/browserless/browserless-mcp/commit/5d50d7d1a55248f7ebae0cfd00668af9be00ceaa))
+
+
+### Bug Fixes
+
+* bound local upload file reads ([#522](https://github.com/browserless/browserless-mcp/issues/522)) ([8d34574](https://github.com/browserless/browserless-mcp/commit/8d3457490d667e35c9d5ec111cf3f5d8b4f64f4b))
+* **hermes:** reserve browser lifecycle commands for the provider ([#521](https://github.com/browserless/browserless-mcp/issues/521)) ([a2feafe](https://github.com/browserless/browserless-mcp/commit/a2feafe2da8d44ed1d552a4831b1bc64033e169b))
+* normalize REST API base URLs ([#515](https://github.com/browserless/browserless-mcp/issues/515)) ([262f5d0](https://github.com/browserless/browserless-mcp/commit/262f5d0b014d8e589ec18a8698a14082d3295f81))
+* reject empty bearer credentials during authentication ([#510](https://github.com/browserless/browserless-mcp/issues/510)) ([7c440d3](https://github.com/browserless/browserless-mcp/commit/7c440d3602d26c25d74aa4ac9fd7e345175f404d))
+
+## [1.46.0](https://github.com/browserless/browserless-mcp/compare/v1.45.0...v1.46.0) (2026-11-06)
+
+
+### Features
+
+* usage and active session widgets ([#507](https://github.com/browserless/browserless-mcp/issues/507)) ([a73f478](https://github.com/browserless/browserless-mcp/commit/a73f47889f9281937cde3333f5c7d320049e17e6))
+* widget to render logs dynamically ([#508](https://github.com/browserless/browserless-mcp/issues/508)) ([0e50644](https://github.com/browserless/browserless-mcp/commit/0e506440880b683470cf2115495465bf05c9337d))
+
+
+### Bug Fixes
+
+* preserve MCP replay across reconnects ([#514](https://github.com/browserless/browserless-mcp/issues/514)) ([8a316b1](https://github.com/browserless/browserless-mcp/commit/8a316b1a4e63bae15842ec13563883c98bb3f1f7))
+
 ## [1.45.0](https://github.com/browserless/browserless-mcp/compare/v1.44.0...v1.45.0) (2026-11-05)
 
 

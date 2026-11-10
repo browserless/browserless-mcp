@@ -1,6 +1,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
@@ -330,6 +331,45 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
   return `${d.filename ?? 'file'} — downloading (${got}${total}); touch the browser again to collect it`;
 };
 
+const MAX_UPLOAD_MB = FILE_TRANSFER_MAX_BYTES / (1024 * 1024);
+
+const uploadTooLarge = (name: string, bytes: number): UserError =>
+  new UserError(
+    `Upload file "${name}" is ${bytes} bytes, over the ${MAX_UPLOAD_MB}MB limit.`,
+  );
+
+// Read a regular file without ever buffering more than the transfer limit:
+// check its size through the open descriptor, then cap the read itself so a
+// file that grows after the check still can't exceed the limit.
+const readUploadFile = async (path: string, name: string): Promise<Buffer> => {
+  // Nonblocking open lets us reject FIFOs without waiting for a writer.
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile()) throw new Error('Upload must be a regular file.');
+    if (stat.size > FILE_TRANSFER_MAX_BYTES) {
+      throw uploadTooLarge(name, stat.size);
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    // Inclusive end: at most one overflow byte, even if the file grows.
+    const stream = file.createReadStream({
+      autoClose: false,
+      start: 0,
+      end: FILE_TRANSFER_MAX_BYTES,
+    });
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > FILE_TRANSFER_MAX_BYTES) throw uploadTooLarge(name, size);
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, size);
+  } finally {
+    // A close failure must not mask the read result or the size error.
+    await file.close().catch(() => {});
+  }
+};
+
 // Resolve each uploadFile entry to base64 `content` (from `content`, a prior
 // `handle`, or a local `path` in stdio) so the model never emits base64 itself.
 export const normalizeUploadCommand = async (
@@ -357,8 +397,16 @@ export const normalizeUploadCommand = async (
             `getDownloads, or supply base64 "content".`,
         );
       }
-      buf = await readFile(record.path);
       defaultName = record.filename;
+      try {
+        buf = await readUploadFile(record.path, defaultName);
+      } catch (e: unknown) {
+        if (e instanceof UserError) throw e;
+        throw new UserError(
+          `Upload handle "${f.handle}" could not be read; it may have ` +
+            'expired. Stage the file again and pass the new handle.',
+        );
+      }
       if (f.mimeType === undefined) f.mimeType = record.mimeType;
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
@@ -385,24 +433,21 @@ export const normalizeUploadCommand = async (
             'the HTTP /upload staging flow and pass the returned handle.',
         );
       }
-      buf = await readFile(path).catch((e: unknown) => {
+      defaultName = basename(path);
+      try {
+        buf = await readUploadFile(path, defaultName);
+      } catch (e: unknown) {
+        if (e instanceof UserError) throw e;
         throw new UserError(
           `Failed to read upload file "${path}": ` +
             (e instanceof Error ? e.message : String(e)),
         );
-      });
-      defaultName = basename(path);
+      }
       delete f.path;
     } else {
       continue;
     }
 
-    if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
-      throw new UserError(
-        `Upload file "${defaultName}" is ${buf.byteLength} bytes, over the ` +
-          `50MB limit.`,
-      );
-    }
     f.content = buf.toString('base64');
     if (!f.name) f.name = defaultName;
   }

@@ -1,6 +1,15 @@
 :root {
   color-scheme: light dark;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(
+    --font-sans,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif
+  );
+  height: var(--host-height, auto);
+  max-height: var(--host-max-height, none);
+  --body-pad-y: 8px;
   --surface: light-dark(#fff, #1d1d1f);
   --text: light-dark(#25242a, #efedf4);
   --muted: light-dark(#6f6b78, #a5a2ac);
@@ -8,12 +17,39 @@
   --raised: light-dark(#f1eff6, #2b2a30);
   --accent: light-dark(#6558dd, #8986ff);
 }
+:root[data-host-palette] {
+  --surface: var(--color-background-primary);
+  --raised: var(--color-background-secondary);
+  --text: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --border: var(--color-border-primary);
+}
+:root[data-input='touch']
+  :is(
+    button,
+    select,
+    summary,
+    textarea,
+    input:not([type='checkbox'], [type='radio'], [type='hidden']),
+    label:has(> input[type='checkbox'], > input[type='radio'])
+  ) {
+  min-height: 44px;
+}
+:root[data-input='touch']
+  :is(
+    button,
+    select,
+    label:has(> input[type='checkbox'], > input[type='radio'])
+  ) {
+  min-width: 44px;
+}
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
-  padding: 8px 0;
+  padding: max(var(--body-pad-y), var(--safe-top, 0px)) var(--safe-right, 0px)
+    max(var(--body-pad-y), var(--safe-bottom, 0px)) var(--safe-left, 0px);
   background: transparent;
   color: var(--text);
 }
@@ -356,8 +392,8 @@ footer i {
   aspect-ratio: auto;
 }
 @media (max-width: 430px) {
-  body {
-    padding: 4px 0;
+  :root {
+    --body-pad-y: 4px;
   }
   .replay-card {
     padding: 12px;

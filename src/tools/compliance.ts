@@ -67,7 +67,12 @@ export const COMPLIANT_EXPORT_DESCRIPTION =
   'Fetch one web page by URL and return its content as text in its own format: HTML, plain text, JSON or XML. Use it when you need the raw source of a known page. It only reads the page: it does not click, fill forms or sign in, and for files such as PDFs or images it returns a short note instead of the file. To find pages, use browserless_search or browserless_map; to read the visible text, links or elements of a page, use browserless_read_page.';
 
 export const COMPLIANT_PERFORMANCE_DESCRIPTION =
-  'Run a Lighthouse audit on a web page and return the category scores (performance, accessibility, best practices, SEO, PWA) and lab metrics (FCP, LCP, TBT, CLS, Speed Index, initial server response time, total transfer size) in the reply. Use it to answer speed and quality questions about a URL. Optionally limit the categories or emulate a mobile or desktop device. INP is not measured by this navigation audit; TBT is a responsiveness proxy. Audits take 30-120 seconds.';
+  'Run a Lighthouse audit on a web page and return the category scores (performance, accessibility, best practices, SEO, PWA) and lab metrics (FCP, LCP, TBT, CLS, Speed Index, initial server response time, total transfer size). Use it to answer speed and quality questions about a URL. Optionally limit the categories or emulate a mobile or desktop device. INP is not measured by this navigation audit; TBT is a responsiveness proxy. Audits take 30-120 seconds. With inline widgets, returns a pending audit reference immediately; the widget runs the audit and displays results. Do not repeat or poll. Use browserless_performance_result for follow-up analysis of a completed audit.';
+
+export const PERFORMANCE_RUN_DESCRIPTION =
+  'Widget-only execution of a prepared Lighthouse audit. Repeated requests reuse the same audit.';
+export const PERFORMANCE_RESULT_DESCRIPTION =
+  'Retrieve an existing inline Lighthouse audit for follow-up analysis using its exact auditRef. Never starts or repeats an audit. If still pending, let the widget finish; do not poll.';
 
 export const COMPLIANT_MAP_DESCRIPTION =
   'List the URLs of a website, found from its sitemap and the links on its pages, without fetching page content. Use it to see which pages a site has before reading specific ones with browserless_read_page or browserless_export. Optionally order the results by relevance to a search phrase, include, skip or use only the sitemap, and limit the count (up to 500).';

@@ -3,24 +3,20 @@ import {
   UsageSnapshotSchema,
   ActiveSessionsSnapshotSchema,
 } from '../lib/account-view-schemas.js';
+import { formatNumber, formatTimestamp, formatDuration } from './host.mjs';
 import './account-view.css';
 
-const number = (value) =>
-  value === null ? 'Unavailable' : new Intl.NumberFormat().format(value);
 const node = (tag, text, className = '') => {
   const element = document.createElement(tag);
   element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
 };
-const date = (value) => {
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime())
-    ? parsed.toLocaleString()
-    : 'Unavailable';
-};
 
-export function mountAccountView(root, view, app) {
+export function mountAccountView(root, view, app, initialHost = {}) {
+  let host = { ...initialHost };
+  const number = (value) => formatNumber(value, host);
+  const date = (value) => formatTimestamp(value, host) ?? 'Unavailable';
   const usage = view.kind === 'usage';
   const schema = usage ? UsageSnapshotSchema : ActiveSessionsSnapshotSchema;
   let data = schema.parse(view.data),
@@ -159,8 +155,11 @@ export function mountAccountView(root, view, app) {
     scroll.setAttribute('role', 'region');
     scroll.setAttribute('aria-label', 'Active browser sessions');
     const table = node('table');
+    table.setAttribute('role', 'table');
     const head = node('thead'),
       headers = node('tr');
+    head.setAttribute('role', 'rowgroup');
+    headers.setAttribute('role', 'row');
     for (const title of [
       'Session ID',
       'Browser',
@@ -170,12 +169,15 @@ export function mountAccountView(root, view, app) {
     ]) {
       const cell = node('th', title);
       cell.scope = 'col';
+      cell.setAttribute('role', 'columnheader');
       headers.append(cell);
     }
     head.append(headers);
     const rows = node('tbody');
+    rows.setAttribute('role', 'rowgroup');
     for (const session of data.sessions) {
       const row = node('tr');
+      row.setAttribute('role', 'row');
       const start =
         session.startTime === null ? NaN : Date.parse(session.startTime);
       const elapsed = Number.isFinite(start)
@@ -185,14 +187,14 @@ export function mountAccountView(root, view, app) {
         session.browserId ?? 'Unavailable',
         session.browserName ?? 'Unavailable',
         session.startTime === null ? 'Unavailable' : date(session.startTime),
-        elapsed === null
-          ? 'Unavailable'
-          : elapsed >= 60
-            ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-            : `${elapsed}s`,
+        elapsed === null ? 'Unavailable' : formatDuration(elapsed, host),
         session.type ?? 'Unavailable',
-      ])
-        row.append(node('td', value));
+      ]) {
+        const cell = node('td', value);
+        cell.setAttribute('role', 'cell');
+        cell.dataset.label = headers.children[row.children.length].textContent;
+        row.append(cell);
+      }
       rows.append(row);
     }
     table.append(head, rows);
@@ -291,6 +293,27 @@ export function mountAccountView(root, view, app) {
   scheduleExpiry();
   return {
     fail,
+    updateHost(context) {
+      if (disposed) return;
+      const next = { ...host, ...context };
+      const changed =
+        next.locale !== host.locale || next.timeZone !== host.timeZone;
+      host = next;
+      if (!changed) return;
+      const scroll = root.querySelector('.account-table-scroll');
+      const focused = scroll && root.ownerDocument.activeElement === scroll;
+      const left = scroll?.scrollLeft,
+        top = scroll?.scrollTop;
+      const timeframe = select.value;
+      render();
+      if (pending) select.value = timeframe;
+      if (scroll) {
+        const replacement = root.querySelector('.account-table-scroll');
+        if (focused) replacement.focus({ preventScroll: true });
+        replacement.scrollLeft = left;
+        replacement.scrollTop = top;
+      }
+    },
     dispose() {
       clearTimeout(expiryTimer);
       disposed = true;

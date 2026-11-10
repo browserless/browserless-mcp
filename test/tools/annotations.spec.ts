@@ -44,7 +44,7 @@ describe('tool annotations', () => {
 
       registerSurface(server, { ...mockConfig, complianceMode });
 
-      expect(addToolSpy.callCount).to.equal(complianceMode ? 5 : 21);
+      expect(addToolSpy.callCount).to.equal(complianceMode ? 7 : 23);
 
       addToolSpy.getCalls().forEach((call) => {
         const tool = call.args[0];
@@ -64,7 +64,7 @@ describe('tool annotations', () => {
           ).to.deep.equal({
             readOnlyHint: true,
             destructiveHint: false,
-            openWorldHint: true,
+            openWorldHint: tool.name !== 'browserless_performance_result',
           });
         }
       });

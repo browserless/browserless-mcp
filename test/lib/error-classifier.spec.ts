@@ -34,7 +34,9 @@ const ROWS: Row[] = [
   },
   {
     name: 'WS closed mid-flight → SESSION_LOST',
-    err: { message: 'WebSocket closed while waiting for "click" response' },
+    err: {
+      message: 'Agent WebSocket closed while waiting for "click" response',
+    },
     cmd: cmd('click'),
     expected: 'SESSION_LOST',
   },
@@ -100,7 +102,9 @@ const ROWS: Row[] = [
   },
   {
     name: 'evaluate + target closed → SESSION_LOST, not SCRIPT_ERROR',
-    err: { message: 'WebSocket closed while waiting for "evaluate" response' },
+    err: {
+      message: 'Agent WebSocket closed while waiting for "evaluate" response',
+    },
     cmd: cmd('evaluate', { content: 'return 1' }),
     expected: 'SESSION_LOST',
   },

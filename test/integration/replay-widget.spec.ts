@@ -135,7 +135,7 @@ describe('production replay tools over real MCP HTTP', () => {
       expect(
         tools.find((tool) => tool.name === 'browserless_view_data')!._meta,
       ).to.deep.include({ ui: { visibility: ['app'] } });
-      expect(VIEW_URI).to.equal('ui://browserless/view/v12.html');
+      expect(VIEW_URI).to.equal('ui://browserless/view/v13.html');
       expect(
         tools.find((tool) => tool.name === 'browserless_show')!._meta,
       ).to.deep.include({
@@ -145,7 +145,7 @@ describe('production replay tools over real MCP HTTP', () => {
       const resource = (await alice.readResource({ uri: VIEW_URI }))
         .contents[0];
       expect(resource.mimeType).to.equal('text/html;profile=mcp-app');
-      for (let version = 1; version <= 11; version++) {
+      for (let version = 1; version <= 12; version++) {
         const legacy = (
           await alice.readResource({
             uri: `ui://browserless/view/v${version}.html`,
@@ -326,6 +326,9 @@ describe('production replay tools over real MCP HTTP', () => {
     expect(tools).not.to.include('browserless_show');
     expect(tools).not.to.include('browserless_view_data');
     expect(resources).not.to.include(VIEW_URI);
-    expect(resources).to.deep.equal([PERFORMANCE_URI]);
+    expect(resources).to.deep.equal([
+      PERFORMANCE_URI,
+      'ui://browserless/performance/v3.html',
+    ]);
   });
 });
