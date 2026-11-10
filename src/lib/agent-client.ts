@@ -1117,10 +1117,7 @@ const connect = (
           throw new Error('Invalid response envelope');
         }
         if (!('id' in parsed) && !('error' in parsed)) {
-          console.error(
-            '[agent-client] ignored id-less WS frame:',
-            raw.slice(0, 200),
-          );
+          console.error('[agent-client] ignored id-less WS frame');
           return;
         }
         // An uncorrelated protocol error can only identify a command when
@@ -1154,10 +1151,7 @@ const connect = (
               error.suggestion = parsed.error.suggestion;
             request.resolve({ id, error });
           } else {
-            console.error(
-              '[agent-client] uncorrelated WS error:',
-              raw.slice(0, 200),
-            );
+            console.error('[agent-client] uncorrelated WS error');
           }
           return;
         }
@@ -1170,7 +1164,7 @@ const connect = (
         }
         response = parsed as AgentResponse;
       } catch {
-        console.error('[agent-client] malformed WS frame:', raw.slice(0, 200));
+        console.error('[agent-client] malformed WS frame');
         for (const request of requests.values()) {
           request.reject(
             new Error(

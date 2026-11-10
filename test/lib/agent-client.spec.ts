@@ -140,11 +140,38 @@ describe('agent-client response containment', () => {
         String(message).includes('malformed WS frame'),
       );
       assert(diagnostic, 'missing malformed-frame diagnostic');
-      assert.equal(diagnostic[1], raw.slice(0, 200));
+      assert.deepEqual(diagnostic, ['[agent-client] malformed WS frame']);
     } finally {
       log.restore();
     }
   });
+
+  for (const [frame, label] of [
+    [
+      '{"cookies":[{"value":"private-cookie-value"}]}',
+      'ignored id-less WS frame',
+    ],
+    [
+      '{"id":null,"error":{"message":"private-cookie-value"}}',
+      'uncorrelated WS error',
+    ],
+  ]) {
+    it(`logs ${label} without response contents`, async () => {
+      const connected = once(peer, 'connection');
+      const session = await open();
+      const [ws] = await connected;
+      const log = sinon.stub(console, 'error');
+      try {
+        const received = once(session.ws, 'message');
+        ws.send(frame);
+        await received;
+        assert.deepEqual(log.args, [[`[agent-client] ${label}`]]);
+        assert.equal(session.ws.readyState, WebSocket.OPEN);
+      } finally {
+        log.restore();
+      }
+    });
+  }
 
   it('does not assign an uncorrelated error to concurrent commands', async () => {
     peer.on('connection', (ws) => {
