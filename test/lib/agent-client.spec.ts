@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import sinon from 'sinon';
 import http from 'node:http';
 import {
@@ -74,7 +74,6 @@ describe('agent-client response containment', () => {
     '42',
     '"text"',
     '[]',
-    '{}',
     '{"id":null}',
     '{"id":"1"}',
     '{"id":1e999}',
@@ -146,7 +145,7 @@ describe('agent-client response containment', () => {
     }
   });
 
-  it('rejects only the oldest pending command for a null-ID protocol error', async () => {
+  it('does not assign an uncorrelated error to concurrent commands', async () => {
     peer.on('connection', (ws) => {
       const ids: number[] = [];
       ws.on('message', (data) => {
@@ -157,6 +156,7 @@ describe('agent-client response containment', () => {
             JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
           );
           ws.send(JSON.stringify({ id: ids[1], result: 'second command' }));
+          ws.send(JSON.stringify({ id: ids[0], result: 'first command' }));
         } else if (ids.length > 2) {
           ws.send(JSON.stringify({ id, result: 'same browser' }));
         }
@@ -167,9 +167,10 @@ describe('agent-client response containment', () => {
       send(session, 'snapshot', {}, 1500),
       send(session, 'getCookies', {}, 1500),
     ]);
-    assert.equal(results[0].status, 'rejected');
-    if (results[0].status === 'rejected')
-      assert.equal(results[0].reason.message, 'Invalid JSON');
+    assert.deepEqual(results[0], {
+      status: 'fulfilled',
+      value: { id: 1, result: 'first command' },
+    });
     assert.deepEqual(results[1], {
       status: 'fulfilled',
       value: { id: 2, result: 'second command' },
@@ -195,12 +196,120 @@ describe('agent-client response containment', () => {
       if (id === 3) ws.send(JSON.stringify({ id, result: 'still usable' }));
     });
     await assert.rejects(send(session, 'snapshot', {}, 20), /timed out/);
-    await assert.rejects(
-      send(session, 'getCookies', {}, 1500),
-      /^Error: Invalid JSON$/,
-    );
+    assert.deepEqual(await send(session, 'getCookies', {}, 1500), {
+      id: 2,
+      error: { message: 'Invalid JSON' },
+    });
     assert.equal((await send(session, 'snapshot')).result, 'still usable');
     assert.equal(session.ws, socket);
+  });
+
+  it('resolves null-ID errors with only allowed, typed error fields', async () => {
+    peer.on('connection', (ws) => {
+      ws.on('message', () =>
+        ws.send(
+          '{"id":null,"error":{"message":"Invalid JSON","code":"INVALID_PARAMS","retryable":false,"suggestion":"Fix the command","__proto__":{"polluted":true},"stack":"untrusted","extra":true}}',
+        ),
+      );
+    });
+    const session = await open();
+    const response = await send(session, 'getCookies', {}, 1500);
+    assert.deepEqual(response, {
+      id: 1,
+      error: {
+        code: 'INVALID_PARAMS',
+        message: 'Invalid JSON',
+        retryable: false,
+        suggestion: 'Fix the command',
+      },
+    });
+    assert.equal(Object.getPrototypeOf(response.error), Object.prototype);
+  });
+
+  it('ignores and logs id-less event frames while idle and during a command', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const [ws] = await connected;
+    const log = sinon.stub(console, 'error');
+    try {
+      const received = once(session.ws, 'message');
+      ws.send('{}');
+      await received;
+      ws.on('message', (data: Buffer) => {
+        const { id } = JSON.parse(data.toString());
+        ws.send('{"method":"event","params":{"text":"notice"}}');
+        ws.send(JSON.stringify({ id, result: 'same browser' }));
+      });
+      assert.equal(
+        (await send(session, 'snapshot', {}, 100)).result,
+        'same browser',
+      );
+      assert.equal(session.ws.readyState, WebSocket.OPEN);
+      assert(log.args.some(([message]) => String(message).includes('id-less')));
+    } finally {
+      log.restore();
+    }
+  });
+
+  it('rejects a socket that starts closing before dispatch without waiting for timeout', async () => {
+    const session = await open();
+    let checks = 0;
+    const state = sinon
+      .stub(session.ws, 'readyState')
+      .get(() => (++checks === 1 ? WebSocket.OPEN : WebSocket.CLOSING));
+    try {
+      await assert.rejects(
+        send(session, 'getCookies', {}, 40),
+        /WebSocket closed.*getCookies/,
+      );
+    } finally {
+      state.restore();
+    }
+  });
+
+  it('rejects an unmanaged socket without leaving a timeout behind', async () => {
+    const session = await open();
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    await once(ws, 'open');
+    const clock = sinon.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+    });
+    try {
+      await assert.rejects(
+        send({ ...session, ws }, 'snapshot', {}, 40),
+        /response dispatcher/i,
+      );
+      await clock.tickAsync(50);
+      assert.equal(clock.countTimers(), 0);
+    } finally {
+      clock.restore();
+      ws.terminate();
+    }
+  });
+
+  it('includes the method in errors for every command awaiting a closed socket', async () => {
+    peer.on('connection', (ws) => {
+      let count = 0;
+      ws.on('message', () => {
+        if (++count === 2) ws.close();
+      });
+    });
+    const session = await open();
+    const results = await Promise.allSettled([
+      send(session, 'snapshot', {}, 1500),
+      send(session, 'getCookies', {}, 1500),
+    ]);
+    for (const [index, method] of ['snapshot', 'getCookies'].entries()) {
+      const result = results[index];
+      assert.equal(result.status, 'rejected');
+      if (result.status === 'rejected')
+        assert.equal(
+          result.reason.message,
+          `Agent WebSocket closed while waiting for "${method}" response`,
+        );
+    }
   });
 
   it('keeps ping/pong, unmatched IDs, and out-of-order results compatible', async () => {

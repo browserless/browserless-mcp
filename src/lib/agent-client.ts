@@ -34,6 +34,7 @@ const AGENT_TOOL_NAME = 'browserless_agent';
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
 
 type PendingResponse = {
+  method: string;
   resolve: (response: AgentResponse) => void;
   reject: (error: Error) => void;
 };
@@ -1114,9 +1115,16 @@ const connect = (
         ) {
           throw new Error('Invalid response envelope');
         }
-        // The server cannot echo an ID when it rejects an invalid command
-        // envelope. With no correlation ID, fail only the oldest pending
-        // command; never destroy the browser for a protocol-level error.
+        if (!('id' in parsed) && !('error' in parsed)) {
+          console.error(
+            '[agent-client] ignored id-less WS frame:',
+            raw.slice(0, 200),
+          );
+          return;
+        }
+        // An uncorrelated protocol error can only identify a command when
+        // exactly one is pending. Resolve it through the normal error path
+        // so callers do not discard the browser and replay the command.
         if (
           'id' in parsed &&
           parsed.id === null &&
@@ -1127,12 +1135,30 @@ const connect = (
           'message' in parsed.error &&
           typeof parsed.error.message === 'string'
         ) {
-          requests
-            .values()
-            .next()
-            .value?.reject(
-              Object.assign(new Error(parsed.error.message), parsed.error),
+          if (requests.size === 1) {
+            const [id, request] = requests.entries().next().value!;
+            const error: NonNullable<AgentResponse['error']> = {
+              message: parsed.error.message,
+            };
+            if ('code' in parsed.error && typeof parsed.error.code === 'string')
+              error.code = parsed.error.code;
+            if (
+              'retryable' in parsed.error &&
+              typeof parsed.error.retryable === 'boolean'
+            )
+              error.retryable = parsed.error.retryable;
+            if (
+              'suggestion' in parsed.error &&
+              typeof parsed.error.suggestion === 'string'
+            )
+              error.suggestion = parsed.error.suggestion;
+            request.resolve({ id, error });
+          } else {
+            console.error(
+              '[agent-client] uncorrelated WS error:',
+              raw.slice(0, 200),
             );
+          }
           return;
         }
         if (
@@ -1147,7 +1173,9 @@ const connect = (
         console.error('[agent-client] malformed WS frame:', raw.slice(0, 200));
         for (const request of requests.values()) {
           request.reject(
-            new Error('Agent WebSocket closed after a malformed response'),
+            new Error(
+              `Agent WebSocket closed while waiting for "${request.method}" response after a malformed response`,
+            ),
           );
         }
         ws.terminate();
@@ -1159,7 +1187,9 @@ const connect = (
     ws.on('close', () => {
       for (const request of requests.values()) {
         request.reject(
-          new Error('Agent WebSocket closed while waiting for response'),
+          new Error(
+            `Agent WebSocket closed while waiting for "${request.method}" response`,
+          ),
         );
       }
     });
@@ -1231,7 +1261,19 @@ const sendMessage = (
   timeoutMs: number = DEFAULT_TIMEOUT,
 ): Promise<AgentResponse> =>
   new Promise((resolve, reject) => {
-    const requests = pendingResponses.get(ws)!;
+    if (ws.readyState !== WebSocket.OPEN) {
+      reject(
+        new Error(
+          `Agent WebSocket closed before sending "${msg.method}" command`,
+        ),
+      );
+      return;
+    }
+    const requests = pendingResponses.get(ws);
+    if (!requests) {
+      reject(new Error('Agent WebSocket has no response dispatcher'));
+      return;
+    }
     const cleanup = () => {
       clearTimeout(timeout);
       requests.delete(msg.id);
@@ -1247,6 +1289,7 @@ const sendMessage = (
     }, timeoutMs);
 
     requests.set(msg.id, {
+      method: msg.method,
       resolve: (response) => {
         cleanup();
         resolve(response);
