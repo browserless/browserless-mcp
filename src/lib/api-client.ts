@@ -437,6 +437,10 @@ export function createApiClient(
   config: ResolvedConfig,
   cache?: ResponseCache,
 ): ApiClient {
+  config = {
+    ...config,
+    browserlessApiUrl: config.browserlessApiUrl.replace(/\/+$/, ''),
+  };
   const _cache = cache ?? new ResponseCache(config.cacheTtlMs);
 
   return {

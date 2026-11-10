@@ -1,10 +1,11 @@
-import { App, applyDocumentTheme } from '@modelcontextprotocol/ext-apps';
+import { App } from '@modelcontextprotocol/ext-apps';
+import { applyHostContext } from './host.mjs';
 import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
 import { mountHandoff } from './handoff.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
-import { mountPerformance } from './performance.mjs';
+import { mountPerformance, mountPerformancePreview } from './performance.mjs';
 import { mountLogs } from './logs.mjs';
 import { mountAccountView } from './account-view.mjs';
 import {
@@ -46,12 +47,36 @@ const isAccountView = () =>
 const isPerformanceView = () =>
   document.body.dataset.viewKind === 'performance' ||
   lastResult?.structuredContent?.kind === 'performance';
+const previews = {
+  performance: { root: () => performanceRoot, mount: mountPerformancePreview },
+};
+let preview;
+let inputPhase = 'waiting';
+function startPreview() {
+  const entry = previews[document.body.dataset.viewKind];
+  if (!entry) return;
+  card.hidden = true;
+  handoffRoot.hidden = true;
+  mediaRoot.hidden = true;
+  entry.root().hidden = false;
+  preview = entry.mount(entry.root());
+}
+function acceptInput(args, complete) {
+  if (!preview || inputPhase === 'settled' || inputPhase === 'complete') return;
+  try {
+    preview.update(args ?? {}, { complete });
+    inputPhase = complete ? 'complete' : 'partial';
+  } catch {
+    /* Partial input is best-effort; keep the current preview. */
+  }
+}
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
-  if (context.theme) applyDocumentTheme(context.theme);
+  applyHostContext(hostContext);
   handoff?.updateHost(context);
   media?.updateHost(context);
   logs?.updateHost(context);
+  accountView?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -95,6 +120,8 @@ function updateTime(ms) {
   );
 }
 function dispose() {
+  preview?.dispose();
+  preview = undefined;
   clearTimeout(expiryTimer);
   player?.getReplayer().destroy();
   player?.$destroy();
@@ -328,6 +355,7 @@ async function loadData(rawSource, viewRef, signal) {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data));
 }
 async function render(result) {
+  inputPhase = 'settled';
   const current = ++generation;
   loading.abort();
   loading = new AbortController();
@@ -369,7 +397,7 @@ async function render(result) {
     }
     const expires = Date.parse(view.expiresAt);
     if (['usage', 'active-sessions'].includes(view.kind)) {
-      accountView = mountAccountView(accountRoot, view, app);
+      accountView = mountAccountView(accountRoot, view, app, hostContext);
       card.hidden = true;
       accountRoot.hidden = false;
       return;
@@ -484,11 +512,14 @@ resize.observe(stage);
 byId('retry').onclick = () => {
   if (lastResult) void render(lastResult);
 };
+app.ontoolinputpartial = (params) => acceptInput(params?.arguments, false);
+app.ontoolinput = (params) => acceptInput(params?.arguments, true);
 app.ontoolresult = (result) => {
   lastResult = result;
   void render(result);
 };
 app.ontoolcancelled = (params) => {
+  inputPhase = 'settled';
   generation++;
   fail(
     new Error(
@@ -504,6 +535,7 @@ app.ontoolcancelled = (params) => {
 };
 app.onhostcontextchanged = updateHost;
 app.onteardown = async () => {
+  inputPhase = 'settled';
   generation++;
   loading.abort();
   dispose();
@@ -511,6 +543,7 @@ app.onteardown = async () => {
   resize.disconnect();
   return {};
 };
+startPreview();
 app
   .connect()
   .then(() => {
