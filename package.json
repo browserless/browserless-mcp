@@ -92,7 +92,7 @@
     "@opentelemetry/resources": "3.0.0",
     "@opentelemetry/sdk-logs": "3.0.0",
     "@opentelemetry/sdk-metrics": "3.0.0",
-    "@opentelemetry/sdk-node": "0.300.0",
+    "@opentelemetry/sdk-node": "0.301.0",
     "@opentelemetry/semantic-conventions": "1.44.0",
     "fastmcp": "4.23.9",
     "ioredis": "^5.10.1",
