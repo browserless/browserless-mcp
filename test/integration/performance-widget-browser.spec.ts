@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -10,7 +10,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
 import { FastMCP } from 'fastmcp';
-import { registerPerformanceWidget } from '../../src/resources/view-widget.js';
+import {
+  registerPerformanceWidget,
+  registerViewWidget,
+} from '../../src/resources/view-widget.js';
+import { summarizePerformance } from '../../src/lib/performance-summary.js';
 
 // Uses an installed Chromium without adding a browser automation dependency.
 const chrome =
@@ -21,6 +25,206 @@ const chrome =
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
   ].find((path) => existsSync(path));
+
+const previewCases = {
+  'shell before input': `
+    await wait(() => $('.perf-preview'));
+    check(!$('#performance').hidden && $('.replay-card').hidden, 'shell visibility');
+    check($('.perf-progress[role="progressbar"]') && text('.perf-status') === 'Preparing audit…', 'initial status');
+    check(!$('.perf-progress').hasAttribute('aria-valuenow'), 'indeterminate progress');
+  `,
+  'partial changing input and authoritative complete input': `
+    await partial({ url: 'https://exa' });
+    await wait(() => text('[data-role="target"]') === 'exa');
+    await partial({ url: 'https://example.com/pri', device: 'desktop' });
+    await wait(() => text('[data-role="target"]') === 'example.com/pri' && text('[data-role="device"]') === 'Desktop');
+    await partial({ url: 'https:/', device: 'desktop', categories: ['seo', 'acc'] });
+    await wait(() => text('[data-role="categories"]') === 'SEO');
+    check(text('[data-role="target"]') === 'example.com/pri', 'invalid partial erased target');
+    await partial({ url: 'https://example.com/pricing', device: 'desktop', categories: ['seo', 'accessibility'] });
+    await wait(() => text('[data-role="target"]') === 'example.com/pricing' && text('[data-role="categories"]') === 'SEO, Accessibility');
+    await complete({ url: 'https://example.com/pricing', categories: ['seo'] });
+    await wait(() => text('.perf-status').startsWith('Running Lighthouse audit'));
+    check($('[data-role="device"]').hidden && text('[data-role="categories"]') === 'SEO', 'complete input retained stale fields');
+  `,
+  'sensitive input stays out of the DOM': `
+    await complete({ url: 'https://user:pass@example.com/a?token=SECRET123#frag', profile: 'my-login-profile', config: { extraHeaders: { Authorization: 'Bearer SECRET456' } } });
+    await wait(() => text('[data-role="target"]') === 'example.com/a');
+    for (const secret of ['user', 'pass', 'SECRET123', 'frag', 'my-login-profile', 'Authorization', 'SECRET456']) {
+      check(!$('#performance').innerHTML.includes(secret) && !text('#performance').includes(secret), 'leaked ' + secret);
+    }
+  `,
+  'complete input then result': `
+    await complete({ url: 'https://example.com/' });
+    await wait(() => text('.perf-status').startsWith('Running Lighthouse audit'));
+    await result();
+    await wait(() => $('.perf-scores'));
+    check(!$('.perf-preview') && !$('.perf-progress') && text('#performance h1') === 'Performance report', 'preview survived result');
+  `,
+  'result without input': `
+    await result();
+    await wait(() => $('.perf-scores'));
+    check(!$('.perf-preview') && !$('.perf-progress') && text('#performance h1') === 'Performance report', 'result-only rendering');
+  `,
+  'cancellation after partial': `
+    await partial({ url: 'https://example.com/' });
+    await wait(() => text('[data-role="target"]') === 'example.com');
+    await bridge.sendToolCancelled({ reason: 'User cancelled the Lighthouse audit' });
+    await wait(() => text('#performance [role="alert"]').includes('User cancelled the Lighthouse audit'));
+    check(!$('.perf-preview') && !$('.perf-progress') && text('#performance').includes('Run a new audit'), 'cancellation left progress');
+  `,
+  'out-of-order input and teardown': `
+    await complete({ url: 'https://example.com/a' });
+    await wait(() => text('[data-role="target"]') === 'example.com/a');
+    await partial({ url: 'https://evil.example/b' });
+    await complete({ url: 'https://evil.example/duplicate' });
+    await theme('dark');
+    check(text('[data-role="target"]') === 'example.com/a', 'input replaced complete');
+    await result();
+    await wait(() => $('.perf-scores'));
+    await partial({ url: 'https://evil.example/' });
+    await complete({ url: 'https://evil.example/' });
+    await theme('light');
+    check($('.perf-scores') && !$('.perf-preview'), 'input replaced result');
+    await bridge.teardownResource({});
+    frame.remove();
+    await open();
+    await partial({ url: 'https://example.com/' });
+    await wait(() => text('[data-role="target"]') === 'example.com');
+    await bridge.teardownResource({});
+    check(!$('#performance').childElementCount, 'teardown retained children');
+    try { await partial({ url: 'https://example.com/x' }); } catch { /* Bridge may reject after teardown. */ }
+    await theme('dark');
+    check(!$('.perf-preview') && !$('#performance').childElementCount, 'input revived torn-down preview');
+  `,
+  'show widget ignores input': `
+    await partial({ viewRef: 'abc' });
+    await complete({ viewRef: 'abc' });
+    await theme('dark');
+    check([...frame.contentDocument.querySelectorAll('main')].every(main => main.hidden), 'show widget displayed a panel');
+  `,
+};
+
+describe('performance widget input preview', () => {
+  for (const [name, scenario] of Object.entries(previewCases)) {
+    (chrome ? it : it.skip)(name, async function () {
+      this.timeout(25000);
+      const server = new FastMCP({ name: 'preview-test', version: '1.0.0' });
+      const resources = sinon.spy(server, 'addResource');
+      if (name === 'show widget ignores input') registerViewWidget(server);
+      else registerPerformanceWidget(server);
+      const resource = await resources.firstCall.args[0].load();
+      resources.restore();
+      if (Array.isArray(resource) || !('text' in resource))
+        throw new Error('Missing widget HTML');
+      const report = summarizePerformance(
+        JSON.parse(
+          readFileSync('test/fixtures/lighthouse-performance.json', 'utf8'),
+        ),
+        { url: 'https://example.test/' },
+      );
+      const host = await build({
+        stdin: {
+          resolveDir: process.cwd(),
+          contents: `
+          import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
+          const output = document.querySelector('pre');
+          const calls = [], errors = [];
+          let frame, bridge;
+          const check = (condition, message) => { if (!condition) throw new Error(message); };
+          const $ = selector => frame.contentDocument.querySelector(selector);
+          const text = selector => $(selector)?.textContent ?? '';
+          const wait = predicate => new Promise((resolve, reject) => {
+            const start = performance.now();
+            const poll = () => {
+              if (predicate()) return resolve();
+              if (performance.now() - start >= 3000) return reject(new Error('Timed out: ' + predicate));
+              setTimeout(poll, 10);
+            }; poll();
+          });
+          async function open() {
+            frame = document.createElement('iframe');
+            frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+            document.body.append(frame);
+            bridge = new AppBridge(null, { name: 'Browser check', version: '1.0.0' }, {});
+            for (const handler of ['oncalltool', 'onopenlink', 'ondownloadfile', 'onmessage'])
+              bridge[handler] = async () => { calls.push(handler); return {}; };
+            const ready = new Promise(resolve => { bridge.oninitialized = resolve; });
+            await bridge.connect(new PostMessageTransport(frame.contentWindow, frame.contentWindow));
+            frame.src = '/widget';
+            await ready;
+            frame.contentWindow.addEventListener('error', event => errors.push(event.message));
+            frame.contentWindow.addEventListener('unhandledrejection', event => errors.push(String(event.reason)));
+          }
+          const partial = args => bridge.sendToolInputPartial({ arguments: args });
+          const complete = args => bridge.sendToolInput({ arguments: args });
+          const result = () => bridge.sendToolResult({ content: [], structuredContent: ${JSON.stringify(report)} });
+          const theme = async value => {
+            bridge.setHostContext({ theme: value });
+            await wait(() => frame.contentDocument.documentElement.dataset.theme === value);
+          };
+          try {
+            await open();
+            ${scenario}
+            await theme(frame.contentDocument.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+            check(calls.length === 0, 'Unexpected host action: ' + calls.join(','));
+            check(errors.length === 0, 'Browser error: ' + errors.join(','));
+            output.textContent = 'PASS';
+          } catch (error) { output.textContent = 'FAIL: ' + error.message; }
+        `,
+        },
+        bundle: true,
+        format: 'esm',
+        platform: 'browser',
+        write: false,
+      });
+      const http = createServer((request, response) => {
+        if (request.url === '/widget') {
+          response.setHeader('content-type', 'text/html');
+          response.setHeader(
+            'content-security-policy',
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'",
+          );
+          response.end(resource.text);
+        } else if (request.url === '/host.js') {
+          response.setHeader('content-type', 'text/javascript');
+          response.end(host.outputFiles[0].text);
+        } else {
+          response.setHeader('content-type', 'text/html');
+          response.end(
+            '<!doctype html><pre>Waiting</pre><script type="module" src="/host.js"></script>',
+          );
+        }
+      });
+      const directory = await mkdtemp(join(tmpdir(), 'performance-preview-'));
+      try {
+        await new Promise<void>((resolve) =>
+          http.listen(0, '127.0.0.1', resolve),
+        );
+        const { stdout } = await promisify(execFile)(
+          chrome!,
+          [
+            '--headless',
+            '--no-sandbox',
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--user-data-dir=' + directory,
+            '--dump-dom',
+            '--virtual-time-budget=10000',
+            'http://127.0.0.1:' + (http.address() as AddressInfo).port + '/',
+          ],
+          { timeout: 20000, maxBuffer: 8 * 1024 * 1024 },
+        );
+        expect(/<pre>([\s\S]*?)<\/pre>/.exec(stdout)?.[1]).to.equal('PASS');
+      } finally {
+        http.closeAllConnections();
+        await new Promise<void>((resolve) => http.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 describe('performance widget browser recovery', () => {
   (chrome ? it : it.skip)(

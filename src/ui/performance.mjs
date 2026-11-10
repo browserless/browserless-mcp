@@ -1,5 +1,39 @@
-import { PerformanceViewSchema } from '../lib/performance-summary.js';
+import {
+  PerformanceViewSchema,
+  previewPerformanceInput,
+} from '../lib/performance-summary.js';
 import './performance.css';
+
+export function mountPerformancePreview(root) {
+  root.innerHTML = `<div class="perf-preview"><header class="perf-heading"><span class="perf-brand" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 19a10 10 0 1 1 16 0M12 12l5-5M4 12h2m12 0h2M12 2v2"/><circle cx="12" cy="12" r="1.5"/></svg></span><div><h1>Running performance audit</h1><p data-role="target" hidden></p></div><span class="perf-device" data-role="device" hidden></span></header><p data-role="categories" hidden></p><div class="perf-progress" role="progressbar" aria-label="Lighthouse audit in progress"></div><p class="perf-status" role="status" aria-live="polite">Preparing audit…</p></div>`;
+  return {
+    update(args, { complete }) {
+      const next = previewPerformanceInput(args);
+      const labels = {
+        target: next.target,
+        device:
+          next.device === null
+            ? null
+            : next.device === 'mobile'
+              ? 'Mobile'
+              : 'Desktop',
+        categories: next.categories.map(({ title }) => title).join(', '),
+      };
+      for (const [role, value] of Object.entries(labels)) {
+        if (!complete && !value) continue;
+        const element = root.querySelector(`[data-role="${role}"]`);
+        element.textContent = value ?? '';
+        element.hidden = !value;
+      }
+      if (complete)
+        root.querySelector('.perf-status').textContent =
+          'Running Lighthouse audit… This usually takes 30 seconds to 2 minutes.';
+    },
+    dispose() {
+      root.replaceChildren();
+    },
+  };
+}
 
 const rating = (score) =>
   score === null
