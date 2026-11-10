@@ -1,4 +1,5 @@
-import { App, applyDocumentTheme } from '@modelcontextprotocol/ext-apps';
+import { App } from '@modelcontextprotocol/ext-apps';
+import { applyHostContext } from './host.mjs';
 import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
@@ -48,10 +49,11 @@ const isPerformanceView = () =>
   lastResult?.structuredContent?.kind === 'performance';
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
-  if (context.theme) applyDocumentTheme(context.theme);
+  applyHostContext(hostContext);
   handoff?.updateHost(context);
   media?.updateHost(context);
   logs?.updateHost(context);
+  accountView?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -369,7 +371,7 @@ async function render(result) {
     }
     const expires = Date.parse(view.expiresAt);
     if (['usage', 'active-sessions'].includes(view.kind)) {
-      accountView = mountAccountView(accountRoot, view, app);
+      accountView = mountAccountView(accountRoot, view, app, hostContext);
       card.hidden = true;
       accountRoot.hidden = false;
       return;
