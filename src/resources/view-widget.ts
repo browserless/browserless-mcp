@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { FastMCP } from 'fastmcp';
 import { RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
 import { VIEW_URI } from '../lib/view-schemas.js';
+import { LIVE_URL_URI } from '../lib/live-url-view.js';
 import type { McpConfig } from '../@types/types.js';
 import { handoffOrigins } from '../lib/handoff.js';
 import { mediaOrigin } from '../lib/agent-media.js';
@@ -52,6 +53,7 @@ export function registerViewWidget(
   // Keep the previous URI readable while refreshed hosts discover the new UI.
   for (const uri of [
     VIEW_URI,
+    LIVE_URL_URI,
     ...Array.from(
       { length: 12 },
       (_, index) => `ui://browserless/view/v${index + 1}.html`,
@@ -60,15 +62,22 @@ export function registerViewWidget(
     server.addResource({
       uri,
       name:
-        uri === VIEW_URI
-          ? 'Browserless views'
-          : `Browserless view (${uri.match(/v\d+/)?.[0]} compatibility)`,
+        uri === LIVE_URL_URI
+          ? 'Browserless live viewer'
+          : uri === VIEW_URI
+            ? 'Browserless views'
+            : `Browserless view (${uri.match(/v\d+/)?.[0]} compatibility)`,
       mimeType: RESOURCE_MIME_TYPE,
       async load() {
         return {
           text: readFileSync(
             new URL('../ui/view.html', import.meta.url),
             'utf8',
+          ).replace(
+            '<body>',
+            uri === LIVE_URL_URI
+              ? '<body data-view-kind="live-url">'
+              : '<body>',
           ),
           _meta: {
             ui: {
@@ -85,7 +94,9 @@ export function registerViewWidget(
               },
             },
             'openai/widgetDescription':
-              'Browserless replay, captured media, human handoff, account usage meter, active sessions table, and request-log explorer. Let the widget present its data; do not repeat its charts or tables in chat unless asked for analysis or specific values.',
+              uri === LIVE_URL_URI
+                ? 'Live viewer for an existing browser. Direct creation does not pause automation or keep the browser alive. Status, close, and handoff preparation do not open viewers here.'
+                : 'Browserless replay, captured media, human handoff, account usage meter, active sessions table, and request-log explorer. Let the widget present its data; do not repeat its charts or tables in chat unless asked for analysis or specific values.',
           },
         };
       },

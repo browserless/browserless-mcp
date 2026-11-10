@@ -121,7 +121,11 @@ describe('production replay tools over real MCP HTTP', () => {
               (tool._meta.ui as { resourceUri?: string }).resourceUri,
           )
           .map((tool) => tool.name),
-      ).to.deep.equal(['browserless_show', 'browserless_performance']);
+      ).to.deep.equal([
+        'browserless_show',
+        'browserless_performance',
+        'browserless_live_url',
+      ]);
       expect(
         tools.find((tool) => tool.name === 'browserless_sessions')!._meta,
       ).to.equal(undefined);

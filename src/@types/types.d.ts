@@ -784,6 +784,9 @@ export interface LiveURLOptions {
 export interface LiveURLCreated {
   liveURL: string;
   liveURLId: string;
+  timeout?: number;
+  browserExpiresAt?: number | null;
+  targetId?: string;
 }
 
 export interface LiveURLState {

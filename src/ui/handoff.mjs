@@ -1,9 +1,9 @@
 import {
   HandoffStateSchema,
   HandoffSummarySchema,
-  LIVE_VIEWER_PATH,
   VIEW_UNAVAILABLE,
 } from '../lib/view-schemas.js';
+import { LiveViewerURLSchema } from '../lib/live-url-view.js';
 import './handoff.css';
 
 export function mountHandoff(root, payload, view, app, initialHost) {
@@ -24,16 +24,9 @@ export function mountHandoff(root, payload, view, app, initialHost) {
     Date.parse(view.expiresAt) > Date.now() &&
     state.status === 'open'
   ) {
-    viewer = new URL(payload.liveURL);
-    const local = ['localhost', '127.0.0.1', '[::1]'].includes(viewer.hostname);
-    if (
-      !['https:', 'http:'].includes(viewer.protocol) ||
-      (viewer.protocol === 'http:' && !local) ||
-      viewer.username ||
-      viewer.password ||
-      !LIVE_VIEWER_PATH.test(viewer.pathname)
-    )
+    if (!LiveViewerURLSchema.safeParse(payload.liveURL).success)
       throw new Error('Invalid handoff viewer.');
+    viewer = new URL(payload.liveURL);
     iframe.src = viewer.href;
     $('external').href = viewer.href;
   }
