@@ -323,16 +323,6 @@ const handleStreamRequest = async ({`,
     to: 'console.log("[mcp-proxy] received delete request");\n\t\tif (await authenticateSessionRequest({ authenticate, oauth, req, res })) return true;',
     required: false,
   });
-  // Wait for authentication to select the credential before constructing the
-  // endpoint. A present header can still fall back to query authentication.
-  patch({
-    name: 'SSE query credential endpoint',
-    dist: dirname(mcpProxyEntry),
-    files: /\.(mjs|js)$/,
-    from: 'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;',
-    to: 'let transport;\n\t\tlet server;',
-    required: false,
-  });
   patch({
     name: 'SSE connection error privacy',
     dist: dirname(mcpProxyEntry),
@@ -341,13 +331,18 @@ const handleStreamRequest = async ({`,
     to: 'console.error("[mcp-proxy] error connecting to server");',
     required: false,
   });
-  // Keep the opening session available before fastmcp lists it after initialize.
+  // Move construction after authentication and retain the opener in one patch.
+  // Unmatched proxy layouts must keep their original transport construction.
+  const sseServerCreation =
+    'let server;\n\t\ttry {\n\t\t\tserver = await createServer(req);\n\t\t} catch (error$1) {\n\t\t\tif (await handleResponseError(error$1, res)) return true;\n\t\t\tres.writeHead(500).end("Error creating server");\n\t\t\treturn true;\n\t\t}';
   patch({
     name: 'session request authentication SSE opener',
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
-    from: 'activeTransports[transport.sessionId] = transport;',
-    to: 'const openerToken = server.auth?.authMethod === "api_key_query" ? server.auth.token : null;\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\ttransport = new SSEServerTransport(messageEndpoint, res);\n\t\tactiveTransports[transport.sessionId] = Object.assign(transport, { browserlessSession: server });',
+    from: `const transport = new SSEServerTransport("/messages", res);\n\t\t${sseServerCreation}\n\t\tactiveTransports[transport.sessionId] = transport;`,
+    to:
+      sseServerCreation +
+      '\n\t\tconst openerToken = server.auth?.authMethod === "api_key_query" ? server.auth.token : null;\n\t\tconst messageEndpoint = openerToken ? `/messages?${new URLSearchParams({ token: openerToken })}` : "/messages";\n\t\tconst transport = new SSEServerTransport(messageEndpoint, res);\n\t\tactiveTransports[transport.sessionId] = Object.assign(transport, { browserlessSession: server });',
     required: false,
   });
   patch({

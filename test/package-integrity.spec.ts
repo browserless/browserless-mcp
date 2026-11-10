@@ -140,6 +140,37 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     );
   });
 
+  it('leaves SSE construction intact when the proxy session record does not match', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'sse-patch-'));
+    try {
+      for (const name of ['fastmcp', 'mcp-proxy']) {
+        const dir = join(fixture, 'node_modules', name);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+          join(dir, 'package.json'),
+          JSON.stringify({ main: 'index.js' }),
+        );
+      }
+      writeFileSync(
+        join(fixture, 'node_modules/fastmcp/index.js'),
+        'this.#capabilities.tools = {};\n  updateAuth(auth) {',
+      );
+      // Newer proxies retain a session record instead of the transport itself.
+      const source =
+        'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;\n\t\tserver = await createServer(req);\n\t\tactiveTransports[transport.sessionId] = { server, transport };';
+      const proxy = join(fixture, 'node_modules/mcp-proxy/index.js');
+      writeFileSync(proxy, source);
+      const script = join(fixture, 'patch-fastmcp.mjs');
+      copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+      for (let run = 0; run < 2; run++) {
+        execFileSync(process.execPath, [script], { stdio: 'pipe' });
+        expect(readFileSync(proxy, 'utf8')).to.equal(source);
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("has unchained mcp-proxy's bundled SSE stream writer", () => {
     const sources = mcpProxySources();
     expect(
