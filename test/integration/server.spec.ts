@@ -427,6 +427,8 @@ describe('MCP Server Integration', () => {
     'rejection',
     'partial response',
     'preset headers',
+    'pipelined requests',
+    'invalid response metadata',
   ]) {
     it(`contains transport request failures: ${scenario}`, async () => {
       const port = await freePort();
@@ -440,6 +442,7 @@ describe('MCP Server Integration', () => {
           `
           import assert from 'node:assert/strict';
           import { createRequire } from 'node:module';
+          import { createConnection } from 'node:net';
           const require = createRequire(import.meta.url);
           const { startHTTPServer } = await import(
             createRequire(require.resolve('fastmcp')).resolve('mcp-proxy')
@@ -455,9 +458,11 @@ describe('MCP Server Integration', () => {
               if (scenario === 'preset headers') {
                 res.setHeader('Content-Length', '100');
                 res.setHeader('Content-Encoding', 'gzip');
+                res.setHeader('Trailer', 'X-Checksum');
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', 'https://client.example');
               }
+              if (scenario === 'invalid response metadata') res.statusMessage = '\\n';
               throw new Error('local request failure');
             },
           });
@@ -484,12 +489,31 @@ describe('MCP Server Integration', () => {
                   await stream.text();
                 }
               }
+            } else if (scenario === 'pipelined requests') {
+              const response = await new Promise((resolve, reject) => {
+                const socket = createConnection(${port}, '127.0.0.1', () => {
+                  socket.write('GET /fail HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n');
+                });
+                let body = '';
+                socket.setEncoding('utf8');
+                socket.setTimeout(2000, () => socket.destroy(new Error('pipeline timeout')));
+                socket.on('data', (chunk) => { body += chunk; });
+                socket.on('error', reject);
+                socket.on('end', () => resolve(body));
+              });
+              assert.ok(response.includes('HTTP/1.1 500'));
+              assert.ok(response.includes('HTTP/1.1 200'));
+              assert.ok(response.includes('Internal Server ErrorHTTP/1.1 200'));
+              assert.ok(response.includes('pong'));
+            } else if (scenario === 'invalid response metadata') {
+              await assert.rejects(fetch(base + '/fail', { signal: AbortSignal.timeout(2000) }));
             } else {
               const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
               assert.equal(response.status, scenario === 'partial response' ? 200 : 500);
               assert.equal(await response.text(), scenario === 'partial response' ? 'partial' : 'Internal Server Error');
               if (scenario === 'preset headers') {
                 assert.equal(response.headers.get('content-encoding'), null);
+                assert.equal(response.headers.get('trailer'), null);
                 assert.equal(response.headers.get('content-type'), 'text/plain; charset=utf-8');
                 assert.equal(response.headers.get('access-control-allow-origin'), 'https://client.example');
               }

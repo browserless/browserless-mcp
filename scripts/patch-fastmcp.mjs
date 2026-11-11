@@ -142,11 +142,16 @@ if (mcpProxyEntry) {
         requestListener(req, res).catch((error) => {
           console.error("[mcp-proxy] error handling request", error);
           if (res.writableEnded || res.destroyed) return;
-          if (res.headersSent) res.end();
-          else {
-            // The failed handler may have prepared headers for a different body.
-            for (const header of ["Content-Length", "Content-Encoding", "Transfer-Encoding"]) res.removeHeader(header);
-            res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }).end("Internal Server Error");
+          try {
+            if (res.headersSent) res.end();
+            else {
+              // The failed handler may have prepared headers for a different body.
+              for (const header of ["Content-Length", "Content-Encoding", "Transfer-Encoding", "Trailer"]) res.removeHeader(header);
+              const body = "Internal Server Error";
+              res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": Buffer.byteLength(body) }).end(body);
+            }
+          } catch {
+            res.destroy();
           }
         });
       })`,
