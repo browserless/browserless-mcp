@@ -672,7 +672,25 @@ before treating these properties as available in production.
 ## Live URL instructions
 
 `browserless_live_url` creates viewer links over REST for an existing browser.
-Set `action: "create"`, `browserId`, and `interactable: true` for a human handoff:
+On the full HTTP surface, `action: "create"` opens an inline live viewer for
+clients that advertise MCP Apps support. The original JSON result, including
+the viewer URL, remains in `content` for clients that advertise Apps support
+but do not render widgets. The widget reads its viewer URL from `_meta`; IDs
+and lifetime metadata are available in `structuredContent`. Direct viewers do
+not use the shared snapshot store. If a successful create cannot be embedded,
+its JSON result is still returned instead of failing the mutation or creating
+another link.
+
+Non-create actions render no widget content. The viewer's local disconnect timer
+uses the server-reported remaining duration, not the client's wall clock. The
+backend enforces the actual link lifetime, including for delayed or restored
+results; the local timer is not an authorization check.
+
+`status` and `close` return lifecycle results without embedding a viewer. Direct
+creation does not keep the browser alive or pause automation. To pause an agent
+for human input, use `handoff` → `browserless_show` and then `handoff_status`.
+
+Set `action: "create"`, `browserId`, and `interactable: true` for an interactive viewer:
 
 ```json
 {

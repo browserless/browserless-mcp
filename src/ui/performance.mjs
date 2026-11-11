@@ -1,5 +1,6 @@
 import {
   PerformanceViewSchema,
+  PerformancePendingSchema,
   previewPerformanceInput,
 } from '../lib/performance-summary.js';
 import './performance.css';
@@ -58,7 +59,95 @@ const node = (tag, className, text) => {
   return element;
 };
 
-export function mountPerformance(root, rawPayload) {
+function mountPerformanceAudit(root, rawPayload, app, onResult) {
+  const pending = PerformancePendingSchema.parse(rawPayload);
+  const controller = new AbortController();
+  const preview = mountPerformancePreview(root);
+  preview.update(pending.input, { complete: true });
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = 'Cancel audit';
+  cancel.dataset.role = 'cancel-audit';
+  root.querySelector('.perf-preview').append(cancel);
+  cancel.addEventListener(
+    'click',
+    () => {
+      controller.abort();
+      onResult({
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: 'Performance audit was cancelled.',
+          },
+        ],
+      });
+    },
+    { signal: controller.signal },
+  );
+  // A separate task lets the shell render before starting the long request.
+  const timer = setTimeout(async () => {
+    try {
+      const result = await app.callServerTool(
+        {
+          name: 'browserless_performance_run',
+          arguments: { auditRef: pending.auditRef },
+        },
+        { signal: controller.signal, timeout: pending.requestTimeoutMs },
+      );
+      if (controller.signal.aborted) return;
+      if (!result.isError) {
+        const report = PerformanceViewSchema.parse(result.structuredContent);
+        void app
+          .updateModelContext({
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  auditRef: pending.auditRef,
+                  ...report,
+                  url: previewPerformanceInput({ url: report.url }).target,
+                }),
+              },
+            ],
+          })
+          .catch(() => {
+            /* Completed results remain readable through browserless_performance_result. */
+          });
+      }
+      onResult(result);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      onResult({
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text:
+              error.message || 'The performance audit could not be completed.',
+          },
+        ],
+      });
+    }
+  }, 0);
+  return {
+    acceptResult(result) {
+      return (
+        result.structuredContent?.kind === 'performance-pending' &&
+        result.structuredContent.auditRef === pending.auditRef
+      );
+    },
+    dispose() {
+      clearTimeout(timer);
+      controller.abort();
+      preview.dispose();
+    },
+  };
+}
+
+export function mountPerformance(root, rawPayload, app, onResult) {
+  if (rawPayload?.kind === 'performance-pending')
+    return mountPerformanceAudit(root, rawPayload, app, onResult);
   const report = PerformanceViewSchema.parse(rawPayload);
   const controller = new AbortController();
   root.innerHTML = `<header class="perf-heading"><span class="perf-brand" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 19a10 10 0 1 1 16 0M12 12l5-5M4 12h2m12 0h2M12 2v2"/><circle cx="12" cy="12" r="1.5"/></svg></span><div><h1>Performance report</h1><p data-role="website"></p></div><span class="perf-device" data-role="device"></span></header><div class="perf-scores" role="group" aria-label="Select audit category"></div><section class="perf-lab" aria-label="Lighthouse lab metrics"><div class="perf-section-heading"><h2>Lab metrics</h2><span data-role="lab-device"></span></div><dl class="perf-metrics"></dl><p class="perf-lab-note">Single lab run. INP is not measured; TBT is a responsiveness proxy.</p></section><details class="perf-findings" aria-label="Failing audits"><summary class="perf-findings-heading"><span data-role="findings-title">Failing audits</span><span data-role="findings-count"></span></summary><div class="perf-findings-body"></div></details><footer><span data-role="version"></span><span>Browserless</span></footer>`;

@@ -1,11 +1,21 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import { z } from 'zod';
-import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
+import {
+  defineTool,
+  assertHttpScheme,
+  type ToolDefinition,
+} from '../lib/define-tool.js';
+import {
+  PerformanceAudits,
+  PERFORMANCE_AUDIT_TTL_MS,
+} from '../lib/performance-audits.js';
 import { profileField } from './schemas.js';
 import {
   isCompliant,
   COMPLIANT_PERFORMANCE_DESCRIPTION,
+  PERFORMANCE_RUN_DESCRIPTION,
+  PERFORMANCE_RESULT_DESCRIPTION,
 } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { downloadOwner, storeDownload } from '../lib/download-store.js';
@@ -15,6 +25,7 @@ import {
   LighthouseCategorySchema,
   LighthouseDeviceSchema,
   summarizePerformance,
+  type PerformancePending,
 } from '../lib/performance-summary.js';
 import { registerPerformanceWidget } from '../resources/view-widget.js';
 import type {
@@ -80,59 +91,57 @@ export function registerPerformanceTool(
 ): void {
   const compliant = isCompliant(config);
   registerPerformanceWidget(server);
-  defineTool<PerformanceParams, PerformanceResponse>(
-    server,
-    config,
-    analytics,
-    {
-      name: 'browserless_performance',
-      description: compliant
-        ? COMPLIANT_PERFORMANCE_DESCRIPTION
-        : 'Run a Lighthouse performance audit on any URL via the Browserless /performance API. ' +
-          'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
-          'Optionally filter by category, emulate a mobile or desktop device, ' +
-          'supply a custom Lighthouse config, or supply performance budgets. ' +
-          'Returns category scores and available Lighthouse lab metrics inline: ' +
-          'FCP, LCP, TBT, CLS, Speed Index, initial server response time, and total transfer size. ' +
-          'Use these metrics to answer page-speed questions without writing timing scripts. ' +
-          'INP is not measured by this navigation audit; TBT is a responsiveness proxy. ' +
-          'Saves the full JSON report outside the conversation. ' +
-          'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
-          'Note: audits can take 30s–120s depending on the site.',
-      parameters: compliant
-        ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
-        : PerformanceParamsSchema,
-      _meta: {
-        ui: { resourceUri: PERFORMANCE_URI },
-        'openai/outputTemplate': PERFORMANCE_URI,
-      },
-      annotations: {
-        title: 'Browserless Lighthouse Performance Audit',
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: true,
-      },
-      validateUrl: (p) => assertHttpScheme(p.url),
-      profileNotFoundMessage: (profile) =>
-        `Profile "${profile}" was not found for the configured API ` +
-        `token. Create the profile with Browserless.saveProfile in a ` +
-        `live session first, or omit the profile parameter to audit ` +
-        `the page anonymously.`,
-      run: async ({ client, params, log }) => {
-        if (
-          compliant &&
-          (params.config !== undefined || params.budgets !== undefined)
-        ) {
-          throw new UserError(
-            'config and budgets are not available on this endpoint.',
-          );
-        }
-        if (compliant && params.profile !== undefined) {
-          throw new UserError(
-            'Authentication profiles are not available on this endpoint.',
-          );
-        }
-        const response = await client.performance({
+  const audits = new PerformanceAudits();
+  const definition: ToolDefinition<PerformanceParams, PerformanceResponse> = {
+    name: 'browserless_performance',
+    description: compliant
+      ? COMPLIANT_PERFORMANCE_DESCRIPTION
+      : 'Run a Lighthouse performance audit on any URL via the Browserless /performance API. ' +
+        'Returns scores and metrics for accessibility, best practices, performance, PWA, and SEO. ' +
+        'Optionally filter by category, emulate a mobile or desktop device, ' +
+        'supply a custom Lighthouse config, or supply performance budgets. ' +
+        'Returns category scores and available Lighthouse lab metrics inline: ' +
+        'FCP, LCP, TBT, CLS, Speed Index, initial server response time, and total transfer size. ' +
+        'Use these metrics to answer page-speed questions without writing timing scripts. ' +
+        'INP is not measured by this navigation audit; TBT is a responsiveness proxy. ' +
+        'Saves the full JSON report outside the conversation. ' +
+        'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
+        'Note: audits can take 30s–120s depending on the site.',
+    parameters: compliant
+      ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
+      : PerformanceParamsSchema,
+    _meta: {
+      ui: { resourceUri: PERFORMANCE_URI },
+      'openai/outputTemplate': PERFORMANCE_URI,
+    },
+    annotations: {
+      title: 'Browserless Lighthouse Performance Audit',
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+    validateUrl: (params) => {
+      assertHttpScheme(params.url);
+      if (
+        compliant &&
+        (params.config !== undefined || params.budgets !== undefined)
+      )
+        throw new UserError(
+          'config and budgets are not available on this endpoint.',
+        );
+      if (compliant && params.profile !== undefined)
+        throw new UserError(
+          'Authentication profiles are not available on this endpoint.',
+        );
+    },
+    profileNotFoundMessage: (profile) =>
+      `Profile "${profile}" was not found for the configured API ` +
+      `token. Create the profile with Browserless.saveProfile in a ` +
+      `live session first, or omit the profile parameter to audit ` +
+      `the page anonymously.`,
+    run: async ({ client, params, log, signal }) => {
+      const response = await client.performance(
+        {
           url: params.url,
           categories: params.categories,
           device: params.device,
@@ -140,12 +149,165 @@ export function registerPerformanceTool(
           budgets: params.budgets,
           timeout: params.timeout,
           profile: params.profile,
+        },
+        signal,
+      );
+      log.debug(
+        `Performance response: type=${response.type}, ` +
+          `dataKeys=${Object.keys(response.data ?? {}).length}`,
+      );
+      return response;
+    },
+    format: async (response, params, { token, sessionId, uiEnabled }) => {
+      const blocks: Content[] = [];
+      const data = response.data ?? {};
+      const categories = (data.categories ?? {}) as Record<
+        string,
+        { title?: string; score?: number | null }
+      >;
+      const categoryEntries = Object.entries(categories);
+      if (categoryEntries.length > 0) {
+        const summary = categoryEntries
+          .map(([id, cat]) => {
+            const score =
+              cat.score != null ? `${Math.round(cat.score * 100)}/100` : 'N/A';
+            return `- ${cat.title ?? id}: ${score}`;
+          })
+          .join('\n');
+        blocks.push({
+          type: 'text' as const,
+          text: `## Lighthouse Scores\n${summary}`,
         });
-        log.debug(
-          `Performance response: type=${response.type}, ` +
-            `dataKeys=${Object.keys(response.data ?? {}).length}`,
+      }
+      const audits = (data.audits ?? {}) as Record<
+        string,
+        {
+          displayValue?: string;
+          numericValue?: number;
+          scoreDisplayMode?: string;
+        }
+      >;
+      const metrics = [
+        ['first-contentful-paint', 'FCP', 'ms'],
+        ['largest-contentful-paint', 'LCP', 'ms'],
+        ['total-blocking-time', 'TBT', 'ms'],
+        ['cumulative-layout-shift', 'CLS', ''],
+        ['speed-index', 'Speed Index', 'ms'],
+        ['server-response-time', 'Initial server response time', 'ms'],
+        ['total-byte-weight', 'Total transfer size', 'bytes'],
+      ];
+      if (categories.performance || metrics.some(([id]) => audits[id])) {
+        const summary = metrics.map(([id, label, unit]) => {
+          const audit = audits[id];
+          let value = 'Unavailable';
+          if (
+            audit &&
+            !['error', 'notApplicable'].includes(audit.scoreDisplayMode ?? '')
+          ) {
+            if (audit.displayValue) {
+              value = audit.displayValue;
+            } else if (
+              typeof audit.numericValue === 'number' &&
+              Number.isFinite(audit.numericValue)
+            ) {
+              value = `${audit.numericValue}${unit ? ` ${unit}` : ''}`;
+            }
+          }
+          return `- ${label}: ${value}`;
+        });
+        blocks.push({
+          type: 'text',
+          text:
+            `## Lighthouse Lab Metrics\n${summary.join('\n')}\n` +
+            'INP is not measured by this navigation audit; TBT is a responsiveness proxy.',
+        });
+      }
+      if (!compliant) {
+        const record = await storeDownload(
+          'lighthouse-report.json',
+          'application/json',
+          Buffer.from(JSON.stringify(data, null, 2)),
+          downloadOwner(token),
+          sessionId,
         );
-        return response;
+        blocks.push({
+          type: 'text' as const,
+          text:
+            'Full Lighthouse report saved outside the conversation:\n' +
+            describeReadyDownload(record, {
+              transport: config.transport,
+              mcpBaseUrl: config.mcpBaseUrl,
+              token,
+            }) +
+            '\nFiles expire after 15 minutes or when the MCP session ends; save a copy if needed. ' +
+            'For HTTP, download to disk first using the save command above. ' +
+            'Inspect only the fields needed for your task with jq, for example:\n' +
+            'jq \'.audits["first-contentful-paint"] | {score, displayValue, numericValue}\' <saved-report-path>\n' +
+            'Do not read or paste the entire JSON report into the conversation.',
+        });
+      }
+      const meta = [
+        '---',
+        `URL: ${params.url}`,
+        ...(!compliant
+          ? [
+              `Lighthouse Version: ${(data.lighthouseVersion as string) ?? 'unknown'}`,
+            ]
+          : []),
+      ];
+      if (params.categories) {
+        meta.push(`Categories: ${params.categories.join(', ')}`);
+      }
+      if (params.device) {
+        meta.push(`Device: ${params.device}`);
+      }
+      meta.push('---');
+      blocks.push({ type: 'text' as const, text: meta.join('\n') });
+      // Keep legacy output byte-for-byte for clients without MCP Apps.
+      // Like other capability-gated producers, no unconditional outputSchema:
+      // those clients must not be required to receive structuredContent.
+      return uiEnabled
+        ? {
+            content: blocks,
+            structuredContent: summarizePerformance(data, params),
+          }
+        : blocks;
+    },
+  };
+  defineTool<PerformanceParams, PerformanceResponse | PerformancePending>(
+    server,
+    config,
+    analytics,
+    {
+      ...definition,
+      description: compliant
+        ? definition.description
+        : definition.description +
+          ' In clients with inline widgets, returns a pending audit reference immediately; ' +
+          'the widget runs the audit and displays results. Do not repeat or poll the audit. ' +
+          'Use browserless_performance_result for follow-up analysis of a completed audit.',
+      run: async (ctx) => {
+        if (!ctx.uiEnabled) return definition.run(ctx);
+        const url = new URL(ctx.params.url);
+        url.username = '';
+        url.password = '';
+        url.search = '';
+        url.hash = '';
+        return {
+          kind: 'performance-pending',
+          auditRef: audits.prepare(ctx.params, ctx.viewOwner),
+          requestTimeoutMs: Math.min(
+            PERFORMANCE_AUDIT_TTL_MS,
+            ((ctx.params.timeout ?? config.requestTimeout) + 5000) *
+              (config.maxRetries + 1) +
+              15000,
+          ),
+          input: {
+            url: url.href.slice(0, 2048),
+            device: ctx.params.device,
+            categories: ctx.params.categories,
+          },
+        };
       },
       analyticsProps: (params) => ({
         url: params.url,
@@ -154,123 +316,65 @@ export function registerPerformanceTool(
         custom_config: !!params.config,
         profile_used: !!params.profile,
       }),
-      format: async (response, params, { token, sessionId, uiEnabled }) => {
-        const blocks: Content[] = [];
-        const data = response.data ?? {};
-        const categories = (data.categories ?? {}) as Record<
-          string,
-          { title?: string; score?: number | null }
-        >;
-        const categoryEntries = Object.entries(categories);
-        if (categoryEntries.length > 0) {
-          const summary = categoryEntries
-            .map(([id, cat]) => {
-              const score =
-                cat.score != null
-                  ? `${Math.round(cat.score * 100)}/100`
-                  : 'N/A';
-              return `- ${cat.title ?? id}: ${score}`;
-            })
-            .join('\n');
-          blocks.push({
-            type: 'text' as const,
-            text: `## Lighthouse Scores\n${summary}`,
-          });
-        }
-        const audits = (data.audits ?? {}) as Record<
-          string,
-          {
-            displayValue?: string;
-            numericValue?: number;
-            scoreDisplayMode?: string;
-          }
-        >;
-        const metrics = [
-          ['first-contentful-paint', 'FCP', 'ms'],
-          ['largest-contentful-paint', 'LCP', 'ms'],
-          ['total-blocking-time', 'TBT', 'ms'],
-          ['cumulative-layout-shift', 'CLS', ''],
-          ['speed-index', 'Speed Index', 'ms'],
-          ['server-response-time', 'Initial server response time', 'ms'],
-          ['total-byte-weight', 'Total transfer size', 'bytes'],
-        ];
-        if (categories.performance || metrics.some(([id]) => audits[id])) {
-          const summary = metrics.map(([id, label, unit]) => {
-            const audit = audits[id];
-            let value = 'Unavailable';
-            if (
-              audit &&
-              !['error', 'notApplicable'].includes(audit.scoreDisplayMode ?? '')
-            ) {
-              if (audit.displayValue) {
-                value = audit.displayValue;
-              } else if (
-                typeof audit.numericValue === 'number' &&
-                Number.isFinite(audit.numericValue)
-              ) {
-                value = `${audit.numericValue}${unit ? ` ${unit}` : ''}`;
-              }
-            }
-            return `- ${label}: ${value}`;
-          });
-          blocks.push({
-            type: 'text',
-            text:
-              `## Lighthouse Lab Metrics\n${summary.join('\n')}\n` +
-              'INP is not measured by this navigation audit; TBT is a responsiveness proxy.',
-          });
-        }
-        if (!compliant) {
-          const record = await storeDownload(
-            'lighthouse-report.json',
-            'application/json',
-            Buffer.from(JSON.stringify(data, null, 2)),
-            downloadOwner(token),
-            sessionId,
-          );
-          blocks.push({
-            type: 'text' as const,
-            text:
-              'Full Lighthouse report saved outside the conversation:\n' +
-              describeReadyDownload(record, {
-                transport: config.transport,
-                mcpBaseUrl: config.mcpBaseUrl,
-                token,
-              }) +
-              '\nFiles expire after 15 minutes or when the MCP session ends; save a copy if needed. ' +
-              'For HTTP, download to disk first using the save command above. ' +
-              'Inspect only the fields needed for your task with jq, for example:\n' +
-              'jq \'.audits["first-contentful-paint"] | {score, displayValue, numericValue}\' <saved-report-path>\n' +
-              'Do not read or paste the entire JSON report into the conversation.',
-          });
-        }
-        const meta = [
-          '---',
-          `URL: ${params.url}`,
-          ...(!compliant
-            ? [
-                `Lighthouse Version: ${(data.lighthouseVersion as string) ?? 'unknown'}`,
-              ]
-            : []),
-        ];
-        if (params.categories) {
-          meta.push(`Categories: ${params.categories.join(', ')}`);
-        }
-        if (params.device) {
-          meta.push(`Device: ${params.device}`);
-        }
-        meta.push('---');
-        blocks.push({ type: 'text' as const, text: meta.join('\n') });
-        // Keep legacy output byte-for-byte for clients without MCP Apps.
-        // Like other capability-gated producers, no unconditional outputSchema:
-        // those clients must not be required to receive structuredContent.
-        return uiEnabled
+      format: (result, params, ctx) =>
+        'kind' in result
           ? {
-              content: blocks,
-              structuredContent: summarizePerformance(data, params),
+              content: [
+                {
+                  type: 'text',
+                  text: 'The performance audit is pending in the inline widget. Do not claim scores yet, start another audit, or poll. The widget will display results; use browserless_performance_result with this auditRef for follow-up questions.',
+                },
+              ],
+              structuredContent: result,
             }
-          : blocks;
-      },
+          : definition.format(result, params, ctx),
     },
   );
+  const reference = z.object({ auditRef: z.uuid() });
+  defineTool(server, config, analytics, {
+    name: 'browserless_performance_run',
+    description: PERFORMANCE_RUN_DESCRIPTION,
+    collectPrompt: false,
+    parameters: reference,
+    annotations: definition.annotations,
+    _meta: { ui: { visibility: ['app'] } },
+    profileNotFoundMessage: definition.profileNotFoundMessage,
+    run: (ctx) =>
+      audits.run(
+        ctx.params.auditRef,
+        ctx.viewOwner,
+        ctx.signal,
+        async (params, signal) => {
+          const response = await definition.run({ ...ctx, params, signal });
+          const result = await definition.format(response, params, {
+            ...ctx,
+            uiEnabled: true,
+          });
+          return Array.isArray(result) ? { content: result } : result;
+        },
+      ),
+    format: (result) => result,
+  });
+  defineTool(server, config, analytics, {
+    name: 'browserless_performance_result',
+    description: PERFORMANCE_RESULT_DESCRIPTION,
+    collectPrompt: false,
+    parameters: reference,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: true,
+    },
+    run: async (ctx) =>
+      audits.read(ctx.params.auditRef, ctx.viewOwner) ?? {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'This audit is still pending in its widget. Let it finish; do not poll or start another audit.',
+          },
+        ],
+      },
+    format: (result) => result,
+  });
 }

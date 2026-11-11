@@ -1,5 +1,6 @@
 """Local-only CDP transport limits. Run: python -m unittest discover -s hermes/scripts -p 'test_*.py'."""
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 import sys
@@ -74,7 +75,10 @@ class MuxLimitsTests(unittest.IsolatedAsyncioTestCase):
                 async with websockets.connect(self.mux.url) as healthy:
                     offender = await websockets.connect(self.mux.url)
                     try:
-                        await offender.send(message)
+                        # The mux closes as soon as the running total crosses the
+                        # limit, which can land before a fragmented send finishes.
+                        with contextlib.suppress(websockets.ConnectionClosed):
+                            await offender.send(message)
                         await asyncio.wait_for(offender.wait_closed(), 5)
                         self.assertEqual(offender.close_code, 1009)
                         await healthy.send('{"id": 9, "method": "Browser.getVersion"}')

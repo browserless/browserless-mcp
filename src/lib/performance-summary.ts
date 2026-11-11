@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { PerformanceParams } from '../@types/types.js';
 
-export const PERFORMANCE_URI = 'ui://browserless/performance/v3.html';
+export const PERFORMANCE_URI = 'ui://browserless/performance/v4.html';
 export const LighthouseCategorySchema = z.enum([
   'accessibility',
   'best-practices',
@@ -10,6 +10,17 @@ export const LighthouseCategorySchema = z.enum([
   'seo',
 ]);
 export const LighthouseDeviceSchema = z.enum(['mobile', 'desktop']);
+export const PerformancePendingSchema = z.object({
+  kind: z.literal('performance-pending'),
+  auditRef: z.uuid(),
+  requestTimeoutMs: z.number().int().positive(),
+  input: z.object({
+    url: z.string().max(2048),
+    device: LighthouseDeviceSchema.optional(),
+    categories: z.array(LighthouseCategorySchema).optional(),
+  }),
+});
+export type PerformancePending = z.infer<typeof PerformancePendingSchema>;
 export const PERFORMANCE_CATEGORY_TITLES = {
   performance: 'Performance',
   accessibility: 'Accessibility',
