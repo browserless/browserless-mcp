@@ -152,8 +152,9 @@ describe('browserless_agent PDF reading', () => {
       ).to.equal(false);
     }
     expect(
-      CompliantAgentParamsSchema.safeParse({ method: 'readPdf', params: {} })
-        .success,
+      CompliantAgentParamsSchema.safeParse({
+        commands: [{ method: 'readPdf', params: {} }],
+      }).success,
     ).to.equal(false);
   });
 
