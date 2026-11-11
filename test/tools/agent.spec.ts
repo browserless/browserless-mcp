@@ -1740,7 +1740,10 @@ describe('browserless_agent session diagnostics', () => {
       url: 'https://example.com',
       status: 200,
     }));
-    const reason = 'transport\n\u202e"\\end';
+    const reason =
+      'transport' +
+      'x'.repeat(100) +
+      '\n\u202e"\\end; code=1008, reason="peer:\\u202e"';
     const warn = sinon.stub();
     sinon
       .stub(WebSocket.prototype, 'send')
@@ -1760,8 +1763,10 @@ describe('browserless_agent session diagnostics', () => {
         .find((line) => line.includes('retrying once'));
       expect(warning).to.be.a('string');
       expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
-      expect(JSON.parse(warning!.slice(warning!.indexOf('): ') + 3))).to.equal(
-        reason,
+      expect(warning!.slice(warning!.indexOf('): ') + 3)).to.equal(
+        'transport' +
+          'x'.repeat(100) +
+          '\\u000a\\u202e"\\end; code=1008, reason="peer:\\u202e"',
       );
     } finally {
       await server.close();

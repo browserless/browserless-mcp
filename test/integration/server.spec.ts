@@ -532,6 +532,60 @@ describe('MCP Server Integration', () => {
     });
   }
 
+  it('returns 400 without an OAuth challenge for invalid attach IDs with a valid token', async () => {
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    server = new FastMCP({
+      name: 'invalid-attach-test',
+      version: '0.1.0',
+      auth: new OAuthProvider({
+        baseUrl: base,
+        clientId: 'test',
+        clientSecret: 'test',
+        authorizationEndpoint: 'http://127.0.0.1:9/authorize',
+        tokenEndpoint: 'http://127.0.0.1:9/token',
+        scopes: ['email'],
+      }),
+      authenticate: (request) =>
+        resolveBrowserlessRequestAuth(request, mockConfig),
+    });
+    try {
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port, host: '127.0.0.1' },
+      });
+      for (const [query, headers] of [
+        ['?browserlessSessionId=browser%0Aid', {}],
+        ['', { 'x-browserless-session-id': 'browser\tid' }],
+      ] as const) {
+        const response = await fetch(`${base}/mcp${query}`, {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer valid-key',
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+            ...headers,
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-03-26',
+              capabilities: {},
+              clientInfo: { name: 'invalid-attach-test', version: '1' },
+            },
+          }),
+        });
+        expect(response.status).to.equal(400);
+        expect(response.headers.get('www-authenticate')).to.equal(null);
+        expect(await response.text()).to.include('session ID');
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
   it('starts with upload roots unset and permits re-upload from the default download directory', async () => {
     const originalDownload = process.env.BROWSERLESS_DOWNLOAD_DIR;
     const originalUpload = process.env.BROWSERLESS_UPLOAD_DIRS;

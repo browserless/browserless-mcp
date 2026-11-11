@@ -87,8 +87,13 @@ export const resolveBrowserlessAuth = async (
         id !== undefined && id.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1,
     )
   ) {
-    throw new Error(
-      'Invalid Browserless session ID: control, format, and line separator characters are not allowed.',
+    throw Response.json(
+      {
+        error: 'invalid_request',
+        error_description:
+          'Invalid Browserless session ID: control, format, and line separator characters are not allowed.',
+      },
+      { status: 400 },
     );
   }
   const attachSessionId = input.sessionIdHeader ?? input.sessionIdQuery;

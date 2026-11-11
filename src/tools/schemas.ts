@@ -51,12 +51,12 @@ export function profileField(whenLoaded: string, extra = '') {
 
 const sessionIdField = z
   .string()
+  .trim()
+  .min(1)
   .refine((value) => value.search(UNSAFE_DIAGNOSTIC_CHARACTERS) === -1, {
     message:
       'sessionId must not contain control, format, or line separator characters',
   })
-  .trim()
-  .min(1)
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +

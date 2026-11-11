@@ -5,7 +5,10 @@ import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
-import { diagnosticString } from '../lib/diagnostic-string.js';
+import {
+  diagnosticString,
+  escapeDiagnosticString,
+} from '../lib/diagnostic-string.js';
 import { mediaOrigin, prepareAgentMedia } from '../lib/agent-media.js';
 import {
   assertAllowedUploadPath,
@@ -1800,7 +1803,7 @@ export const runAgentCommands = async (
           sendErr instanceof Error ? sendErr.message : String(sendErr);
         if (!isRetry && !saveSecretSent) {
           log.warn(
-            `agent: ${cmd.method} failed (first attempt, retrying once): ${diagnosticString(errMessage)}`,
+            `agent: ${cmd.method} failed (first attempt, retrying once): ${escapeDiagnosticString(errMessage)}`,
           );
           return runCommands(true, agentSession.persona ?? retryPersona);
         }

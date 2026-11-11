@@ -19,7 +19,7 @@ import {
 } from '../../src/lib/agent-client.js';
 
 describe('agent session identifier validation', () => {
-  it('rejects controls, format characters and line separators before trimming on both surfaces', () => {
+  it('trims session IDs before rejecting remaining unsafe characters on both surfaces', () => {
     for (const schema of [
       AgentToolParamsSchema,
       CompliantAgentToolParamsSchema,
@@ -47,7 +47,7 @@ describe('agent session identifier validation', () => {
           expect(
             schema.safeParse({ commands: [{ method: 'close' }], sessionId })
               .success,
-          ).to.equal(false);
+          ).to.equal(sessionId.trim() === 's:valid');
         }
       }
       for (const sessionId of [
@@ -60,6 +60,15 @@ describe('agent session identifier validation', () => {
           schema.safeParse({ commands: [{ method: 'close' }], sessionId })
             .success,
         ).to.equal(true);
+      }
+      for (const sessionId of [
+        's:12345678-1234-1234-1234-123456789abc\n',
+        's:valid\t',
+      ]) {
+        expect(
+          schema.parse({ commands: [{ method: 'close' }], sessionId })
+            .sessionId,
+        ).to.equal(sessionId.trim());
       }
     }
   });

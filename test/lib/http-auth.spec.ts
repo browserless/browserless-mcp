@@ -53,9 +53,11 @@ describe('resolveBrowserlessAuth', () => {
         } catch (caught) {
           error = caught;
         }
-        expect(error).to.be.instanceOf(Error);
-        expect((error as Error).message).to.include('session ID');
-        expect((error as Error).message).not.to.include(id);
+        expect(error).to.be.instanceOf(Response);
+        expect((error as Response).status).to.equal(400);
+        const body = await (error as Response).text();
+        expect(body).to.include('session ID');
+        expect(body).not.to.include(id);
       }
     }
     expect(fetch.called).to.equal(false);
