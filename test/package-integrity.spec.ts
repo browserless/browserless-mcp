@@ -146,16 +146,80 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     );
   });
 
+  it('fails closed on missing security patches for the pinned transport only', () => {
+    const targets = [
+      'const activeSSETransports = {};',
+      'const activeStreamTransports = {};',
+      'const cleanupServer = async (server, onClose) => {\n\tif (onClose) await onClose(server);',
+      'http.createServer(requestListener)',
+      'https.createServer(options, requestListener)',
+      '\t\t\t\tserver.connect(transport);',
+    ];
+    for (const version of [pkg.overrides['mcp-proxy'], '99.0.0']) {
+      for (let missing = -1; missing < targets.length; missing++) {
+        const fixture = mkdtempSync(join(tmpdir(), 'transport-patch-'));
+        try {
+          const scripts = join(fixture, 'scripts');
+          const fastmcp = join(fixture, 'node_modules/fastmcp/dist');
+          const proxy = join(fixture, 'node_modules/mcp-proxy/dist');
+          for (const dir of [scripts, fastmcp, proxy])
+            mkdirSync(dir, { recursive: true });
+          writeFileSync(
+            join(fixture, 'package.json'),
+            JSON.stringify({ overrides: pkg.overrides }),
+          );
+          writeFileSync(
+            join(fastmcp, '../package.json'),
+            JSON.stringify({ main: 'dist/FastMCP.cjs' }),
+          );
+          writeFileSync(
+            join(fastmcp, 'FastMCP.cjs'),
+            'this.#capabilities.tools = {};\n  updateAuth(auth) {',
+          );
+          writeFileSync(
+            join(proxy, '../package.json'),
+            JSON.stringify({ version, main: 'dist/index.mjs' }),
+          );
+          writeFileSync(
+            join(proxy, 'index.mjs'),
+            targets.filter((_, index) => index !== missing).join('\n'),
+          );
+          const script = join(scripts, 'patch-fastmcp.mjs');
+          copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+          const run = () =>
+            execFileSync(process.execPath, [script], { stdio: 'pipe' });
+          if (missing >= 0 && version === pkg.overrides['mcp-proxy']) {
+            expect(run, `missing pinned target ${targets[missing]}`).to.throw(
+              'target not found',
+            );
+          } else {
+            run();
+            run(); // Both pinned and consumer installs must stay idempotent.
+          }
+        } finally {
+          rmSync(fixture, { recursive: true, force: true });
+        }
+      }
+    }
+  });
   for (const supported of [false, true]) {
     it(`handles an SSE session-record fixture with supported=${supported}`, async () => {
       const fixture = mkdtempSync(join(tmpdir(), 'sse-patch-'));
       try {
+        mkdirSync(join(fixture, 'scripts'));
+        writeFileSync(
+          join(fixture, 'package.json'),
+          JSON.stringify({ overrides: pkg.overrides }),
+        );
         for (const name of ['fastmcp', 'mcp-proxy']) {
           const dir = join(fixture, 'node_modules', name);
           mkdirSync(dir, { recursive: true });
           writeFileSync(
             join(dir, 'package.json'),
-            JSON.stringify({ main: 'index.js' }),
+            JSON.stringify({
+              version: '6.8.0',
+              main: name === 'mcp-proxy' ? 'dist/index.js' : 'index.js',
+            }),
           );
         }
         writeFileSync(
@@ -166,9 +230,10 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         const source = supported
           ? 'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;\n\t\ttry {\n\t\t\tserver = await createServer(req);\n\t\t} catch (error) {\n\t\t\tif (await handleResponseError(error, res)) return true;\n\t\t\tres.writeHead(500).end("Error creating server");\n\t\t\treturn true;\n\t\t}\n\t\tactiveTransports[transport.sessionId] = {\n\t\t\tserver,\n\t\t\ttransport\n\t\t};\nif (sseEndpoint && await handleSSERequest({ req, res })) return;'
           : 'const transport = new SSEServerTransport("/messages", res);\n\t\tlet server;\n\t\tserver = await createServer(req);\n\t\tactiveTransports[transport.sessionId] = { server, transport };';
-        const proxy = join(fixture, 'node_modules/mcp-proxy/index.js');
+        const proxy = join(fixture, 'node_modules/mcp-proxy/dist/index.js');
+        mkdirSync(dirname(proxy));
         writeFileSync(proxy, source);
-        const script = join(fixture, 'patch-fastmcp.mjs');
+        const script = join(fixture, 'scripts/patch-fastmcp.mjs');
         copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
         let patched = source;
         for (let run = 0; run < 2; run++) {
