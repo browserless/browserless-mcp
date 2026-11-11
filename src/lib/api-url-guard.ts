@@ -22,12 +22,16 @@ export const assertAllowedApiUrl = (
   }
 
   const host = url.hostname;
-  const allowedHost =
+  const browserlessHost =
     host === 'browserless.io' ||
     (host.length > '.browserless.io'.length &&
-      host.endsWith('.browserless.io')) ||
-    allowedApiUrlHosts(config).includes(host) ||
+      host.endsWith('.browserless.io'));
+  const isConfiguredOrigin = () =>
     url.origin === new URL(config.browserlessApiUrl).origin;
+  const allowedHost =
+    browserlessHost ||
+    allowedApiUrlHosts(config).includes(host) ||
+    isConfiguredOrigin();
 
   if (
     candidate.length > 2048 ||
@@ -43,5 +47,14 @@ export const assertAllowedApiUrl = (
     !allowedHost
   ) {
     throw new InvalidApiUrlError('Invalid Browserless API URL override');
+  }
+
+  // Hosted Browserless APIs receive the token with each request, so a
+  // plain-HTTP override would send it unencrypted. The operator's own
+  // configured origin is exempt.
+  if (browserlessHost && url.protocol !== 'https:' && !isConfiguredOrigin()) {
+    throw new InvalidApiUrlError(
+      'Browserless API URL overrides must use https://',
+    );
   }
 };
