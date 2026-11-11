@@ -1279,7 +1279,7 @@ export const runAgentCommands = async (
     params.sessionId !== `attach:${attachSessionId}`
   ) {
     log.warn(
-      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId)} canonical=attach:${attachSessionId}`,
+      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId)} canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
     );
   }
   const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
@@ -1800,7 +1800,7 @@ export const runAgentCommands = async (
           sendErr instanceof Error ? sendErr.message : String(sendErr);
         if (!isRetry && !saveSecretSent) {
           log.warn(
-            `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
+            `agent: ${cmd.method} failed (first attempt, retrying once): ${diagnosticString(errMessage)}`,
           );
           return runCommands(true, agentSession.persona ?? retryPersona);
         }

@@ -19,6 +19,68 @@ const config = {
 describe('resolveBrowserlessAuth', () => {
   afterEach(() => sinon.restore());
 
+  it('rejects unsafe attach IDs from headers and decoded query parameters without resolving credentials', async () => {
+    const fetch = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('Unexpected credential lookup'));
+    for (const char of [
+      '\u0000',
+      '\n',
+      '\r',
+      '\t',
+      '\u001b',
+      '\u0085',
+      '\u202e',
+      '\u200b',
+      '\ufeff',
+      '\u2028',
+      '\u2029',
+      '\u{e0001}',
+    ]) {
+      const id = 'browser' + char + 'id';
+      for (const [headers, query] of [
+        [{ 'x-browserless-session-id': id }, 'safe-browser'],
+        [{}, id],
+        [{ 'x-browserless-session-id': 'safe-browser' }, id],
+      ] as const) {
+        const input = authInputFromRequest({
+          headers: { authorization: 'Bearer a.b.c', ...headers },
+          url: '/mcp?browserlessSessionId=' + encodeURIComponent(query),
+        });
+        let error: unknown;
+        try {
+          await resolveBrowserlessAuth(input, config);
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(Error);
+        expect((error as Error).message).to.include('session ID');
+        expect((error as Error).message).not.to.include(id);
+      }
+    }
+    expect(fetch.called).to.equal(false);
+    expect(
+      (
+        await resolveBrowserlessAuth(
+          {
+            authHeader: 'key',
+            sessionIdHeader: 'browser-header',
+            sessionIdQuery: 'browser-query',
+          },
+          config,
+        )
+      ).attachSessionId,
+    ).to.equal('browser-header');
+    expect(
+      (
+        await resolveBrowserlessAuth(
+          { authHeader: 'key', sessionIdQuery: 'browser-query' },
+          config,
+        )
+      ).attachSessionId,
+    ).to.equal('browser-query');
+  });
+
   it('distinguishes presented credentials without resolving them', () => {
     for (const [input, expected] of [
       [{}, false],

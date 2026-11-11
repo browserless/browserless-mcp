@@ -4,6 +4,7 @@ import { resolveApiKey } from './account-resolver.js';
 import type { BrowserlessSession, McpConfig } from '../@types/types.js';
 import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 import { sanitizeUserAgent } from './attribution.js';
+import { UNSAFE_DIAGNOSTIC_CHARACTERS } from './diagnostic-string.js';
 
 export type ResolvedBrowserlessAuth = BrowserlessSession;
 
@@ -80,6 +81,16 @@ export const resolveBrowserlessAuth = async (
   // A pre-created session id to attach to, threaded by the autologin runner.
   // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
   // own POST /profile.
+  if (
+    [input.sessionIdHeader, input.sessionIdQuery].some(
+      (id) =>
+        id !== undefined && id.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1,
+    )
+  ) {
+    throw new Error(
+      'Invalid Browserless session ID: control, format, and line separator characters are not allowed.',
+    );
+  }
   const attachSessionId = input.sessionIdHeader ?? input.sessionIdQuery;
 
   // Analytics-only origin tag set by our own callers; absent for external LLMs.

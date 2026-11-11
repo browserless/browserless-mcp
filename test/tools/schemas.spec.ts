@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   AgentCommandSchema,
   AgentToolParamsSchema,
+  CompliantAgentToolParamsSchema,
   CompliantAgentCommandSchema,
   COMPLIANT_AGENT_METHODS,
   GenericCommandSchema,
@@ -16,6 +17,53 @@ import {
   ProxyOptionsSchema,
   PROXY_FIELDS,
 } from '../../src/lib/agent-client.js';
+
+describe('agent session identifier validation', () => {
+  it('rejects controls, format characters and line separators before trimming on both surfaces', () => {
+    for (const schema of [
+      AgentToolParamsSchema,
+      CompliantAgentToolParamsSchema,
+    ]) {
+      for (const char of [
+        '\u0000',
+        '\n',
+        '\r',
+        '\t',
+        '\u001b',
+        '\u0085',
+        '\u202e',
+        '\u2066',
+        '\u200b',
+        '\ufeff',
+        '\u2028',
+        '\u2029',
+        '\u{e0001}',
+      ]) {
+        for (const sessionId of [
+          char + 's:valid',
+          's:bad' + char + 'id',
+          's:valid' + char,
+        ]) {
+          expect(
+            schema.safeParse({ commands: [{ method: 'close' }], sessionId })
+              .success,
+          ).to.equal(false);
+        }
+      }
+      for (const sessionId of [
+        's:12345678-1234-1234-1234-123456789abc',
+        'attach:browser-1',
+        's:café😀',
+        undefined,
+      ]) {
+        expect(
+          schema.safeParse({ commands: [{ method: 'close' }], sessionId })
+            .success,
+        ).to.equal(true);
+      }
+    }
+  });
+});
 
 describe('credential command schema dispatch', () => {
   it('points saved profile users at profile import', () => {

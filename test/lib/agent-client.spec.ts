@@ -2979,6 +2979,7 @@ describe('agent-client session diagnostics', () => {
       false,
       undefined,
       handle,
+      'eviction-scope',
     );
   };
   afterEach(async () => {
@@ -2991,6 +2992,7 @@ describe('agent-client session diagnostics', () => {
         undefined,
         undefined,
         handle,
+        'eviction-scope',
       );
     }
     await server.close();
@@ -3021,13 +3023,19 @@ describe('agent-client session diagnostics', () => {
         undefined,
         undefined,
         handle,
+        'eviction-scope',
       );
-      const expected = `[agent-client] evicted session key=${JSON.stringify(key.slice(0, 80))}${key.length > 80 ? '…' : ''} reason=idle\n`;
+      const previewKey = key.replace(
+        `conv#${handle}`,
+        `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+      );
+      const expected = `[agent-client] evicted session key=${JSON.stringify(previewKey)} reason=idle\n`;
       const line = stderr
         .getCalls()
         .map((call) => String(call.args[0]))
         .find((value) => value === expected);
       expect(line).to.be.a('string');
+      expect(line).to.include('int#');
       expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
       expect(() =>
         getActiveSessionByHandle(handle, server.url, 'tok'),
@@ -3069,6 +3077,39 @@ describe('agent-client session diagnostics', () => {
       for (const ws of peer.clients) ws.terminate();
       await new Promise<void>((resolve) => peer.close(() => resolve()));
     }
+  });
+
+  it('escapes the complete peer reason in a connect-close error', async () => {
+    const reason = 'a'.repeat(100) + '\n\u202e"\\end';
+    expect(Buffer.byteLength(reason)).to.be.at.most(123);
+    const emit = WebSocket.prototype.emit;
+    // Exercise the pre-open close path, which cannot be sent as a normal
+    // post-upgrade close frame without first resolving the connection.
+    sinon.stub(WebSocket.prototype, 'emit').callsFake(function (
+      this: WebSocket,
+      event,
+      ...args
+    ) {
+      if (
+        event === 'open' &&
+        this.url?.startsWith(server.url.replace('http:', 'ws:'))
+      ) {
+        return emit.call(this, 'close', 1008, Buffer.from(reason));
+      }
+      return emit.call(this, event, ...args);
+    });
+    let error: unknown;
+    try {
+      await open('s:connect-close');
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).to.be.instanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(JSON.parse(message.slice(message.indexOf('reason=') + 7))).to.equal(
+      reason,
+    );
   });
 });
 

@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
-import { diagnosticString } from './diagnostic-string.js';
+import { diagnosticPreview, diagnosticString } from './diagnostic-string.js';
 import {
   recordUpstreamCall,
   recordSessionLifetime,
@@ -537,8 +537,16 @@ const properClose = (
       } catch {
         /* ignore */
       }
+      // Bound only the handle; keep every scope suffix in the diagnostic key.
+      const handleStart = key.indexOf('conv#') + 'conv#'.length;
+      const preview = diagnosticPreview(session.handle);
+      const diagnosticKey =
+        key.slice(0, handleStart) +
+        preview +
+        (preview.length < session.handle.length ? '…' : '') +
+        key.slice(handleStart + session.handle.length);
       console.error(
-        `[agent-client] evicted session key=${diagnosticString(key)} reason=${reason}`,
+        `[agent-client] evicted session key=${diagnosticString(diagnosticKey, Infinity)} reason=${reason}`,
       );
     });
 };
@@ -868,7 +876,8 @@ export const preflightAgentCapabilities = async (
 // UpgradeError), so a 1006 close here only means a transport failure or a
 // server crash before any HTTP response.
 const describeConnectCloseCode = (code: number, reason: string): string => {
-  if (reason) return `code=${code}, reason=${diagnosticString(reason)}`;
+  if (reason)
+    return `code=${code}, reason=${diagnosticString(reason, Infinity)}`;
   if (code === 1006)
     return 'code=1006 (abnormal close before HTTP response — likely a network failure or server crash)';
   if (code === 1008) return 'code=1008 (policy violation)';

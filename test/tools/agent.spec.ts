@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { once } from 'node:events';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
@@ -1735,17 +1735,68 @@ const getAgentExecute = (
 describe('browserless_agent session diagnostics', () => {
   afterEach(() => sinon.restore());
 
-  it('escapes echoed session controls without rejecting execution', async () => {
+  it('escapes transport errors in retry warnings', async () => {
+    const server = await makeRespondingServer(() => ({
+      url: 'https://example.com',
+      status: 200,
+    }));
+    const reason = 'transport\n\u202e"\\end';
+    const warn = sinon.stub();
+    sinon
+      .stub(WebSocket.prototype, 'send')
+      .callThrough()
+      .onFirstCall()
+      .throws(new Error(reason));
+    try {
+      const result = await getAgentExecute(server.url)(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, log: { ...mockContext.log, warn } },
+      );
+      expect(JSON.stringify(result)).to.include('https://example.com');
+      expect(server.hits()).to.equal(2);
+      const warning = warn
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((line) => line.includes('retrying once'));
+      expect(warning).to.be.a('string');
+      expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(JSON.parse(warning!.slice(warning!.indexOf('): ') + 3))).to.equal(
+        reason,
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('escapes canonical attach IDs as a backstop when HTTP validation is bypassed', async () => {
+    const warn = sinon.stub();
+    const attachSessionId = 'browser\t\u202e';
+    await getAgentExecute('http://127.0.0.1:1')(
+      { method: 'close', sessionId: 's:foreign' },
+      {
+        ...mockContext,
+        log: { ...mockContext.log, warn },
+        session: { attachSessionId },
+      },
+    );
+    const warning = warn.firstCall.args[0] as string;
+    expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(
+      JSON.parse(warning.slice(warning.indexOf('canonical=') + 10)),
+    ).to.equal(`attach:${attachSessionId}`);
+  });
+
+  it('escapes echoed session controls as a backstop when schema validation is bypassed', async () => {
     const sessionId =
       's:\n\r\t\u001b\u007f\u0085\u009b\u2028\u2029\u202e\u2066\u200b\u{e0001}"\\end';
     const stderr = sinon.spy(process.stderr, 'write');
     // Closing an absent session reaches the diagnostics without a connection.
     const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
     const result = await execute(
-      AgentToolParamsSchema.parse({
+      {
         method: 'close',
         sessionId,
-      }),
+      },
       { ...mockContext, sessionId },
     );
     expect(JSON.stringify(result)).to.include('Browser session closed.');
@@ -3805,7 +3856,7 @@ describe('browserless_agent persona creation guard', () => {
           )!;
         expect(JSON.parse(fields[1])).to.equal(echo.slice(0, 80));
         expect(fields[2]).to.equal(echo.length > 80 ? '…' : '');
-        expect(fields[3]).to.equal('attach:existing-browser');
+        expect(fields[3]).to.equal('"attach:existing-browser"');
         expect(warn.firstCall.args[0]).to.not.include('test-token');
       }
       warn.resetHistory();
