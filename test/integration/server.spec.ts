@@ -426,6 +426,7 @@ describe('MCP Server Integration', () => {
     'registry',
     'rejection',
     'partial response',
+    'partial fixed-length response',
     'preset headers',
     'pipelined requests',
     'invalid response metadata',
@@ -454,7 +455,8 @@ describe('MCP Server Integration', () => {
             createServer: async () => { throw new Error('unexpected session'); },
             onUnhandledRequest: async (req, res) => {
               if (req.url !== '/fail') return;
-              if (scenario === 'partial response') res.write('partial');
+              if (scenario === 'partial fixed-length response') res.setHeader('Content-Length', '100');
+              if (scenario.startsWith('partial')) res.write('partial');
               if (scenario === 'preset headers') {
                 res.setHeader('Content-Length', '100');
                 res.setHeader('Content-Encoding', 'gzip');
@@ -501,16 +503,24 @@ describe('MCP Server Integration', () => {
                 socket.on('error', reject);
                 socket.on('end', () => resolve(body));
               });
-              assert.ok(response.includes('HTTP/1.1 500'));
-              assert.ok(response.includes('HTTP/1.1 200'));
-              assert.ok(response.includes('Internal Server ErrorHTTP/1.1 200'));
-              assert.ok(response.includes('pong'));
-            } else if (scenario === 'invalid response metadata') {
-              await assert.rejects(fetch(base + '/fail', { signal: AbortSignal.timeout(2000) }));
+              const headerEnd = response.indexOf('\\r\\n\\r\\n');
+              const headers = response.slice(0, headerEnd).toLowerCase().split('\\r\\n');
+              assert.ok(headers[0].startsWith('http/1.1 500 '));
+              const length = Number(headers.find((header) => header.startsWith('content-length:'))?.split(':')[1]);
+              assert.equal(length, Buffer.byteLength('Internal Server Error'));
+              const bodyEnd = headerEnd + 4 + length;
+              assert.equal(response.slice(headerEnd + 4, bodyEnd), 'Internal Server Error');
+              assert.ok(response.slice(bodyEnd).startsWith('HTTP/1.1 200 '));
+              assert.ok(response.slice(bodyEnd).includes('pong'));
+            } else if (scenario === 'invalid response metadata' || scenario.startsWith('partial')) {
+              await assert.rejects(async () => {
+                const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
+                await response.text();
+              });
             } else {
               const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
-              assert.equal(response.status, scenario === 'partial response' ? 200 : 500);
-              assert.equal(await response.text(), scenario === 'partial response' ? 'partial' : 'Internal Server Error');
+              assert.equal(response.status, 500);
+              assert.equal(await response.text(), 'Internal Server Error');
               if (scenario === 'preset headers') {
                 assert.equal(response.headers.get('content-encoding'), null);
                 assert.equal(response.headers.get('trailer'), null);

@@ -143,7 +143,7 @@ if (mcpProxyEntry) {
           console.error("[mcp-proxy] error handling request", error);
           if (res.writableEnded || res.destroyed) return;
           try {
-            if (res.headersSent) res.end();
+            if (res.headersSent) res.destroy();
             else {
               // The failed handler may have prepared headers for a different body.
               for (const header of ["Content-Length", "Content-Encoding", "Transfer-Encoding", "Trailer"]) res.removeHeader(header);
