@@ -595,11 +595,12 @@ describe('MCP Server Integration', () => {
   ]) {
     it(`contains transport request failures: ${scenario}`, async () => {
       const port = await freePort();
-      // A child with Node's default rejection policy must survive the request;
+      // A child with strict rejection handling must survive the request;
       // an in-process test runner could mask an unhandled listener rejection.
       const { stdout } = await promisify(execFile)(
         process.execPath,
         [
+          '--unhandled-rejections=strict',
           '--input-type=module',
           '-e',
           `
