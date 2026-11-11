@@ -73,6 +73,37 @@ describe('browserless_performance tool', () => {
     expect(() => registerPerformanceTool(server, mockConfig)).to.not.throw();
   });
 
+  it('propagates MCP cancellation to the API request without retrying', async () => {
+    const controller = new AbortController();
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    fetchStub.callsFake(
+      (_url, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          started();
+          init.signal!.addEventListener(
+            'abort',
+            () => reject(new Error('API request aborted')),
+            { once: true },
+          );
+        }),
+    );
+    const execute = getToolExecute(
+      new FastMCP({ name: 'test', version: '0.1.0' }),
+      { ...mockConfig, maxRetries: 3 },
+    );
+    const result = execute(
+      { url: 'https://example.com' },
+      { ...mockContext, signal: controller.signal },
+    ).catch((error) => error);
+    await ready;
+    controller.abort();
+    expect(((await result) as Error).message).to.equal('API request aborted');
+    expect(fetchStub.callCount).to.equal(1);
+  });
+
   it('connector returns the audit inline without a file transfer', async () => {
     fetchStub.resolves(
       new Response(

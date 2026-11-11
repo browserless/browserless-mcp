@@ -1,10 +1,13 @@
 import { expect } from 'chai';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import WebSocket, { WebSocketServer } from 'ws';
 import sinon from 'sinon';
 import http from 'node:http';
 import {
   buildAgentWsUrl,
   closeSession,
+  closeSessionByHandle,
   createRepeatState,
   detectRepetition,
   getActiveSessionByHandle,
@@ -16,6 +19,7 @@ import {
   preflightAgentCapabilities,
   proxyFingerprint,
   sessionHandle,
+  sweepSessions,
   dropMcpSession,
   send,
   startHumanHandoff,
@@ -43,6 +47,371 @@ import {
   createSyncInstruments,
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
+import { classifyAgentError } from '../../src/lib/error-classifier.js';
+
+describe('agent-client response containment', () => {
+  let peer: WebSocketServer;
+  beforeEach(async () => {
+    peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+  });
+  afterEach(async () => {
+    for (const ws of peer.clients) ws.terminate();
+    await new Promise<void>((resolve) => peer.close(() => resolve()));
+  });
+  const open = () => {
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    return getOrCreateSession(
+      'response-containment',
+      `http://127.0.0.1:${address.port}`,
+      'fixture-token',
+    );
+  };
+
+  for (const frame of [
+    'null',
+    '{invalid',
+    'true',
+    '42',
+    '"text"',
+    '[]',
+    '{"id":null}',
+    '{"id":"1"}',
+    '{"id":1e999}',
+    '{"id":null,"error":{}}',
+  ]) {
+    it(`contains malformed frames to their connection (${frame})`, async () => {
+      peer.on('connection', (ws) => {
+        let count = 0;
+        ws.on('message', () => {
+          if (++count === 2) ws.send(frame);
+        });
+      });
+      const healthyPeer = await makeRespondingServer(() => ({ healthy: true }));
+      try {
+        const failed = await open();
+        const healthy = await getOrCreateSession(
+          'healthy-containment',
+          healthyPeer.url,
+          'fixture-token',
+        );
+        assert.deepEqual((await send(healthy, 'snapshot')).result, {
+          healthy: true,
+        });
+        const closed = once(failed.ws, 'close');
+        const results = await Promise.allSettled([
+          send(failed, 'evaluate', {}, 1500),
+          send(failed, 'getCookies', {}, 1500),
+          send(healthy, 'snapshot', {}, 1500),
+        ]);
+        for (const result of results.slice(0, 2)) {
+          assert.equal(result.status, 'rejected');
+          if (result.status === 'rejected') {
+            const classified = classifyAgentError({
+              err: result.reason,
+              cmd: { method: 'evaluate', params: {} },
+            });
+            assert.equal(classified.category, 'SESSION_LOST');
+            assert.match(classified.recovery, /goto.*snapshot/i);
+          }
+        }
+        await closed;
+        assert.equal(results[2].status, 'fulfilled');
+        assert.deepEqual((await send(healthy, 'snapshot')).result, {
+          healthy: true,
+        });
+      } finally {
+        await healthyPeer.close();
+      }
+    });
+  }
+
+  it('contains and logs a malformed frame even between commands', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const [ws] = await connected;
+    const closed = once(session.ws, 'close');
+    const log = sinon.stub(console, 'error');
+    const raw = 'bad-frame-' + 'x'.repeat(300);
+    try {
+      ws.send(raw);
+      await closed;
+      const diagnostic = log.args.find(([message]) =>
+        String(message).includes('malformed WS frame'),
+      );
+      assert(diagnostic, 'missing malformed-frame diagnostic');
+      assert.deepEqual(diagnostic, ['[agent-client] malformed WS frame']);
+    } finally {
+      log.restore();
+    }
+  });
+
+  for (const [frame, label] of [
+    [
+      '{"cookies":[{"value":"private-cookie-value"}]}',
+      'ignored id-less WS frame',
+    ],
+    [
+      '{"id":null,"error":{"message":"private-cookie-value"}}',
+      'uncorrelated WS error',
+    ],
+  ]) {
+    it(`logs ${label} without response contents`, async () => {
+      const connected = once(peer, 'connection');
+      const session = await open();
+      const [ws] = await connected;
+      const log = sinon.stub(console, 'error');
+      try {
+        const received = once(session.ws, 'message');
+        ws.send(frame);
+        await received;
+        assert.deepEqual(log.args, [[`[agent-client] ${label}`]]);
+        assert.equal(session.ws.readyState, WebSocket.OPEN);
+      } finally {
+        log.restore();
+      }
+    });
+  }
+
+  it('does not assign an uncorrelated error to concurrent commands', async () => {
+    peer.on('connection', (ws) => {
+      const ids: number[] = [];
+      ws.on('message', (data) => {
+        const { id } = JSON.parse(data.toString());
+        ids.push(id);
+        if (ids.length === 2) {
+          ws.send(
+            JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+          );
+          ws.send(JSON.stringify({ id: ids[1], result: 'second command' }));
+          ws.send(JSON.stringify({ id: ids[0], result: 'first command' }));
+        } else if (ids.length > 2) {
+          ws.send(JSON.stringify({ id, result: 'same browser' }));
+        }
+      });
+    });
+    const session = await open();
+    const results = await Promise.allSettled([
+      send(session, 'snapshot', {}, 1500),
+      send(session, 'getCookies', {}, 1500),
+    ]);
+    assert.deepEqual(results[0], {
+      status: 'fulfilled',
+      value: { id: 1, result: 'first command' },
+    });
+    assert.deepEqual(results[1], {
+      status: 'fulfilled',
+      value: { id: 2, result: 'second command' },
+    });
+    assert.equal((await send(session, 'snapshot')).result, 'same browser');
+    assert.equal(peer.clients.size, 1);
+  });
+
+  it('ignores idle protocol errors and removes timed-out requests before matching errors', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const socket = session.ws;
+    const [ws] = await connected;
+    const received = once(socket, 'message');
+    ws.send(JSON.stringify({ id: null, error: { message: 'Idle error' } }));
+    await received;
+    ws.on('message', (data: Buffer) => {
+      const { id } = JSON.parse(data.toString());
+      if (id === 2)
+        ws.send(
+          JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+        );
+      if (id === 3) ws.send(JSON.stringify({ id, result: 'still usable' }));
+    });
+    await assert.rejects(send(session, 'snapshot', {}, 20), /timed out/);
+    assert.deepEqual(await send(session, 'getCookies', {}, 1500), {
+      id: 2,
+      error: { message: 'Invalid JSON' },
+    });
+    assert.equal((await send(session, 'snapshot')).result, 'still usable');
+    assert.equal(session.ws, socket);
+  });
+
+  it('resolves null-ID errors with only allowed, typed error fields', async () => {
+    peer.on('connection', (ws) => {
+      ws.on('message', () =>
+        ws.send(
+          '{"id":null,"error":{"message":"Invalid JSON","code":"INVALID_PARAMS","retryable":false,"suggestion":"Fix the command","__proto__":{"polluted":true},"stack":"untrusted","extra":true}}',
+        ),
+      );
+    });
+    const session = await open();
+    const response = await send(session, 'getCookies', {}, 1500);
+    assert.deepEqual(response, {
+      id: 1,
+      error: {
+        code: 'INVALID_PARAMS',
+        message: 'Invalid JSON',
+        retryable: false,
+        suggestion: 'Fix the command',
+      },
+    });
+    assert.equal(Object.getPrototypeOf(response.error), Object.prototype);
+  });
+
+  it('preserves the connection after an error with no id key', async () => {
+    peer.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const { id, method } = JSON.parse(data.toString());
+        ws.send(
+          JSON.stringify(
+            method === 'getCookies'
+              ? { error: { message: 'Invalid JSON' } }
+              : { id, result: 'same browser' },
+          ),
+        );
+      });
+    });
+    const session = await open();
+    const socket = session.ws;
+    assert.deepEqual(await send(session, 'getCookies', {}, 1500), {
+      id: 1,
+      error: { message: 'Invalid JSON' },
+    });
+    assert.equal((await send(session, 'snapshot')).result, 'same browser');
+    assert.equal(session.ws, socket);
+  });
+
+  it('accepts an in-flight reply while the session is closing normally', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const [ws] = await connected;
+    const received = once(ws, 'message');
+    const response = send(session, 'getCookies', {}, 1500);
+    const [data] = await received;
+    const { id } = JSON.parse(data.toString());
+    const closed = once(session.ws, 'close');
+    assert.equal(
+      await closeSessionByHandle(session.handle, 'fixture-token'),
+      true,
+    );
+    assert.equal(session.ws.readyState, WebSocket.CLOSING);
+    ws.send(JSON.stringify({ id, result: { cookies: [] } }));
+    assert.deepEqual(await response, { id, result: { cookies: [] } });
+    await closed;
+  });
+
+  it('ignores and logs id-less event frames while idle and during a command', async () => {
+    const connected = once(peer, 'connection');
+    const session = await open();
+    const [ws] = await connected;
+    const log = sinon.stub(console, 'error');
+    try {
+      const received = once(session.ws, 'message');
+      ws.send('{}');
+      await received;
+      ws.on('message', (data: Buffer) => {
+        const { id } = JSON.parse(data.toString());
+        ws.send('{"method":"event","params":{"text":"notice"}}');
+        ws.send(JSON.stringify({ id, result: 'same browser' }));
+      });
+      assert.equal(
+        (await send(session, 'snapshot', {}, 100)).result,
+        'same browser',
+      );
+      assert.equal(session.ws.readyState, WebSocket.OPEN);
+      assert(log.args.some(([message]) => String(message).includes('id-less')));
+    } finally {
+      log.restore();
+    }
+  });
+
+  it('rejects a socket that starts closing before dispatch without waiting for timeout', async () => {
+    const session = await open();
+    let checks = 0;
+    const state = sinon
+      .stub(session.ws, 'readyState')
+      .get(() => (++checks === 1 ? WebSocket.OPEN : WebSocket.CLOSING));
+    try {
+      await assert.rejects(
+        send(session, 'getCookies', {}, 40),
+        /WebSocket closed.*getCookies/,
+      );
+    } finally {
+      state.restore();
+    }
+  });
+
+  it('rejects an unmanaged socket without leaving a timeout behind', async () => {
+    const session = await open();
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    await once(ws, 'open');
+    const clock = sinon.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+    });
+    try {
+      await assert.rejects(
+        send({ ...session, ws }, 'snapshot', {}, 40),
+        /response dispatcher/i,
+      );
+      await clock.tickAsync(50);
+      assert.equal(clock.countTimers(), 0);
+    } finally {
+      clock.restore();
+      ws.terminate();
+    }
+  });
+
+  it('includes the method in errors for every command awaiting a closed socket', async () => {
+    peer.on('connection', (ws) => {
+      let count = 0;
+      ws.on('message', () => {
+        if (++count === 2) ws.close();
+      });
+    });
+    const session = await open();
+    const results = await Promise.allSettled([
+      send(session, 'snapshot', {}, 1500),
+      send(session, 'getCookies', {}, 1500),
+    ]);
+    for (const [index, method] of ['snapshot', 'getCookies'].entries()) {
+      const result = results[index];
+      assert.equal(result.status, 'rejected');
+      if (result.status === 'rejected')
+        assert.equal(
+          result.reason.message,
+          `Agent WebSocket closed while waiting for "${method}" response`,
+        );
+    }
+  });
+
+  it('keeps ping/pong, unmatched IDs, and out-of-order results compatible', async () => {
+    let pongs = 0;
+    peer.on('connection', (ws) => {
+      const ids: number[] = [];
+      ws.on('pong', () => {
+        if (++pongs !== 2) return;
+        ws.send(JSON.stringify({ id: 999, result: 'unrelated' }));
+        ws.send(JSON.stringify({ id: ids[1], error: { message: 'rejected' } }));
+        ws.send(JSON.stringify({ id: ids[0], result: null, extra: true }));
+      });
+      ws.on('message', (data) => {
+        ids.push(JSON.parse(data.toString()).id);
+        ws.ping('not JSON');
+      });
+    });
+    const session = await open();
+    assert.deepEqual(
+      await Promise.all([
+        send(session, 'snapshot', {}, 1500),
+        send(session, 'getCookies', {}, 1500),
+      ]),
+      [
+        { id: 1, result: null, extra: true },
+        { id: 2, error: { message: 'rejected' } },
+      ],
+    );
+    assert.equal(pongs, 2);
+  });
+});
 
 describe('agent-client explicit close during human handoff', () => {
   it('blocks scope and source changes until the handoff is released', async () => {
@@ -2588,6 +2957,222 @@ describe('agent-client integration binding key', () => {
 
   it('ignores allowedDomains with no integrationId (it never reaches the wire)', () => {
     expect(key(undefined, ['https://a.com'])).to.equal(key(undefined));
+  });
+});
+
+describe('agent-client session diagnostics', () => {
+  let server: Awaited<ReturnType<typeof makeRespondingServer>>;
+  const handles: string[] = [];
+  beforeEach(async () => {
+    server = await makeRespondingServer(() => ({}));
+  });
+  const open = (handle: string, url = server.url) => {
+    handles.push(handle);
+    return getOrCreateSession(
+      'eviction-diagnostic',
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      'eviction-scope',
+    );
+  };
+  afterEach(async () => {
+    for (const handle of handles.splice(0)) {
+      await closeSession(
+        'eviction-diagnostic',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        handle,
+        'eviction-scope',
+      );
+    }
+    await server.close();
+    sinon.restore();
+  });
+
+  for (const handle of [
+    's:\tcontrol',
+    's:eviction-long\t' + 'x'.repeat(1024),
+  ]) {
+    it(`bounds and escapes the eviction key for a ${handle.length > 80 ? 'long' : 'short'} handle`, async () => {
+      const stderr = sinon.spy(process.stderr, 'write');
+      // Tab is a control character accepted by the upstream session header.
+      const neighbor = await open('s:diagnostic-neighbor');
+      const session = await open(handle);
+      expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
+        session,
+      );
+      const closed = once(session.ws, 'close');
+      session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+      sweepSessions();
+      await closed;
+      const key = getSessionKey(
+        'eviction-diagnostic',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        handle,
+        'eviction-scope',
+      );
+      const previewKey = key.replace(
+        `conv#${handle}`,
+        `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+      );
+      const expected = `[agent-client] evicted session key=${JSON.stringify(previewKey)} reason=idle\n`;
+      const line = stderr
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((value) => value === expected);
+      expect(line).to.be.a('string');
+      expect(line).to.include('int#');
+      expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(() =>
+        getActiveSessionByHandle(handle, server.url, 'tok'),
+      ).to.throw('The requested browser session is unavailable.');
+      expect(
+        getActiveSessionByHandle(neighbor.handle, server.url, 'tok'),
+      ).to.equal(neighbor);
+    });
+  }
+
+  for (const attachId of [
+    'browser-$&-$`-id',
+    'browser-$&-' + 'x'.repeat(1024),
+  ]) {
+    it(`bounds the logged attach# value for a ${attachId.length > 80 ? 'long' : 'short'} attach ID without changing session scope`, async () => {
+      const handle = `attach:${attachId}`;
+      const stderr = sinon.spy(process.stderr, 'write');
+      try {
+        const session = await getOrCreateSession(
+          'attach-diagnostic',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          false,
+          undefined,
+          undefined,
+          'attach-scope',
+        );
+        expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
+          session,
+        );
+        expect(
+          new URL(server.upgradeUrls()[0], server.url).searchParams.get(
+            'sessionId',
+          ),
+        ).to.equal(attachId);
+        const key = getSessionKey(
+          'attach-diagnostic',
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          undefined,
+          'attach-scope',
+        );
+        const closed = once(session.ws, 'close');
+        session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+        sweepSessions();
+        await closed;
+        const expectedKey = key
+          .replace(
+            `conv#${handle}`,
+            () => `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+          )
+          .replace(
+            `attach#${attachId}`,
+            () =>
+              `attach#${attachId.slice(0, 80)}${attachId.length > 80 ? '…' : ''}`,
+          );
+        const expected = `[agent-client] evicted session key=${JSON.stringify(expectedKey)} reason=idle\n`;
+        const lines = stderr.getCalls().map((call) => String(call.args[0]));
+        expect(lines).to.include(expected);
+        expect(expectedKey).to.include('\u0000int#');
+      } finally {
+        await closeSessionByHandle(handle, 'tok');
+      }
+    });
+  }
+
+  it('escapes peer-controlled WebSocket close reasons in stderr', async () => {
+    // Use a separate peer to send a real WebSocket close frame.
+    const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    const reason = 'peer:\n\r\u001b\u202e\u200b"\\end';
+    const stderr = sinon.spy(process.stderr, 'write');
+    try {
+      const session = await open(
+        's:close-reason',
+        `http://127.0.0.1:${address.port}`,
+      );
+      const closed = once(session.ws, 'close');
+      for (const ws of peer.clients) ws.close(1008, reason);
+      await closed;
+      const line = stderr
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((value) =>
+          value.startsWith('[agent-client] WebSocket closed unexpectedly:'),
+        );
+      expect(line).to.be.a('string');
+      expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(JSON.parse(line!.slice(line!.indexOf('reason=') + 7))).to.equal(
+        reason,
+      );
+    } finally {
+      for (const ws of peer.clients) ws.terminate();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  });
+
+  it('escapes the complete peer reason in a connect-close error', async () => {
+    const reason = 'a'.repeat(100) + '\n\u202e"\\end';
+    expect(Buffer.byteLength(reason)).to.be.at.most(123);
+    const emit = WebSocket.prototype.emit;
+    // Exercise the pre-open close path, which cannot be sent as a normal
+    // post-upgrade close frame without first resolving the connection.
+    sinon.stub(WebSocket.prototype, 'emit').callsFake(function (
+      this: WebSocket,
+      event,
+      ...args
+    ) {
+      if (
+        event === 'open' &&
+        this.url?.startsWith(server.url.replace('http:', 'ws:'))
+      ) {
+        return emit.call(this, 'close', 1008, Buffer.from(reason));
+      }
+      return emit.call(this, event, ...args);
+    });
+    let error: unknown;
+    try {
+      await open('s:connect-close');
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).to.be.instanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(JSON.parse(message.slice(message.indexOf('reason=') + 7))).to.equal(
+      reason,
+    );
   });
 });
 

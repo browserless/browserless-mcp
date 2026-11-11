@@ -1,9 +1,14 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
+import {
+  diagnosticString,
+  escapeDiagnosticString,
+} from '../lib/diagnostic-string.js';
 import { mediaOrigin, prepareAgentMedia } from '../lib/agent-media.js';
 import {
   assertAllowedUploadPath,
@@ -330,6 +335,45 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
   return `${d.filename ?? 'file'} — downloading (${got}${total}); touch the browser again to collect it`;
 };
 
+const MAX_UPLOAD_MB = FILE_TRANSFER_MAX_BYTES / (1024 * 1024);
+
+const uploadTooLarge = (name: string, bytes: number): UserError =>
+  new UserError(
+    `Upload file "${name}" is ${bytes} bytes, over the ${MAX_UPLOAD_MB}MB limit.`,
+  );
+
+// Read a regular file without ever buffering more than the transfer limit:
+// check its size through the open descriptor, then cap the read itself so a
+// file that grows after the check still can't exceed the limit.
+const readUploadFile = async (path: string, name: string): Promise<Buffer> => {
+  // Nonblocking open lets us reject FIFOs without waiting for a writer.
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile()) throw new Error('Upload must be a regular file.');
+    if (stat.size > FILE_TRANSFER_MAX_BYTES) {
+      throw uploadTooLarge(name, stat.size);
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    // Inclusive end: at most one overflow byte, even if the file grows.
+    const stream = file.createReadStream({
+      autoClose: false,
+      start: 0,
+      end: FILE_TRANSFER_MAX_BYTES,
+    });
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > FILE_TRANSFER_MAX_BYTES) throw uploadTooLarge(name, size);
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, size);
+  } finally {
+    // A close failure must not mask the read result or the size error.
+    await file.close().catch(() => {});
+  }
+};
+
 // Resolve each uploadFile entry to base64 `content` (from `content`, a prior
 // `handle`, or a local `path` in stdio) so the model never emits base64 itself.
 export const normalizeUploadCommand = async (
@@ -357,8 +401,16 @@ export const normalizeUploadCommand = async (
             `getDownloads, or supply base64 "content".`,
         );
       }
-      buf = await readFile(record.path);
       defaultName = record.filename;
+      try {
+        buf = await readUploadFile(record.path, defaultName);
+      } catch (e: unknown) {
+        if (e instanceof UserError) throw e;
+        throw new UserError(
+          `Upload handle "${f.handle}" could not be read; it may have ` +
+            'expired. Stage the file again and pass the new handle.',
+        );
+      }
       if (f.mimeType === undefined) f.mimeType = record.mimeType;
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
@@ -385,24 +437,21 @@ export const normalizeUploadCommand = async (
             'the HTTP /upload staging flow and pass the returned handle.',
         );
       }
-      buf = await readFile(path).catch((e: unknown) => {
+      defaultName = basename(path);
+      try {
+        buf = await readUploadFile(path, defaultName);
+      } catch (e: unknown) {
+        if (e instanceof UserError) throw e;
         throw new UserError(
           `Failed to read upload file "${path}": ` +
             (e instanceof Error ? e.message : String(e)),
         );
-      });
-      defaultName = basename(path);
+      }
       delete f.path;
     } else {
       continue;
     }
 
-    if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
-      throw new UserError(
-        `Upload file "${defaultName}" is ${buf.byteLength} bytes, over the ` +
-          `50MB limit.`,
-      );
-    }
     f.content = buf.toString('base64');
     if (!f.name) f.name = defaultName;
   }
@@ -685,6 +734,9 @@ export const SAVED_LOGIN_REMINDER =
   '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
   'as the first command of your next batch, then continue the task (end a batch with `snapshot` first if you have not taken one).';
 
+export const SKILL_OUTCOME_NOT_RECORDED =
+  "Skill outcome not recorded: the browser session had already closed, and a skill outcome is only accepted from the browser that visited the site. No browser was opened. Don't resend it now; next time, send reportSkillOutcome in a batch while the browser is still open (before close).";
+
 const hostOf = (url: unknown): string | undefined => {
   try {
     return typeof url === 'string'
@@ -780,7 +832,10 @@ export const nextProfileAuthState = (
 const isReportOnly = (commands: Array<{ method: string }>): boolean =>
   commands.every((c) =>
     ['reportOutcome', 'reportSkillOutcome', 'close'].includes(c.method),
-  ) && commands.some((c) => c.method === 'reportOutcome');
+  ) &&
+  commands.some((c) =>
+    ['reportOutcome', 'reportSkillOutcome'].includes(c.method),
+  );
 
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
@@ -1227,7 +1282,7 @@ export const runAgentCommands = async (
     params.sessionId !== `attach:${attachSessionId}`
   ) {
     log.warn(
-      `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId)} canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
     );
   }
   const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
@@ -1235,7 +1290,7 @@ export const runAgentCommands = async (
   // browser per conversation and one per call — log it, don't infer it.
   if (config.transport === 'httpStream') {
     console.error(
-      `[agent] handle ${echoedSessionId ? `echoed=${echoedSessionId}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
+      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId)}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
     );
   }
 
@@ -1246,7 +1301,6 @@ export const runAgentCommands = async (
   let repeatCount = 0;
   let repeatWarning = '';
   let agentSessionHandle: string | null = echoedSessionId ?? null;
-  let lateVerdictRecorded = false;
   let verdict:
     | {
         self_reported_success: boolean;
@@ -1355,36 +1409,30 @@ export const runAgentCommands = async (
         getActiveSessionByHandle(echoedSessionId, apiUrl, token, userId);
         live = true;
       } catch {
-        // A missing or disconnected session must not be reopened for a verdict.
+        // A missing or disconnected session must not be reopened for reports.
       }
     }
     if (!live) {
       const report = commands
         .filter((c) => c.method === 'reportOutcome')
-        .at(-1)!;
-      verdict = {
-        self_reported_success: report.params.success as boolean,
-        ...(report.params.reason
-          ? { outcome_reason: report.params.reason as string }
-          : {}),
-        verdict_delivery: 'late',
-      };
-      const remaining = commands.filter((c) => c.method !== 'reportOutcome');
-      sendAnalytics(true);
-      lateVerdictRecorded = true;
-      if (remaining.every((c) => c.method === 'close')) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: 'Outcome recorded. No browser was opened.',
-            },
-          ],
-          results: [],
+        .at(-1);
+      if (report) {
+        verdict = {
+          self_reported_success: report.params.success as boolean,
+          ...(report.params.reason
+            ? { outcome_reason: report.params.reason as string }
+            : {}),
+          verdict_delivery: 'late',
         };
       }
-      verdict = undefined;
-      commands = remaining;
+      sendAnalytics(true);
+      const text = commands.some((c) => c.method === 'reportSkillOutcome')
+        ? (report ? 'Outcome recorded. ' : '') + SKILL_OUTCOME_NOT_RECORDED
+        : 'Outcome recorded. No browser was opened.';
+      return {
+        content: [{ type: 'text' as const, text }],
+        results: [],
+      };
     }
   }
 
@@ -1755,7 +1803,7 @@ export const runAgentCommands = async (
           sendErr instanceof Error ? sendErr.message : String(sendErr);
         if (!isRetry && !saveSecretSent) {
           log.warn(
-            `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
+            `agent: ${cmd.method} failed (first attempt, retrying once): ${escapeDiagnosticString(errMessage)}`,
           );
           return runCommands(true, agentSession.persona ?? retryPersona);
         }
@@ -1993,10 +2041,7 @@ export const runAgentCommands = async (
           text: closedDuringBatch
             ? 'Browser session closed.'
             : !keepAlive && !createProfile && !attachSessionId
-              ? oneShotClosedNotice(
-                  agentSession.handle,
-                  lateVerdictRecorded || verdict !== undefined,
-                )
+              ? oneShotClosedNotice(agentSession.handle, verdict !== undefined)
               : 'Done.',
         },
       ];
@@ -2150,10 +2195,7 @@ export const runAgentCommands = async (
         ? ''
         : keepAlive || downloadsPending || createProfile || attachSessionId
           ? sessionLine(agentSession, compliant)
-          : oneShotClosedNotice(
-              agentSession.handle,
-              lateVerdictRecorded || verdict !== undefined,
-            ),
+          : oneShotClosedNotice(agentSession.handle, verdict !== undefined),
     ]
       .filter(Boolean)
       .join('\n\n');
