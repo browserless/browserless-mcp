@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UNSAFE_DIAGNOSTIC_CHARACTERS } from '../lib/diagnostic-string.js';
 import {
   PERSONA_FIELDS,
   PersonaOptionsSchema,
@@ -48,7 +49,14 @@ export function profileField(whenLoaded: string, extra = '') {
   return nulSafeString('profile').optional().describe(description);
 }
 
-const sessionIdField = nulSafeString('sessionId')
+const sessionIdField = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => value.search(UNSAFE_DIAGNOSTIC_CHARACTERS) === -1, {
+    message:
+      'sessionId must not contain control, format, or line separator characters',
+  })
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +

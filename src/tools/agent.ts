@@ -5,6 +5,10 @@ import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
+import {
+  diagnosticString,
+  escapeDiagnosticString,
+} from '../lib/diagnostic-string.js';
 import { mediaOrigin, prepareAgentMedia } from '../lib/agent-media.js';
 import {
   assertAllowedUploadPath,
@@ -1278,7 +1282,7 @@ export const runAgentCommands = async (
     params.sessionId !== `attach:${attachSessionId}`
   ) {
     log.warn(
-      `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId)} canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
     );
   }
   const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
@@ -1286,7 +1290,7 @@ export const runAgentCommands = async (
   // browser per conversation and one per call — log it, don't infer it.
   if (config.transport === 'httpStream') {
     console.error(
-      `[agent] handle ${echoedSessionId ? `echoed=${echoedSessionId}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
+      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId)}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
     );
   }
 
@@ -1799,7 +1803,7 @@ export const runAgentCommands = async (
           sendErr instanceof Error ? sendErr.message : String(sendErr);
         if (!isRetry && !saveSecretSent) {
           log.warn(
-            `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
+            `agent: ${cmd.method} failed (first attempt, retrying once): ${escapeDiagnosticString(errMessage)}`,
           );
           return runCommands(true, agentSession.persona ?? retryPersona);
         }
