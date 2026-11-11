@@ -19,6 +19,7 @@ import {
   preflightAgentCapabilities,
   proxyFingerprint,
   sessionHandle,
+  sweepSessions,
   dropMcpSession,
   send,
   startHumanHandoff,
@@ -2956,6 +2957,222 @@ describe('agent-client integration binding key', () => {
 
   it('ignores allowedDomains with no integrationId (it never reaches the wire)', () => {
     expect(key(undefined, ['https://a.com'])).to.equal(key(undefined));
+  });
+});
+
+describe('agent-client session diagnostics', () => {
+  let server: Awaited<ReturnType<typeof makeRespondingServer>>;
+  const handles: string[] = [];
+  beforeEach(async () => {
+    server = await makeRespondingServer(() => ({}));
+  });
+  const open = (handle: string, url = server.url) => {
+    handles.push(handle);
+    return getOrCreateSession(
+      'eviction-diagnostic',
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      'eviction-scope',
+    );
+  };
+  afterEach(async () => {
+    for (const handle of handles.splice(0)) {
+      await closeSession(
+        'eviction-diagnostic',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        handle,
+        'eviction-scope',
+      );
+    }
+    await server.close();
+    sinon.restore();
+  });
+
+  for (const handle of [
+    's:\tcontrol',
+    's:eviction-long\t' + 'x'.repeat(1024),
+  ]) {
+    it(`bounds and escapes the eviction key for a ${handle.length > 80 ? 'long' : 'short'} handle`, async () => {
+      const stderr = sinon.spy(process.stderr, 'write');
+      // Tab is a control character accepted by the upstream session header.
+      const neighbor = await open('s:diagnostic-neighbor');
+      const session = await open(handle);
+      expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
+        session,
+      );
+      const closed = once(session.ws, 'close');
+      session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+      sweepSessions();
+      await closed;
+      const key = getSessionKey(
+        'eviction-diagnostic',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        handle,
+        'eviction-scope',
+      );
+      const previewKey = key.replace(
+        `conv#${handle}`,
+        `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+      );
+      const expected = `[agent-client] evicted session key=${JSON.stringify(previewKey)} reason=idle\n`;
+      const line = stderr
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((value) => value === expected);
+      expect(line).to.be.a('string');
+      expect(line).to.include('int#');
+      expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(() =>
+        getActiveSessionByHandle(handle, server.url, 'tok'),
+      ).to.throw('The requested browser session is unavailable.');
+      expect(
+        getActiveSessionByHandle(neighbor.handle, server.url, 'tok'),
+      ).to.equal(neighbor);
+    });
+  }
+
+  for (const attachId of [
+    'browser-$&-$`-id',
+    'browser-$&-' + 'x'.repeat(1024),
+  ]) {
+    it(`bounds the logged attach# value for a ${attachId.length > 80 ? 'long' : 'short'} attach ID without changing session scope`, async () => {
+      const handle = `attach:${attachId}`;
+      const stderr = sinon.spy(process.stderr, 'write');
+      try {
+        const session = await getOrCreateSession(
+          'attach-diagnostic',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          false,
+          undefined,
+          undefined,
+          'attach-scope',
+        );
+        expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
+          session,
+        );
+        expect(
+          new URL(server.upgradeUrls()[0], server.url).searchParams.get(
+            'sessionId',
+          ),
+        ).to.equal(attachId);
+        const key = getSessionKey(
+          'attach-diagnostic',
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          undefined,
+          'attach-scope',
+        );
+        const closed = once(session.ws, 'close');
+        session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+        sweepSessions();
+        await closed;
+        const expectedKey = key
+          .replace(
+            `conv#${handle}`,
+            () => `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+          )
+          .replace(
+            `attach#${attachId}`,
+            () =>
+              `attach#${attachId.slice(0, 80)}${attachId.length > 80 ? '…' : ''}`,
+          );
+        const expected = `[agent-client] evicted session key=${JSON.stringify(expectedKey)} reason=idle\n`;
+        const lines = stderr.getCalls().map((call) => String(call.args[0]));
+        expect(lines).to.include(expected);
+        expect(expectedKey).to.include('\u0000int#');
+      } finally {
+        await closeSessionByHandle(handle, 'tok');
+      }
+    });
+  }
+
+  it('escapes peer-controlled WebSocket close reasons in stderr', async () => {
+    // Use a separate peer to send a real WebSocket close frame.
+    const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    const reason = 'peer:\n\r\u001b\u202e\u200b"\\end';
+    const stderr = sinon.spy(process.stderr, 'write');
+    try {
+      const session = await open(
+        's:close-reason',
+        `http://127.0.0.1:${address.port}`,
+      );
+      const closed = once(session.ws, 'close');
+      for (const ws of peer.clients) ws.close(1008, reason);
+      await closed;
+      const line = stderr
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((value) =>
+          value.startsWith('[agent-client] WebSocket closed unexpectedly:'),
+        );
+      expect(line).to.be.a('string');
+      expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(JSON.parse(line!.slice(line!.indexOf('reason=') + 7))).to.equal(
+        reason,
+      );
+    } finally {
+      for (const ws of peer.clients) ws.terminate();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  });
+
+  it('escapes the complete peer reason in a connect-close error', async () => {
+    const reason = 'a'.repeat(100) + '\n\u202e"\\end';
+    expect(Buffer.byteLength(reason)).to.be.at.most(123);
+    const emit = WebSocket.prototype.emit;
+    // Exercise the pre-open close path, which cannot be sent as a normal
+    // post-upgrade close frame without first resolving the connection.
+    sinon.stub(WebSocket.prototype, 'emit').callsFake(function (
+      this: WebSocket,
+      event,
+      ...args
+    ) {
+      if (
+        event === 'open' &&
+        this.url?.startsWith(server.url.replace('http:', 'ws:'))
+      ) {
+        return emit.call(this, 'close', 1008, Buffer.from(reason));
+      }
+      return emit.call(this, event, ...args);
+    });
+    let error: unknown;
+    try {
+      await open('s:connect-close');
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).to.be.instanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(JSON.parse(message.slice(message.indexOf('reason=') + 7))).to.equal(
+      reason,
+    );
   });
 });
 

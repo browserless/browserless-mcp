@@ -445,6 +445,70 @@ function expectCommon(
 
 describe('Session request diagnostic contracts', function () {
   this.timeout(30000);
+  it('records legacy SSE refusals before initialization', async () => {
+    await withLogServer(
+      false,
+      async ({ base, records, privateValues, expectCount }) => {
+        const response = await fetch(`${base}/sse`, {
+          headers: { Authorization: `Bearer ${keys[0]}` },
+          signal: AbortSignal.timeout(10000),
+        });
+        expect(response.status).to.equal(200);
+        const reader = response.body!.getReader();
+        try {
+          let frame = '';
+          while (!frame.includes('\n\n')) {
+            const chunk = await reader.read();
+            expect(chunk.done).to.equal(false);
+            frame += new TextDecoder().decode(chunk.value);
+          }
+          const endpoint = new URL(frame.match(/data: (.+)/)![1], base);
+          const sid = endpoint.searchParams.get('sessionId')!;
+          privateValues.push(sid);
+          for (const [key, status] of [
+            [keys[1], 404],
+            [undefined, 401],
+          ] as const) {
+            const denied = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'user-agent': 'Session-Contract/1.0',
+                'x-real-ip': '192.0.2.8',
+                ...(key ? { Authorization: `Bearer ${key}` } : {}),
+              },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/list',
+                params: {},
+              }),
+            });
+            expect(denied.status).to.equal(status);
+            await denied.text();
+          }
+          await expectCount(2);
+          for (const record of records) {
+            expectCommon(record, false, sid, 'POST');
+            expect(record['event.name']).to.equal(
+              'browserless.mcp.session.request_refused',
+            );
+            expect(record.owner_ref).to.equal(principalRef(keys[0]));
+          }
+          expect(records[0]).to.include({
+            reason: 'principal_mismatch',
+            presenter_ref: principalRef(keys[1]),
+          });
+          expect(records[1].reason).to.equal(
+            'missing_credentials_live_session',
+          );
+        } finally {
+          await reader.cancel();
+        }
+      },
+    );
+  });
+
   for (const compliant of [false, true]) {
     it(`records one principal decision per method with compliance=${compliant}`, async () => {
       await withLogServer(

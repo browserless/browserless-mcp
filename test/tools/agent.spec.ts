@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { once } from 'node:events';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
@@ -1731,6 +1731,125 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent session diagnostics', () => {
+  afterEach(() => sinon.restore());
+
+  it('escapes transport errors in retry warnings', async () => {
+    const server = await makeRespondingServer(() => ({
+      url: 'https://example.com',
+      status: 200,
+    }));
+    const reason =
+      'transport' +
+      'x'.repeat(100) +
+      '\n\u202e"\\end; code=1008, reason="peer:\\u202e"';
+    const warn = sinon.stub();
+    sinon
+      .stub(WebSocket.prototype, 'send')
+      .callThrough()
+      .onFirstCall()
+      .throws(new Error(reason));
+    try {
+      const result = await getAgentExecute(server.url)(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, log: { ...mockContext.log, warn } },
+      );
+      expect(JSON.stringify(result)).to.include('https://example.com');
+      expect(server.hits()).to.equal(2);
+      const warning = warn
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((line) => line.includes('retrying once'));
+      expect(warning).to.be.a('string');
+      expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(warning!.slice(warning!.indexOf('): ') + 3)).to.equal(
+        'transport' +
+          'x'.repeat(100) +
+          '\\u000a\\u202e"\\end; code=1008, reason="peer:\\u202e"',
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('escapes canonical attach IDs as a backstop when HTTP validation is bypassed', async () => {
+    const warn = sinon.stub();
+    const attachSessionId = 'browser\t\u202e';
+    await getAgentExecute('http://127.0.0.1:1')(
+      { method: 'close', sessionId: 's:foreign' },
+      {
+        ...mockContext,
+        log: { ...mockContext.log, warn },
+        session: { attachSessionId },
+      },
+    );
+    const warning = warn.firstCall.args[0] as string;
+    expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(
+      JSON.parse(warning.slice(warning.indexOf('canonical=') + 10)),
+    ).to.equal(`attach:${attachSessionId}`);
+  });
+
+  it('escapes echoed session controls as a backstop when schema validation is bypassed', async () => {
+    const sessionId =
+      's:\n\r\t\u001b\u007f\u0085\u009b\u2028\u2029\u202e\u2066\u200b\u{e0001}"\\end';
+    const stderr = sinon.spy(process.stderr, 'write');
+    // Closing an absent session reaches the diagnostics without a connection.
+    const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
+    const result = await execute(
+      {
+        method: 'close',
+        sessionId,
+      },
+      { ...mockContext, sessionId },
+    );
+    expect(JSON.stringify(result)).to.include('Browser session closed.');
+    const lines = stderr.getCalls().map((call) => String(call.args[0]));
+    const diagnostic = lines.find((line) => line.startsWith('[agent] handle '));
+    expect(diagnostic).to.be.a('string');
+    expect(diagnostic!.slice(0, -1)).not.to.match(
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u,
+    );
+    const encoded = diagnostic!.slice('[agent] handle echoed='.length, -1);
+    expect(JSON.parse(encoded)).to.equal(sessionId);
+  });
+
+  it('preserves complete handles and bounds previews by code point before escaping', async () => {
+    const stderr = sinon.spy(process.stderr, 'write');
+    const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
+    const handle = 's:12345678-1234-1234-1234-123456789abc';
+    for (const sessionId of [
+      handle,
+      'x'.repeat(80),
+      'a'.repeat(79) + '😀',
+      'a'.repeat(79) + '😀z',
+      '\u202e'.repeat(1024),
+    ]) {
+      await execute({ method: 'close', sessionId }, mockContext);
+    }
+    await execute(
+      { method: 'close' },
+      { ...mockContext, sessionId: undefined },
+    );
+    const lines = stderr.getCalls().map((call) => String(call.args[0]));
+    expect(lines).to.include(`[agent] handle echoed="${handle}"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'x'.repeat(80)}"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'a'.repeat(79)}😀"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'a'.repeat(79)}😀"…\n`);
+    expect(lines).to.include(
+      `[agent] handle echoed="${'\\u202e'.repeat(80)}"…\n`,
+    );
+    expect(lines).to.include('[agent] handle absent (mcp=none)\n');
+    await execute(
+      { method: 'close' },
+      { ...mockContext, sessionId: 'server-uuid' },
+    );
+    expect(String(stderr.lastCall.args[0])).to.equal(
+      '[agent] handle absent (mcp=server-uuid)\n',
+    );
+  });
+});
 
 describe('browserless_agent null-ID protocol errors', () => {
   it('keeps the same browser and does not replay a command after a protocol error', async () => {
@@ -3721,6 +3840,7 @@ describe('browserless_agent persona creation guard', () => {
         's:foreign',
         '',
         'x'.repeat(1024),
+        's:\n\r\u001b[31m\u0085\u2028\u2029\u202e\u200b"\\end',
       ];
       for (const echo of echoes) {
         warn.resetHistory();
@@ -3733,9 +3853,15 @@ describe('browserless_agent persona creation guard', () => {
         );
         expect(server.upgradeUrls()).to.have.length(1);
         expect(warn.calledOnce).to.equal(true);
-        expect(warn.firstCall.args[0]).to.equal(
-          `[agent] attach handle mismatch ignored: echoed=${echo.slice(0, 24)}… canonical=attach:existing-browser`,
-        );
+        const warning = warn.firstCall.args[0] as string;
+        expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+        const fields =
+          /^\[agent\] attach handle mismatch ignored: echoed=(".*")(…?) canonical=(.*)$/.exec(
+            warning,
+          )!;
+        expect(JSON.parse(fields[1])).to.equal(echo.slice(0, 80));
+        expect(fields[2]).to.equal(echo.length > 80 ? '…' : '');
+        expect(fields[3]).to.equal('"attach:existing-browser"');
         expect(warn.firstCall.args[0]).to.not.include('test-token');
       }
       warn.resetHistory();
