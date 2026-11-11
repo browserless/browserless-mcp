@@ -3046,6 +3046,69 @@ describe('agent-client session diagnostics', () => {
     });
   }
 
+  for (const attachId of [
+    'browser-$&-$`-id',
+    'browser-$&-' + 'x'.repeat(1024),
+  ]) {
+    it(`bounds the logged attach# value for a ${attachId.length > 80 ? 'long' : 'short'} attach ID without changing session scope`, async () => {
+      const handle = `attach:${attachId}`;
+      const stderr = sinon.spy(process.stderr, 'write');
+      try {
+        const session = await getOrCreateSession(
+          'attach-diagnostic',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          false,
+          undefined,
+          undefined,
+          'attach-scope',
+        );
+        expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
+          session,
+        );
+        expect(
+          new URL(server.upgradeUrls()[0], server.url).searchParams.get(
+            'sessionId',
+          ),
+        ).to.equal(attachId);
+        const key = getSessionKey(
+          'attach-diagnostic',
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          undefined,
+          'attach-scope',
+        );
+        const closed = once(session.ws, 'close');
+        session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+        sweepSessions();
+        await closed;
+        const expectedKey = key
+          .replace(
+            `conv#${handle}`,
+            () => `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+          )
+          .replace(
+            `attach#${attachId}`,
+            () =>
+              `attach#${attachId.slice(0, 80)}${attachId.length > 80 ? '…' : ''}`,
+          );
+        const expected = `[agent-client] evicted session key=${JSON.stringify(expectedKey)} reason=idle\n`;
+        const lines = stderr.getCalls().map((call) => String(call.args[0]));
+        expect(lines).to.include(expected);
+        expect(expectedKey).to.include('\u0000int#');
+      } finally {
+        await closeSessionByHandle(handle, 'tok');
+      }
+    });
+  }
+
   it('escapes peer-controlled WebSocket close reasons in stderr', async () => {
     // Use a separate peer to send a real WebSocket close frame.
     const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });

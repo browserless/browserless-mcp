@@ -537,14 +537,27 @@ const properClose = (
       } catch {
         /* ignore */
       }
-      // Bound only the handle; keep every scope suffix in the diagnostic key.
+      // Bound caller-controlled values, keeping all scope suffixes intact.
       const handleStart = key.indexOf('conv#') + 'conv#'.length;
       const preview = diagnosticPreview(session.handle);
+      let suffix = key.slice(handleStart + session.handle.length);
+      const attachId = session.creationSessionId;
+      if (attachId) {
+        const attachPreview = diagnosticPreview(attachId);
+        suffix = suffix.replace(
+          KEY_SEP + 'attach#' + attachId,
+          () =>
+            KEY_SEP +
+            'attach#' +
+            attachPreview +
+            (attachPreview.length < attachId.length ? '…' : ''),
+        );
+      }
       const diagnosticKey =
         key.slice(0, handleStart) +
         preview +
         (preview.length < session.handle.length ? '…' : '') +
-        key.slice(handleStart + session.handle.length);
+        suffix;
       console.error(
         `[agent-client] evicted session key=${diagnosticString(diagnosticKey, Infinity)} reason=${reason}`,
       );
