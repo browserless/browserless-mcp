@@ -578,6 +578,41 @@ describe('MCP Server Integration', () => {
     }
   });
 
+  it('lists tools after initializing a real FastMCP session through the patched transport', async () => {
+    const port = await freePort();
+    server = new FastMCP({ name: 'initialization-test', version: '1.0.0' });
+    server.addTool({
+      name: 'echo',
+      description: 'Returns the submitted value',
+      parameters: z.object({ value: z.string() }),
+      execute: async ({ value }) => value,
+    });
+    const client = new Client({
+      name: 'initialization-client',
+      version: '1.0.0',
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+    );
+    try {
+      await server.start({
+        transportType: 'httpStream',
+        httpStream: { port, host: '127.0.0.1' },
+      });
+      await client.connect(transport);
+      expect(transport.sessionId).to.be.a('string').and.not.equal('');
+      expect(
+        (await client.listTools()).tools.map((tool) => tool.name),
+      ).to.include('echo');
+      expect(
+        await client.callTool({ name: 'echo', arguments: { value: 'ready' } }),
+      ).to.have.deep.property('content', [{ type: 'text', text: 'ready' }]);
+    } finally {
+      await client.close().catch(() => {});
+      await server.stop();
+    }
+  });
+
   for (const scenario of [
     'registry',
     'rejection',
@@ -629,11 +664,18 @@ describe('MCP Server Integration', () => {
             host: '127.0.0.1', port: ${port},
             ...(tlsDirectory ? { sslKey: join(tlsDirectory, 'key.pem'), sslCert: join(tlsDirectory, 'cert.pem') } : {}),
             stateless: scenario === 'stateless connect rejection',
+            enableJsonResponse: scenario.endsWith('connect rejection'),
             createServer: async () => {
               if (scenario.endsWith('close')) return new Server({ name: 'cleanup-test', version: '1.0.0' }, { capabilities: {} });
-              if (scenario.endsWith('connect rejection')) return {
-                connect: async () => { throw new Error('local connect failure'); }, close: async () => {},
-              };
+              if (scenario.endsWith('connect rejection')) {
+                const session = new Server({ name: 'connect-test', version: '1.0.0' }, { capabilities: {} });
+                const connect = session.connect.bind(session);
+                session.connect = async transport => {
+                  await connect(transport);
+                  throw new Error('local connect failure');
+                };
+                return session;
+              }
               throw new Error('unexpected session');
             },
             onClose: async () => {
@@ -685,8 +727,10 @@ describe('MCP Server Integration', () => {
                   params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'connect-test', version: '1.0.0' } },
                 }), signal: AbortSignal.timeout(2000),
               });
-              assert.equal(response.status, 500);
-              assert.equal((await response.json()).error.code, -32603);
+              assert.equal(response.status, 200);
+              const body = await response.json();
+              if (scenario === 'stateless connect rejection') assert.equal(body.error.code, -32601);
+              else assert.equal(body.result.protocolVersion, '2025-03-26');
             } else if (scenario.endsWith('close')) {
               if (scenario === 'legacy SSE close') {
                 const response = await fetch(base + '/sse', { signal: AbortSignal.timeout(2000) });

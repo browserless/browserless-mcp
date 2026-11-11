@@ -149,12 +149,14 @@ if (mcpProxyEntry) {
   }`,
     required: requireSecurityPatches,
   });
+  // Session setup may wait for initialize, so dispatch must not await it.
+  // Contain background failures without changing the transport's call order.
   patch({
     name: 'stream initialization rejection containment',
     dist: dirname(mcpProxyEntry),
     files: /\.(mjs|js)$/,
     from: '\t\t\t\tserver.connect(transport);',
-    to: '\t\t\t\tawait server.connect(transport);',
+    to: '\t\t\t\tserver.connect(transport).catch(() => { console.error("[mcp-proxy] error connecting to server"); });',
     required: requireSecurityPatches,
   });
   // Node ignores a request listener's returned promise. Contain rejections at
