@@ -422,7 +422,12 @@ describe('MCP Server Integration', () => {
     }
   });
 
-  for (const scenario of ['registry', 'rejection', 'partial response']) {
+  for (const scenario of [
+    'registry',
+    'rejection',
+    'partial response',
+    'preset headers',
+  ]) {
     it(`contains transport request failures: ${scenario}`, async () => {
       const port = await freePort();
       // A child with Node's default rejection policy must survive the request;
@@ -447,6 +452,12 @@ describe('MCP Server Integration', () => {
             onUnhandledRequest: async (req, res) => {
               if (req.url !== '/fail') return;
               if (scenario === 'partial response') res.write('partial');
+              if (scenario === 'preset headers') {
+                res.setHeader('Content-Length', '100');
+                res.setHeader('Content-Encoding', 'gzip');
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Access-Control-Allow-Origin', 'https://client.example');
+              }
               throw new Error('local request failure');
             },
           });
@@ -475,8 +486,13 @@ describe('MCP Server Integration', () => {
               }
             } else {
               const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
-              assert.equal(response.status, scenario === 'rejection' ? 500 : 200);
-              assert.equal(await response.text(), scenario === 'rejection' ? 'Internal Server Error' : 'partial');
+              assert.equal(response.status, scenario === 'partial response' ? 200 : 500);
+              assert.equal(await response.text(), scenario === 'partial response' ? 'partial' : 'Internal Server Error');
+              if (scenario === 'preset headers') {
+                assert.equal(response.headers.get('content-encoding'), null);
+                assert.equal(response.headers.get('content-type'), 'text/plain; charset=utf-8');
+                assert.equal(response.headers.get('access-control-allow-origin'), 'https://client.example');
+              }
             }
             const ping = await fetch(base + '/ping', { signal: AbortSignal.timeout(2000) });
             assert.equal(ping.status, 200);
