@@ -38,6 +38,24 @@ describe('API URL guard', () => {
     }
   });
 
+  it('rejects whitespace and control characters the URL parser would strip', () => {
+    for (const candidate of [
+      ' https://production-sfo.browserless.io',
+      'https://production-sfo.browserless.io ',
+      '\thttps://production-sfo.browserless.io',
+      'https://production-sfo.browserless.io\n',
+      'https://production-\tsfo.browserless.io',
+      'https://production-sfo.browserless.io/a b',
+      '\u0001https://production-sfo.browserless.io',
+      'https://production-sfo.browserless.io\u007f',
+    ]) {
+      expect(
+        () => assertAllowedApiUrl(candidate, config),
+        JSON.stringify(candidate),
+      ).to.throw(InvalidApiUrlError);
+    }
+  });
+
   it('still accepts a plain-HTTP Browserless host when it is the configured origin', () => {
     const custom = {
       ...config,

@@ -10,6 +10,15 @@ export const allowedApiUrlHosts = (config: ApiUrlConfig): string[] => {
     .map((host) => host.toLowerCase());
 };
 
+// Spaces, C0 controls and DEL. The URL parser strips them from the ends and
+// drops tabs and newlines inside, but callers keep using the raw string, so
+// the URL they build could differ from the one this guard checked.
+const hasSpaceOrControl = (value: string): boolean =>
+  [...value].some((char) => {
+    const code = char.charCodeAt(0);
+    return code <= 0x20 || code === 0x7f;
+  });
+
 export const assertAllowedApiUrl = (
   candidate: string,
   config: ApiUrlConfig,
@@ -35,7 +44,7 @@ export const assertAllowedApiUrl = (
 
   if (
     candidate.length > 2048 ||
-    candidate.includes('\0') ||
+    hasSpaceOrControl(candidate) ||
     // Parsed search/hash are empty for bare delimiters retained by raw sinks.
     candidate.includes('?') ||
     candidate.includes('#') ||
