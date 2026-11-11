@@ -113,7 +113,9 @@ class Mux:
         except BaseException:
             await self._shutdown_upstream()
             raise
-        self._server = await websockets.serve(self._serve_client, self.host, self.port, max_size=None,
+        # Bound local commands before JSON parsing; browser responses aren't subject to this limit.
+        self._server = await websockets.serve(self._serve_client, self.host, self.port,
+                                              max_size=16 * 1024 * 1024, compression=None,
                                               ping_interval=None, close_timeout=2, process_request=self._http)
         if not self.port:
             self.port = self._server.sockets[0].getsockname()[1]
@@ -438,22 +440,68 @@ class Mux:
             client.responses += 1
             await self._deliver(client, {"id": cmid, "result": result, **({"sessionId": sid} if sid else {})})
 
+        async def reject(ref, code=-32001, message="Session with given id not found."):
+            if code == -32001:
+                released = self.recently_released.get(ref) if isinstance(ref, str) else None
+                kind = "stale_session_rejected" if released == client.cid else "foreign_session_rejected"
+                self.stats[kind] += 1
+                if kind == "foreign_session_rejected" and self.stats[kind] <= 5:
+                    own = self.owner.get(ref) if isinstance(ref, str) else None
+                    self.log(f"mux: WARNING c{client.cid} sent {method} on a session it doesn't own "
+                             f"(sess={ref[:8] if isinstance(ref, str) else '<invalid>'} "
+                             f"owner={'c%d' % own.cid if own else None})")
+            client.responses += 1
+            await self._deliver(client, {"id": cmid, **({"sessionId": sid} if "sessionId" in msg else {}),
+                                         "error": {"code": code, "message": message}})
+
         if client.generation != self.generation or not self.ready.is_set():
             return  # stale client from before an upstream reconnect; it is being closed
-        if sid and self.owner.get(sid) is not client:
-            kind = "stale_session_rejected" if self.recently_released.get(sid) == client.cid else "foreign_session_rejected"
-            self.stats[kind] += 1
-            if kind == "foreign_session_rejected" and self.stats[kind] <= 5:
-                own = self.owner.get(sid)
-                self.log(f"mux: WARNING c{client.cid} sent {method} on a session it doesn't own "
-                         f"(sess={sid[:8]} owner={'c%d' % own.cid if own else None})")
-            client.responses += 1
-            await self._deliver(client, {"id": cmid, "sessionId": sid,
-                                         "error": {"code": -32001, "message": "Session with given id not found."}})
+        if sid not in (None, "") and (not isinstance(sid, str) or self.owner.get(sid) is not client):
+            await reject(sid)
             return
-        if not sid and method in LOCAL_NOOP:
+        if method in LOCAL_NOOP:
             self.stats["browser_close_swallowed"] += 1
             await reply({})
+            return
+        # Authorize parameter selectors and every command inside legacy envelopes.
+        # A targetId alone cannot identify a unique owned session.
+        nested = msg
+        envelopes = []
+        while isinstance(nested, dict):
+            nested_method = nested.get("method")
+            nested_params = nested.get("params") or {}
+            references = [nested["sessionId"]] if nested is not msg and "sessionId" in nested else []
+            if nested_method in ("Target.detachFromTarget", "Target.sendMessageToTarget") and isinstance(nested_params, dict):
+                references.append(nested_params.get("sessionId"))
+            for ref in references:
+                if not isinstance(ref, str) or self.owner.get(ref) is not client:
+                    await reject(ref)
+                    return
+            if nested_method != "Target.sendMessageToTarget":
+                break
+            if not isinstance(nested_params, dict):
+                break
+            try:
+                nested = json.loads(nested_params.get("message"))
+            except TypeError:
+                break  # leave non-string messages to upstream CDP validation
+            except (ValueError, RecursionError):
+                # Upstream parsers may accept syntax Python rejects; never forward it unchecked.
+                await reject(None, -32700, "Invalid nested message.")
+                return
+            envelopes.append((nested_params, nested))
+            nested_method = nested.get("method") if isinstance(nested, dict) else None
+            # A successful outer reply would leave a hidden lifecycle call waiting.
+            if isinstance(nested_method, str) and nested_method in LOCAL_NOOP:
+                await reject(None, -32000, "Browser lifecycle is managed by the provider.")
+                return
+        # Forward exactly the parsed values we authorized, never ambiguous duplicate keys.
+        # Rebuild inner envelopes first so deeper normalization reaches the wire too.
+        try:
+            for envelope_params, command in reversed(envelopes):
+                envelope_params["message"] = json.dumps(command)
+        except RecursionError:
+            await reject(None, -32700, "Invalid nested message.")
             return
         if not sid and method == "Target.setDiscoverTargets":
             want = bool(params.get("discover"))

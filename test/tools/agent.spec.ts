@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { once } from 'node:events';
+import { WebSocketServer } from 'ws';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
@@ -23,6 +25,7 @@ import {
   closeReminder,
   nextProfileAuthState,
   SAVED_LOGIN_REMINDER,
+  SKILL_OUTCOME_NOT_RECORDED as skillNotRecorded,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
@@ -34,15 +37,18 @@ import {
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile as fsReadFile,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   clearSession,
+  consumeDownload,
   downloadOwner,
   downloadUri,
   FILE_TRANSFER_MAX_BYTES,
@@ -890,7 +896,9 @@ describe('normalizeUploadCommand', () => {
 
   it('retains the size cap for an allowed local file', async () => {
     const path = join(allowed, 'large.bin');
-    await writeFile(path, Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1));
+    await writeFile(path, '');
+    // Sparse: exceeds readFile's own ceiling without allocating gigabytes.
+    await truncate(path, 2 ** 31 + 1);
     const file: Record<string, unknown> = { path };
     const error = await normalizeUploadCommand(
       { method: 'uploadFile', params: { files: [file] } },
@@ -901,6 +909,128 @@ describe('normalizeUploadCommand', () => {
       () => undefined,
       (error: unknown) => error,
     );
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message)
+      .to.include('"large.bin"')
+      .and.include(`${2 ** 31 + 1} bytes, over the 50MB limit`);
+    expect(file).not.to.have.property('content');
+  });
+
+  it('bounds an oversized stored handle before reading it', async () => {
+    const token = 'handle-cap-token';
+    const record = await storeDownload(
+      'huge.bin',
+      'application/octet-stream',
+      Buffer.from('small'),
+      downloadOwner(token),
+    );
+    try {
+      // Sparse growth after staging: the handle branch must not buffer it all.
+      await truncate(record.path, 2 ** 31 + 1);
+      const file: Record<string, unknown> = { handle: downloadUri(record.id) };
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'httpStream',
+        undefined,
+        token,
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include('"huge.bin"')
+        .and.include(`${2 ** 31 + 1} bytes, over the 50MB limit`);
+      expect(file).not.to.have.property('content');
+    } finally {
+      consumeDownload(downloadUri(record.id), downloadOwner(token));
+    }
+  });
+
+  it('reports an expired stored handle without exposing the server path', async () => {
+    const token = 'expired-handle-token';
+    const record = await storeDownload(
+      'gone.bin',
+      'application/octet-stream',
+      Buffer.from('bytes'),
+      downloadOwner(token),
+    );
+    try {
+      await rm(record.path);
+      const handle = downloadUri(record.id);
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [{ handle }] } },
+        'httpStream',
+        undefined,
+        token,
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include('could not be read')
+        .and.not.include(record.path);
+    } finally {
+      consumeDownload(downloadUri(record.id), downloadOwner(token));
+    }
+  });
+
+  it('rejects directories as non-regular upload files', async () => {
+    const path = join(allowed, 'directory');
+    await mkdir(path);
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).catch((error: unknown) => error);
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.include('regular file');
+    expect(file).not.to.have.property('content');
+  });
+
+  for (const size of [0, 50 * 1024 * 1024 - 1, 50 * 1024 * 1024]) {
+    it(`accepts a local file of ${size} bytes`, async () => {
+      const path = join(allowed, 'boundary.bin');
+      await writeFile(path, '');
+      await truncate(path, size);
+      const file: Record<string, unknown> = { path };
+      await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'stdio',
+        undefined,
+        'test-token',
+      );
+      const result = Buffer.from(file.content as string, 'base64');
+      expect(result.length).to.equal(size);
+      expect(result.every((byte) => byte === 0)).to.equal(true);
+      expect(file.name).to.equal('boundary.bin');
+      expect(file).not.to.have.property('path');
+    });
+  }
+
+  it('rejects a file that grows over the cap after descriptor inspection', async () => {
+    const path = join(allowed, 'growing.bin');
+    await writeFile(path, 'initial');
+    const probe = await open(path, 'r');
+    const prototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const stat = prototype.stat;
+    // Keep real descriptor I/O; inject growth at the otherwise racy boundary.
+    sinon.stub(prototype, 'stat').callsFake(async function (this: unknown) {
+      const result = await stat.call(this);
+      await truncate(path, 50 * 1024 * 1024 + 1);
+      return result;
+    });
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).catch((error: unknown) => error);
     expect(error).to.be.instanceOf(UserError);
     expect((error as Error).message).to.include('50MB limit');
     expect(file).not.to.have.property('content');
@@ -1343,12 +1473,12 @@ describe('formatErrorMessage', () => {
     const out = formatErrorMessage({
       category: 'SESSION_LOST',
       prefix: 'click failed: ',
-      message: 'WebSocket closed while waiting for "click" response',
+      message: 'Agent WebSocket closed while waiting for "click" response',
       recovery: 'A fresh session was opened automatically.',
     });
     expect(out).to.match(/^Category: SESSION_LOST\n\n/);
     expect(out).to.include(
-      'click failed: WebSocket closed while waiting for "click" response',
+      'click failed: Agent WebSocket closed while waiting for "click" response',
     );
     expect(out).to.not.include('[');
     expect(out).to.include('Recovery: A fresh session was opened');
@@ -1635,6 +1765,81 @@ describe('browserless_agent session diagnostics', () => {
       expect(JSON.parse(encoded)).to.equal(sessionId);
     });
   }
+});
+
+describe('browserless_agent null-ID protocol errors', () => {
+  it('keeps the same browser and does not replay a command after a protocol error', async () => {
+    const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+    const address = peer.address();
+    if (!address || typeof address === 'string')
+      throw new Error('Missing port');
+    const url = `http://127.0.0.1:${address.port}`;
+    let connections = 0;
+    let rejectedCommands = 0;
+    peer.on('connection', (ws) => {
+      connections++;
+      ws.on('message', (data) => {
+        const { id, method } = JSON.parse(data.toString());
+        if (method === 'getCookies') {
+          rejectedCommands++;
+          ws.send(
+            JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+          );
+        } else {
+          ws.send(
+            JSON.stringify({
+              id,
+              result:
+                method === 'snapshot'
+                  ? {
+                      url: 'https://example.com',
+                      title: 'Example',
+                      elements: [],
+                      time: 0,
+                    }
+                  : { text: 'original browser state' },
+            }),
+          );
+        }
+      });
+    });
+    try {
+      const execute = getAgentExecute(url);
+      const first = JSON.stringify(
+        await execute({ method: 'text', keepSessionAlive: true }, mockContext),
+      );
+      const sessionId = /sessionId:\s*(\S+)/.exec(first)?.[1];
+      expect(sessionId).to.be.a('string');
+      const session = getActiveSessionByHandle(sessionId!, url, 'test-token');
+      expect(session).to.not.equal(undefined);
+      let error: unknown;
+      try {
+        await execute(
+          { sessionId, method: 'getCookies', keepSessionAlive: true },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error)?.message).to.include('Invalid JSON');
+      expect(rejectedCommands).to.equal(1);
+      expect(getActiveSessionByHandle(sessionId!, url, 'test-token')).to.equal(
+        session,
+      );
+      const next = JSON.stringify(
+        await execute(
+          { sessionId, method: 'text', keepSessionAlive: true },
+          mockContext,
+        ),
+      );
+      expect(next).to.include('original browser state');
+      expect(connections).to.equal(1);
+    } finally {
+      for (const ws of peer.clients) ws.terminate();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  });
 });
 
 describe('browserless_agent close reminder surface', () => {
@@ -1938,6 +2143,216 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  for (const row of [
+    {
+      name: 'dead handle',
+      sessionId: 's:dead-a',
+      methods: ['reportSkillOutcome'],
+    },
+    {
+      name: 'with close',
+      sessionId: 's:dead-f',
+      methods: ['reportSkillOutcome', 'close'],
+    },
+    {
+      name: 'with verdict and close',
+      sessionId: 's:dead-c',
+      methods: ['reportSkillOutcome', 'reportOutcome', 'close'],
+    },
+    {
+      name: 'repeated reports and verdicts',
+      sessionId: 's:dead-g',
+      methods: [
+        'reportOutcome',
+        'reportSkillOutcome',
+        'reportSkillOutcome',
+        'reportOutcome',
+      ],
+    },
+    { name: 'no handle', methods: ['reportSkillOutcome'] },
+    {
+      name: 'no handle kept',
+      keepSessionAlive: true,
+      methods: ['reportSkillOutcome'],
+    },
+  ]) {
+    it(`drops late skill reports without connecting: ${row.name}`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return { recorded: true };
+      });
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const commands = row.methods.map((method, index) => ({
+        method,
+        ...(method === 'reportSkillOutcome'
+          ? { params: { domain: 'example.com', task: 'read', success: true } }
+          : method === 'reportOutcome'
+            ? {
+                params: {
+                  success: index === 0,
+                  reason: index === 0 ? 'completed' : 'timeout',
+                },
+              }
+            : {}),
+      }));
+      try {
+        const result = await getAgentExecute(
+          srv.url,
+          'stdio',
+          analytics,
+        )(
+          {
+            sessionId: row.sessionId,
+            keepSessionAlive: row.keepSessionAlive,
+            commands,
+          },
+          mockContext,
+        );
+        const hasVerdict = row.methods.includes('reportOutcome');
+        expect(result).to.deep.equal({
+          content: [
+            {
+              type: 'text',
+              text: (hasVerdict ? 'Outcome recorded. ' : '') + skillNotRecorded,
+            },
+          ],
+        });
+        expect(srv.hits()).to.equal(0);
+        expect(methods).to.deep.equal([]);
+        expect(fire.callCount).to.equal(1);
+        expect(fire.firstCall.args[2]).to.include({
+          agent_session_handle: row.sessionId ?? null,
+          methods: row.methods.join(','),
+          command_count: commands.length,
+          success: true,
+        });
+        if (hasVerdict) {
+          expect(fire.firstCall.args[2]).to.include({
+            verdict_delivery: 'late',
+            self_reported_success: false,
+            outcome_reason: 'timeout',
+          });
+        } else {
+          expect(fire.firstCall.args[2]).not.to.have.any.keys(
+            'verdict_delivery',
+            'self_reported_success',
+            'outcome_reason',
+          );
+        }
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const withVerdict of [false, true]) {
+    for (const otherToken of [false, true]) {
+      it(`routes skill reports only to the caller's live browser (verdict=${withVerdict}, otherToken=${otherToken})`, async () => {
+        const methods: string[] = [];
+        const srv = await makeRespondingServer((method) => {
+          methods.push(method);
+          return method === 'text' ? { text: 'done' } : { recorded: true };
+        });
+        const analytics = new AnalyticsHelper(false);
+        const fire = sinon.stub(analytics, 'fireToolRequest');
+        try {
+          const execute = getAgentExecute(srv.url, 'stdio', analytics);
+          const opened = await execute(
+            { method: 'text', keepSessionAlive: true },
+            mockContext,
+          );
+          const sessionId = /sessionId: (\S+) /.exec(
+            JSON.stringify(opened),
+          )![1];
+          methods.length = 0;
+          fire.resetHistory();
+          const result = await execute(
+            {
+              sessionId,
+              commands: [
+                {
+                  method: 'reportSkillOutcome',
+                  params: {
+                    domain: 'example.com',
+                    task: 'read',
+                    success: true,
+                  },
+                },
+                ...(withVerdict
+                  ? [
+                      {
+                        method: 'reportOutcome',
+                        params: { success: false, reason: 'timeout' },
+                      },
+                    ]
+                  : []),
+              ],
+            },
+            otherToken
+              ? { ...mockContext, session: { token: 'other-token' } }
+              : mockContext,
+          );
+          expect(srv.hits()).to.equal(1);
+          expect(methods).to.deep.equal(
+            otherToken
+              ? []
+              : withVerdict
+                ? ['reportSkillOutcome', 'reportOutcome']
+                : ['reportSkillOutcome'],
+          );
+          expect(result).to.deep.equal({
+            content: [
+              {
+                type: 'text',
+                text: otherToken
+                  ? (withVerdict ? 'Outcome recorded. ' : '') + skillNotRecorded
+                  : 'Done.',
+              },
+            ],
+          });
+          expect(fire.callCount).to.equal(1);
+          if (withVerdict)
+            expect(fire.firstCall.args[2]).to.include({
+              verdict_delivery: otherToken ? 'late' : 'in_session',
+              self_reported_success: false,
+            });
+        } finally {
+          await srv.close();
+        }
+      });
+    }
+  }
+
+  it('rejects invalid late skill reports before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ recorded: true }));
+    try {
+      let error: unknown;
+      try {
+        await getAgentExecute(srv.url)(
+          {
+            sessionId: 's:dead-i',
+            commands: [
+              {
+                method: 'reportSkillOutcome',
+                params: { domain: 'example.com', task: 'read', success: 'yes' },
+              },
+            ],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).not.to.equal(skillNotRecorded);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const failure of ['command', 'poll']) {
     it(`preserves completed downloads when a later ${failure} fails`, async () => {
       let polls = 0;
@@ -2213,7 +2628,7 @@ describe('browserless_agent one-shot sessions', () => {
     }
   });
 
-  it('delivers only the skill report after recording a late task outcome once', async () => {
+  it('records a late outcome and drops the skill report without opening a browser', async () => {
     const methods: string[] = [];
     const srv = await makeRespondingServer((method) => {
       methods.push(method);
@@ -2221,6 +2636,9 @@ describe('browserless_agent one-shot sessions', () => {
     });
     const analytics = new AnalyticsHelper(false);
     const fire = sinon.stub(analytics, 'fireToolRequest');
+    const fetch = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('No probe expected'));
     try {
       const result = await getAgentExecute(
         srv.url,
@@ -2230,6 +2648,7 @@ describe('browserless_agent one-shot sessions', () => {
         {
           sessionId: 's:finished-skill',
           keepSessionAlive: false,
+          requiredCapabilities: ['reportOutcome'],
           commands: [
             {
               method: 'reportSkillOutcome',
@@ -2243,15 +2662,15 @@ describe('browserless_agent one-shot sessions', () => {
         },
         mockContext,
       );
-      expect(JSON.stringify(result)).to.include(
-        'Browser session closed (one-shot)',
-      );
-      expect(JSON.stringify(result)).not.to.include(
-        'report whether the task worked',
-      );
-      expect(srv.hits()).to.equal(1);
-      expect(methods).to.deep.equal(['reportSkillOutcome']);
-      expect(fire.callCount).to.equal(2);
+      expect(result).to.deep.equal({
+        content: [
+          { type: 'text', text: 'Outcome recorded. ' + skillNotRecorded },
+        ],
+      });
+      expect(srv.hits()).to.equal(0);
+      expect(methods).to.deep.equal([]);
+      expect(fetch.called).to.equal(false);
+      expect(fire.callCount).to.equal(1);
       expect(fire.firstCall.args[2]).to.include({
         agent_session_handle: 's:finished-skill',
         verdict_delivery: 'late',
@@ -2260,10 +2679,8 @@ describe('browserless_agent one-shot sessions', () => {
         methods: 'reportSkillOutcome,reportOutcome',
         command_count: 2,
       });
-      expect(fire.lastCall.args[2]).not.to.have.any.keys(
-        'verdict_delivery',
-        'self_reported_success',
-        'outcome_reason',
+      expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+        'test-token',
       );
     } finally {
       await srv.close();
@@ -5416,10 +5833,15 @@ describe('browserless_agent skill outcome forwarding', () => {
     const forwarded: unknown[] = [];
     const srv = await makeRespondingServer((method, params) => {
       if (method === 'reportSkillOutcome') forwarded.push(params);
-      return { recorded: true };
+      return method === 'text' ? { text: 'done' } : { recorded: true };
     });
     try {
       const execute = getAgentExecute(srv.url);
+      const opened = await execute(
+        { method: 'text', keepSessionAlive: true },
+        mockContext,
+      );
+      const sessionId = /sessionId: (\S+) /.exec(JSON.stringify(opened))![1];
       const legacy = { domain: 'example.com', task: 'search', success: true };
       const tampered = {
         ...receipt,
@@ -5435,6 +5857,7 @@ describe('browserless_agent skill outcome forwarding', () => {
       ] as const) {
         await execute(
           {
+            sessionId,
             method: 'reportSkillOutcome',
             params: {
               ...legacy,
@@ -5453,6 +5876,7 @@ describe('browserless_agent skill outcome forwarding', () => {
       }
       await execute(
         {
+          sessionId,
           commands: [
             { method: 'reportSkillOutcome', params: { ...legacy, ...receipt } },
             { method: 'close' },

@@ -8,6 +8,7 @@ import {
   logEntryKey,
 } from '../lib/log-view-schemas.js';
 import { ShowOutputSchema } from '../lib/view-schemas.js';
+import { formatTimestamp, formatNumber } from './host.mjs';
 import './logs.css';
 
 const node = (tag, text, className = '') => {
@@ -74,6 +75,14 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
   root.innerHTML = `<header><span class="logs-icon" aria-hidden="true">≡</span><div><h1>Request logs</h1><p data-role="range"></p></div><button data-role="refresh">Refresh</button></header><details class="logs-filters"><summary>Filters</summary><dl data-role="active-filters"></dl><form><fieldset><div class="logs-filter-grid" data-role="fields"></div><label>Timestamp order<select name="order"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label><label>Entries per page<input name="limit" type="number" min="1" max="100" value="50"></label><fieldset class="logs-levels"><legend>Severity</legend></fieldset></fieldset><div class="logs-filter-actions"><button type="button" data-role="apply">Apply filters</button><button type="button" data-role="clear">Clear filters</button></div></form></details><p data-role="status" role="status" aria-live="polite"></p><p data-role="error" role="alert" hidden></p><button data-role="retry" hidden>Retry</button><div class="logs-table-scroll" tabindex="0" role="region" aria-label="Request log entries"><table><thead><tr><th scope="col">Timestamp</th><th scope="col">Severity</th><th scope="col">Endpoint / event</th><th scope="col">Outcome / status</th><th scope="col">Category / reason</th><th scope="col">Duration</th><th scope="col">Units</th><th scope="col">Region</th></tr></thead><tbody></tbody></table></div><p data-role="empty" hidden>No request log entries matched. Widen the time range or remove a filter. The available window depends on your account plan.</p><button data-role="more">Load more</button><footer><span data-role="updated"></span><span>Browserless</span></footer>`;
   const $ = (role) => root.querySelector(`[data-role="${role}"]`);
   const form = root.querySelector('form');
+  for (const [selector, role] of [
+    ['table', 'table'],
+    ['thead,tbody', 'rowgroup'],
+    ['tr', 'row'],
+    ['th', 'columnheader'],
+  ])
+    for (const element of root.querySelectorAll(selector))
+      element.setAttribute('role', role);
   for (const [key, title] of fields) {
     const label = node('label', title);
     const input = node(key === 'eventNames' ? 'textarea' : 'input');
@@ -125,23 +134,11 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
     return LogsParamsSchema.omit({ cursor: true }).parse(filters);
   }
   function timestamp(value) {
-    if (value === null) return 'Unavailable';
-    const time = new Date(value);
-    if (!Number.isFinite(time.getTime())) return value;
-    try {
-      return new Intl.DateTimeFormat(host.locale, {
-        dateStyle: 'short',
-        timeStyle: 'medium',
-        ...(host.timeZone ? { timeZone: host.timeZone } : {}),
-      }).format(time);
-    } catch {
-      return time.toLocaleString();
-    }
+    return (
+      formatTimestamp(value, host) ?? (value === null ? 'Unavailable' : value)
+    );
   }
-  const number = (value, suffix = '') =>
-    value === null
-      ? 'Unavailable'
-      : `${new Intl.NumberFormat(host.locale, { maximumFractionDigits: 20 }).format(value)}${suffix}`;
+  const number = (value, suffix = '') => formatNumber(value, host, suffix);
   function chip(value) {
     const tone = /^(error|fatal|failed)$/i.test(value ?? '')
       ? 'bad'
@@ -183,6 +180,8 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
       const key = logEntryKey(entry);
       const row = node('tr');
       const details = node('tr', undefined, 'logs-detail');
+      row.setAttribute('role', 'row');
+      details.setAttribute('role', 'row');
       details.hidden = !expanded.has(key);
       const toggle = node(
         'button',
@@ -227,7 +226,13 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
         node('td', number(entry.totalUnits)),
         node('td', entry.region ?? 'Unavailable'),
       );
+      const headers = root.querySelectorAll('th');
+      [...row.children].forEach((cell, index) => {
+        cell.setAttribute('role', 'cell');
+        cell.dataset.label = headers[index].textContent;
+      });
       const cell = node('td');
+      cell.setAttribute('role', 'cell');
       cell.colSpan = 8;
       const values = node('dl');
       for (const [key, title] of Object.entries(labels)) {
