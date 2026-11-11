@@ -27,6 +27,7 @@
 // generous so this is rare.
 
 import { recordSessionLifetime } from './metrics-recorders.js';
+import { diagnosticString } from './diagnostic-string.js';
 
 // 30 minutes of no inbound activity before an abandoned session is reaped.
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
@@ -153,7 +154,9 @@ export const reapIdleSessions = (
     lastSeen.delete(id);
     firstSeen.delete(id);
     closed++;
-    console.error(`[session-reaper] closed idle mcp session id=${id}`);
+    console.error(
+      `[session-reaper] closed idle mcp session id=${diagnosticString(id)}`,
+    );
   }
   // Drop tracking for ids with no live session. `touchSession` stamps the
   // mcp-session-id before auth (and rejected/unknown requests carry arbitrary

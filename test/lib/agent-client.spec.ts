@@ -19,6 +19,7 @@ import {
   preflightAgentCapabilities,
   proxyFingerprint,
   sessionHandle,
+  sweepSessions,
   dropMcpSession,
   send,
   startHumanHandoff,
@@ -2962,6 +2963,62 @@ describe('agent-client integration binding key', () => {
 describe('agent-client mcp-session churn', () => {
   const bare = (sid: string, url: string) =>
     getOrCreateSession(sid, url, 'tok');
+
+  it('escapes a control-character session handle when eviction writes to stderr', async () => {
+    const server = await makeRespondingServer(() => ({}));
+    const stderr = sinon.spy(process.stderr, 'write');
+    // Tab is a control character accepted by the upstream session header.
+    const handle = 's:\tcontrol';
+    try {
+      const session = await getOrCreateSession(
+        'eviction-diagnostic',
+        server.url,
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        handle,
+      );
+      expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
+        session,
+      );
+      const closed = once(session.ws, 'close');
+      sweepSessions(Date.now() + 24 * 60 * 60 * 1000);
+      await closed;
+      const line = stderr
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((value) =>
+          value.startsWith('[agent-client] evicted session key='),
+        );
+      expect(line).to.be.a('string');
+      expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      const encoded =
+        /^\[agent-client\] evicted session key=(.*) reason=idle\n$/.exec(
+          line!,
+        )!;
+      expect(JSON.parse(encoded[1])).to.equal(
+        getSessionKey(
+          'eviction-diagnostic',
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          handle,
+        ),
+      );
+      expect(() =>
+        getActiveSessionByHandle(handle, server.url, 'tok'),
+      ).to.throw('The requested browser session is unavailable.');
+    } finally {
+      stderr.restore();
+      await server.close();
+    }
+  });
 
   // "Orphan adoption" let a bare call recover a browser whose MCP session went
   // quiet — the same guess that collided tasks. The handle is now the only way back.

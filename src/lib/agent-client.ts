@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
+import { diagnosticString } from './diagnostic-string.js';
 import {
   recordUpstreamCall,
   recordSessionLifetime,
@@ -537,7 +538,7 @@ const properClose = (
         /* ignore */
       }
       console.error(
-        `[agent-client] evicted session key=${key} reason=${reason}`,
+        `[agent-client] evicted session key=${diagnosticString(key)} reason=${reason}`,
       );
     });
 };

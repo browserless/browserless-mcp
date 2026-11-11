@@ -14,6 +14,7 @@ import { registerDownloadRoute } from './resources/download-route.js';
 import { registerMediaPreviewRoute } from './resources/media-preview.js';
 import { registerCloseRoute } from './resources/close-route.js';
 import { clearSession } from './lib/download-store.js';
+import { diagnosticString } from './lib/diagnostic-string.js';
 import { dropMcpSession, startSweepTimer } from './lib/agent-client.js';
 import {
   touchSession,
@@ -272,7 +273,7 @@ server.on('connect', (event) => {
   const id = event.session.sessionId ?? 'stdio';
   // Stamp activity so the idle reaper gives a fresh session a full TTL.
   touchSession(event.session.sessionId);
-  console.error(`[browserless-mcp] Client connected: ${id}`);
+  console.error(`[browserless-mcp] Client connected: ${diagnosticString(id)}`);
   if (
     amplitudeAnalytics &&
     !warnedAboutServerIdentity &&
@@ -322,7 +323,9 @@ server.on('disconnect', (event) => {
   // only frees the timer and the MCP server; the agent browser handle is keyed
   // separately in agent-client and is untouched.
   void Promise.resolve(event.session.close()).catch(() => {});
-  console.error(`[browserless-mcp] Client disconnected: ${id}`);
+  console.error(
+    `[browserless-mcp] Client disconnected: ${diagnosticString(id)}`,
+  );
 });
 
 startSweepTimer();

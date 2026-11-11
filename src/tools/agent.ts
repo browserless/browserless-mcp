@@ -5,6 +5,7 @@ import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
+import { diagnosticString } from '../lib/diagnostic-string.js';
 import { mediaOrigin, prepareAgentMedia } from '../lib/agent-media.js';
 import {
   assertAllowedUploadPath,
@@ -1064,13 +1065,6 @@ export function registerAgentTools(
   });
 }
 
-// JSON escapes C0 controls; also escape terminal controls and Unicode line breaks.
-const diagnosticString = (value: string): string =>
-  JSON.stringify(value).replace(
-    /[\u007f-\u009f\u2028\u2029]/g,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  );
-
 export const runAgentCommands = async (
   {
     client,
@@ -1285,7 +1279,7 @@ export const runAgentCommands = async (
     params.sessionId !== `attach:${attachSessionId}`
   ) {
     log.warn(
-      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId.slice(0, 24))}… canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
+      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId, 24)} canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
     );
   }
   const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
@@ -1293,7 +1287,7 @@ export const runAgentCommands = async (
   // browser per conversation and one per call — log it, don't infer it.
   if (config.transport === 'httpStream') {
     console.error(
-      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId)}` : `absent (mcp=${diagnosticString(mcpSessionId ?? 'none')})`}`,
+      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId, 24)}` : `absent (mcp=${mcpSessionId === undefined ? 'none' : diagnosticString(mcpSessionId)})`}`,
     );
   }
 
