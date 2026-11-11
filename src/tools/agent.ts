@@ -1279,7 +1279,7 @@ export const runAgentCommands = async (
     params.sessionId !== `attach:${attachSessionId}`
   ) {
     log.warn(
-      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId, 24)} canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
+      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId)} canonical=attach:${attachSessionId}`,
     );
   }
   const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
@@ -1287,7 +1287,7 @@ export const runAgentCommands = async (
   // browser per conversation and one per call — log it, don't infer it.
   if (config.transport === 'httpStream') {
     console.error(
-      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId, 24)}` : `absent (mcp=${mcpSessionId === undefined ? 'none' : diagnosticString(mcpSessionId)})`}`,
+      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId)}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
     );
   }
 

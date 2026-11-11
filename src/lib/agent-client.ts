@@ -868,7 +868,7 @@ export const preflightAgentCapabilities = async (
 // UpgradeError), so a 1006 close here only means a transport failure or a
 // server crash before any HTTP response.
 const describeConnectCloseCode = (code: number, reason: string): string => {
-  if (reason) return `code=${code}, reason="${reason}"`;
+  if (reason) return `code=${code}, reason=${diagnosticString(reason)}`;
   if (code === 1006)
     return 'code=1006 (abnormal close before HTTP response — likely a network failure or server crash)';
   if (code === 1008) return 'code=1008 (policy violation)';
@@ -1627,7 +1627,7 @@ export const getOrCreateSession = async (
     ws.on('close', (code: number, reason: Buffer) => {
       if (code !== 1000) {
         console.error(
-          `[agent-client] WebSocket closed unexpectedly: code=${code} reason=${reason?.toString('utf8') || 'none'}`,
+          `[agent-client] WebSocket closed unexpectedly: code=${code} reason=${reason?.length ? diagnosticString(reason.toString('utf8')) : 'none'}`,
         );
       }
       // Delete by identity, not by the captured key: adoption re-keys a live

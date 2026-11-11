@@ -2960,65 +2960,121 @@ describe('agent-client integration binding key', () => {
   });
 });
 
-describe('agent-client mcp-session churn', () => {
-  const bare = (sid: string, url: string) =>
-    getOrCreateSession(sid, url, 'tok');
-
-  it('escapes a control-character session handle when eviction writes to stderr', async () => {
-    const server = await makeRespondingServer(() => ({}));
-    const stderr = sinon.spy(process.stderr, 'write');
-    // Tab is a control character accepted by the upstream session header.
-    const handle = 's:\tcontrol';
-    try {
-      const session = await getOrCreateSession(
+describe('agent-client session diagnostics', () => {
+  let server: Awaited<ReturnType<typeof makeRespondingServer>>;
+  const handles: string[] = [];
+  beforeEach(async () => {
+    server = await makeRespondingServer(() => ({}));
+  });
+  const open = (handle: string, url = server.url) => {
+    handles.push(handle);
+    return getOrCreateSession(
+      'eviction-diagnostic',
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+    );
+  };
+  afterEach(async () => {
+    for (const handle of handles.splice(0)) {
+      await closeSession(
         'eviction-diagnostic',
-        server.url,
         'tok',
         undefined,
         undefined,
         undefined,
         undefined,
-        false,
-        undefined,
         handle,
       );
+    }
+    await server.close();
+    sinon.restore();
+  });
+
+  for (const handle of [
+    's:\tcontrol',
+    's:eviction-long\t' + 'x'.repeat(1024),
+  ]) {
+    it(`bounds and escapes the eviction key for a ${handle.length > 80 ? 'long' : 'short'} handle`, async () => {
+      const stderr = sinon.spy(process.stderr, 'write');
+      // Tab is a control character accepted by the upstream session header.
+      const neighbor = await open('s:diagnostic-neighbor');
+      const session = await open(handle);
       expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
         session,
       );
       const closed = once(session.ws, 'close');
-      sweepSessions(Date.now() + 24 * 60 * 60 * 1000);
+      session.lastUsedAt = Date.now() - 16 * 60 * 1000;
+      sweepSessions();
+      await closed;
+      const key = getSessionKey(
+        'eviction-diagnostic',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        handle,
+      );
+      const expected = `[agent-client] evicted session key=${JSON.stringify(key.slice(0, 80))}${key.length > 80 ? '…' : ''} reason=idle\n`;
+      const line = stderr
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((value) => value === expected);
+      expect(line).to.be.a('string');
+      expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(() =>
+        getActiveSessionByHandle(handle, server.url, 'tok'),
+      ).to.throw('The requested browser session is unavailable.');
+      expect(
+        getActiveSessionByHandle(neighbor.handle, server.url, 'tok'),
+      ).to.equal(neighbor);
+    });
+  }
+
+  it('escapes peer-controlled WebSocket close reasons in stderr', async () => {
+    // Use a separate peer to send a real WebSocket close frame.
+    const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+    const address = peer.address();
+    assert(address && typeof address !== 'string');
+    const reason = 'peer:\n\r\u001b\u202e\u200b"\\end';
+    const stderr = sinon.spy(process.stderr, 'write');
+    try {
+      const session = await open(
+        's:close-reason',
+        `http://127.0.0.1:${address.port}`,
+      );
+      const closed = once(session.ws, 'close');
+      for (const ws of peer.clients) ws.close(1008, reason);
       await closed;
       const line = stderr
         .getCalls()
         .map((call) => String(call.args[0]))
         .find((value) =>
-          value.startsWith('[agent-client] evicted session key='),
+          value.startsWith('[agent-client] WebSocket closed unexpectedly:'),
         );
       expect(line).to.be.a('string');
       expect(line!.slice(0, -1)).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
-      const encoded =
-        /^\[agent-client\] evicted session key=(.*) reason=idle\n$/.exec(
-          line!,
-        )!;
-      expect(JSON.parse(encoded[1])).to.equal(
-        getSessionKey(
-          'eviction-diagnostic',
-          'tok',
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          handle,
-        ),
+      expect(JSON.parse(line!.slice(line!.indexOf('reason=') + 7))).to.equal(
+        reason,
       );
-      expect(() =>
-        getActiveSessionByHandle(handle, server.url, 'tok'),
-      ).to.throw('The requested browser session is unavailable.');
     } finally {
-      stderr.restore();
-      await server.close();
+      for (const ws of peer.clients) ws.terminate();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
     }
   });
+});
+
+describe('agent-client mcp-session churn', () => {
+  const bare = (sid: string, url: string) =>
+    getOrCreateSession(sid, url, 'tok');
 
   // "Orphan adoption" let a bare call recover a browser whose MCP session went
   // quiet — the same guess that collided tasks. The handle is now the only way back.

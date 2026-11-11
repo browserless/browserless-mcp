@@ -1735,52 +1735,63 @@ const getAgentExecute = (
 describe('browserless_agent session diagnostics', () => {
   afterEach(() => sinon.restore());
 
-  for (const echoed of [true, false]) {
-    it(`escapes ${echoed ? 'echoed' : 'fallback MCP'} session controls without rejecting execution`, async () => {
-      const sessionId =
-        's:\n\r\t\u001b\u007f\u0085\u009b\u2028\u2029\u202e\u2066\u200b\u{e0001}"\\end';
-      const stderr = sinon.spy(process.stderr, 'write');
-      // Closing an absent session reaches the diagnostics without a connection.
-      const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
-      const result = await execute(
-        AgentToolParamsSchema.parse({
-          method: 'close',
-          ...(echoed ? { sessionId } : {}),
-        }),
-        { ...mockContext, sessionId },
-      );
-      expect(JSON.stringify(result)).to.include('Browser session closed.');
-      const lines = stderr.getCalls().map((call) => String(call.args[0]));
-      const diagnostic = lines.find((line) =>
-        line.startsWith('[agent] handle '),
-      );
-      expect(diagnostic).to.be.a('string');
-      expect(diagnostic!.slice(0, -1)).not.to.match(
-        /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u,
-      );
-      const encoded = echoed
-        ? diagnostic!.slice('[agent] handle echoed='.length, -1)
-        : diagnostic!.slice('[agent] handle absent (mcp='.length, -2);
-      expect(JSON.parse(encoded)).to.equal(sessionId);
-    });
-  }
+  it('escapes echoed session controls without rejecting execution', async () => {
+    const sessionId =
+      's:\n\r\t\u001b\u007f\u0085\u009b\u2028\u2029\u202e\u2066\u200b\u{e0001}"\\end';
+    const stderr = sinon.spy(process.stderr, 'write');
+    // Closing an absent session reaches the diagnostics without a connection.
+    const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
+    const result = await execute(
+      AgentToolParamsSchema.parse({
+        method: 'close',
+        sessionId,
+      }),
+      { ...mockContext, sessionId },
+    );
+    expect(JSON.stringify(result)).to.include('Browser session closed.');
+    const lines = stderr.getCalls().map((call) => String(call.args[0]));
+    const diagnostic = lines.find((line) => line.startsWith('[agent] handle '));
+    expect(diagnostic).to.be.a('string');
+    expect(diagnostic!.slice(0, -1)).not.to.match(
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u,
+    );
+    const encoded = diagnostic!.slice('[agent] handle echoed='.length, -1);
+    expect(JSON.parse(encoded)).to.equal(sessionId);
+  });
 
-  it('bounds echoed handles before escaping and preserves bare none for missing MCP IDs', async () => {
+  it('preserves complete handles and bounds previews by code point before escaping', async () => {
     const stderr = sinon.spy(process.stderr, 'write');
     const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
-    await execute(
-      { method: 'close', sessionId: '\u202e'.repeat(1024) },
-      mockContext,
-    );
+    const handle = 's:12345678-1234-1234-1234-123456789abc';
+    for (const sessionId of [
+      handle,
+      'x'.repeat(80),
+      'a'.repeat(79) + '😀',
+      'a'.repeat(79) + '😀z',
+      '\u202e'.repeat(1024),
+    ]) {
+      await execute({ method: 'close', sessionId }, mockContext);
+    }
     await execute(
       { method: 'close' },
       { ...mockContext, sessionId: undefined },
     );
     const lines = stderr.getCalls().map((call) => String(call.args[0]));
+    expect(lines).to.include(`[agent] handle echoed="${handle}"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'x'.repeat(80)}"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'a'.repeat(79)}😀"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'a'.repeat(79)}😀"…\n`);
     expect(lines).to.include(
-      `[agent] handle echoed="${'\\u202e'.repeat(24)}"…\n`,
+      `[agent] handle echoed="${'\\u202e'.repeat(80)}"…\n`,
     );
     expect(lines).to.include('[agent] handle absent (mcp=none)\n');
+    await execute(
+      { method: 'close' },
+      { ...mockContext, sessionId: 'server-uuid' },
+    );
+    expect(String(stderr.lastCall.args[0])).to.equal(
+      '[agent] handle absent (mcp=server-uuid)\n',
+    );
   });
 });
 
@@ -3792,9 +3803,9 @@ describe('browserless_agent persona creation guard', () => {
           /^\[agent\] attach handle mismatch ignored: echoed=(".*")(…?) canonical=(.*)$/.exec(
             warning,
           )!;
-        expect(JSON.parse(fields[1])).to.equal(echo.slice(0, 24));
-        expect(fields[2]).to.equal(echo.length > 24 ? '…' : '');
-        expect(JSON.parse(fields[3])).to.equal('attach:existing-browser');
+        expect(JSON.parse(fields[1])).to.equal(echo.slice(0, 80));
+        expect(fields[2]).to.equal(echo.length > 80 ? '…' : '');
+        expect(fields[3]).to.equal('attach:existing-browser');
         expect(warn.firstCall.args[0]).to.not.include('test-token');
       }
       warn.resetHistory();
