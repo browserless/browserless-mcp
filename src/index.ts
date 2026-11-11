@@ -27,7 +27,6 @@ import {
   admitSessionRequest,
   authOutcome,
   requestSessionId,
-  requestSessions,
   type SessionRefusal,
 } from './lib/session-binding.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
@@ -161,15 +160,10 @@ const hybridAuthenticate =
             request,
             config,
           )) as BrowserlessSession;
-          admitSessionRequest(
-            sid,
-            session,
-            requestSessions(request, server.sessions),
-            (r, o) => {
-              refusal = r;
-              owner = o;
-            },
-          );
+          admitSessionRequest(sid, session, server.sessions, (r, o) => {
+            refusal = r;
+            owner = o;
+          });
           recordMcpRequest(
             'authenticated',
             performance.now() - authStartedAt,
@@ -182,7 +176,7 @@ const hybridAuthenticate =
               failed: false,
               auth: session,
               store: eventStore,
-              sessions: () => requestSessions(request, server.sessions),
+              sessions: () => server.sessions,
             }),
           );
           return session;
@@ -201,7 +195,7 @@ const hybridAuthenticate =
               refusal,
               owner,
               store: eventStore,
-              sessions: () => requestSessions(request, server.sessions),
+              sessions: () => server.sessions,
             }),
           );
           throw err;

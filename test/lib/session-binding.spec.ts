@@ -5,7 +5,6 @@ import {
   assertSessionPrincipal,
   authOutcome,
   requestSessionId,
-  requestSessions,
   sessionNotFoundResponse,
   sessionPrincipal,
   type SessionLike,
@@ -47,48 +46,14 @@ async function notFound(run: () => void) {
 describe('session binding', () => {
   afterEach(() => resetSessionReaperForTests());
 
-  it('uses the session id selected by the request transport', () => {
-    for (const [request, expected] of [
-      [{ method: 'POST', url: '/messages?sessionId=a' }, 'a'],
-      [{ method: 'POST', url: '/messagesX?sessionId=a' }, 'a'],
-      [{ method: 'POST', url: '/messages?sessionId=a&sessionId=b' }, 'a'],
-      [{ method: 'POST', url: '/messages' }, undefined],
-      [{ method: 'POST', url: '/messages?sessionId=' }, ''],
-      [
-        {
-          method: 'POST',
-          url: '/messages?sessionId=a',
-          headers: { 'mcp-session-id': 'h' },
-        },
-        'a',
-      ],
-      [{ method: 'GET', url: '/messages?sessionId=a' }, undefined],
-      [{ method: 'POST', url: '/mcp?sessionId=a' }, undefined],
-      [
-        { method: 'POST', url: '/mcp', headers: { 'mcp-session-id': 'h' } },
-        'h',
-      ],
-      [
-        {
-          method: 'POST',
-          url: '/mcp',
-          headers: { 'mcp-session-id': ['h1', 'h2'] },
-        },
-        'h1',
-      ],
-    ] as [Parameters<typeof requestSessionId>[0], string | undefined][]) {
-      expect(requestSessionId(request)).to.equal(expected);
-    }
-  });
-
-  it('includes the opening session before registration without changing the live list', () => {
-    const sessions = [{ sessionId: 'registered', auth: key }];
-    const opening = { sessionId: 'opening', auth: oauth };
-    expect(requestSessions({}, sessions)).to.equal(sessions);
+  it('uses only the session header for identity binding', () => {
+    expect(requestSessionId({})).to.equal(undefined);
+    expect(requestSessionId({ headers: { 'mcp-session-id': 'h' } })).to.equal(
+      'h',
+    );
     expect(
-      requestSessions({ browserlessSession: opening }, sessions),
-    ).to.deep.equal([...sessions, opening]);
-    expect(sessions).to.have.length(1);
+      requestSessionId({ headers: { 'mcp-session-id': ['h1', 'h2'] } }),
+    ).to.equal('h1');
   });
 
   it('observes refusal reasons without changing admission or responses', async () => {

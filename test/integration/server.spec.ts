@@ -24,7 +24,6 @@ import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { defineTool } from '../../src/lib/define-tool.js';
 import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
@@ -306,25 +305,11 @@ describe('MCP Server Integration', () => {
   }
 
   for (const oauth of [false, true]) {
-    for (const opener of [
-      'header',
-      'query',
-      'empty-bearer',
-      'jwt-with-query',
-    ]) {
-      it(`binds built-server legacy SSE posts with OAuth=${oauth}, opener=${opener}`, async () => {
-        const queryAuth = opener !== 'header';
+    for (const compliant of [false, true]) {
+      it(`returns 404 for retired endpoints with OAuth=${oauth}, compliance=${compliant}`, async () => {
         const port = await freePort();
         const base = `http://127.0.0.1:${port}`;
-        const keys = ['a'.repeat(24) + '+&=%/#', 'b'.repeat(24)];
-        const authorization =
-          opener === 'header'
-            ? `Bearer ${keys[0]}`
-            : opener === 'empty-bearer'
-              ? 'Bearer '
-              : opener === 'jwt-with-query'
-                ? 'Bearer e30.e30.test'
-                : undefined;
+        const key = 'a'.repeat(24) + '+&=%/#';
         const child = spawn(process.execPath, ['build/src/index.js'], {
           env: {
             ...process.env,
@@ -334,6 +319,7 @@ describe('MCP Server Integration', () => {
             BROWSERLESS_API_URL: 'http://127.0.0.1:9',
             BROWSERLESS_MAX_RETRIES: '0',
             OAUTH_ENABLED: String(oauth),
+            MCP_COMPLIANCE_MODE: String(compliant),
             MCP_BASE_URL: base,
             SUPABASE_URL: 'http://127.0.0.1:9',
             SUPABASE_OAUTH_CLIENT_ID: 'test',
@@ -352,7 +338,6 @@ describe('MCP Server Integration', () => {
           output += chunk;
         });
         const exited = once(child, 'exit');
-        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         try {
           let ready = false;
           for (let i = 0; i < 100; i++) {
@@ -365,98 +350,48 @@ describe('MCP Server Integration', () => {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           expect(ready).to.equal(true);
-          const stream = await fetch(
-            `${base}/sse?token=${encodeURIComponent(queryAuth ? keys[0] : keys[1])}`,
-            {
-              headers: authorization ? { Authorization: authorization } : {},
-              signal: AbortSignal.timeout(10000),
-            },
-          );
-          expect(stream.status).to.equal(200);
-          reader = stream.body!.getReader();
-          let frames = '';
-          const until = async (value: string) => {
-            while (!frames.includes(value)) {
-              const chunk = await reader!.read();
-              expect(chunk.done).to.equal(false);
-              frames += new TextDecoder().decode(chunk.value);
-            }
-          };
-          await until('\n\n');
-          const endpoint = new URL(frames.match(/data: (.+)/)![1], base);
-          expect(endpoint.searchParams.get('token')).to.equal(
-            queryAuth ? keys[0] : null,
-          );
-          const bareEndpoint = new URL(endpoint);
-          bareEndpoint.searchParams.delete('token');
-          const post = (
-            key?: string,
-            method = 'initialize',
-            target = bareEndpoint,
-          ) =>
-            fetch(target, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(key ? { Authorization: `Bearer ${key}` } : {}),
-              },
-              body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: method === 'initialize' ? 1 : 2,
+          for (const auth of ['none', 'header', 'query']) {
+            for (const [method, path] of [
+              ['GET', '/sse'],
+              ['POST', '/messages'],
+              ['POST', '/messages?sessionId=retired'],
+            ]) {
+              const url = new URL(path, base);
+              if (auth === 'query') url.searchParams.set('token', key);
+              const response = await fetch(url, {
                 method,
-                params:
-                  method === 'initialize'
-                    ? {
-                        protocolVersion: '2025-11-25',
-                        capabilities: {},
-                        clientInfo: { name: 'sse', version: '1' },
-                      }
-                    : {},
-              }),
-            });
-          const missing = await post();
-          expect(missing.status).to.equal(401);
-          expect(await missing.json()).to.have.nested.property(
-            'error.code',
-            -32000,
-          );
-          if (oauth)
-            expect(missing.headers.get('www-authenticate')).to.include(
-              'resource_metadata=',
-            );
-          const other = await post(keys[1]);
-          expect(other.status).to.equal(404);
-          expect(await other.text()).to.equal(
-            '{"error":{"code":-32001,"message":"Session not found"},"id":null,"jsonrpc":"2.0"}',
-          );
-          expect(
-            (
-              await post(
-                queryAuth ? undefined : keys[0],
-                'initialize',
-                endpoint,
-              )
-            ).status,
-          ).to.equal(202);
-          await until('"id":1');
-          expect(
-            (
-              await post(
-                queryAuth ? undefined : keys[0],
-                'tools/list',
-                endpoint,
-              )
-            ).status,
-          ).to.equal(202);
-          await until('"tools"');
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(auth === 'header'
+                    ? { Authorization: `Bearer ${key}` }
+                    : {}),
+                },
+                ...(method === 'POST'
+                  ? {
+                      body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: 'tools/list',
+                      }),
+                    }
+                  : {}),
+                signal: AbortSignal.timeout(3000),
+              });
+              await response.body?.cancel();
+              expect(
+                response.status,
+                `${method} ${path}, auth=${auth}`,
+              ).to.equal(404);
+              expect(response.headers.has('www-authenticate')).to.equal(false);
+            }
+          }
         } finally {
-          await reader?.cancel().catch(() => {});
           child.kill('SIGTERM');
           await exited;
         }
-        for (const key of keys) expect(output).not.to.include(key);
-        expect(output).not.to.include(encodeURIComponent(keys[0]));
-        expect(output).not.to.include('key:');
+        expect(output).not.to.include(key);
+        expect(output).not.to.include(encodeURIComponent(key));
+        expect(output).not.to.include('HTTP Stream session established');
       });
     }
   }
@@ -578,51 +513,66 @@ describe('MCP Server Integration', () => {
     }
   });
 
-  it('preserves legacy SSE initialization and tool POST bodies', async () => {
-    const port = await freePort();
-    server = new FastMCP({ name: 'legacy-sse-test', version: '1.0.0' });
-    server.addTool({
-      name: 'echo',
-      description: 'Returns the submitted value',
-      parameters: z.object({ value: z.string() }),
-      execute: async ({ value }) => value,
+  for (const stateless of [false, true]) {
+    it(`retires legacy endpoints before authentication with stateless=${stateless}`, async () => {
+      const port = await freePort();
+      const authenticate = sinon.stub().resolves({ token: 'test-token' });
+      server = new FastMCP({
+        name: 'transport-test',
+        version: '1.0.0',
+        authenticate,
+      });
+      server.addTool({
+        name: 'echo',
+        description: 'Returns the submitted value',
+        parameters: z.object({ value: z.string() }),
+        execute: async ({ value }) => value,
+      });
+      const client = new Client({ name: 'transport-client', version: '1.0.0' });
+      try {
+        await server.start({
+          transportType: 'httpStream',
+          httpStream: { port, host: '127.0.0.1', stateless },
+        });
+        const base = `http://127.0.0.1:${port}`;
+        for (const key of [undefined, 'test-token']) {
+          for (const [method, path] of [
+            ['GET', '/sse'],
+            ['GET', '/sse?token=test-token'],
+            ['POST', '/messages'],
+            ['POST', '/messages?sessionId=retired&token=test-token'],
+          ]) {
+            const response = await fetch(base + path, {
+              method,
+              headers: {
+                Accept: 'application/json, text/event-stream',
+                ...(key ? { Authorization: `Bearer ${key}` } : {}),
+              },
+              signal: AbortSignal.timeout(3000),
+            });
+            await response.body?.cancel();
+            expect(response.status, `${method} ${path}`).to.equal(404);
+          }
+        }
+        expect(authenticate.callCount).to.equal(0);
+        expect(server.sessions).to.have.length(0);
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL(`${base}/mcp`)),
+        );
+        expect(
+          await client.callTool({
+            name: 'echo',
+            arguments: { value: 'POST body + & = ✓' },
+          }),
+        ).to.deep.equal({
+          content: [{ type: 'text', text: 'POST body + & = ✓' }],
+        });
+      } finally {
+        await client.close();
+        await server.stop();
+      }
     });
-    const client = new Client({ name: 'legacy-sse-client', version: '1.0.0' });
-    try {
-      await server.start({
-        transportType: 'httpStream',
-        httpStream: { port, host: '127.0.0.1' },
-      });
-      await client.connect(
-        new SSEClientTransport(new URL(`http://127.0.0.1:${port}/sse`), {
-          fetch: (url, init) =>
-            fetch(url, {
-              ...init,
-              signal:
-                init?.method === 'POST'
-                  ? AbortSignal.any([
-                      ...(init?.signal ? [init.signal] : []),
-                      AbortSignal.timeout(3000),
-                    ])
-                  : init?.signal,
-            }),
-        }),
-        { timeout: 3000 },
-      );
-      expect(client.getServerVersion()?.name).to.equal('legacy-sse-test');
-      expect(
-        await client.callTool({
-          name: 'echo',
-          arguments: { value: 'legacy POST body + & = ✓' },
-        }),
-      ).to.deep.equal({
-        content: [{ type: 'text', text: 'legacy POST body + & = ✓' }],
-      });
-    } finally {
-      await client.close();
-      await server.stop();
-    }
-  });
+  }
 
   afterEach(async () => {
     sinon.restore();
