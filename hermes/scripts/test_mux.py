@@ -61,6 +61,37 @@ class MuxLifecycleTests(unittest.IsolatedAsyncioTestCase):
         result = await self.request("Target.attachToBrowserTarget")
         return result["result"]["sessionId"]
 
+    async def test_invalid_legacy_session_ids_preserve_connected_clients(self):
+        sid = await self.attach()
+        async with websockets.connect(self.mux.url) as other:
+            for invalid in ([], {}, [sid], {"sessionId": sid}, 17, False):
+                with self.subTest(session=invalid):
+                    await self.upstream_ws.send(json.dumps({
+                        "method": "Target.receivedMessageFromTarget", "sessionId": sid,
+                        "params": {"sessionId": invalid, "message": '{"id": 9, "result": {}}'}}))
+                    self.assertEqual(await self.request("Runtime.enable", session=sid),
+                                     {"id": 37, "result": {}, "sessionId": sid})
+                    self.assertEqual(await self.request("Browser.getVersion", client=other),
+                                     {"id": 37, "result": {}})
+            self.assertEqual(self.mux.upstream_connects, 1)
+
+    async def test_unowned_legacy_events_are_counted(self):
+        sid = await self.attach()
+        for count, unowned in enumerate((None, "", "unknown-session"), 1):
+            with self.subTest(session=unowned):
+                params = {"message": '{"id": 9, "result": {}}'}
+                if unowned is not None:
+                    params["sessionId"] = unowned
+                await self.upstream_ws.send(json.dumps({
+                    "method": "Target.receivedMessageFromTarget", "sessionId": sid, "params": params}))
+                self.assertEqual(await self.request("Browser.getVersion"), {"id": 37, "result": {}})
+                self.assertEqual(self.mux.stats["event_unowned_session"], count)
+        owned = {"method": "Target.receivedMessageFromTarget", "params": {
+            "sessionId": sid, "message": '{"id": 9, "result": {}}'}}
+        await self.upstream_ws.send(json.dumps(owned))
+        self.assertEqual(json.loads(await asyncio.wait_for(self.client.recv(), 2)), owned)
+        self.assertEqual(self.mux.stats["event_unowned_session"], 3)
+
     async def test_legacy_events_follow_nested_session_owner(self):
         async with websockets.connect(self.mux.url) as other:
             sessions = []
