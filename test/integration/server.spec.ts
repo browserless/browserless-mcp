@@ -428,8 +428,14 @@ describe('MCP Server Integration', () => {
     'partial response',
     'partial fixed-length response',
     'preset headers',
+    'preset status message',
     'pipelined requests',
     'invalid response metadata',
+    'legacy SSE close',
+    'streamable close',
+    'streamable connect rejection',
+    'stateless connect rejection',
+    'HTTPS rejection',
   ]) {
     it(`contains transport request failures: ${scenario}`, async () => {
       const port = await freePort();
@@ -444,15 +450,39 @@ describe('MCP Server Integration', () => {
           import assert from 'node:assert/strict';
           import { createRequire } from 'node:module';
           import { createConnection } from 'node:net';
+          import { request } from 'node:https';
+          import { execFileSync } from 'node:child_process';
+          import { mkdtempSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { join } from 'node:path';
+          import { Server } from '@modelcontextprotocol/sdk/server/index.js';
           const require = createRequire(import.meta.url);
           const { startHTTPServer } = await import(
             createRequire(require.resolve('fastmcp')).resolve('mcp-proxy')
           );
           const base = 'http://127.0.0.1:${port}';
           const scenario = ${JSON.stringify(scenario)};
+          const tlsDirectory = scenario === 'HTTPS rejection' ? mkdtempSync(join(tmpdir(), 'mcp-https-')) : null;
+          if (tlsDirectory) execFileSync('openssl', [
+            'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+            '-keyout', join(tlsDirectory, 'key.pem'), '-out', join(tlsDirectory, 'cert.pem'),
+          ], { stdio: 'ignore' });
+          let closeCalls = 0;
           const server = await startHTTPServer({
             host: '127.0.0.1', port: ${port},
-            createServer: async () => { throw new Error('unexpected session'); },
+            ...(tlsDirectory ? { sslKey: join(tlsDirectory, 'key.pem'), sslCert: join(tlsDirectory, 'cert.pem') } : {}),
+            stateless: scenario === 'stateless connect rejection',
+            createServer: async () => {
+              if (scenario.endsWith('close')) return new Server({ name: 'cleanup-test', version: '1.0.0' }, { capabilities: {} });
+              if (scenario.endsWith('connect rejection')) return {
+                connect: async () => { throw new Error('local connect failure'); }, close: async () => {},
+              };
+              throw new Error('unexpected session');
+            },
+            onClose: async () => {
+              closeCalls++;
+              throw new Error('local close failure');
+            },
             onUnhandledRequest: async (req, res) => {
               if (req.url !== '/fail') return;
               if (scenario === 'partial fixed-length response') res.setHeader('Content-Length', '100');
@@ -463,13 +493,72 @@ describe('MCP Server Integration', () => {
                 res.setHeader('Trailer', 'X-Checksum');
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', 'https://client.example');
+                res.setHeader('Set-Cookie', 'failed-handler=1');
+                res.setHeader('Cache-Control', 'public, max-age=3600');
+                res.setHeader('Content-Disposition', 'attachment; filename="failed.txt"');
+                res.setHeader('X-Failed-Handler', 'private metadata');
               }
+              if (scenario === 'preset status message') res.statusMessage = 'Cached Success';
               if (scenario === 'invalid response metadata') res.statusMessage = '\\n';
               throw new Error('local request failure');
             },
           });
           try {
-            if (scenario === 'registry') {
+            if (scenario === 'HTTPS rejection') {
+              for (const path of ['/fail', '/ping']) {
+                const response = await new Promise((resolve, reject) => {
+                  const req = request({ host: '127.0.0.1', port: ${port}, path, rejectUnauthorized: false, agent: false }, res => {
+                    let body = '';
+                    res.setEncoding('utf8');
+                    res.on('data', chunk => { body += chunk; });
+                    res.on('error', reject);
+                    res.on('end', () => resolve({ status: res.statusCode, body }));
+                  });
+                  req.setTimeout(2000, () => req.destroy(new Error('HTTPS timeout')));
+                  req.on('error', reject);
+                  req.end();
+                });
+                assert.deepEqual(response, path === '/fail' ? { status: 500, body: 'Internal Server Error' } : { status: 200, body: 'pong' });
+              }
+            } else if (scenario.endsWith('connect rejection')) {
+              const response = await fetch(base + '/mcp', {
+                method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1,
+                  method: scenario === 'stateless connect rejection' ? 'tools/list' : 'initialize',
+                  params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'connect-test', version: '1.0.0' } },
+                }), signal: AbortSignal.timeout(2000),
+              });
+              assert.equal(response.status, 500);
+              assert.equal((await response.json()).error.code, -32603);
+            } else if (scenario.endsWith('close')) {
+              if (scenario === 'legacy SSE close') {
+                const response = await fetch(base + '/sse', { signal: AbortSignal.timeout(2000) });
+                assert.equal(response.status, 200);
+                await response.body.cancel();
+              } else {
+                const response = await fetch(base + '/mcp', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+                  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+                    protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'cleanup-test', version: '1.0.0' },
+                  } }),
+                  signal: AbortSignal.timeout(2000),
+                });
+                assert.equal(response.status, 200);
+                const sessionId = response.headers.get('mcp-session-id');
+                assert.ok(sessionId);
+                await response.text();
+                const deleted = await fetch(base + '/mcp', {
+                  method: 'DELETE', headers: { 'mcp-session-id': sessionId }, signal: AbortSignal.timeout(2000),
+                });
+                assert.equal(deleted.status, 200);
+                await deleted.text();
+              }
+              for (let i = 0; i < 100 && !closeCalls; i++) await new Promise(resolve => setTimeout(resolve, 10));
+              assert.equal(closeCalls, 1);
+              // Let any rejected async close listener reach Node's fatal policy.
+              await new Promise(resolve => setImmediate(resolve));
+            } else if (scenario === 'registry') {
               for (const id of ['constructor', '__proto__', 'toString', 'unknown-session']) {
                 const response = await fetch(base + '/messages?sessionId=' + id, {
                   method: 'POST', body: '{}', signal: AbortSignal.timeout(2000),
@@ -512,27 +601,36 @@ describe('MCP Server Integration', () => {
               assert.equal(response.slice(headerEnd + 4, bodyEnd), 'Internal Server Error');
               assert.ok(response.slice(bodyEnd).startsWith('HTTP/1.1 200 '));
               assert.ok(response.slice(bodyEnd).includes('pong'));
-            } else if (scenario === 'invalid response metadata' || scenario.startsWith('partial')) {
+            } else if (scenario.startsWith('partial')) {
               await assert.rejects(async () => {
                 const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
                 await response.text();
+              }, error => {
+                assert.notEqual(error.name, 'TimeoutError');
+                return true;
               });
             } else {
               const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
               assert.equal(response.status, 500);
+              assert.equal(response.statusText, 'Internal Server Error');
               assert.equal(await response.text(), 'Internal Server Error');
               if (scenario === 'preset headers') {
-                assert.equal(response.headers.get('content-encoding'), null);
-                assert.equal(response.headers.get('trailer'), null);
+                for (const name of ['content-encoding', 'trailer', 'set-cookie', 'cache-control', 'content-disposition', 'access-control-allow-origin', 'x-failed-handler']) {
+                  assert.equal(response.headers.get(name), null, name);
+                }
                 assert.equal(response.headers.get('content-type'), 'text/plain; charset=utf-8');
-                assert.equal(response.headers.get('access-control-allow-origin'), 'https://client.example');
               }
             }
-            const ping = await fetch(base + '/ping', { signal: AbortSignal.timeout(2000) });
-            assert.equal(ping.status, 200);
-            assert.equal(await ping.text(), 'pong');
+            if (!tlsDirectory) {
+              const ping = await fetch(base + '/ping', { signal: AbortSignal.timeout(2000) });
+              assert.equal(ping.status, 200);
+              assert.equal(await ping.text(), 'pong');
+            }
             console.log('survived');
-          } finally { await server.close(); }
+          } finally {
+            await server.close();
+            if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
+          }
           `,
         ],
         { timeout: 10000 },
