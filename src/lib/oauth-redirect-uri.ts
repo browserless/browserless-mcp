@@ -16,6 +16,7 @@ const SAFE_DEFAULT_PATTERNS = ['http://localhost:*', 'http://127.0.0.1:*'];
 
 const AUTHORITY_WITH_USERINFO = /^\s*[a-z][a-z\d+.-]*:\/\/[^/?#]*@/i;
 const UNSAFE_URL_CHARACTERS = /[\\\p{Cc}]/u;
+const DOT_PATH_SEGMENT = /\/(?:\.|%2e){1,2}(?:\/|$)/i;
 const URL_PATTERN =
   /^([a-z][a-z\d+.-]*):\/\/(\[[^\]]+\]|[^:/?#@]+)(?::([^/?#]*))?(.*)$/;
 
@@ -39,7 +40,7 @@ function globComponentToRegExp(
 
 function globToRegExp(
   pattern: string,
-): { uri: RegExp; hostname: RegExp } | undefined {
+): { uri: RegExp; hostname: RegExp; pathname?: RegExp } | undefined {
   if (UNSAFE_URL_CHARACTERS.test(pattern)) return;
   const match = URL_PATTERN.exec(pattern);
   if (!match) return;
@@ -103,6 +104,26 @@ function globToRegExp(
       `^${globComponentToRegExp(canonicalHostname, '[^./:@?#]')}$`,
       'i',
     ),
+    // Encode literal path bytes with URL rules, keeping '?' as a glob. Its
+    // parsed match must be nonempty but may expand into multiple encoded bytes;
+    // the raw matcher still enforces the original single-character width.
+    pathname: allowsAnyLoopbackPath
+      ? undefined
+      : new RegExp(
+          `^${(suffix || '/')
+            .split('?')
+            .map((part) =>
+              globComponentToRegExp(
+                // The final '*' keeps URL from trimming trailing literal spaces.
+                new URL(`https://policy.invalid/${part}*`).pathname.slice(
+                  1,
+                  -1,
+                ),
+                '[^/?#]',
+              ),
+            )
+            .join('[^/?#]+')}$`,
+        ),
   };
 }
 
@@ -121,7 +142,9 @@ export function isAllowedOAuthRedirectUri(
   redirectUri: string,
   patterns: string[] | undefined,
 ): boolean {
-  if (UNSAFE_URL_CHARACTERS.test(redirectUri)) return false;
+  // Query/fragment values cannot alter the authority or path. Preserve the
+  // unrestricted loopback policies' existing query and fragment admission.
+  if (UNSAFE_URL_CHARACTERS.test(redirectUri.split(/[?#]/, 1)[0])) return false;
   let uri: URL;
   try {
     uri = new URL(redirectUri);
@@ -137,6 +160,7 @@ export function isAllowedOAuthRedirectUri(
     return false;
   }
   if (Array.isArray(patterns) && patterns.length === 0) return false;
+  const rawPath = URL_PATTERN.exec(redirectUri)?.[4].split(/[?#]/, 1)[0] ?? '';
 
   return (patterns ?? SAFE_DEFAULT_PATTERNS).some((pattern) => {
     const matcher = globToRegExp(pattern);
@@ -146,6 +170,9 @@ export function isAllowedOAuthRedirectUri(
       // Partial Punycode globs stay ASCII; Unicode label globs need decoding.
       (matcher.hostname.test(uri.hostname) ||
         matcher.hostname.test(domainToUnicode(uri.hostname) || uri.hostname)) &&
+      (!matcher.pathname ||
+        (!DOT_PATH_SEGMENT.test(rawPath) &&
+          matcher.pathname.test(uri.pathname))) &&
       matcher.uri.test(redirectUri)
     );
   });

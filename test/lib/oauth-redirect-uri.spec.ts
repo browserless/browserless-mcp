@@ -72,6 +72,14 @@ const AMBIGUOUS_HOST_CALLBACKS = [
   'https://outside\n.corp.example.com/cb',
   'https://outside\r.corp.example.com/cb',
 ];
+const NORMALIZED_PATH_CALLBACKS = [
+  '.',
+  '..',
+  '%2e',
+  '%2e%2e',
+  '.%2E',
+  '%2e.',
+].map((segment) => `https://chatgpt.com/connector/oauth/${segment}`);
 
 function buildConfig(
   overrides: Partial<OAuthProxyConfig> = {},
@@ -246,6 +254,15 @@ describe('Browserless OAuth redirect URI validation', () => {
     });
   }
 
+  it('rejects dot segments that normalize a restricted callback path', () => {
+    for (const redirectUri of NORMALIZED_PATH_CALLBACKS) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, patterns),
+        redirectUri,
+      ).to.equal(false);
+    }
+  });
+
   it('preserves configured hosts and raw path and port constraints', () => {
     for (const [redirectUri, pattern, expected] of [
       ['https://client.corp.example.com/cb', HOST_POLICY, true],
@@ -269,6 +286,17 @@ describe('Browserless OAuth redirect URI validation', () => {
       ['https://client.example:443/cb', 'https://client.example:443/cb', true],
       ['https://client.example:443/cb', 'https://client.example/cb', false],
       ['https://client.example/cb/a%2Fb', 'https://client.example/cb/*', true],
+      ['https://client.example/café/*', 'https://client.example/café/*', true],
+      ['https://client.example/cb/é', 'https://client.example/cb/?', true],
+      ['https://client.example/cb/[x]', 'https://client.example/cb/*', true],
+      ['https://client.example/cb/%3F', 'https://client.example/cb/%3F', true],
+      ['https://client.example/cb/a b', 'https://client.example/cb/a ?', true],
+      ['https://client.example/cb/ ', 'https://client.example/cb/?', false],
+      [
+        'https://client.example/cb/.well-known',
+        'https://client.example/cb/*',
+        true,
+      ],
       [
         'https://client.example/cb/../other',
         'https://client.example/other',
@@ -284,10 +312,13 @@ describe('Browserless OAuth redirect URI validation', () => {
     }
   });
 
-  it('rejects ambiguous hosts at registration and when authorizing stored clients', async () => {
+  it('rejects ambiguous destinations at registration and when authorizing stored clients', async () => {
     const redis = new RedisMock() as unknown as Redis;
     const config = buildConfig({
-      allowedRedirectUriPatterns: [HOST_POLICY],
+      allowedRedirectUriPatterns: [
+        HOST_POLICY,
+        'https://chatgpt.com/connector/oauth/*',
+      ],
       encryptionKey: false,
       tokenStorage: new RedisTokenStorage(redis),
     });
@@ -295,12 +326,18 @@ describe('Browserless OAuth redirect URI validation', () => {
     // accepting control characters (its wildcard does not match newlines).
     const previous = new OAuthProxy({
       ...config,
-      allowedRedirectUriPatterns: AMBIGUOUS_HOST_CALLBACKS,
+      allowedRedirectUriPatterns: [
+        ...AMBIGUOUS_HOST_CALLBACKS,
+        ...NORMALIZED_PATH_CALLBACKS,
+      ],
     });
     const hardened = new BrowserlessOAuthProxy(config);
     const originalKeys = new Set(await redis.keys('mcp:oauth:*'));
     try {
-      for (const redirectUri of AMBIGUOUS_HOST_CALLBACKS) {
+      for (const redirectUri of [
+        ...AMBIGUOUS_HOST_CALLBACKS,
+        ...NORMALIZED_PATH_CALLBACKS,
+      ]) {
         const keysBefore = await redis.keys('mcp:oauth:client:*');
         try {
           await hardened.registerClient({ redirect_uris: [redirectUri] });
@@ -493,6 +530,8 @@ describe('Browserless OAuth redirect URI validation', () => {
       'http://localhost:3000?state=1',
       'http://localhost:3000#done',
       'http://127.0.0.1:8976?state=1',
+      'http://localhost:3000/cb?x=a\\b',
+      'http://127.0.0.1:8976/cb?x=a\tb',
     ]) {
       expect(
         isAllowedOAuthRedirectUri(redirectUri, patterns),
@@ -726,9 +765,14 @@ describe('Browserless OAuth redirect URI validation', () => {
     }
   });
 
-  it('delegates valid registration and authorization with Redis storage', async () => {
+  it('delegates valid and pre-existing loopback registrations with Redis storage', async () => {
     const redis = new RedisMock() as unknown as Redis;
     const proxy = new BrowserlessOAuthProxy({
+      ...buildConfig(),
+      encryptionKey: false,
+      tokenStorage: new RedisTokenStorage(redis),
+    });
+    const previous = new OAuthProxy({
       ...buildConfig(),
       encryptionKey: false,
       tokenStorage: new RedisTokenStorage(redis),
@@ -753,8 +797,31 @@ describe('Browserless OAuth redirect URI validation', () => {
       expect(response.headers.get('location')).to.include(
         '127.0.0.1:9/oauth/authorize',
       );
+      for (const callback of [
+        'http://localhost:3000/cb?x=a\\b',
+        'http://127.0.0.1:8976/cb?x=a\tb',
+      ]) {
+        const stored = await previous.registerClient({
+          redirect_uris: [callback],
+        });
+        const newlyRegistered = await proxy.registerClient({
+          redirect_uris: [callback],
+        });
+        expect(newlyRegistered.redirect_uris).to.deep.equal([callback]);
+        const authorized = await proxy.authorize({
+          client_id: stored.client_id,
+          redirect_uri: callback,
+          response_type: 'code',
+          state: 'client-state',
+        });
+        expect(authorized.status).to.equal(302);
+        expect(new URL(authorized.headers.get('location')!).pathname).to.equal(
+          '/oauth/authorize',
+        );
+      }
     } finally {
       proxy.destroy();
+      previous.destroy();
       await redis.quit();
     }
   });
