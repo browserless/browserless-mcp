@@ -298,10 +298,15 @@ describe('session request identity', () => {
         expect(denied.status).to.equal(key === undefined ? 401 : 404);
         expect(await denied.text()).not.to.include('"result"');
       }
-      const other = f.track(await f.get(b, foreignKeys[0], cursor));
-      const sameOwnerOtherSession = f.track(
-        await f.get(otherOwnerSession, refreshedKey, cursor),
-      );
+      for (const [session, key, replayCursor] of [
+        [b, foreignKeys[0], cursor],
+        [otherOwnerSession, refreshedKey, cursor],
+        [a, refreshedKey, 'unknown-cursor'],
+      ]) {
+        const denied = await f.get(session, key, replayCursor);
+        expect(denied.status).to.equal(400);
+        expect(await denied.text()).not.to.include('"result"');
+      }
       const owner = f.track(await f.get(a, refreshedKey, cursor));
       await waitFor(() =>
         owner.frames.some((frame) => frame.data.includes('"id":42')),
@@ -312,8 +317,6 @@ describe('session request identity', () => {
         ).result,
       ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
       await delay(100);
-      expect(other.frames).to.deep.equal([]);
-      expect(sameOwnerOtherSession.frames).to.deep.equal([]);
       expect(f.calls()).to.equal(1);
     });
   }

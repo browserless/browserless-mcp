@@ -146,6 +146,61 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     );
   });
 
+  for (const hiddenExports of [false, true]) {
+    it(`patches edge priming with optional SDK exports hidden=${hiddenExports}`, () => {
+      const fixture = mkdtempSync(join(tmpdir(), 'edge-context-patch-'));
+      try {
+        const dist = join(fixture, 'node_modules/fastmcp/dist');
+        mkdirSync(join(dist, 'edge'), { recursive: true });
+        writeFileSync(
+          join(dist, '../package.json'),
+          JSON.stringify({ main: 'dist/FastMCP.cjs' }),
+        );
+        writeFileSync(
+          join(dist, 'FastMCP.cjs'),
+          'this.#capabilities.tools = {};\n  updateAuth(auth) {',
+        );
+        for (const format of ['js', 'cjs'])
+          writeFileSync(
+            join(dist, `edge/index.${format}`),
+            'function prime(streamId) { return this.store.storeEvent(streamId, {}); }',
+          );
+        if (hiddenExports) {
+          for (const name of ['server', 'sdk']) {
+            const sdk = join(
+              fixture,
+              'node_modules/@modelcontextprotocol',
+              name,
+            );
+            mkdirSync(sdk, { recursive: true });
+            writeFileSync(
+              join(sdk, 'package.json'),
+              JSON.stringify({ exports: { './visible': './visible.js' } }),
+            );
+          }
+        }
+        const script = join(fixture, 'patch-fastmcp.mjs');
+        copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+        const run = () =>
+          execFileSync(process.execPath, [script], { stdio: 'pipe' });
+        run();
+        const before = sourcesIn(join(dist, 'edge'), /\.(js|cjs)$/);
+        for (const source of before) {
+          const owner = runInNewContext(
+            `${source}; prime.call({ activeSessionId: 'owner', store: { storeEvent: (_, __, session) => session } }, 'request')`,
+          );
+          expect(owner).to.equal('owner');
+        }
+        run();
+        expect(sourcesIn(join(dist, 'edge'), /\.(js|cjs)$/)).to.deep.equal(
+          before,
+        );
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+    });
+  }
+
   it('fails closed on missing security patches for the pinned transport only', () => {
     const targets = [
       'const activeSSETransports = {};',
@@ -387,6 +442,19 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     const script = join(root, 'scripts', 'patch-fastmcp.mjs');
     const before = mcpProxySources();
     const fastmcpBefore = distSources();
+    const edgeBefore = sourcesIn(join(distDir(), 'edge'), /\.(cjs|js)$/);
+    const sdkDist = dirname(
+      dirname(
+        dirname(
+          createRequire(import.meta.url).resolve(
+            '@modelcontextprotocol/sdk/server/streamableHttp.js',
+          ),
+        ),
+      ),
+    );
+    const sdkBefore = ['esm', 'cjs'].map((format) =>
+      sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/),
+    );
     expect(() =>
       execFileSync(process.execPath, [script], { stdio: 'pipe' }),
     ).to.not.throw();
@@ -396,5 +464,13 @@ describe('package integrity — installable by --omit=dev consumers', () => {
       'capability must remain enabled after a second run',
     ).to.equal(true);
     expect(distSources()).to.deep.equal(fastmcpBefore);
+    expect(sourcesIn(join(distDir(), 'edge'), /\.(cjs|js)$/)).to.deep.equal(
+      edgeBefore,
+    );
+    expect(
+      ['esm', 'cjs'].map((format) =>
+        sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/),
+      ),
+    ).to.deep.equal(sdkBefore);
   });
 });

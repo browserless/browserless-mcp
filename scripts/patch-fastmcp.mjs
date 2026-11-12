@@ -462,7 +462,10 @@ for (const resolveFrom of [
       dirname(resolveFrom.resolve('@modelcontextprotocol/server')),
     );
   } catch (err) {
-    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+    if (
+      !['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(err.code)
+    )
+      throw err;
   }
   try {
     const sdkServerRoot = dirname(
@@ -478,7 +481,10 @@ for (const resolveFrom of [
       transportDists.push(join(sdkServerRoot, format, 'server'));
   } catch (err) {
     // A consumer that resolves no SDK server build simply goes unpatched.
-    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+    if (
+      !['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(err.code)
+    )
+      throw err;
   }
 }
 for (const dist of [...new Set(transportDists)]) {
@@ -504,16 +510,37 @@ for (const dist of [...new Set(transportDists)]) {
     to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
     required: false,
   });
+  // Reject before registering a live stream. These anchors follow replay in
+  // the bundled proxy and both SDK versions, outside the other patch bodies.
+  for (const anchor of [
+    '// Do not await between catch-up and live registration or terminal close.',
+    'if (this._closed || cancelled) {',
+  ]) {
+    patch({
+      name: 'event-store replay refusal',
+      dist,
+      files: /\.(cjs|mjs|js)$/,
+      from: anchor,
+      to: `if (!replayedStreamId) {
+                try { streamController.close(); } catch {}
+                return this.createJsonErrorResponse(400, -32000, "Invalid replay cursor");
+            }
+            ${anchor}`,
+      required: false,
+    });
+  }
 }
 const edgeDist = join(dirname(fastmcpEntry), 'edge');
-patch({
-  name: 'edge event-store write context',
-  dist: edgeDist,
-  files: /\.(cjs|js)$/,
-  from: '.storeEvent(streamId, message)',
-  to: '.storeEvent(streamId, message, this.activeSessionId)',
-  required: false,
-});
+for (const message of ['message', '{}']) {
+  patch({
+    name: 'edge event-store write context',
+    dist: edgeDist,
+    files: /\.(cjs|js)$/,
+    from: `.storeEvent(streamId, ${message})`,
+    to: `.storeEvent(streamId, ${message}, this.activeSessionId)`,
+    required: false,
+  });
+}
 patch({
   name: 'edge event-store replay context',
   dist: edgeDist,
@@ -522,3 +549,50 @@ patch({
   to: '.replayEventsAfter(lastEventId, { sessionId: this.activeSessionId,',
   required: false,
 });
+// Edge replay writes with backpressure in a detached task. Wait only until a
+// frame is ready or replay settles, so a refusal can still set the HTTP status
+// without buffering history or deadlocking a valid replay's first write.
+for (const [from, to] of [
+  [
+    'this._replaysInFlight += 1;\n    void (async () => {',
+    `let resolveReplayResponse;
+    const replayResponse = new Promise(resolve => { resolveReplayResponse = resolve; });
+    this._replaysInFlight += 1;
+    void (async () => {`,
+  ],
+  [
+    'send: async (eventId, message) => {\n            await this.writeSSEEventWithId(writer, eventId, message);',
+    'send: async (eventId, message) => {\n            resolveReplayResponse();\n            await this.writeSSEEventWithId(writer, eventId, message);',
+  ],
+  [
+    'if (this._streamGeneration !== generation) {',
+    `if (!streamId) {
+          resolveReplayResponse(this.createErrorResponse(400, -32000, "Invalid replay cursor"));
+          await this.closeQuietly(writer);
+          return;
+        }
+        resolveReplayResponse();
+        if (this._streamGeneration !== generation) {`,
+  ],
+  [
+    'this._replaysInFlight -= 1;',
+    'this._replaysInFlight -= 1;\n        resolveReplayResponse();',
+  ],
+  [
+    '})().catch(() => {\n    });\n    return new Response(readable, {',
+    `})().catch(() => {
+    });
+    const refusal = await replayResponse;
+    if (refusal) return refusal;
+    return new Response(readable, {`,
+  ],
+]) {
+  patch({
+    name: 'edge event-store replay refusal',
+    dist: edgeDist,
+    files: /\.(cjs|js)$/,
+    from,
+    to,
+    required: false,
+  });
+}

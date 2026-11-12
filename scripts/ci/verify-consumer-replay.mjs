@@ -16,8 +16,7 @@ const post = (token, session, message) =>
     signal: AbortSignal.timeout(5000),
   });
 
-// Retain partial data on timeout: a denied replay may leave an empty SSE
-// response open, but any leaked frame must still fail the assertion below.
+// Successful owner replay can leave an SSE response open after its result.
 async function read(response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -74,14 +73,23 @@ const cursor = data.match(/^id: *(.+)$/m)?.[1]?.trim();
 assert.ok(cursor, 'request stream supplies a replay cursor');
 assert.match(data, /"id":4242/);
 
-const resume = (token, session) =>
+const resume = (token, session, replayCursor = cursor) =>
   fetch(url, {
-    headers: { ...headers(token, session), 'Last-Event-ID': cursor },
+    headers: { ...headers(token, session), 'Last-Event-ID': replayCursor },
     signal: AbortSignal.timeout(2000),
   });
-const other = await resume('ci-other', otherSession);
-assert.ok([200, 400, 404].includes(other.status));
-assert.doesNotMatch(await read(other), /"id":4242|"tools":\[/);
+for (const [token, session, replayCursor] of [
+  ['ci-other', otherSession, cursor],
+  ['ci-smoke', ownerSession, 'unknown-cursor'],
+]) {
+  const denied = await resume(token, session, replayCursor);
+  assert.equal(denied.status, 400, 'invalid replay terminates with a refusal');
+  assert.match(denied.headers.get('content-type'), /application\/json/);
+  const body = await denied.json();
+  assert.equal(body.error.code, -32000);
+  assert.equal(body.id, null);
+  assert.doesNotMatch(JSON.stringify(body), /"id":4242|"tools":\[/);
+}
 
 const own = await resume('ci-smoke', ownerSession);
 assert.equal(own.status, 200);
