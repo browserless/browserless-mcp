@@ -5,7 +5,7 @@ name: Publish to npm
 # the npm package and the Docker image together on the same version.
 #
 # Tests are NOT re-run here: they run via test.yml on the Release PR before it
-# is merged. This job only builds and publishes the package.
+# is merged. Build without OIDC, then publish the same-run packed package.
 
 on:
   push:
@@ -24,13 +24,14 @@ env:
   TAG: ${{ github.ref_name }}
   RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
 
+permissions: {}
+
 jobs:
-  publish:
+  build:
     if: github.repository == 'browserless/browserless-mcp'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       # No git push/pull after checkout, so don't persist credentials.
       - uses: actions/checkout@v7
@@ -42,19 +43,54 @@ jobs:
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
-          cache: npm
+          package-manager-cache: false
           check-latest: true
       - name: Ensure npm >= 11.10.0 (min-release-age support)
-        run: npm install -g npm@11.17.0 --ignore-scripts
+        run: npm install -g npm@11.17.0 --ignore-scripts # zizmor: ignore[adhoc-packages] -- exact npm bootstrap; lifecycle scripts disabled
 
       - name: Install dependencies
         run: npm ci
 
-      # `npm publish` runs the prepack hook (build), which compiles TypeScript and
-      # assembles the published artifacts. Provenance is attached automatically
-      # via npm trusted publishing (OIDC, id-token: write).
+      # prepack compiles and assembles artifacts without a publishing identity.
+      - name: Pack npm package
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-package"
+          npm pack --pack-destination "$RUNNER_TEMP/npm-package"
+          mv "$RUNNER_TEMP/npm-package/"*.tgz "$RUNNER_TEMP/npm-package/package.tgz"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package/package.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+          check-latest: true
+      - name: Ensure npm >= 11.10.0 (min-release-age support)
+        run: npm install -g npm@11.17.0 --ignore-scripts # zizmor: ignore[adhoc-packages] -- exact npm bootstrap; lifecycle scripts disabled
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package
+      # Publish only the same-run tarball; never execute package lifecycle scripts.
+      # npm trusted publishing attaches provenance through OIDC.
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish "$RUNNER_TEMP/npm-package/package.tgz" --access public --ignore-scripts
 
       # The package is already published by this point; a Slack hiccup must not
       # mark the release as failed.
@@ -74,7 +110,8 @@ jobs:
   # MCP_REGISTRY_PRIVATE_KEY secret holds the Ed25519 private key (hex).
   publish-mcp-registry:
     needs: publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -83,10 +120,15 @@ jobs:
       # update both together.
       MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
     steps:
-      # Pinned to a commit because this job handles the registry signing key.
+      # This checkout is covered by the workflow lockfile.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
 
       # Until the DNS record and secret exist, skip with a warning rather than
       # failing every release.
@@ -115,7 +157,7 @@ jobs:
         if: steps.key.outputs.configured == 'true'
         run: |
           VERSION="${TAG#v}"
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if [ "$(npm view "@browserless.io/mcp@${VERSION}" mcpName 2>/dev/null)" = "io.browserless/mcp" ]; then
               exit 0
             fi

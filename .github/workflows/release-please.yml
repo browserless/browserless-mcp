@@ -21,9 +21,7 @@ concurrency:
   group: release-please-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   release-please:
@@ -37,6 +35,8 @@ jobs:
         with:
           app-id: ${{ vars.BROWSERLESS_ACTIONS_APP_ID }}
           private-key: ${{ secrets.BROWSERLESS_ACTIONS_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: googleapis/release-please-action@v5
         id: release

@@ -6,6 +6,8 @@ on:
   push:
     tags: [v*]
 
+permissions: {}
+
 jobs:
   push_to_registry:
     if: github.repository == 'browserless/browserless-mcp'
@@ -15,6 +17,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -33,7 +37,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get Tag
-        run: echo "IMAGE_TAG=${GITHUB_REF_NAME////-}" >> $GITHUB_ENV
+        run: echo "IMAGE_TAG=${GITHUB_REF_NAME////-}" >> "$GITHUB_ENV"
 
       - name: Publish the Image
         uses: docker/build-push-action@v7
