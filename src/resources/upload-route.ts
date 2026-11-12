@@ -16,10 +16,48 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   const app = server.getApp();
 
   app.post('/upload', async (c) => {
-    // Raw Hono routes bypass FastMCP's authenticate, so gate on the same token
-    // rules as the MCP surface — no anonymous drops.
     const auth = await guardRouteAuth(c, config);
     if (auth instanceof Response) return auth;
+
+    // Reject positively invalid plain keys before staging. Preserve existing
+    // upload behavior when verification is unavailable or capacity-limited.
+    if (auth.authMethod !== 'oauth') {
+      try {
+        const url = new URL(`${auth.apiUrl.replace(/\/+$/, '')}/pressure`);
+        url.searchParams.set('token', auth.token);
+        const response = await fetch(url, {
+          // JSON avoids a worker's capacity-based 503 response.
+          headers: { Accept: 'application/json' },
+          redirect: 'error',
+          signal: AbortSignal.timeout(5000),
+        });
+        const message = await response.text();
+        const limitError =
+          /credits?|\bunits?\b|(?:spend|usage|concurrency|rate)[ _-]?(?:limit|cap)/i.test(
+            message,
+          );
+        const invalidKey =
+          /\b(?:invalid|unknown|unrecognized)[ _-]*(?:api[ _-]*)?(?:key|token|credential)\b/i.test(
+            message,
+          );
+        if (
+          invalidKey ||
+          ([401, 403].includes(response.status) && !limitError)
+        ) {
+          return c.json({ ok: false, error: 'Unauthorized' }, 401);
+        }
+        if (!response.ok || limitError) {
+          // Do not log the upstream body or URL: they may contain credentials.
+          console.warn(
+            `[browserless-mcp] Upload credential verification inconclusive (HTTP ${response.status}); allowing upload`,
+          );
+        }
+      } catch {
+        console.warn(
+          '[browserless-mcp] Upload credential verification unavailable; allowing upload',
+        );
+      }
+    }
 
     let file: unknown;
     try {
