@@ -2,9 +2,13 @@ import { expect } from 'chai';
 import http from 'node:http';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
-import { Types } from '@amplitude/analytics-node';
+import { createInstance, Types } from '@amplitude/analytics-node';
 import { MockAmplitudeMCPAnalytics } from '@amplitude/mcp-analytics/testing';
-import { createToolContext, runWithContext } from '@amplitude/mcp-analytics';
+import {
+  AmplitudeMCPAnalytics,
+  createToolContext,
+  runWithContext,
+} from '@amplitude/mcp-analytics';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { FastMCP } from 'fastmcp';
 import sinon from 'sinon';
@@ -13,6 +17,7 @@ import {
   getAmplitudeIdentity,
   initializeAmplitudeAnalytics,
   instrumentFastMcpTools,
+  observeAmplitudeDelivery,
   resetAmplitudeAnalyticsForTests,
   shutdownAmplitudeAnalytics,
 } from '../../src/lib/amplitude-analytics.js';
@@ -20,6 +25,7 @@ import { defineTool } from '../../src/lib/define-tool.js';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import { z } from 'zod';
+import { flushAmplitudeDelivery } from '../../src/lib/amplitude-delivery.js';
 
 const createDeferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -35,6 +41,7 @@ describe('Amplitude MCP analytics', () => {
   const originalConnect = Server.prototype.connect;
 
   afterEach(() => {
+    flushAmplitudeDelivery();
     resetAmplitudeAnalyticsForTests(originalConnect);
   });
 
@@ -70,19 +77,19 @@ describe('Amplitude MCP analytics', () => {
       expect([errors.callCount, warnings.callCount]).to.deep.equal([0, 0]);
       logger.enable(Types.LogLevel.Error);
       emit();
-      expect([errors.callCount, warnings.callCount]).to.deep.equal([1, 0]);
       logger.enable(Types.LogLevel.Warn);
       emit();
-      expect([errors.callCount, warnings.callCount]).to.deep.equal([2, 1]);
       logger.disable();
       emit();
-      expect([errors.callCount, warnings.callCount]).to.deep.equal([2, 1]);
       logger.enable(Types.LogLevel.Warn);
       emit();
-      expect([errors.callCount, warnings.callCount]).to.deep.equal([3, 2]);
       logger.enable(Types.LogLevel.None);
       emit();
-      expect([errors.callCount, warnings.callCount]).to.deep.equal([3, 2]);
+      expect([errors.callCount, warnings.callCount]).to.deep.equal([0, 0]);
+      flushAmplitudeDelivery();
+      expect(errors.callCount).to.equal(0);
+      expect(warnings.callCount).to.equal(1);
+      expect(warnings.firstCall.args[0]).to.include('SDK errors 3, warnings 2');
       expect(stdout.called).to.equal(false);
       expect(
         [...errors.args, ...warnings.args].flat().join(' '),
@@ -92,61 +99,163 @@ describe('Amplitude MCP analytics', () => {
     }
   });
 
-  it('keeps SDK delivery diagnostics free of credentials', async () => {
-    const key = 'Basic synthetic-analytics-credential';
-    const receiver = http.createServer((_req, res) => {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ code: 400, error: `Invalid API key: ${key}` }));
-    });
-    await new Promise<void>((resolve) =>
-      receiver.listen(0, '127.0.0.1', resolve),
-    );
-    const port = (receiver.address() as AddressInfo).port;
-    // Route the real SDK transport to a local receiver, never to Amplitude.
-    const request = sinon
-      .stub(https, 'request')
-      .callsFake(((
-        options: http.RequestOptions,
-        callback: (res: http.IncomingMessage) => void,
-      ) =>
-        http.request(
-          { ...options, hostname: '127.0.0.1', port, protocol: 'http:' },
-          callback,
-        )) as typeof https.request);
-    const stderr = sinon.stub(console, 'error');
-    const warnings = sinon.stub(console, 'warn');
-    const stdout = sinon.stub(console, 'log');
-    try {
-      const analytics = initializeAmplitudeAnalytics(key, '1.0.0');
-      expect(analytics).not.to.equal(undefined);
-      analytics!.trackToolEvent(
-        createToolContext(
-          {
-            server: { name: 'test', version: '1.0.0' },
-            transport: 'stdio',
-            identity: { userId: 'synthetic-user', resolvedFrom: 'explicit' },
-          },
-          { name: 'test_tool' },
-        ),
-        'test event',
+  for (const automatic of [true, false]) {
+    it(`keeps SDK delivery diagnostics free of credentials during ${automatic ? 'automatic delivery' : 'shutdown'}`, async () => {
+      const key = 'Basic synthetic-analytics-credential';
+      const previous = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+      process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT =
+        'http://127.0.0.1:9/v1/logs';
+      const exported = sinon
+        .stub(globalThis, 'fetch')
+        .resolves(new Response('{}'));
+      const receiver = http.createServer((_req, res) => {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ code: 400, error: `Invalid API key: ${key}` }),
+        );
+      });
+      await new Promise<void>((resolve) =>
+        receiver.listen(0, '127.0.0.1', resolve),
       );
-      // Let the SDK finish initialization and enqueue the event before flushing.
+      const port = (receiver.address() as AddressInfo).port;
+      // Route the real SDK transport to a local receiver, never to Amplitude.
+      const request = sinon
+        .stub(https, 'request')
+        .callsFake(((
+          options: http.RequestOptions,
+          callback: (res: http.IncomingMessage) => void,
+        ) =>
+          http.request(
+            { ...options, hostname: '127.0.0.1', port, protocol: 'http:' },
+            callback,
+          )) as typeof https.request);
+      const stderr = sinon.stub(console, 'error');
+      const warnings = sinon.stub(console, 'warn');
+      const stdout = sinon.stub(console, 'log');
+      try {
+        const amplitude = createInstance();
+        const tracked = sinon.spy(amplitude, 'track');
+        const analytics = initializeAmplitudeAnalytics(
+          key,
+          '1.0.0',
+          automatic
+            ? (apiKey, serverVersion) => {
+                const loggerProvider = createAmplitudeLogger();
+                amplitude.init(apiKey, {
+                  loggerProvider,
+                  flushIntervalMillis: 1,
+                });
+                return new AmplitudeMCPAnalytics({
+                  amplitude: {
+                    ...observeAmplitudeDelivery(amplitude),
+                    configuration: { loggerProvider },
+                  },
+                  serverName: 'test',
+                  serverVersion,
+                });
+              }
+            : undefined,
+        );
+        expect(analytics).not.to.equal(undefined);
+        analytics!.trackToolEvent(
+          createToolContext(
+            {
+              server: { name: 'test', version: '1.0.0' },
+              transport: 'stdio',
+              identity: { userId: 'synthetic-user', resolvedFrom: 'explicit' },
+            },
+            { name: 'test_tool' },
+          ),
+          'test event',
+        );
+        // Automatic delivery preserves the response reason; explicit SDK flush reports a status prefix.
+        if (automatic) await tracked.firstCall.returnValue.promise;
+        else await new Promise(setImmediate);
+        await shutdownAmplitudeAnalytics(analytics);
+        expect(request.called).to.equal(true);
+        const output = [...stderr.args, ...warnings.args, ...stdout.args]
+          .flat()
+          .join(' ');
+        expect(output).not.to.contain(key);
+        expect(output).not.to.contain('synthetic-analytics-credential');
+        expect(output).to.contain('Amplitude');
+        expect(stdout.called).to.equal(false);
+        expect(stderr.callCount).to.equal(0);
+        expect(warnings.callCount).to.equal(1);
+        expect(exported.callCount).to.equal(1);
+        const body = String(exported.firstCall.args[1]?.body);
+        expect(body).not.to.contain('synthetic-analytics-credential');
+        const record =
+          JSON.parse(body).resourceLogs[0].scopeLogs[0].logRecords[0];
+        expect(record.body.stringValue).to.equal(
+          'browserless.mcp.amplitude.delivery_failed',
+        );
+        const fields = Object.fromEntries(
+          record.attributes.map(
+            (a: {
+              key: string;
+              value: { stringValue?: string; intValue?: string };
+            }) => [a.key, a.value.stringValue ?? Number(a.value.intValue)],
+          ),
+        );
+        expect(fields).to.include({
+          status: 400,
+          reason: automatic ? 'Invalid API key' : 'invalid',
+          event_type: 'test event',
+          count: 1,
+        });
+      } finally {
+        exported.restore();
+        if (previous === undefined)
+          delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+        else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = previous;
+        request.restore();
+        stderr.restore();
+        warnings.restore();
+        stdout.restore();
+        await new Promise<void>((resolve) => receiver.close(() => resolve()));
+      }
+    });
+  }
+
+  it('observes delivery without changing arguments, return values or rejection handling', async () => {
+    const amplitude = createInstance();
+    const deferred = createDeferred<Types.Result>();
+    const returned = { promise: deferred.promise };
+    const track = sinon.stub(amplitude, 'track').returns(returned);
+    const warnings = sinon.stub(console, 'warn');
+    try {
+      const observed = observeAmplitudeDelivery(amplitude);
+      const result = observed.track(
+        'test event',
+        { flag: true },
+        { user_id: 'test-user' },
+      );
+      expect(result).to.equal(returned);
+      expect(track.firstCall.args).to.deep.equal([
+        'test event',
+        { flag: true },
+        { user_id: 'test-user' },
+      ]);
+      const failure = {
+        event: { event_type: 'test event' },
+        code: 400,
+        message: 'bad request',
+      };
+      deferred.resolve(failure);
+      expect(await result.promise).to.equal(failure);
+      flushAmplitudeDelivery();
+      expect(warnings.firstCall.args[0]).to.include('400: 1');
+      track.returns({
+        promise: Promise.reject(new Error('private rejection')),
+      });
+      observed.track('test event');
       await new Promise(setImmediate);
-      await shutdownAmplitudeAnalytics(analytics);
-      expect(request.called).to.equal(true);
-      const output = [...stderr.args, ...warnings.args, ...stdout.args]
-        .flat()
-        .join(' ');
-      expect(output).not.to.contain(key);
-      expect(output).not.to.contain('synthetic-analytics-credential');
-      expect(output).to.contain('Amplitude');
-      expect(stdout.called).to.equal(false);
+      flushAmplitudeDelivery();
+      expect(warnings.callCount).to.equal(1);
     } finally {
-      request.restore();
-      stderr.restore();
+      track.restore();
       warnings.restore();
-      stdout.restore();
-      await new Promise<void>((resolve) => receiver.close(() => resolve()));
     }
   });
 
@@ -430,6 +539,26 @@ describe('Amplitude MCP analytics', () => {
         source: 'mcp_client',
         skill_count: 0,
       });
+      expect(tracked.callCount).to.equal(0);
+    });
+
+    it('sends session starts only through the queue even inside an SDK frame', () => {
+      const mock = new MockAmplitudeMCPAnalytics({
+        serverName: 'test',
+        serverVersion: '1.0.0',
+      });
+      const tracked = sinon.spy(mock, 'trackToolEvent');
+      initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+      const helper = new AnalyticsHelper(true);
+      const queued = sinon
+        .stub(helper, 'send')
+        .rejects(new Error('unavailable'));
+      runWithContext(toolCtx(), () =>
+        helper.fireSessionStarted('queue-session-auth-token', {
+          transport: 'sse',
+        }),
+      );
+      expect(queued.firstCall.args[0]).to.equal('MCP Session Started');
       expect(tracked.callCount).to.equal(0);
     });
 

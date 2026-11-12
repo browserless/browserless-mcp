@@ -12,6 +12,11 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastMCP } from 'fastmcp';
 import type { BrowserlessSession } from '../@types/types.js';
 import { skillDeliveryFailed } from './skill-telemetry.js';
+import {
+  flushAmplitudeDelivery,
+  noteAmplitudeResult,
+  noteAmplitudeSdkLog,
+} from './amplitude-delivery.js';
 
 export type AmplitudeFactory = (
   apiKey: string,
@@ -79,27 +84,40 @@ export const createAmplitudeLogger = (): Types.ILogger & { info(): void } => {
     log: () => {},
     info: () => {},
     warn: () => {
-      if (level >= Types.LogLevel.Warn)
-        console.warn('[browserless-mcp] Amplitude SDK warning');
+      if (level >= Types.LogLevel.Warn) noteAmplitudeSdkLog('warn');
     },
     error: () => {
-      if (level >= Types.LogLevel.Error)
-        console.error(new Error('[browserless-mcp] Amplitude SDK error'));
+      if (level >= Types.LogLevel.Error) noteAmplitudeSdkLog('error');
     },
   };
 };
+
+export const observeAmplitudeDelivery = <
+  T extends Pick<ReturnType<typeof createInstance>, 'track'>,
+>(
+  amplitude: T,
+): T => ({
+  ...amplitude,
+  track: (...args: Parameters<ReturnType<typeof createInstance>['track']>) => {
+    const result = amplitude.track(...args);
+    void result.promise.then(noteAmplitudeResult, () => {});
+    return result;
+  },
+});
 
 export const initializeAmplitudeAnalytics = (
   apiKey: string | undefined,
   serverVersion: string,
   factory: AmplitudeFactory = (key, version) => {
     const amplitude = createInstance();
-    // SDK diagnostics can include credentials and event payloads. Keep only
-    // their severity, and use stderr so stdio's JSON-RPC channel stays clean.
+    // Count severity and sanitized status/reason per minute; never log payloads.
     const loggerProvider = createAmplitudeLogger();
     amplitude.init(key, { loggerProvider });
     return new AmplitudeMCPAnalytics({
-      amplitude: { ...amplitude, configuration: { loggerProvider } },
+      amplitude: {
+        ...observeAmplitudeDelivery(amplitude),
+        configuration: { loggerProvider },
+      },
       serverName: 'browserless-mcp',
       serverVersion: version,
     });
@@ -227,6 +245,7 @@ export const shutdownAmplitudeAnalytics = async (
     console.error('[browserless-mcp] Amplitude shutdown failed:', error);
   } finally {
     if (timeout) clearTimeout(timeout);
+    flushAmplitudeDelivery();
     try {
       analytics?.shutdown();
     } catch (error) {
