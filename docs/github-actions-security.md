@@ -2,8 +2,9 @@
 
 ## Tool update procedure
 
-Tool pins live in `.github/workflows/test.yml`. Dependabot updates action
-references and existing lockfile entries, but not these shell-installed tools.
+Analyzer pins live in `.github/workflows/test.yml`; the MCP publisher pin lives
+in `.github/workflows/npm-publish.yml`. Dependabot updates action references and
+existing lockfile entries, but not these shell-installed tools.
 
 - **gh-actions-lock v0.4.1:** review the release and update `--pin`. The extension
   installation has no separate archive checksum. Use the same version locally.
@@ -12,6 +13,9 @@ references and existing lockfile entries, but not these shell-installed tools.
   checksum/signature where available. Update the step name, URL, extraction path
   if needed, and literal SHA-256 together. Verification must precede extraction
   and execution. Keep zizmor at least 1.32.0 for lockfile support.
+- **mcp-publisher v1.8.1:** review the registry release and verify the Linux
+  amd64 archive digest. Update `MCP_PUBLISHER_VERSION` and
+  `MCP_PUBLISHER_SHA256` together in `npm-publish.yml`.
 
 After adding/removing workflows or changing action references, regenerate the
 lockfile after all workflow edits. From the repository root, with the pinned
@@ -35,17 +39,13 @@ onboard new workflows. Run PR checks and revisit exceptions after tool upgrades.
   three-day minimum for npm and GitHub Actions instead of the analyzer's default
   seven. The explicit guard in `test.yml` checks all updaters because zizmor
   1.32.0 returns after its first compliant entry. Test lowering npm and Actions
-  independently, removing either updater/cooldown, and adding an unprotected
-  updater. Remove the guard only after a tool upgrade detects those regressions.
-- **`dependabot.yml:49`:** the existing Docker `/docker` updater has no configured
-  cooldown. Only this updater is exempt from the guard. The narrow analyzer
-  exception is currently redundant because zizmor 1.32.0 treats an omitted
-  cooldown as three days. Keep the location aligned if the file moves; remove
-  the exception when an explicit Docker cooldown is approved.
-- **Exact npm bootstrap steps:** inline `adhoc-packages` exceptions in
-  `test.yml` and `npm-publish.yml` cover only `npm@11.17.0 --ignore-scripts`,
-  needed for release-age enforcement. Update the pin and rationale together;
-  remove the bootstrap when the selected Node runtime supplies suitable npm.
+  independently (including SemVer overrides), include/exclude filters, removing
+  either updater/cooldown, and adding an unprotected updater. Remove the guard
+  only after a tool upgrade detects those regressions.
+- **Docker cooldown:** only the single default-branch Docker `/docker` updater
+  is exempt from the guard. Duplicate entries and a non-default target branch
+  fail. There is no analyzer suppression: zizmor 1.32.0 treats an omitted
+  cooldown as three days. Revisit the guard when a Docker cooldown is approved.
 - **Analyzer limitations:** actionlint 1.7.12 skips remote-action input schemas
   at full-semver refs, so review inputs against each locked action's `action.yml`.
   No input or runner-label diagnostics are globally suppressed. Revisit this
