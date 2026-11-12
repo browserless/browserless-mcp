@@ -165,6 +165,12 @@ describe('package integrity — installable by --omit=dev consumers', () => {
             join(dist, `edge/index.${format}`),
             'function prime(streamId) { return this.store.storeEvent(streamId, {}); }',
           );
+        // Consumer bundles may put the EventStore implementation in its own
+        // chunk. Definitions are not transport calls and need no owner patch.
+        const definitions =
+          'class Store { storeEvent(streamId, message) {} replayEventsAfter(lastEventId, { send }) {} }';
+        const storeChunk = join(dist, 'edge/store.mjs');
+        writeFileSync(storeChunk, definitions);
         if (hiddenExports) {
           for (const name of ['server', 'sdk']) {
             const sdk = join(
@@ -184,6 +190,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         const run = () =>
           execFileSync(process.execPath, [script], { stdio: 'pipe' });
         run();
+        expect(readFileSync(storeChunk, 'utf8')).to.equal(definitions);
         const before = sourcesIn(join(dist, 'edge'), /\.(js|cjs)$/);
         for (const source of before) {
           const owner = runInNewContext(
@@ -200,6 +207,50 @@ describe('package integrity — installable by --omit=dev consumers', () => {
       }
     });
   }
+
+  it('rejects replay patch drift without changing any replay files', () => {
+    const edgeSource = sourcesIn(join(distDir(), 'edge'), /\.js$/)[0];
+    const driftedSources = [
+      'let resolveReplayResponse;',
+      'const refusal = await replayResponse;',
+    ].map((anchor) => {
+      expect(edgeSource).to.include(anchor);
+      return edgeSource.replace(anchor, '// upstream drift');
+    });
+    driftedSources.push(
+      `${edgeSource}\nstore.replayEventsAfter(differentCursor, {});`,
+    );
+    for (const originalDrift of driftedSources) {
+      const fixture = mkdtempSync(join(tmpdir(), 'replay-patch-drift-'));
+      try {
+        const dist = join(fixture, 'node_modules/fastmcp/dist');
+        mkdirSync(join(dist, 'edge'), { recursive: true });
+        writeFileSync(
+          join(dist, '../package.json'),
+          JSON.stringify({ main: 'dist/FastMCP.cjs' }),
+        );
+        writeFileSync(
+          join(dist, 'FastMCP.cjs'),
+          'this.#capabilities.tools = {};\n  updateAuth(auth) {',
+        );
+        const prime = join(dist, 'edge/a.js');
+        const drifted = join(dist, 'edge/z.js');
+        const originalPrime =
+          'function prime(streamId) { return this.store.storeEvent(streamId, {}); }';
+        writeFileSync(prime, originalPrime);
+        writeFileSync(drifted, originalDrift);
+        const script = join(fixture, 'patch-fastmcp.mjs');
+        copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+        expect(() =>
+          execFileSync(process.execPath, [script], { stdio: 'pipe' }),
+        ).to.throw('replay patch');
+        expect(readFileSync(prime, 'utf8')).to.equal(originalPrime);
+        expect(readFileSync(drifted, 'utf8')).to.equal(originalDrift);
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+    }
+  });
 
   it('fails closed on missing security patches for the pinned transport only', () => {
     const targets = [

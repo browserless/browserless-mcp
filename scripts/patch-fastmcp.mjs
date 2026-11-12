@@ -448,8 +448,71 @@ const handleStreamRequest = async ({`,
 
 // Supply transport context alongside retained request history. npm overrides
 // do not reach consumers, so resolve SDK v1 and v2 from the actual proxy too.
-// Unknown builds remain best-effort at install time; BoundedEventStore refuses
-// retained replay without ownership, and the consumer smoke checks owner replay.
+// Preflight the coupled replay edits before writing any replay files. A changed
+// transport must fail installation clearly, not ship a partially patched replay.
+const replayWrites = new Map();
+const patchReplay = (dist, context, refusalPatches) => {
+  let files;
+  try {
+    files = readdirSync(dist);
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  for (const file of files.filter((f) => /\.(cjs|mjs|js)$/.test(f))) {
+    const path = join(dist, file);
+    const original = readFileSync(path, 'utf8');
+    if (!/\.(?:storeEvent|replayEventsAfter)\s*\(/.test(original)) continue;
+    let source = original;
+    const mismatch = new Error(
+      `[patch-fastmcp] replay patch: target not found in ${path}; ` +
+        'no replay edits written — update scripts/patch-fastmcp.mjs',
+    );
+    const wasPatched =
+      source.includes(
+        `.replayEventsAfter(lastEventId, { sessionId: this.${context},`,
+      ) ||
+      source.includes(`, this.${context})`) ||
+      source.includes('resolveReplayResponse') ||
+      source.includes('"Invalid replay cursor"');
+    const apply = (from, to) => {
+      // Do not attempt to repair a half-patched file: leftover fragments could
+      // duplicate declarations or leave a dangling call after replacement.
+      if (wasPatched && !source.includes(to)) throw mismatch;
+      source = source.replaceAll(to, from);
+      if (!source.includes(from)) throw mismatch;
+      source = source.replaceAll(from, to);
+    };
+    for (const args of [
+      'streamId, {}',
+      'streamId, message',
+      'this._standaloneSseStreamId, message',
+    ]) {
+      const from = `.storeEvent(${args})`;
+      const to = `.storeEvent(${args}, this.${context})`;
+      if (source.includes(from) || source.includes(to)) apply(from, to);
+    }
+    // No event-store call may silently miss context because its shape drifted.
+    const writes = [...source.matchAll(/\.storeEvent\(([^\n;]+)\)/g)];
+    const calls = source.match(/\.storeEvent\s*\(/g) ?? [];
+    if (
+      writes.length !== calls.length ||
+      writes.some((match) => !match[1].endsWith(`, this.${context}`))
+    )
+      throw mismatch;
+    if (source.includes('replayEventsAfter')) {
+      const replay = `.replayEventsAfter(lastEventId, { sessionId: this.${context},`;
+      apply('.replayEventsAfter(lastEventId, {', replay);
+      if (
+        (source.match(/\.replayEventsAfter\s*\(/g) ?? []).length !==
+        source.split(replay).length - 1
+      )
+        throw mismatch;
+      for (const [from, to] of refusalPatches(source)) apply(from, to);
+    }
+    replayWrites.set(path, source);
+  }
+};
 const transportDists = [];
 if (mcpProxyEntry) transportDists.push(dirname(mcpProxyEntry));
 for (const resolveFrom of [
@@ -488,71 +551,29 @@ for (const resolveFrom of [
   }
 }
 for (const dist of [...new Set(transportDists)]) {
-  for (const args of [
-    'streamId, {}',
-    'streamId, message',
-    'this._standaloneSseStreamId, message',
-  ]) {
-    patch({
-      name: 'event-store write context',
-      dist,
-      files: /\.(cjs|mjs|js)$/,
-      from: `.storeEvent(${args})`,
-      to: `.storeEvent(${args}, this.sessionId)`,
-      required: false,
-    });
-  }
-  patch({
-    name: 'event-store replay context',
-    dist,
-    files: /\.(cjs|mjs|js)$/,
-    from: '.replayEventsAfter(lastEventId, {',
-    to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
-    required: false,
-  });
   // Reject before registering a live stream. These anchors follow replay in
   // the bundled proxy and both SDK versions, outside the other patch bodies.
-  for (const anchor of [
-    '// Do not await between catch-up and live registration or terminal close.',
-    'if (this._closed || cancelled) {',
-  ]) {
-    patch({
-      name: 'event-store replay refusal',
-      dist,
-      files: /\.(cjs|mjs|js)$/,
-      from: anchor,
-      to: `if (!replayedStreamId) {
+  patchReplay(dist, 'sessionId', (source) => {
+    const anchor = source.includes('// Do not await between catch-up')
+      ? '// Do not await between catch-up and live registration or terminal close.'
+      : 'if (this._closed || cancelled) {';
+    return [
+      [
+        anchor,
+        `if (!replayedStreamId) {
                 try { streamController.close(); } catch {}
                 return this.createJsonErrorResponse(400, -32000, "Invalid replay cursor");
             }
             ${anchor}`,
-      required: false,
-    });
-  }
-}
-const edgeDist = join(dirname(fastmcpEntry), 'edge');
-for (const message of ['message', '{}']) {
-  patch({
-    name: 'edge event-store write context',
-    dist: edgeDist,
-    files: /\.(cjs|js)$/,
-    from: `.storeEvent(streamId, ${message})`,
-    to: `.storeEvent(streamId, ${message}, this.activeSessionId)`,
-    required: false,
+      ],
+    ];
   });
 }
-patch({
-  name: 'edge event-store replay context',
-  dist: edgeDist,
-  files: /\.(cjs|js)$/,
-  from: '.replayEventsAfter(lastEventId, {',
-  to: '.replayEventsAfter(lastEventId, { sessionId: this.activeSessionId,',
-  required: false,
-});
+const edgeDist = join(dirname(fastmcpEntry), 'edge');
 // Edge replay writes with backpressure in a detached task. Wait only until a
 // frame is ready or replay settles, so a refusal can still set the HTTP status
 // without buffering history or deadlocking a valid replay's first write.
-for (const [from, to] of [
+patchReplay(edgeDist, 'activeSessionId', () => [
   [
     'this._replaysInFlight += 1;\n    void (async () => {',
     `let resolveReplayResponse;
@@ -586,13 +607,10 @@ for (const [from, to] of [
     if (refusal) return refusal;
     return new Response(readable, {`,
   ],
-]) {
-  patch({
-    name: 'edge event-store replay refusal',
-    dist: edgeDist,
-    files: /\.(cjs|js)$/,
-    from,
-    to,
-    required: false,
-  });
+]);
+for (const [path, source] of replayWrites) {
+  if (readFileSync(path, 'utf8') !== source) writeFileSync(path, source);
 }
+process.stdout.write(
+  `[patch-fastmcp] replay patch: complete (${replayWrites.size} file(s) verified)\n`,
+);
