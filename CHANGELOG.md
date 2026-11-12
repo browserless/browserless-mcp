@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.48.0](https://github.com/browserless/browserless-mcp/compare/v1.47.1...v1.48.0) (2026-11-12)
+
+
+### Features
+
+* record session opens and summarize analytics delivery failures ([#549](https://github.com/browserless/browserless-mcp/issues/549)) ([1d01801](https://github.com/browserless/browserless-mcp/commit/1d018017050a408ea59a5352ca58549bab42b826))
+
+
+### Bug Fixes
+
+* avoid opening browsers for late skill reports ([#541](https://github.com/browserless/browserless-mcp/issues/541)) ([c1169ee](https://github.com/browserless/browserless-mcp/commit/c1169ee6877daa6bd17eb8affa894b4c1e904b5d))
+* contain transport request failures ([#539](https://github.com/browserless/browserless-mcp/issues/539)) ([ef2c5f3](https://github.com/browserless/browserless-mcp/commit/ef2c5f3c638cbfbf21340bbe534452e30352d91b))
+* escape session diagnostic strings ([#525](https://github.com/browserless/browserless-mcp/issues/525)) ([b2c9b46](https://github.com/browserless/browserless-mcp/commit/b2c9b46a08d38579829ac11793baf1a5bffd994b))
+* require https for hosted Browserless API URL overrides ([#543](https://github.com/browserless/browserless-mcp/issues/543)) ([8fad97d](https://github.com/browserless/browserless-mcp/commit/8fad97d44535c12390b0be2f70ca52fafc2acc6d))
+* require the opening credential on legacy SSE message posts ([#503](https://github.com/browserless/browserless-mcp/issues/503)) ([030ef7a](https://github.com/browserless/browserless-mcp/commit/030ef7a8d3aef559c6fd6be15ca8cd14718994df))
+* validate parsed OAuth redirect policies ([#546](https://github.com/browserless/browserless-mcp/issues/546)) ([aa161c8](https://github.com/browserless/browserless-mcp/commit/aa161c8d79a521b03766d0aff13d293a61f54e11))
+
 ## [1.47.1](https://github.com/browserless/browserless-mcp/compare/v1.47.0...v1.47.1) (2026-11-10)
 
 
