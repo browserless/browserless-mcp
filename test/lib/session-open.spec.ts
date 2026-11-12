@@ -68,6 +68,34 @@ describe('Session opening records', () => {
     ).to.equal('c\\u000a' + '😀'.repeat(126));
   });
 
+  it('keeps recognized attribution labels and discards arbitrary header values', () => {
+    for (const source of [
+      'cli_agent',
+      'script_builder',
+      'autologin',
+      'agent_run',
+      'mcp_client',
+    ])
+      expect(
+        sessionOpenAttributes({ ...auth, source }, undefined).source,
+      ).to.equal(source);
+    const fields = sessionOpenAttributes(
+      { ...auth, source: token, userAgent: token },
+      undefined,
+    );
+    expect(fields).to.include({
+      source: 'unknown',
+      user_agent_family: 'unknown',
+    });
+    expect(JSON.stringify(fields)).not.to.include(token);
+    expect(
+      sessionOpenAttributes(
+        { ...auth, userAgent: 'python-httpx/0.28.1' },
+        undefined,
+      ).user_agent_family,
+    ).to.equal('python-httpx');
+  });
+
   it('sends only SSE sessions through the queue and isolates telemetry failures', () => {
     const fireSessionStarted = sinon.stub();
     recordSessionOpen(auth, { name: 'c' }, { fireSessionStarted });
@@ -85,6 +113,22 @@ describe('Session opening records', () => {
     expect(() =>
       recordSessionOpen(auth, undefined, { fireSessionStarted }),
     ).not.to.throw();
+  });
+
+  it('bounds and escapes client attribution in queue events too', () => {
+    const fireSessionStarted = sinon.stub();
+    recordSessionOpen(
+      auth,
+      {
+        name: 'probe\n' + '😀'.repeat(300),
+        version: 'v\u0000' + 'x'.repeat(300),
+      },
+      { fireSessionStarted },
+    );
+    expect(fireSessionStarted.firstCall.args[1]).to.include({
+      client_name: 'probe\\u000a' + '😀'.repeat(122),
+      client_version: 'v\\u0000' + 'x'.repeat(126),
+    });
   });
 
   it('records once whether readiness preceded or follows connection', () => {

@@ -49,7 +49,11 @@ function attributes(record: LogRecord): Attributes {
 }
 
 async function withServer(
-  options: { compliant?: boolean; queueFails?: boolean },
+  options: {
+    compliant?: boolean;
+    queueFails?: boolean;
+    hostileAttribution?: boolean;
+  },
   run: (fixture: {
     base: string;
     records: LogRecord[];
@@ -195,7 +199,12 @@ async function withServer(
       output: () => output,
       queueRequests: () => queueRequests,
       connect: async (transport, name) => {
-        const client = await connect(base, transport, name);
+        const client = await connect(
+          base,
+          transport,
+          name,
+          options.hostileAttribution,
+        );
         clients.push(client);
         return client;
       },
@@ -222,14 +231,31 @@ async function connect(
   base: string,
   transport: 'sse' | 'streamable-http',
   name: string,
+  hostileAttribution = false,
 ) {
   const client = new Client({ name, version: '1.0.0' });
   try {
     await client.connect(
       transport === 'sse'
-        ? new SSEClientTransport(new URL(`${base}/sse?token=${token}`))
+        ? new SSEClientTransport(
+            new URL(
+              `${base}/sse?token=${token}${hostileAttribution ? `&mcpSource=${token}` : ''}`,
+            ),
+            {
+              requestInit: {
+                headers: hostileAttribution ? { 'User-Agent': token } : {},
+              },
+            },
+          )
         : new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-            requestInit: { headers: { Authorization: `Bearer ${token}` } },
+            requestInit: {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                ...(hostileAttribution
+                  ? { 'User-Agent': token, 'x-browserless-mcp-source': token }
+                  : {}),
+              },
+            },
           }),
       { timeout: 5000 },
     );
@@ -344,28 +370,44 @@ describe('Session opening telemetry', function () {
     });
   }
 
-  it('initializes with a long control-bearing client name and bounds its log value', async () => {
-    const name = ('probe\n\r\t\u0000\u001b"\\' + 'x'.repeat(10000)).slice(
-      0,
-      10000,
-    );
-    await withServer({}, async ({ connect, records, events, settle }) => {
-      await connect('streamable-http', name);
-      await settle();
-      const props = expectOpen(records, 'streamable-http', 'api_key_header');
-      expect(props.client_name).to.be.a('string');
-      const logged = String(props.client_name);
-      expect(logged.length).to.be.within(1, 256);
-      expect(logged).to.include('probe');
-      expect(
-        [...logged].some(
-          (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
-        ),
-        'client name has no literal control characters',
-      ).to.equal(false);
-      expect(events).to.deep.equal([]);
+  for (const transport of ['sse', 'streamable-http'] as const) {
+    it(`bounds hostile attribution over ${transport}`, async () => {
+      const name = ('probe\n\r\t\u0000\u001b"\\' + 'x'.repeat(10000)).slice(
+        0,
+        10000,
+      );
+      await withServer(
+        { hostileAttribution: true },
+        async ({ connect, records, events, settle }) => {
+          await connect(transport, name);
+          await settle();
+          const props = expectOpen(
+            records,
+            transport,
+            transport === 'sse' ? 'api_key_query' : 'api_key_header',
+          );
+          expect(props).to.include({
+            source: 'unknown',
+            user_agent_family: 'unknown',
+          });
+          expect(props.client_name).to.be.a('string');
+          const logged = String(props.client_name);
+          expect(logged.length).to.be.within(1, 256);
+          expect(logged).to.include('probe');
+          expect(
+            [...logged].some(
+              (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+            ),
+            'client name has no literal control characters',
+          ).to.equal(false);
+          if (transport === 'sse') {
+            expect(events).to.have.length(1);
+            expect(events[0].event_properties.client_name).to.equal(logged);
+          } else expect(events).to.deep.equal([]);
+        },
+      );
     });
-  });
+  }
 
   it('keeps initialization and tools available when the queue fails', async () => {
     await withServer(

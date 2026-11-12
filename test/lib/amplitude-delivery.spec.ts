@@ -69,6 +69,7 @@ describe('Amplitude delivery summaries', () => {
         'Invalid field values on some events',
       ],
       ['bad token AbCdEfGh0123456789xyz here', 'bad token [redacted] here'],
+      ['Invalid account alice@example.com', 'Invalid account [redacted]'],
       ['x\u0000y', 'x\\u0000y'],
       [sentence, sentence.slice(0, 80)],
       ['', 'unknown'],

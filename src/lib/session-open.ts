@@ -5,6 +5,7 @@ import {
   escapeDiagnosticString,
 } from './diagnostic-string.js';
 import { exportLogRecord, type LogAttributes } from './otlp-log.js';
+import { skillSource } from './skill-telemetry.js';
 import { hashToken, resolveMcpSource } from './utils.js';
 
 export const sessionOpenAttributes = (
@@ -16,9 +17,21 @@ export const sessionOpenAttributes = (
     transport: source.transport,
     auth_method: source.auth_method,
     key_fp: hashToken(auth.token),
-    source: source.source,
+    source: skillSource(source.source),
     client_family: source.client_family,
-    user_agent_family: source.user_agent_family,
+    user_agent_family: [
+      'node',
+      'python-httpx',
+      'python-requests',
+      'curl',
+      'mozilla',
+      'undici',
+      'go-http-client',
+      'claude-user',
+      'agent',
+    ].includes(source.user_agent_family)
+      ? source.user_agent_family
+      : 'unknown',
     usage_mode: source.usage_mode,
     ...(auth.accountId ? { account_id: auth.accountId } : {}),
     ...(clientInfo?.name
@@ -44,16 +57,17 @@ export const recordSessionOpen = (
   analytics: Pick<AnalyticsHelper, 'fireSessionStarted'>,
 ): void => {
   try {
+    const attributes = sessionOpenAttributes(auth, clientInfo);
     void exportLogRecord({
       scope: 'session-open',
       event: 'browserless.mcp.session.open',
       severity: 'INFO',
-      attributes: sessionOpenAttributes(auth, clientInfo),
+      attributes,
     });
     if (auth.transport === 'sse')
       analytics.fireSessionStarted(auth.token, {
         ...resolveMcpSource(auth, clientInfo, 'httpStream'),
-        key_fp: hashToken(auth.token),
+        ...attributes,
       });
   } catch {
     // Best-effort telemetry must not interrupt session initialization.

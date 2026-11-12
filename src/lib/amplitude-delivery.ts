@@ -20,6 +20,7 @@ export const amplitudeFailureReason = (message: unknown): string => {
   if (typeof message !== 'string') return 'unknown';
   const text = message
     .split(':', 1)[0]
+    .replace(/\S+/g, (word) => (word.includes('@') ? '[redacted]' : word))
     .replace(/[A-Za-z0-9+/=_-]{16,}/g, '[redacted]')
     .trim();
   return escapeDiagnosticString(diagnosticPreview(text, 80)) || 'unknown';
