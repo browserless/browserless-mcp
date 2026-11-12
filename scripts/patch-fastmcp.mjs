@@ -21,6 +21,8 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 // cwd-relative node_modules and fails when fastmcp is hoisted).
 
 const require = createRequire(import.meta.url);
+// Startup uses the same preflight, but must never repair or write dependencies.
+const checkReplay = process.argv.includes('--check-replay');
 
 let fastmcpEntry;
 try {
@@ -31,11 +33,12 @@ try {
   // fastmcp genuinely absent (e.g. an install that excludes it): nothing to
   // do. Any other resolution failure is a broken install — surface it rather
   // than silently shipping unpatched.
-  if (err.code === 'MODULE_NOT_FOUND') process.exit(0);
+  if (err.code === 'MODULE_NOT_FOUND') process.exit(checkReplay ? 1 : 0);
   throw err;
 }
 
 const patch = ({ name, dist, files, from, to, required = true }) => {
+  if (checkReplay) return;
   let changed = 0;
   let alreadyApplied = false;
   // A dist whose directory is absent (e.g. a future fastmcp without `edge`) is
@@ -448,9 +451,14 @@ const handleStreamRequest = async ({`,
 
 // Supply transport context alongside retained request history. npm overrides
 // do not reach consumers, so resolve SDK v1 and v2 from the actual proxy too.
-// Preflight the coupled replay edits before writing any replay files. A changed
-// transport must fail installation clearly, not ship a partially patched replay.
+// Preflight the coupled replay edits before writing any replay files. Unknown
+// layouts skip the group; our runtime independently refuses unverified resume.
 const replayWrites = new Map();
+const proxyRequire = mcpProxyEntry ? createRequire(mcpProxyEntry) : undefined;
+const activeTransportDists = new Set(
+  mcpProxyEntry ? [dirname(mcpProxyEntry)] : [],
+);
+let activeReplayTargets = 0;
 const patchReplay = (dist, context, refusalPatches) => {
   let files;
   try {
@@ -501,6 +509,7 @@ const patchReplay = (dist, context, refusalPatches) => {
     )
       throw mismatch;
     if (source.includes('replayEventsAfter')) {
+      if (activeTransportDists.has(dist)) activeReplayTargets++;
       const replay = `.replayEventsAfter(lastEventId, { sessionId: this.${context},`;
       apply('.replayEventsAfter(lastEventId, {', replay);
       if (
@@ -518,12 +527,12 @@ if (mcpProxyEntry) transportDists.push(dirname(mcpProxyEntry));
 for (const resolveFrom of [
   require,
   createRequire(fastmcpEntry),
-  ...(mcpProxyEntry ? [createRequire(mcpProxyEntry)] : []),
+  ...(proxyRequire ? [proxyRequire] : []),
 ]) {
   try {
-    transportDists.push(
-      dirname(resolveFrom.resolve('@modelcontextprotocol/server')),
-    );
+    const dist = dirname(resolveFrom.resolve('@modelcontextprotocol/server'));
+    transportDists.push(dist);
+    if (resolveFrom === proxyRequire) activeTransportDists.add(dist);
   } catch (err) {
     if (
       !['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(err.code)
@@ -550,67 +559,87 @@ for (const resolveFrom of [
       throw err;
   }
 }
-for (const dist of [...new Set(transportDists)]) {
-  // Reject before registering a live stream. These anchors follow replay in
-  // the bundled proxy and both SDK versions, outside the other patch bodies.
-  patchReplay(dist, 'sessionId', (source) => {
-    const anchor = source.includes('// Do not await between catch-up')
-      ? '// Do not await between catch-up and live registration or terminal close.'
-      : 'if (this._closed || cancelled) {';
-    return [
-      [
-        anchor,
-        `if (!replayedStreamId) {
+try {
+  for (const dist of [...new Set(transportDists)]) {
+    // Reject before registering a live stream. These anchors follow replay in
+    // the bundled proxy and both SDK versions, outside the other patch bodies.
+    patchReplay(dist, 'sessionId', (source) => {
+      const anchor = source.includes('// Do not await between catch-up')
+        ? '// Do not await between catch-up and live registration or terminal close.'
+        : 'if (this._closed || cancelled) {';
+      return [
+        [
+          anchor,
+          `if (!replayedStreamId) {
                 try { streamController.close(); } catch {}
                 return this.createJsonErrorResponse(400, -32000, "Invalid replay cursor");
             }
             ${anchor}`,
-      ],
-    ];
-  });
-}
-const edgeDist = join(dirname(fastmcpEntry), 'edge');
-// Edge replay writes with backpressure in a detached task. Wait only until a
-// frame is ready or replay settles, so a refusal can still set the HTTP status
-// without buffering history or deadlocking a valid replay's first write.
-patchReplay(edgeDist, 'activeSessionId', () => [
-  [
-    'this._replaysInFlight += 1;\n    void (async () => {',
-    `let resolveReplayResponse;
+        ],
+      ];
+    });
+  }
+  const edgeDist = join(dirname(fastmcpEntry), 'edge');
+  // Edge replay writes with backpressure in a detached task. Wait only until a
+  // frame is ready or replay settles, so a refusal can still set the HTTP status
+  // without buffering history or deadlocking a valid replay's first write.
+  patchReplay(edgeDist, 'activeSessionId', () => [
+    [
+      'this._replaysInFlight += 1;\n    void (async () => {',
+      `let resolveReplayResponse;
     const replayResponse = new Promise(resolve => { resolveReplayResponse = resolve; });
     this._replaysInFlight += 1;
     void (async () => {`,
-  ],
-  [
-    'send: async (eventId, message) => {\n            await this.writeSSEEventWithId(writer, eventId, message);',
-    'send: async (eventId, message) => {\n            resolveReplayResponse();\n            await this.writeSSEEventWithId(writer, eventId, message);',
-  ],
-  [
-    'if (this._streamGeneration !== generation) {',
-    `if (!streamId) {
+    ],
+    [
+      'send: async (eventId, message) => {\n            await this.writeSSEEventWithId(writer, eventId, message);',
+      'send: async (eventId, message) => {\n            resolveReplayResponse();\n            await this.writeSSEEventWithId(writer, eventId, message);',
+    ],
+    [
+      'if (this._streamGeneration !== generation) {',
+      `if (!streamId) {
           resolveReplayResponse(this.createErrorResponse(400, -32000, "Invalid replay cursor"));
           await this.closeQuietly(writer);
           return;
         }
         resolveReplayResponse();
         if (this._streamGeneration !== generation) {`,
-  ],
-  [
-    'this._replaysInFlight -= 1;',
-    'this._replaysInFlight -= 1;\n        resolveReplayResponse();',
-  ],
-  [
-    '})().catch(() => {\n    });\n    return new Response(readable, {',
-    `})().catch(() => {
+    ],
+    [
+      'this._replaysInFlight -= 1;',
+      'this._replaysInFlight -= 1;\n        resolveReplayResponse();',
+    ],
+    [
+      '})().catch(() => {\n    });\n    return new Response(readable, {',
+      `})().catch(() => {
     });
     const refusal = await replayResponse;
     if (refusal) return refusal;
     return new Response(readable, {`,
-  ],
-]);
-for (const [path, source] of replayWrites) {
-  if (readFileSync(path, 'utf8') !== source) writeFileSync(path, source);
+    ],
+  ]);
+  if (checkReplay) {
+    if (activeReplayTargets === 0) {
+      throw new Error('No supported active replay transport found');
+    }
+    for (const [path, source] of replayWrites) {
+      if (readFileSync(path, 'utf8') !== source) {
+        throw new Error(`Replay patch not applied in ${path}`);
+      }
+    }
+  } else {
+    for (const [path, source] of replayWrites) {
+      if (readFileSync(path, 'utf8') !== source) writeFileSync(path, source);
+    }
+    process.stdout.write(
+      `[patch-fastmcp] replay patch: complete (${replayWrites.size} file(s) verified)\n`,
+    );
+  }
+} catch (error) {
+  process.stderr.write(
+    `[patch-fastmcp] retained replay disabled: ${error.message}; replay patch skipped\n`,
+  );
+  // Installation stays usable. Startup treats any verification failure as no
+  // replay support, and rejects Last-Event-ID before dispatching to the SDK.
+  if (checkReplay) process.exitCode = 1;
 }
-process.stdout.write(
-  `[patch-fastmcp] replay patch: complete (${replayWrites.size} file(s) verified)\n`,
-);

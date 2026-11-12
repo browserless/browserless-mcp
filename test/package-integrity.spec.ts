@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   readFileSync,
   readdirSync,
@@ -189,6 +189,15 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
         const run = () =>
           execFileSync(process.execPath, [script], { stdio: 'pipe' });
+        const unpatched = sourcesIn(join(dist, 'edge'), /\.(js|cjs)$/);
+        const verified = spawnSync(process.execPath, [
+          script,
+          '--check-replay',
+        ]);
+        expect(verified.status).to.equal(1);
+        expect(sourcesIn(join(dist, 'edge'), /\.(js|cjs)$/)).to.deep.equal(
+          unpatched,
+        );
         run();
         expect(readFileSync(storeChunk, 'utf8')).to.equal(definitions);
         const before = sourcesIn(join(dist, 'edge'), /\.(js|cjs)$/);
@@ -208,7 +217,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     });
   }
 
-  it('rejects replay patch drift without changing any replay files', () => {
+  it('warns and skips replay patch drift without changing any replay files', () => {
     const edgeSource = sourcesIn(join(distDir(), 'edge'), /\.js$/)[0];
     const driftedSources = [
       'let resolveReplayResponse;',
@@ -241,14 +250,72 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         writeFileSync(drifted, originalDrift);
         const script = join(fixture, 'patch-fastmcp.mjs');
         copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
-        expect(() =>
-          execFileSync(process.execPath, [script], { stdio: 'pipe' }),
-        ).to.throw('replay patch');
+        const result = spawnSync(process.execPath, [script], {
+          encoding: 'utf8',
+        });
+        expect(result.status, result.stderr).to.equal(0);
+        expect(result.stderr).to.include('retained replay disabled');
+        expect(result.stdout).not.to.include('replay patch: complete');
         expect(readFileSync(prime, 'utf8')).to.equal(originalPrime);
         expect(readFileSync(drifted, 'utf8')).to.equal(originalDrift);
       } finally {
         rmSync(fixture, { recursive: true, force: true });
       }
+    }
+  });
+
+  it('does not verify an unused SDK instead of an unknown active transport', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'replay-unused-sdk-'));
+    try {
+      const require = createRequire(import.meta.url);
+      const sdkSource = readFileSync(
+        join(
+          dirname(
+            require.resolve('@modelcontextprotocol/sdk/server/streamableHttp.js'),
+          ),
+          'webStandardStreamableHttp.js',
+        ),
+        'utf8',
+      );
+      for (const [name, source] of [
+        ['fastmcp', ''],
+        ['mcp-proxy', 'export const unrelated = true;'],
+        ['@modelcontextprotocol/sdk', sdkSource],
+      ]) {
+        const dependency = join(fixture, 'node_modules', name);
+        const entry =
+          name === '@modelcontextprotocol/sdk'
+            ? 'dist/esm/server/streamableHttp.js'
+            : 'dist/index.js';
+        mkdirSync(dirname(join(dependency, entry)), { recursive: true });
+        writeFileSync(
+          join(dependency, 'package.json'),
+          JSON.stringify({
+            main: entry,
+            version: '99.0.0',
+            ...(name === '@modelcontextprotocol/sdk'
+              ? {
+                  exports: {
+                    './server/streamableHttp.js':
+                      './dist/esm/server/streamableHttp.js',
+                  },
+                }
+              : {}),
+          }),
+        );
+        writeFileSync(join(dependency, entry), source);
+      }
+      mkdirSync(join(fixture, 'scripts'));
+      writeFileSync(join(fixture, 'package.json'), JSON.stringify(pkg));
+      const script = join(fixture, 'scripts/patch-fastmcp.mjs');
+      copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+      const result = spawnSync(process.execPath, [script, '--check-replay'], {
+        encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).to.equal(1);
+      expect(result.stderr).to.include('No supported active replay transport');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
     }
   });
 
