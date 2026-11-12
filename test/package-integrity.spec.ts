@@ -453,8 +453,10 @@ describe('package integrity — installable by --omit=dev consumers', () => {
       ),
     );
     const sdkBefore = ['esm', 'cjs'].map((format) =>
-      sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/),
+      sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/i),
     );
+    for (const sources of sdkBefore)
+      expect(sources.length).to.be.greaterThan(0);
     expect(() =>
       execFileSync(process.execPath, [script], { stdio: 'pipe' }),
     ).to.not.throw();
@@ -469,7 +471,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     );
     expect(
       ['esm', 'cjs'].map((format) =>
-        sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/),
+        sourcesIn(join(sdkDist, format, 'server'), /StreamableHttp\.js$/i),
       ),
     ).to.deep.equal(sdkBefore);
   });
