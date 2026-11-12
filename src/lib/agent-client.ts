@@ -4,7 +4,11 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
-import { diagnosticPreview, diagnosticString } from './diagnostic-string.js';
+import {
+  diagnosticPreview,
+  diagnosticString,
+  UNSAFE_DIAGNOSTIC_CHARACTERS,
+} from './diagnostic-string.js';
 import {
   recordUpstreamCall,
   recordSessionLifetime,
@@ -538,9 +542,10 @@ const properClose = (
         /* ignore */
       }
       // Bound caller-controlled values, keeping all scope suffixes intact.
-      const handleStart = key.indexOf('conv#') + 'conv#'.length;
+      const displayKey = (JSON.parse(key) as string[]).join('');
+      const handleStart = displayKey.indexOf('conv#') + 'conv#'.length;
       const preview = diagnosticPreview(session.handle);
-      let suffix = key.slice(handleStart + session.handle.length);
+      let suffix = displayKey.slice(handleStart + session.handle.length);
       const attachId = session.creationSessionId;
       if (attachId) {
         const attachPreview = diagnosticPreview(attachId);
@@ -554,7 +559,7 @@ const properClose = (
         );
       }
       const diagnosticKey =
-        key.slice(0, handleStart) +
+        displayKey.slice(0, handleStart) +
         preview +
         (preview.length < session.handle.length ? '…' : '') +
         suffix;
@@ -634,9 +639,8 @@ export const stopSweepTimer = (): void => {
   sweepTimer = undefined;
 };
 
-// Separator between the host segment (mcpSessionId or stdio:<hash>) and
-// the proxy fingerprint in a session key. NUL is illegal in any
-// user-supplied field, so the two segments cannot ambiguously concatenate.
+// Readable labels in diagnostics; tuple serialization, not this separator,
+// keeps caller-controlled values from forging other session-key segments.
 const KEY_SEP = '\u0000';
 
 // Hash externalProxyServer rather than serialize it raw: the session key is
@@ -672,6 +676,27 @@ export const sessionHandle = (
   echoed?: string,
 ): string => echoed ?? mcpSessionId ?? `stdio:${hashToken(token)}`;
 
+const integrationScope = (integrationId?: string, allowedDomains?: string[]) =>
+  JSON.stringify([
+    integrationId || null,
+    integrationId ? [...(allowedDomains ?? [])].sort() : [],
+  ]);
+
+const assertIntegrationScope = (
+  session: ActiveSession,
+  integrationId?: string,
+  allowedDomains?: string[],
+): void => {
+  if (
+    integrationScope(session.integrationId, session.allowedDomains) !==
+    integrationScope(integrationId, allowedDomains)
+  ) {
+    throw new PersonaConflictError(
+      'Integration binding and allowed domains must match the browser session.',
+    );
+  }
+};
+
 // Profile and OAuth user ids are hashed so the eviction-logged key cannot leak
 // them; token-prefixed so a caller cannot echo another account's handle.
 export const getSessionKey = (
@@ -686,31 +711,31 @@ export const getSessionKey = (
   allowedDomains?: string[],
   userId?: string,
 ): string =>
-  `t:${hashToken(token)}` +
-  KEY_SEP +
-  'conv#' +
-  (attachSessionId
-    ? `attach:${attachSessionId}`
-    : sessionHandle(mcpSessionId, token, echoedSessionId)) +
-  // A returned handle identifies proxy and profile state, so neither is folded
-  // into the key for an echoed handle; integration bindings remain contractual
-  // scope and must be repeated on every call.
-  (echoedSessionId ? '' : proxyFingerprint(proxy)) +
-  (echoedSessionId || !profile
-    ? ''
-    : KEY_SEP + 'profile#' + hashToken(profile)) +
-  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
-  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-  // Different integration scope must key to a different WS. Sorted so domain
-  // order doesn't fork the key.
-  (integrationId
-    ? KEY_SEP +
-      'int#' +
-      hashToken(
-        JSON.stringify([integrationId, [...(allowedDomains ?? [])].sort()]),
-      )
-    : '') +
-  (userId ? KEY_SEP + 'user#' + hashToken(userId) : '');
+  JSON.stringify([
+    `t:${hashToken(token)}`,
+    KEY_SEP +
+      'conv#' +
+      (attachSessionId
+        ? `attach:${attachSessionId}`
+        : sessionHandle(mcpSessionId, token, echoedSessionId)),
+    // A returned handle identifies proxy and profile state, so neither is folded
+    // into the key for an echoed handle; integration bindings remain contractual
+    // scope and must be repeated on every call.
+    echoedSessionId ? '' : proxyFingerprint(proxy),
+    echoedSessionId || !profile
+      ? ''
+      : KEY_SEP + 'profile#' + hashToken(profile),
+    createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '',
+    attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '',
+    // Different integration scope must key to a different WS. Sorted so domain
+    // order doesn't fork the key.
+    integrationId
+      ? KEY_SEP +
+        'int#' +
+        hashToken(integrationScope(integrationId, allowedDomains))
+      : '',
+    userId ? KEY_SEP + 'user#' + hashToken(userId) : '',
+  ]);
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -1347,6 +1372,19 @@ export const getOrCreateSession = async (
   userId?: string,
   mcpTool = AGENT_TOOL_NAME,
 ): Promise<ActiveSession> => {
+  // Direct library callers bypass the MCP schemas. Attached browsers ignore
+  // echoed handles, so only validate an echo when it actually selects a session.
+  if (
+    !attachSessionId &&
+    echoedSessionId !== undefined &&
+    (!echoedSessionId.trim() ||
+      echoedSessionId.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1)
+  ) {
+    throw new PersonaConflictError(
+      'sessionId must be non-empty and must not contain control, format, or line separator characters',
+    );
+  }
+  allowedDomains = allowedDomains ? [...allowedDomains] : undefined;
   const requestedHandle = attachSessionId
     ? `attach:${attachSessionId}`
     : echoedSessionId;
@@ -1409,6 +1447,7 @@ export const getOrCreateSession = async (
   );
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
+  if (existing) assertIntegrationScope(existing, integrationId, allowedDomains);
   const retainedPersona = retainedPersonas.get(key);
   const hasRetainedProxy = retainedProxies.has(key);
   const retainedProxy = retainedProxies.get(key);
@@ -1519,6 +1558,7 @@ export const getOrCreateSession = async (
   const inFlight = pending.get(key);
   if (inFlight) {
     const session = await inFlight;
+    assertIntegrationScope(session, integrationId, allowedDomains);
     if (
       proxy !== undefined &&
       proxyFingerprint(session.proxy) !== proxyFingerprint(proxy)

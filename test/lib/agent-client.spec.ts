@@ -48,6 +48,7 @@ import {
   resetSyncInstruments,
 } from '../../src/lib/metrics-recorders.js';
 import { classifyAgentError } from '../../src/lib/error-classifier.js';
+import { hashToken } from '../../src/lib/utils.js';
 
 describe('agent-client response containment', () => {
   let peer: WebSocketServer;
@@ -2808,7 +2809,12 @@ describe('agent-client session handle', () => {
         undefined,
         'reuse-browser',
       );
-      for (const echo of ['attach:reuse-browseX', 's:other']) {
+      for (const echo of [
+        'attach:reuse-browseX',
+        's:other',
+        '',
+        's:\u0000bad',
+      ]) {
         const next = await getOrCreateSession(
           'attach-b',
           server.url,
@@ -2979,6 +2985,226 @@ describe('agent-client integration binding key', () => {
   it('ignores allowedDomains with no integrationId (it never reaches the wire)', () => {
     expect(key(undefined, ['https://a.com'])).to.equal(key(undefined));
   });
+
+  it('cannot forge integration scope through a resume handle', () => {
+    const scoped = key('op_int_a', ['https://a.com']);
+    const forged =
+      'handle-1\u0000int#' +
+      hashToken(JSON.stringify(['op_int_a', ['https://a.com']]));
+    expect(
+      getSessionKey(
+        'mcp-1',
+        'tok',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        forged,
+      ),
+    ).not.to.equal(scoped);
+  });
+});
+
+describe('agent-client library resume scope', () => {
+  for (const concurrent of [false, true]) {
+    it(`rejects a forged handle during ${concurrent ? 'pending' : 'cached'} reuse without dispatching on the bound socket`, async () => {
+      const server = await makeRespondingServer(() => ({ scoped: true }));
+      const handle = `scope-${concurrent}`;
+      const open = (echo: string, integration?: string, domains?: string[]) =>
+        getOrCreateSession(
+          'scope',
+          server.url,
+          'scope-token',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          echo,
+          integration,
+          domains,
+        );
+      const creation = open(handle, 'integration-a', ['https://a.com']);
+      try {
+        if (!concurrent) await creation;
+        const forged =
+          handle +
+          '\u0000int#' +
+          hashToken(JSON.stringify(['integration-a', ['https://a.com']]));
+        const result = await open(forged).catch((error: unknown) => error);
+        expect(result).to.be.instanceOf(Error);
+        const bound = await creation;
+        expect(await open(handle, 'integration-a', ['https://a.com'])).to.equal(
+          bound,
+        );
+        expect(server.hits()).to.equal(1);
+        expect((await send(bound, 'getCookies')).result).to.deep.equal({
+          scoped: true,
+        });
+      } finally {
+        await creation;
+        await closeSessionByHandle(handle, 'scope-token');
+        await server.close();
+      }
+    });
+  }
+
+  it('rejects unsafe and empty handles at the public library boundary', async () => {
+    const server = await makeRespondingServer(() => ({}));
+    try {
+      for (const handle of [
+        '',
+        '   ',
+        's:\u0000bad',
+        's:\tbad',
+        's:\u202ebad',
+        's:\u2028bad',
+      ]) {
+        const result = await getOrCreateSession(
+          'invalid',
+          server.url,
+          'invalid-token',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          handle,
+        ).catch((error: unknown) => error);
+        expect(result).to.be.instanceOf(Error);
+      }
+      expect(server.hits()).to.equal(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  for (const concurrent of [false, true]) {
+    for (const field of ['integrationId', 'allowedDomains'] as const) {
+      it(`checks stored ${field} before ${concurrent ? 'pending' : 'cached'} reuse`, async () => {
+        const server = await makeRespondingServer(() => ({}));
+        const handle = `binding-${concurrent}-${field}`;
+        const open = (onSession?: (reused: boolean) => void) =>
+          getOrCreateSession(
+            'binding',
+            server.url,
+            'binding-token',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            false,
+            undefined,
+            handle,
+            'integration-a',
+            ['https://a.com'],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            onSession,
+          );
+        const creation = open(() => {
+          const session = getActiveSessionByHandle(
+            handle,
+            server.url,
+            'binding-token',
+          );
+          // Simulate inconsistent runtime state without weakening the public
+          // readonly session type; reuse must check the stored binding too.
+          Object.defineProperty(session, field, {
+            value:
+              field === 'integrationId' ? 'integration-b' : ['https://b.com'],
+          });
+        });
+        try {
+          if (!concurrent) await creation;
+          const result = await open().catch((error: unknown) => error);
+          expect(result).to.be.instanceOf(PersonaConflictError);
+          expect(isRetryableUpgradeError(result)).to.equal(false);
+          expect(server.hits()).to.equal(1);
+        } finally {
+          await creation;
+          await closeSessionByHandle(handle, 'binding-token');
+          await server.close();
+        }
+      });
+    }
+  }
+
+  it('isolates integration scopes while sharing equivalent pending and cached requests', async () => {
+    const server = await makeRespondingServer(() => ({}));
+    const open = (integration?: string, domains?: string[]) =>
+      getOrCreateSession(
+        'legit',
+        server.url,
+        'legit-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'legit-handle',
+        integration,
+        domains,
+      );
+    try {
+      const domains = ['https://b.com', 'https://a.com'];
+      const first = open('integration-a', domains);
+      const pendingReuse = open('integration-a', [...domains].reverse());
+      domains.push('https://mutated.com');
+      const bound = await first;
+      expect(bound.allowedDomains).to.deep.equal([
+        'https://b.com',
+        'https://a.com',
+      ]);
+      expect(
+        JSON.parse(
+          new URL(server.upgradeUrls()[0], server.url).searchParams.get(
+            'allowedDomains',
+          )!,
+        ),
+      ).to.deep.equal(['https://b.com', 'https://a.com']);
+      expect(await pendingReuse).to.equal(bound);
+      expect(
+        await open('integration-a', ['https://a.com', 'https://b.com']),
+      ).to.equal(bound);
+      const unscoped = await open();
+      const otherIntegration = await open('integration-b', [
+        'https://a.com',
+        'https://b.com',
+      ]);
+      const otherDomains = await open('integration-a', ['https://a.com']);
+      expect(
+        new Set([bound.ws, unscoped.ws, otherIntegration.ws, otherDomains.ws])
+          .size,
+      ).to.equal(4);
+      expect(server.hits()).to.equal(4);
+    } finally {
+      for (const [integration, domains] of [
+        ['integration-a', ['https://a.com', 'https://b.com']],
+        [undefined, undefined],
+        ['integration-b', ['https://a.com', 'https://b.com']],
+        ['integration-a', ['https://a.com']],
+      ] as const) {
+        await closeSession(
+          'legit',
+          'legit-token',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          'legit-handle',
+          integration,
+          domains ? [...domains] : undefined,
+        );
+      }
+      await server.close();
+    }
+  });
 });
 
 describe('agent-client session diagnostics', () => {
@@ -3021,12 +3247,11 @@ describe('agent-client session diagnostics', () => {
   });
 
   for (const handle of [
-    's:\tcontrol',
-    's:eviction-long\t' + 'x'.repeat(1024),
+    's:"\\quoted',
+    's:eviction-long"\\' + 'x'.repeat(1024),
   ]) {
     it(`bounds and escapes the eviction key for a ${handle.length > 80 ? 'long' : 'short'} handle`, async () => {
       const stderr = sinon.spy(process.stderr, 'write');
-      // Tab is a control character accepted by the upstream session header.
       const neighbor = await open('s:diagnostic-neighbor');
       const session = await open(handle);
       expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
@@ -3046,10 +3271,12 @@ describe('agent-client session diagnostics', () => {
         handle,
         'eviction-scope',
       );
-      const previewKey = key.replace(
-        `conv#${handle}`,
-        `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
-      );
+      const previewKey = (JSON.parse(key) as string[])
+        .join('')
+        .replace(
+          `conv#${handle}`,
+          `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+        );
       const expected = `[agent-client] evicted session key=${JSON.stringify(previewKey)} reason=idle\n`;
       const line = stderr
         .getCalls()
@@ -3068,8 +3295,8 @@ describe('agent-client session diagnostics', () => {
   }
 
   for (const attachId of [
-    'browser-$&-$`-id',
-    'browser-$&-' + 'x'.repeat(1024),
+    'browser-\t-$&-$`-id',
+    'browser-\t-$&-' + 'x'.repeat(1024),
   ]) {
     it(`bounds the logged attach# value for a ${attachId.length > 80 ? 'long' : 'short'} attach ID without changing session scope`, async () => {
       const handle = `attach:${attachId}`;
@@ -3110,7 +3337,8 @@ describe('agent-client session diagnostics', () => {
         session.lastUsedAt = Date.now() - 16 * 60 * 1000;
         sweepSessions();
         await closed;
-        const expectedKey = key
+        const expectedKey = (JSON.parse(key) as string[])
+          .join('')
           .replace(
             `conv#${handle}`,
             () => `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
