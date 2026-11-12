@@ -57,6 +57,7 @@ import {
 } from '../../src/lib/download-store.js';
 import {
   getActiveSessionByHandle,
+  PersonaConflictError,
   ProfileNotFoundError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
@@ -1797,14 +1798,16 @@ describe('browserless_agent session diagnostics', () => {
     const stderr = sinon.spy(process.stderr, 'write');
     // Closing an absent session reaches the diagnostics without a connection.
     const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
-    const result = await execute(
-      {
-        method: 'close',
-        sessionId,
-      },
-      { ...mockContext, sessionId },
-    );
-    expect(JSON.stringify(result)).to.include('Browser session closed.');
+    let result: unknown;
+    try {
+      result = await execute(
+        { method: 'close', sessionId },
+        { ...mockContext, sessionId },
+      );
+    } catch (error) {
+      result = error;
+    }
+    expect(result).to.be.instanceOf(PersonaConflictError);
     const lines = stderr.getCalls().map((call) => String(call.args[0]));
     const diagnostic = lines.find((line) => line.startsWith('[agent] handle '));
     expect(diagnostic).to.be.a('string');
@@ -1826,7 +1829,15 @@ describe('browserless_agent session diagnostics', () => {
       'a'.repeat(79) + '😀z',
       '\u202e'.repeat(1024),
     ]) {
-      await execute({ method: 'close', sessionId }, mockContext);
+      let result: unknown;
+      try {
+        result = await execute({ method: 'close', sessionId }, mockContext);
+      } catch (error) {
+        result = error;
+      }
+      if (sessionId.startsWith('\u202e'))
+        expect(result).to.be.instanceOf(PersonaConflictError);
+      else expect(JSON.stringify(result)).to.include('Browser session closed.');
     }
     await execute(
       { method: 'close' },

@@ -462,6 +462,7 @@ export const getActiveSessionByHandle = (
   userId?: string,
   touch = true,
 ): ActiveSession => {
+  handle = normalizeSessionHandle(handle) ?? '';
   const matches = [...sessions.values()].filter(
     (session) =>
       session.handle === handle &&
@@ -542,7 +543,18 @@ const properClose = (
         /* ignore */
       }
       // Bound caller-controlled values, keeping all scope suffixes intact.
-      const displayKey = (JSON.parse(key) as string[]).join('');
+      const displayKey = getSessionKey(
+        undefined,
+        session.token,
+        session.proxy,
+        session.profile,
+        session.createProfile,
+        session.createProfile ? undefined : session.creationSessionId,
+        session.handle,
+        session.integrationId,
+        session.allowedDomains,
+        session.userId,
+      );
       const handleStart = displayKey.indexOf('conv#') + 'conv#'.length;
       const preview = diagnosticPreview(session.handle);
       let suffix = displayKey.slice(handleStart + session.handle.length);
@@ -676,16 +688,34 @@ export const sessionHandle = (
   echoed?: string,
 ): string => echoed ?? mcpSessionId ?? `stdio:${hashToken(token)}`;
 
+// Match MCP trimming while preserving blank library echoes as "no handle".
+const normalizeSessionHandle = (handle?: string): string | undefined => {
+  const normalized = handle?.trim();
+  if (normalized && normalized.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1) {
+    throw new PersonaConflictError(
+      'sessionId must not contain control, format, or line separator characters',
+    );
+  }
+  return normalized || undefined;
+};
+
+// A handle owns one browser per token/user. Scope is checked on the session,
+// not included in its lookup key: changing scope must not fork that browser.
+const sessionCacheKey = (handle: string, token: string, userId?: string) =>
+  JSON.stringify([hashToken(token), handle, userId ? hashToken(userId) : null]);
+
 const integrationScope = (integrationId?: string, allowedDomains?: string[]) =>
   JSON.stringify([
     integrationId || null,
     integrationId ? [...(allowedDomains ?? [])].sort() : [],
   ]);
 
-const assertIntegrationScope = (
+const assertSessionBinding = (
   session: ActiveSession,
   integrationId?: string,
   allowedDomains?: string[],
+  attachSessionId?: string,
+  createProfile?: CreateProfileParams,
 ): void => {
   if (
     integrationScope(session.integrationId, session.allowedDomains) !==
@@ -695,10 +725,20 @@ const assertIntegrationScope = (
       'Integration binding and allowed domains must match the browser session.',
     );
   }
+  if (attachSessionId && session.creationSessionId !== attachSessionId) {
+    throw new PersonaConflictError(
+      'Attach target must match the browser session owning this handle.',
+    );
+  }
+  if (createProfile && session.createProfile?.name !== createProfile.name) {
+    throw new PersonaConflictError(
+      'Profile creation target must match the browser session owning this handle.',
+    );
+  }
 };
 
-// Profile and OAuth user ids are hashed so the eviction-logged key cannot leak
-// them; token-prefixed so a caller cannot echo another account's handle.
+// Legacy exported/diagnostic format; never use this delimiter-joined value as
+// a security lookup key. The pool uses the private structured tuple above.
 export const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
@@ -711,7 +751,7 @@ export const getSessionKey = (
   allowedDomains?: string[],
   userId?: string,
 ): string =>
-  JSON.stringify([
+  [
     `t:${hashToken(token)}`,
     KEY_SEP +
       'conv#' +
@@ -727,15 +767,14 @@ export const getSessionKey = (
       : KEY_SEP + 'profile#' + hashToken(profile),
     createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '',
     attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '',
-    // Different integration scope must key to a different WS. Sorted so domain
-    // order doesn't fork the key.
+    // Preserve the exported integration fingerprint, independent of domain order.
     integrationId
       ? KEY_SEP +
         'int#' +
         hashToken(integrationScope(integrationId, allowedDomains))
       : '',
     userId ? KEY_SEP + 'user#' + hashToken(userId) : '',
-  ]);
+  ].join('');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -1372,18 +1411,10 @@ export const getOrCreateSession = async (
   userId?: string,
   mcpTool = AGENT_TOOL_NAME,
 ): Promise<ActiveSession> => {
-  // Direct library callers bypass the MCP schemas. Attached browsers ignore
-  // echoed handles, so only validate an echo when it actually selects a session.
-  if (
-    !attachSessionId &&
-    echoedSessionId !== undefined &&
-    (!echoedSessionId.trim() ||
-      echoedSessionId.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1)
-  ) {
-    throw new PersonaConflictError(
-      'sessionId must be non-empty and must not contain control, format, or line separator characters',
-    );
-  }
+  // Attached browsers ignore the echo, including its validation.
+  echoedSessionId = attachSessionId
+    ? undefined
+    : normalizeSessionHandle(echoedSessionId);
   allowedDomains = allowedDomains ? [...allowedDomains] : undefined;
   const requestedHandle = attachSessionId
     ? `attach:${attachSessionId}`
@@ -1433,21 +1464,17 @@ export const getOrCreateSession = async (
   const handle = attachSessionId
     ? `attach:${attachSessionId}`
     : (echoedSessionId ?? `s:${randomUUID()}`);
-  const key = getSessionKey(
-    mcpSessionId,
-    token,
-    proxy,
-    profile,
-    createProfile,
-    attachSessionId,
-    handle,
-    integrationId,
-    allowedDomains,
-    userId,
-  );
+  const key = sessionCacheKey(handle, token, userId);
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
-  if (existing) assertIntegrationScope(existing, integrationId, allowedDomains);
+  if (existing)
+    assertSessionBinding(
+      existing,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
   const retainedPersona = retainedPersonas.get(key);
   const hasRetainedProxy = retainedProxies.has(key);
   const retainedProxy = retainedProxies.get(key);
@@ -1558,7 +1585,13 @@ export const getOrCreateSession = async (
   const inFlight = pending.get(key);
   if (inFlight) {
     const session = await inFlight;
-    assertIntegrationScope(session, integrationId, allowedDomains);
+    assertSessionBinding(
+      session,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
     if (
       proxy !== undefined &&
       proxyFingerprint(session.proxy) !== proxyFingerprint(proxy)
@@ -1804,8 +1837,8 @@ export class SessionCloseConflictError extends Error {}
 export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
-  proxy?: ProxyOptions,
-  profile?: string,
+  _proxy?: ProxyOptions,
+  _profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
@@ -1814,22 +1847,29 @@ export const closeSession = (
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
 ): void | Promise<void> => {
-  const key = getSessionKey(
-    mcpSessionId,
-    token,
-    proxy,
-    profile,
-    createProfile,
-    attachSessionId,
-    echoedSessionId,
-    integrationId,
-    allowedDomains,
-    userId,
-  );
+  const handle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : sessionHandle(
+        mcpSessionId,
+        token,
+        normalizeSessionHandle(echoedSessionId),
+      );
+  const key = sessionCacheKey(handle, token, userId);
+  const session =
+    sessions.get(key) ??
+    [...handoffHandles.values()].find((entry) => entry.key === key)?.session;
+  if (session)
+    assertSessionBinding(
+      session,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
   return closeSessionByKey(key, onSession);
 };
 
-/** Close the exact cached key, including profile, attach, and integration scope. */
+/** Close the exact cached browser, including its retained configuration. */
 const closeSessionByKey = (
   key: string,
   onSession?: (reused: boolean, ageMs: number) => void,
@@ -1890,12 +1930,13 @@ const closeSessionByKey = (
   finish();
 };
 
-/** Handles are token/user scoped but can identify more than one integration binding. */
+/** Close the browser owning this token/user-scoped handle. */
 export const closeSessionByHandle = (
   handle: string,
   token: string,
   userId?: string,
 ): boolean | Promise<boolean> => {
+  handle = normalizeSessionHandle(handle) ?? '';
   const candidates = new Map(sessions);
   for (const entry of handoffHandles.values())
     if (!candidates.has(entry.key)) candidates.set(entry.key, entry.session);
@@ -1923,8 +1964,8 @@ export const closeSessionByHandle = (
 export const destroySession = (
   mcpSessionId: string | undefined,
   token: string,
-  proxy?: ProxyOptions,
-  profile?: string,
+  _proxy?: ProxyOptions,
+  _profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
@@ -1933,21 +1974,25 @@ export const destroySession = (
   userId?: string,
   expectedSession?: ActiveSession,
 ): void => {
-  const key = getSessionKey(
-    mcpSessionId,
-    token,
-    proxy,
-    profile,
-    createProfile,
-    attachSessionId,
-    echoedSessionId,
-    integrationId,
-    allowedDomains,
-    userId,
-  );
+  const handle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : sessionHandle(
+        mcpSessionId,
+        token,
+        normalizeSessionHandle(echoedSessionId),
+      );
+  const key = sessionCacheKey(handle, token, userId);
   const session = sessions.get(key);
   // A failed command may belong to a browser evicted before its reply arrived.
   if (expectedSession && session !== expectedSession) return;
+  if (session)
+    assertSessionBinding(
+      session,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
   if (session) {
     try {
       session.ws.close();

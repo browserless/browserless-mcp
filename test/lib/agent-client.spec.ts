@@ -8,6 +8,7 @@ import {
   buildAgentWsUrl,
   closeSession,
   closeSessionByHandle,
+  destroySession,
   createRepeatState,
   detectRepetition,
   getActiveSessionByHandle,
@@ -2768,6 +2769,60 @@ describe('agent-client session-cache isolation', () => {
 });
 
 describe('agent-client session handle', () => {
+  for (const concurrent of [false, true]) {
+    it(`does not substitute a fresh browser for an attach or profile-creation target during ${concurrent ? 'pending' : 'cached'} reuse`, async () => {
+      const server = await makeRespondingServer(() => ({}));
+      try {
+        const creation = getOrCreateSession(
+          'attach-owner',
+          server.url,
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          'attach:target',
+        );
+        if (!concurrent) await creation;
+        const attempts = [
+          getOrCreateSession(
+            'attach-request',
+            server.url,
+            'tok',
+            undefined,
+            undefined,
+            undefined,
+            'target',
+          ),
+          getOrCreateSession(
+            'profile-request',
+            server.url,
+            'tok',
+            undefined,
+            undefined,
+            { name: 'target' },
+            undefined,
+            false,
+            undefined,
+            'attach:target',
+          ),
+        ].map((attempt) => attempt.catch((error: unknown) => error));
+        for (const result of await Promise.all(attempts))
+          expect(result).to.be.instanceOf(PersonaConflictError);
+        const original = await creation;
+        expect(
+          getActiveSessionByHandle('attach:target', server.url, 'tok'),
+        ).to.equal(original);
+        expect(server.hits()).to.equal(1);
+        await closeSessionByHandle(original.handle, 'tok');
+      } finally {
+        await server.close();
+      }
+    });
+  }
+
   it('keys attached conversations by the header regardless of echo or MCP session id', () => {
     const canonical = getSessionKey(
       'a',
@@ -2986,11 +3041,7 @@ describe('agent-client integration binding key', () => {
     expect(key(undefined, ['https://a.com'])).to.equal(key(undefined));
   });
 
-  it('cannot forge integration scope through a resume handle', () => {
-    const scoped = key('op_int_a', ['https://a.com']);
-    const forged =
-      'handle-1\u0000int#' +
-      hashToken(JSON.stringify(['op_int_a', ['https://a.com']]));
+  it('preserves the exported legacy NUL-joined key format', () => {
     expect(
       getSessionKey(
         'mcp-1',
@@ -2999,9 +3050,14 @@ describe('agent-client integration binding key', () => {
         undefined,
         undefined,
         undefined,
-        forged,
+        'handle-1',
+        'op_int_a',
+        ['https://a.com'],
+        'user-a',
       ),
-    ).not.to.equal(scoped);
+    ).to.equal(
+      `t:${hashToken('tok')}\u0000conv#handle-1\u0000int#${hashToken(JSON.stringify(['op_int_a', ['https://a.com']]))}\u0000user#${hashToken('user-a')}`,
+    );
   });
 });
 
@@ -3050,12 +3106,10 @@ describe('agent-client library resume scope', () => {
     });
   }
 
-  it('rejects unsafe and empty handles at the public library boundary', async () => {
+  it('rejects unsafe handles at the public library boundary', async () => {
     const server = await makeRespondingServer(() => ({}));
     try {
       for (const handle of [
-        '',
-        '   ',
         's:\u0000bad',
         's:\tbad',
         's:\u202ebad',
@@ -3081,60 +3135,176 @@ describe('agent-client library resume scope', () => {
     }
   });
 
-  for (const concurrent of [false, true]) {
-    for (const field of ['integrationId', 'allowedDomains'] as const) {
-      it(`checks stored ${field} before ${concurrent ? 'pending' : 'cached'} reuse`, async () => {
-        const server = await makeRespondingServer(() => ({}));
-        const handle = `binding-${concurrent}-${field}`;
-        const open = (onSession?: (reused: boolean) => void) =>
-          getOrCreateSession(
-            'binding',
-            server.url,
-            'binding-token',
+  it('treats blank echoes as new tasks and normalizes handles across library operations', async () => {
+    const server = await makeRespondingServer(() => ({}));
+    const open = (echo: string) =>
+      getOrCreateSession(
+        'normalization',
+        server.url,
+        'normalization-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        echo,
+      );
+    try {
+      const blank = await open('');
+      const whitespace = await open('   ');
+      expect(blank.handle).to.match(/^s:/);
+      expect(whitespace.handle).to.match(/^s:/);
+      expect(blank).not.to.equal(whitespace);
+      const session = await open('  s:normalized  ');
+      expect(session.handle).to.equal('s:normalized');
+      expect(await open('s:normalized')).to.equal(session);
+      expect(
+        getActiveSessionByHandle(
+          ' s:normalized ',
+          server.url,
+          'normalization-token',
+        ),
+      ).to.equal(session);
+      await closeSession(
+        'normalization',
+        'normalization-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ' s:normalized ',
+      );
+      expect(() =>
+        getActiveSessionByHandle(
+          session.handle,
+          server.url,
+          'normalization-token',
+        ),
+      ).to.throw(/unavailable/);
+      const destroyed = await open(' s:destroy ');
+      destroySession(
+        'normalization',
+        'normalization-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ' s:destroy ',
+      );
+      expect(() =>
+        getActiveSessionByHandle(
+          destroyed.handle,
+          server.url,
+          'normalization-token',
+        ),
+      ).to.throw(/unavailable/);
+      const closed = await open(' s:close-handle ');
+      expect(
+        await closeSessionByHandle(' s:close-handle ', 'normalization-token'),
+      ).to.equal(true);
+      expect(() =>
+        getActiveSessionByHandle(
+          closed.handle,
+          server.url,
+          'normalization-token',
+        ),
+      ).to.throw(/unavailable/);
+      for (const invalid of ['s:\u0000bad', 's:\u202ebad', 's:\u2028bad']) {
+        expect(() =>
+          closeSession(
+            undefined,
+            'normalization-token',
             undefined,
             undefined,
             undefined,
             undefined,
-            false,
+            invalid,
+          ),
+        ).to.throw(PersonaConflictError);
+        expect(() =>
+          destroySession(
             undefined,
-            handle,
-            'integration-a',
-            ['https://a.com'],
+            'normalization-token',
             undefined,
             undefined,
             undefined,
             undefined,
-            onSession,
-          );
-        const creation = open(() => {
-          const session = getActiveSessionByHandle(
-            handle,
-            server.url,
-            'binding-token',
-          );
-          // Simulate inconsistent runtime state without weakening the public
-          // readonly session type; reuse must check the stored binding too.
-          Object.defineProperty(session, field, {
-            value:
-              field === 'integrationId' ? 'integration-b' : ['https://b.com'],
-          });
-        });
-        try {
-          if (!concurrent) await creation;
-          const result = await open().catch((error: unknown) => error);
-          expect(result).to.be.instanceOf(PersonaConflictError);
-          expect(isRetryableUpgradeError(result)).to.equal(false);
-          expect(server.hits()).to.equal(1);
-        } finally {
-          await creation;
-          await closeSessionByHandle(handle, 'binding-token');
-          await server.close();
-        }
-      });
+            invalid,
+          ),
+        ).to.throw(PersonaConflictError);
+        expect(() =>
+          getActiveSessionByHandle(invalid, server.url, 'normalization-token'),
+        ).to.throw(PersonaConflictError);
+        expect(() =>
+          closeSessionByHandle(invalid, 'normalization-token'),
+        ).to.throw(PersonaConflictError);
+      }
+    } finally {
+      await server.close();
     }
+  });
+
+  for (const concurrent of [false, true]) {
+    it(`refuses changed integration scope for an owned handle during ${concurrent ? 'pending' : 'cached'} resume`, async () => {
+      const server = await makeRespondingServer(() => ({ ok: true }));
+      const open = (integration?: string, domains?: string[]) =>
+        getOrCreateSession(
+          'owned',
+          server.url,
+          'owned-token',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          undefined,
+          's:owned',
+          integration,
+          domains,
+        );
+      try {
+        const creation = open('integration-a', ['https://a.com']);
+        if (!concurrent) await creation;
+        const attempts = [
+          open(),
+          open('integration-b', ['https://a.com']),
+          open('integration-a', ['https://b.com']),
+        ].map((attempt) => attempt.catch((error: unknown) => error));
+        const bound = await creation;
+        for (const result of await Promise.all(attempts))
+          expect(result).to.be.instanceOf(PersonaConflictError);
+        expect(server.hits()).to.equal(1);
+        expect(
+          getActiveSessionByHandle('s:owned', server.url, 'owned-token'),
+        ).to.equal(bound);
+        expect((await send(bound, 'getCookies')).result).to.deep.equal({
+          ok: true,
+        });
+        expect(await closeSessionByHandle('s:owned', 'owned-token')).to.equal(
+          true,
+        );
+        const unboundCreation = open();
+        if (!concurrent) await unboundCreation;
+        const changed = await open('integration-a', ['https://a.com']).catch(
+          (error: unknown) => error,
+        );
+        expect(changed).to.be.instanceOf(PersonaConflictError);
+        const unbound = await unboundCreation;
+        expect(server.hits()).to.equal(2);
+        expect(
+          getActiveSessionByHandle('s:owned', server.url, 'owned-token'),
+        ).to.equal(unbound);
+        expect(await closeSessionByHandle('s:owned', 'owned-token')).to.equal(
+          true,
+        );
+      } finally {
+        await server.close();
+      }
+    });
   }
 
-  it('isolates integration scopes while sharing equivalent pending and cached requests', async () => {
+  it('shares equivalent pending and cached scope while snapshotting caller domains', async () => {
     const server = await makeRespondingServer(() => ({}));
     const open = (integration?: string, domains?: string[]) =>
       getOrCreateSession(
@@ -3172,36 +3342,9 @@ describe('agent-client library resume scope', () => {
       expect(
         await open('integration-a', ['https://a.com', 'https://b.com']),
       ).to.equal(bound);
-      const unscoped = await open();
-      const otherIntegration = await open('integration-b', [
-        'https://a.com',
-        'https://b.com',
-      ]);
-      const otherDomains = await open('integration-a', ['https://a.com']);
-      expect(
-        new Set([bound.ws, unscoped.ws, otherIntegration.ws, otherDomains.ws])
-          .size,
-      ).to.equal(4);
-      expect(server.hits()).to.equal(4);
+      expect(server.hits()).to.equal(1);
     } finally {
-      for (const [integration, domains] of [
-        ['integration-a', ['https://a.com', 'https://b.com']],
-        [undefined, undefined],
-        ['integration-b', ['https://a.com', 'https://b.com']],
-        ['integration-a', ['https://a.com']],
-      ] as const) {
-        await closeSession(
-          'legit',
-          'legit-token',
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          'legit-handle',
-          integration,
-          domains ? [...domains] : undefined,
-        );
-      }
+      await closeSessionByHandle('legit-handle', 'legit-token');
       await server.close();
     }
   });
@@ -3271,12 +3414,10 @@ describe('agent-client session diagnostics', () => {
         handle,
         'eviction-scope',
       );
-      const previewKey = (JSON.parse(key) as string[])
-        .join('')
-        .replace(
-          `conv#${handle}`,
-          `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
-        );
+      const previewKey = key.replace(
+        `conv#${handle}`,
+        `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
+      );
       const expected = `[agent-client] evicted session key=${JSON.stringify(previewKey)} reason=idle\n`;
       const line = stderr
         .getCalls()
@@ -3315,9 +3456,6 @@ describe('agent-client session diagnostics', () => {
           undefined,
           'attach-scope',
         );
-        expect(getActiveSessionByHandle(handle, server.url, 'tok')).to.equal(
-          session,
-        );
         expect(
           new URL(server.upgradeUrls()[0], server.url).searchParams.get(
             'sessionId',
@@ -3337,8 +3475,7 @@ describe('agent-client session diagnostics', () => {
         session.lastUsedAt = Date.now() - 16 * 60 * 1000;
         sweepSessions();
         await closed;
-        const expectedKey = (JSON.parse(key) as string[])
-          .join('')
+        const expectedKey = key
           .replace(
             `conv#${handle}`,
             () => `conv#${handle.slice(0, 80)}${handle.length > 80 ? '…' : ''}`,
@@ -3353,7 +3490,16 @@ describe('agent-client session diagnostics', () => {
         expect(lines).to.include(expected);
         expect(expectedKey).to.include('\u0000int#');
       } finally {
-        await closeSessionByHandle(handle, 'tok');
+        await closeSession(
+          'attach-diagnostic',
+          'tok',
+          undefined,
+          undefined,
+          undefined,
+          attachId,
+          undefined,
+          'attach-scope',
+        );
       }
     });
   }
