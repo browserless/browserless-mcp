@@ -13,10 +13,10 @@ import type { FastMCP } from 'fastmcp';
 import type { BrowserlessSession } from '../@types/types.js';
 import { skillDeliveryFailed } from './skill-telemetry.js';
 import {
-  flushAmplitudeDelivery,
-  noteAmplitudeResult,
-  noteAmplitudeSdkLog,
-} from './amplitude-delivery.js';
+  diagnosticPreview,
+  escapeDiagnosticString,
+} from './diagnostic-string.js';
+import { exportLogRecord } from './otlp-log.js';
 
 export type AmplitudeFactory = (
   apiKey: string,
@@ -68,6 +68,94 @@ const installConnectHook = (analytics: AmplitudeMCPAnalytics): void => {
     return this.connect(transport);
   };
   hookInstalled = true;
+};
+
+type Failure = {
+  event_type: string;
+  status: number;
+  reason: string;
+  count: number;
+};
+const failures = new Map<string, Failure>();
+const statuses = new Map<number, number>();
+let deliveryFlush = Promise.resolve();
+let overflow = 0;
+let errors = 0;
+let warnings = 0;
+let timer: NodeJS.Timeout | undefined;
+
+export const amplitudeFailureReason = (message: unknown): string => {
+  if (typeof message !== 'string') return 'unknown';
+  const text = message
+    .split(':', 1)[0]
+    .replace(/\S+/g, (word) => (word.includes('@') ? '[redacted]' : word))
+    .replace(/[A-Za-z0-9+/=_-]{16,}/g, '[redacted]')
+    .trim();
+  return escapeDiagnosticString(diagnosticPreview(text, 80)) || 'unknown';
+};
+
+const startWindow = (): void => {
+  timer ??= setTimeout(flushAmplitudeDelivery, 60_000).unref();
+};
+
+export const noteAmplitudeResult = (result: {
+  event?: { event_type?: unknown };
+  code: number;
+  message?: unknown;
+}): void => {
+  if (result.code === 200 || result.code === 100) return;
+  statuses.set(result.code, (statuses.get(result.code) ?? 0) + 1);
+  const event_type =
+    typeof result.event?.event_type === 'string'
+      ? escapeDiagnosticString(diagnosticPreview(result.event.event_type, 64))
+      : 'unknown';
+  const reason = amplitudeFailureReason(result.message);
+  const key = JSON.stringify([event_type, result.code, reason]);
+  const existing = failures.get(key);
+  if (existing) existing.count++;
+  else if (failures.size < 12)
+    failures.set(key, { event_type, status: result.code, reason, count: 1 });
+  else overflow++;
+  startWindow();
+};
+
+export const noteAmplitudeSdkLog = (level: 'warn' | 'error'): void => {
+  if (level === 'error') errors++;
+  else warnings++;
+  startWindow();
+};
+
+export const flushAmplitudeDelivery = (): Promise<void> => {
+  if (timer) clearTimeout(timer);
+  timer = undefined;
+  if (!failures.size && !overflow && !errors && !warnings) return deliveryFlush;
+  const records = [...failures.values()];
+  if (overflow)
+    records.push({
+      event_type: 'other',
+      status: 0,
+      reason: 'overflow',
+      count: overflow,
+    });
+  const count = records.reduce((total, record) => total + record.count, 0);
+  deliveryFlush = Promise.all([
+    deliveryFlush,
+    ...records.map((record) =>
+      exportLogRecord({
+        scope: 'amplitude',
+        event: 'browserless.mcp.amplitude.delivery_failed',
+        severity: 'WARN',
+        attributes: { ...record, window_s: 60 },
+      }),
+    ),
+  ]).then(() => {});
+  console.warn(
+    `[browserless-mcp] Amplitude delivery failed for ${count} events in the last 60s (${[...statuses].map(([status, n]) => `${status}: ${n}`).join(', ')}); SDK errors ${errors}, warnings ${warnings}`,
+  );
+  failures.clear();
+  statuses.clear();
+  overflow = errors = warnings = 0;
+  return deliveryFlush;
 };
 
 export const createAmplitudeLogger = (): Types.ILogger & { info(): void } => {
@@ -231,9 +319,7 @@ export const shutdownAmplitudeAnalytics = async (
 ): Promise<void> => {
   let timeout: NodeJS.Timeout | undefined;
   try {
-    // `shutdown()` is synchronous and returns void — only `flush()` yields an
-    // awaitable, so awaiting shutdown alone resolves on the next tick and
-    // `process.exit()` drops whatever is still in flight.
+    // Only `flush()` is awaitable; synchronous SDK shutdown cannot drain events.
     await Promise.race([
       (analytics?.flush() as AmplitudeFlushResult)?.promise,
       new Promise<void>((resolve) => {
@@ -245,7 +331,7 @@ export const shutdownAmplitudeAnalytics = async (
     console.error('[browserless-mcp] Amplitude shutdown failed:', error);
   } finally {
     if (timeout) clearTimeout(timeout);
-    flushAmplitudeDelivery();
+    await flushAmplitudeDelivery();
     try {
       analytics?.shutdown();
     } catch (error) {

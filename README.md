@@ -627,7 +627,7 @@ On the full `httpStream` surface, each ready session emits an INFO `browserless.
 OTLP record with `transport`, `auth_method`, `key_fp` (a 16-hex token fingerprint),
 `source`, `client_family`, `user_agent_family`, and `usage_mode`. Known account IDs are included.
 Client names/versions use 128-code-point escaped previews in both logs and queue events.
-Source and UA families use known labels or `unknown`; no raw token or UA in logs.
+Source and UA families use known labels or `unknown`; no raw token or UA in log/event properties.
 The compliant surface and stdio do not emit session-open records.
 
 `MCP Session Started` uses only the existing authenticated analytics queue,
@@ -638,8 +638,8 @@ enabled. The queue consumer resolves identity using its authentication field.
 integer `status`, sanitized `reason`, `count`, and `window_s=60`. Each window
 holds at most 12 distinct keys plus one overflow record. Reasons drop text
 after the first colon, redact key-like runs and email-like words, and escape a bounded preview.
-One stderr summary per window replaces per-failure SDK lines; it contains
-status counts and SDK error/warning totals, never payloads or reason text.
+One stderr summary per window replaces per-failure SDK lines; real status counts survive overflow.
+Shutdown awaits final/in-flight exports with the exporter's one-second deadline.
 
 ### Failure diagnostics
 

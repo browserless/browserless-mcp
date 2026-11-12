@@ -403,6 +403,13 @@ describe('Session opening telemetry', function () {
           if (transport === 'sse') {
             expect(events).to.have.length(1);
             expect(events[0].event_properties.client_name).to.equal(logged);
+            expect(events[0].event_properties).not.to.have.property(
+              'user_agent',
+            );
+            const { token: authenticationToken, ...properties } =
+              events[0].event_properties;
+            expect(authenticationToken).to.equal(token);
+            expect(JSON.stringify(properties)).not.to.include(token);
           } else expect(events).to.deep.equal([]);
         },
       );

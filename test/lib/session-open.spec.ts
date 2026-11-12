@@ -98,9 +98,19 @@ describe('Session opening records', () => {
 
   it('sends only SSE sessions through the queue and isolates telemetry failures', () => {
     const fireSessionStarted = sinon.stub();
-    recordSessionOpen(auth, { name: 'c' }, { fireSessionStarted });
+    recordSessionOpen(
+      { ...auth, source: token, userAgent: token },
+      { name: 'c' },
+      { fireSessionStarted },
+    );
     expect(fireSessionStarted.callCount).to.equal(1);
     expect(fireSessionStarted.firstCall.args[0]).to.equal(token);
+    expect(fireSessionStarted.firstCall.args[1]).not.to.have.property(
+      'user_agent',
+    );
+    expect(JSON.stringify(fireSessionStarted.firstCall.args[1])).not.to.include(
+      token,
+    );
     expect(fireSessionStarted.firstCall.args[1]).to.include({
       transport: 'sse',
       key_fp: createHash('sha256').update(token).digest('hex').slice(0, 16),

@@ -14,6 +14,7 @@ import { FastMCP } from 'fastmcp';
 import sinon from 'sinon';
 import {
   createAmplitudeLogger,
+  flushAmplitudeDelivery,
   getAmplitudeIdentity,
   initializeAmplitudeAnalytics,
   instrumentFastMcpTools,
@@ -25,7 +26,6 @@ import { defineTool } from '../../src/lib/define-tool.js';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import { z } from 'zod';
-import { flushAmplitudeDelivery } from '../../src/lib/amplitude-delivery.js';
 
 const createDeferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;

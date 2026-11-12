@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import sinon from 'sinon';
 import {
@@ -7,7 +8,7 @@ import {
   noteAmplitudeResult,
   noteAmplitudeSdkLog,
   flushAmplitudeDelivery,
-} from '../../src/lib/amplitude-delivery.js';
+} from '../../src/lib/amplitude-analytics.js';
 
 describe('Amplitude delivery summaries', () => {
   let receiver: http.Server;
@@ -135,7 +136,44 @@ describe('Amplitude delivery summaries', () => {
     });
     expect(records().reduce((n, r) => n + r.count, 0)).to.equal(1000);
     expect(warnings.callCount).to.equal(1);
+    expect(warnings.firstCall.args[0]).to.include('400: 1000');
+    expect(warnings.firstCall.args[0]).not.to.include('0: 760');
+    noteAmplitudeResult({ code: 503 });
+    flushAmplitudeDelivery();
+    expect(warnings.lastCall.args[0]).to.include('503: 1');
+    expect(warnings.lastCall.args[0]).not.to.include('400:');
   });
+
+  for (const alreadyFlushed of [false, true]) {
+    it(`awaits ${alreadyFlushed ? 'in-flight' : 'final-window'} exports before process exit`, async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import { noteAmplitudeResult, flushAmplitudeDelivery, shutdownAmplitudeAnalytics } from './build/src/lib/amplitude-analytics.js';
+          noteAmplitudeResult({ event: { event_type: 'shutdown probe' }, code: 400, message: 'bad request' });
+          ${alreadyFlushed ? 'void flushAmplitudeDelivery();' : ''}
+          await shutdownAmplitudeAnalytics(undefined);
+          process.exit(0);`,
+        ],
+        { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] },
+      );
+      let stderr = '';
+      child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', resolve);
+      });
+      expect(exitCode, stderr).to.equal(0);
+      expect(records()).to.have.length(1);
+      expect(records()[0]).to.include({
+        event_type: 'shutdown probe',
+        status: 400,
+        count: 1,
+      });
+    });
+  }
 
   it('starts a lazy sixty-second window and resets after flushing', async () => {
     const clock = sinon.useFakeTimers({

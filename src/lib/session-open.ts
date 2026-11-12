@@ -65,10 +65,7 @@ export const recordSessionOpen = (
       attributes,
     });
     if (auth.transport === 'sse')
-      analytics.fireSessionStarted(auth.token, {
-        ...resolveMcpSource(auth, clientInfo, 'httpStream'),
-        ...attributes,
-      });
+      analytics.fireSessionStarted(auth.token, attributes);
   } catch {
     // Best-effort telemetry must not interrupt session initialization.
   }
