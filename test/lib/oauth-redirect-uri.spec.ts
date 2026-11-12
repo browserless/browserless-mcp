@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import RedisMock from 'ioredis-mock';
 import type { Redis } from 'ioredis';
+import sinon from 'sinon';
 import {
   OAuthProxy,
   OAuthProxyError,
@@ -60,6 +61,16 @@ const LOOPBACK_CONFUSION_CALLBACKS = [
   'http://@localhost:31337/callback',
   'http://user@localhost:31337/callback',
   'http://user:password@127.0.0.1:31337/callback',
+];
+
+const HOST_POLICY = 'https://*.corp.example.com/cb';
+const AMBIGUOUS_HOST_CALLBACKS = [
+  'https://outside\\.corp.example.com/cb',
+  'https://outside%2eother.corp.example.com/cb',
+  'https://outside%2Eother.corp.example.com/cb',
+  'https://outside\t.corp.example.com/cb',
+  'https://outside\n.corp.example.com/cb',
+  'https://outside\r.corp.example.com/cb',
 ];
 
 function buildConfig(
@@ -225,6 +236,153 @@ describe('Browserless OAuth redirect URI validation', () => {
         'https://client.example/cb/?',
       ]),
     ).to.equal(true);
+  });
+
+  for (const redirectUri of AMBIGUOUS_HOST_CALLBACKS) {
+    it(`rejects ambiguous hostname ${JSON.stringify(redirectUri)}`, () => {
+      expect(isAllowedOAuthRedirectUri(redirectUri, [HOST_POLICY])).to.equal(
+        false,
+      );
+    });
+  }
+
+  it('preserves configured hosts and raw path and port constraints', () => {
+    for (const [redirectUri, pattern, expected] of [
+      ['https://client.corp.example.com/cb', HOST_POLICY, true],
+      ['https://cl%69ent.corp.example.com/cb', HOST_POLICY, true],
+      [
+        'https://CLIENT.corp.example.com/cb',
+        'https://CLIENT.corp.example.com/cb',
+        true,
+      ],
+      ['https://client.exämple.com/cb', 'https://*.exämple.com/cb', true],
+      ['https://café.example/cb', 'https://*é.example/cb', true],
+      ['http://127.0.0.1:3000/cb', 'http://127.0.*.1:*/cb', true],
+      ['https://cl%69ent.example/cb', 'https://cl%69ent.example/cb', true],
+      ['http://[::1]:3000/cb', 'http://[::1]:*/cb', true],
+      ['https://client.example:443/cb', 'https://client.example:443/cb', true],
+      ['https://client.example:443/cb', 'https://client.example/cb', false],
+      ['https://client.example/cb/a%2Fb', 'https://client.example/cb/*', true],
+      [
+        'https://client.example/cb/../other',
+        'https://client.example/other',
+        false,
+      ],
+      ['https://client.example/cb\u0000', 'https://client.example/cb*', false],
+      ['https://client.example/cb\u007f', 'https://client.example/cb*', false],
+    ] as const) {
+      expect(
+        isAllowedOAuthRedirectUri(redirectUri, [pattern]),
+        redirectUri,
+      ).to.equal(expected);
+    }
+  });
+
+  it('rejects ambiguous hosts at registration and when authorizing stored clients', async () => {
+    const redis = new RedisMock() as unknown as Redis;
+    const config = buildConfig({
+      allowedRedirectUriPatterns: [HOST_POLICY],
+      encryptionKey: false,
+      tokenStorage: new RedisTokenStorage(redis),
+    });
+    // Model stored registrations without relying on the base proxy's globs
+    // accepting control characters (its wildcard does not match newlines).
+    const previous = new OAuthProxy({
+      ...config,
+      allowedRedirectUriPatterns: AMBIGUOUS_HOST_CALLBACKS,
+    });
+    const hardened = new BrowserlessOAuthProxy(config);
+    const originalKeys = new Set(await redis.keys('mcp:oauth:*'));
+    try {
+      for (const redirectUri of AMBIGUOUS_HOST_CALLBACKS) {
+        const keysBefore = await redis.keys('mcp:oauth:client:*');
+        try {
+          await hardened.registerClient({ redirect_uris: [redirectUri] });
+          expect.fail('accepted an ambiguous registration');
+        } catch (error) {
+          expect(error).to.be.instanceOf(OAuthProxyError);
+          expect((error as OAuthProxyError).code).to.equal(
+            'invalid_redirect_uri',
+          );
+        }
+        expect(await redis.keys('mcp:oauth:client:*')).to.have.members(
+          keysBefore,
+        );
+
+        const registration = await previous.registerClient({
+          redirect_uris: [redirectUri],
+        });
+        try {
+          await hardened.authorize({
+            client_id: registration.client_id,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            state: 'client-state',
+          });
+          expect.fail('authorized an ambiguous stored callback');
+        } catch (error) {
+          expect(error).to.be.instanceOf(OAuthProxyError);
+          expect((error as OAuthProxyError).code).to.equal('invalid_request');
+        }
+      }
+      expect(await redis.keys('mcp:oauth:transaction:*')).to.deep.equal([]);
+    } finally {
+      previous.destroy();
+      hardened.destroy();
+      const createdKeys = (await redis.keys('mcp:oauth:*')).filter(
+        (key) => !originalKeys.has(key),
+      );
+      if (createdKeys.length) await redis.del(...createdKeys);
+      await redis.quit();
+    }
+  });
+
+  it('completes a configured wildcard callback without rewriting registration', async () => {
+    const proxy = new BrowserlessOAuthProxy(
+      buildConfig({ allowedRedirectUriPatterns: [HOST_POLICY] }),
+    );
+    const upstream = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          access_token: 'local-test-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    try {
+      const redirectUri = 'https://cl%69ent.corp.example.com/cb';
+      const registration = await proxy.registerClient({
+        redirect_uris: [redirectUri],
+      });
+      expect(registration.redirect_uris).to.deep.equal([redirectUri]);
+      const authorization = await proxy.authorize({
+        client_id: registration.client_id,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        state: 'client-state',
+      });
+      const transactionId = new URL(
+        authorization.headers.get('location')!,
+      ).searchParams.get('state');
+      const response = await proxy.handleCallback(
+        new Request(
+          `http://127.0.0.1:18081/oauth/callback?code=local-test-code&state=${transactionId}`,
+        ),
+      );
+      expect(response.status).to.equal(302);
+      const destination = new URL(response.headers.get('location')!);
+      expect(destination.origin + destination.pathname).to.equal(
+        'https://client.corp.example.com/cb',
+      );
+      expect(destination.searchParams.get('code')).to.be.a('string').and.not
+        .empty;
+      expect(destination.searchParams.get('state')).to.equal('client-state');
+    } finally {
+      upstream.restore();
+      proxy.destroy();
+    }
   });
 
   it('keeps wildcards inside their URL component boundaries', () => {

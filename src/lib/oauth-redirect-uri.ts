@@ -1,3 +1,4 @@
+import { domainToUnicode } from 'node:url';
 import {
   OAuthProxy,
   OAuthProxyError,
@@ -14,6 +15,7 @@ export const MAX_CACHED_DCR_CLIENTS = 5000;
 const SAFE_DEFAULT_PATTERNS = ['http://localhost:*', 'http://127.0.0.1:*'];
 
 const AUTHORITY_WITH_USERINFO = /^\s*[a-z][a-z\d+.-]*:\/\/[^/?#]*@/i;
+const UNSAFE_URL_CHARACTERS = /[\\\p{Cc}]/u;
 const URL_PATTERN =
   /^([a-z][a-z\d+.-]*):\/\/(\[[^\]]+\]|[^:/?#@]+)(?::([^/?#]*))?(.*)$/;
 
@@ -35,12 +37,20 @@ function globComponentToRegExp(
     .join('');
 }
 
-function globToRegExp(pattern: string): RegExp | undefined {
+function globToRegExp(
+  pattern: string,
+): { uri: RegExp; hostname: RegExp } | undefined {
+  if (UNSAFE_URL_CHARACTERS.test(pattern)) return;
   const match = URL_PATTERN.exec(pattern);
   if (!match) return;
 
   const [, scheme, hostnamePattern, portPattern, suffix] = match;
   if (portPattern === '') return;
+
+  // Decode DNS names so encoded separators remain label boundaries. Unicode
+  // form preserves globs within IDN labels; numeric globs are not valid DNS
+  // names, so retain their spelling to match the parsed IPv4 hostname.
+  const canonicalHostname = domainToUnicode(hostnamePattern) || hostnamePattern;
 
   // '?' and '#' end the authority, so a host glob must not run into them:
   // otherwise 'https://client.example*' accepts 'https://client.example#frag'.
@@ -85,9 +95,15 @@ function globToRegExp(pattern: string): RegExp | undefined {
   const path = allowsAnyLoopbackPath
     ? '(?:[/?#].*)?'
     : globComponentToRegExp(suffix, '[^/?#]');
-  return new RegExp(
-    `^${globComponentToRegExp(scheme, '[^:]')}://${hostname}${port}${path}$`,
-  );
+  return {
+    uri: new RegExp(
+      `^${globComponentToRegExp(scheme, '[^:]')}://${hostname}${port}${path}$`,
+    ),
+    hostname: new RegExp(
+      `^${globComponentToRegExp(canonicalHostname, '[^./:@?#]')}$`,
+      'i',
+    ),
+  };
 }
 
 function hasExpectedLoopbackHost(uri: URL, pattern: string): boolean {
@@ -105,6 +121,7 @@ export function isAllowedOAuthRedirectUri(
   redirectUri: string,
   patterns: string[] | undefined,
 ): boolean {
+  if (UNSAFE_URL_CHARACTERS.test(redirectUri)) return false;
   let uri: URL;
   try {
     uri = new URL(redirectUri);
@@ -126,7 +143,8 @@ export function isAllowedOAuthRedirectUri(
     return (
       matcher !== undefined &&
       hasExpectedLoopbackHost(uri, pattern) &&
-      matcher.test(redirectUri)
+      matcher.hostname.test(domainToUnicode(uri.hostname) || uri.hostname) &&
+      matcher.uri.test(redirectUri)
     );
   });
 }
