@@ -217,7 +217,9 @@ type OtlpRecord = {
   }[];
 };
 type OtlpPayload = {
-  resourceLogs: { scopeLogs: { logRecords: OtlpRecord[] }[] }[];
+  resourceLogs: {
+    scopeLogs: { scope: { name: string }; logRecords: OtlpRecord[] }[];
+  }[];
 };
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const principalRef = (key: string) =>
@@ -268,6 +270,7 @@ async function withLogServer(
       const payload = JSON.parse(body) as OtlpPayload;
       for (const resource of payload.resourceLogs) {
         for (const scope of resource.scopeLogs) {
+          if (scope.scope.name !== 'session-requests') continue;
           for (const record of scope.logRecords) {
             records.push(
               Object.fromEntries(

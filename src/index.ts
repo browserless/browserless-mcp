@@ -29,7 +29,9 @@ import {
   requestSessionId,
   requestSessions,
   type SessionRefusal,
+  type SessionLike,
 } from './lib/session-binding.js';
+import { recordSessionOpen, whenSessionReady } from './lib/session-open.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import {
   observeSessionRequest,
@@ -291,6 +293,15 @@ server.on('connect', (event) => {
   }
   // Only the full surface asks clients to refresh the tool list on connect.
   announceToolListOnConnect(event.session, config);
+  if (config.transport === 'httpStream' && !config.complianceMode) {
+    const session = event.session;
+    whenSessionReady(session, () => {
+      const auth = (session as unknown as SessionLike).auth as
+        BrowserlessSession | undefined;
+      if (auth)
+        recordSessionOpen(auth, session.server.getClientVersion(), analytics);
+    });
+  }
 });
 
 if (amplitudeAnalytics || telemetryShutdown) {
