@@ -449,7 +449,7 @@ https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://prod
 
 When both headers and query parameters are present, headers take precedence.
 
-API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
+API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Overrides for `browserless.io` and its subdomains must use `https://`, because the API token travels with each request; the configured origin is exempt. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
 
 ### Claude Desktop
 

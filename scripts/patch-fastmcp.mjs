@@ -133,6 +133,83 @@ if (mcpProxyEntry) {
     to: '',
     required: false,
   });
+  const requireSecurityPatches =
+    JSON.parse(
+      readFileSync(join(dirname(mcpProxyEntry), '../package.json'), 'utf8'),
+    ).version ===
+    JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ).overrides['mcp-proxy'];
+  // Keep the SDK-compatible transport pin. Session identifiers are untrusted:
+  // neither SSE nor Streamable HTTP may resolve an Object.prototype member.
+  // As with the other transport patches, consumer versions are best-effort;
+  // child-process integration tests guard the pinned hosted tree.
+  for (const registry of ['activeSSETransports', 'activeStreamTransports']) {
+    patch({
+      name: `${registry} membership`,
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `const ${registry} = {};`,
+      to: `const ${registry} = Object.create(null);`,
+      required: requireSecurityPatches,
+    });
+  }
+  // Close callbacks run in async event listeners, outside request containment.
+  // A failed hook must neither escape to Node nor prevent the server closing.
+  patch({
+    name: 'session close rejection containment',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: 'const cleanupServer = async (server, onClose) => {\n\tif (onClose) await onClose(server);',
+    to: `const cleanupServer = async (server, onClose) => {
+  try {
+    if (onClose) await onClose(server);
+  } catch (error) {
+    console.error("[mcp-proxy] error in session close callback", error);
+  }`,
+    required: requireSecurityPatches,
+  });
+  // Session setup may wait for initialize, so dispatch must not await it.
+  // Contain background failures without changing the transport's call order.
+  patch({
+    name: 'stream initialization rejection containment',
+    dist: dirname(mcpProxyEntry),
+    files: /\.(mjs|js)$/,
+    from: '\t\t\t\tserver.connect(transport);',
+    to: '\t\t\t\tserver.connect(transport).catch(() => { console.error("[mcp-proxy] error connecting to server"); });',
+    required: requireSecurityPatches,
+  });
+  // Node ignores a request listener's returned promise. Contain rejections at
+  // that boundary for both HTTP and HTTPS, without a global rejection handler.
+  for (const createServer of [
+    'http.createServer(',
+    'https.createServer(options, ',
+  ]) {
+    patch({
+      name: `${createServer.startsWith('https') ? 'HTTPS' : 'HTTP'} request rejection containment`,
+      dist: dirname(mcpProxyEntry),
+      files: /\.(mjs|js)$/,
+      from: `${createServer}requestListener)`,
+      to: `${createServer}(req, res) => {
+        requestListener(req, res).catch((error) => {
+          console.error("[mcp-proxy] error handling request", error);
+          if (res.writableEnded || res.destroyed) return;
+          try {
+            if (res.headersSent) res.destroy();
+            else {
+              // Discard all metadata prepared for the failed response.
+              for (const header of res.getHeaderNames()) res.removeHeader(header);
+              const body = "Internal Server Error";
+              res.writeHead(500, "Internal Server Error", { "Content-Type": "text/plain; charset=utf-8", "Content-Length": Buffer.byteLength(body) }).end(body);
+            }
+          } catch {
+            res.destroy();
+          }
+        });
+      })`,
+      required: requireSecurityPatches,
+    });
+  }
   // Backport mcp-proxy's RFC 9728 URL construction without its SDK v2 upgrade.
   // Insert the well-known segment before the resource path, preserving query
   // components. Cover both HTTP and middleware (401/403) challenge builders.

@@ -144,6 +144,62 @@ describe('package integrity — installable by --omit=dev consumers', () => {
     );
   });
 
+  it('fails closed on missing security patches for the pinned transport only', () => {
+    const targets = [
+      'const activeSSETransports = {};',
+      'const activeStreamTransports = {};',
+      'const cleanupServer = async (server, onClose) => {\n\tif (onClose) await onClose(server);',
+      'http.createServer(requestListener)',
+      'https.createServer(options, requestListener)',
+      '\t\t\t\tserver.connect(transport);',
+    ];
+    for (const version of [pkg.overrides['mcp-proxy'], '99.0.0']) {
+      for (let missing = -1; missing < targets.length; missing++) {
+        const fixture = mkdtempSync(join(tmpdir(), 'transport-patch-'));
+        try {
+          const scripts = join(fixture, 'scripts');
+          const fastmcp = join(fixture, 'node_modules/fastmcp/dist');
+          const proxy = join(fixture, 'node_modules/mcp-proxy/dist');
+          for (const dir of [scripts, fastmcp, proxy])
+            mkdirSync(dir, { recursive: true });
+          writeFileSync(
+            join(fixture, 'package.json'),
+            JSON.stringify({ overrides: pkg.overrides }),
+          );
+          writeFileSync(
+            join(fastmcp, '../package.json'),
+            JSON.stringify({ main: 'dist/FastMCP.cjs' }),
+          );
+          writeFileSync(
+            join(fastmcp, 'FastMCP.cjs'),
+            'this.#capabilities.tools = {};\n  updateAuth(auth) {\n          streamEndpoint\n        });',
+          );
+          writeFileSync(
+            join(proxy, '../package.json'),
+            JSON.stringify({ version, main: 'dist/index.mjs' }),
+          );
+          writeFileSync(
+            join(proxy, 'index.mjs'),
+            targets.filter((_, index) => index !== missing).join('\n'),
+          );
+          const script = join(scripts, 'patch-fastmcp.mjs');
+          copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
+          const run = () =>
+            execFileSync(process.execPath, [script], { stdio: 'pipe' });
+          if (missing >= 0 && version === pkg.overrides['mcp-proxy']) {
+            expect(run, `missing pinned target ${targets[missing]}`).to.throw(
+              'target not found',
+            );
+          } else {
+            run();
+            run(); // Both pinned and consumer installs must stay idempotent.
+          }
+        } finally {
+          rmSync(fixture, { recursive: true, force: true });
+        }
+      }
+    }
+  });
   it('disables legacy transport in both HTTP modes and Node formats', () => {
     const sources = distSources().filter((s) =>
       s.includes('const streamEndpoint = joinPaths('),
@@ -157,19 +213,28 @@ describe('package integrity — installable by --omit=dev consumers', () => {
   it('removes the previous message-auth hook from a reused proxy install', async () => {
     const fixture = mkdtempSync(join(tmpdir(), 'transport-upgrade-'));
     try {
+      mkdirSync(join(fixture, 'scripts'));
+      writeFileSync(
+        join(fixture, 'package.json'),
+        JSON.stringify({ overrides: pkg.overrides }),
+      );
       for (const name of ['fastmcp', 'mcp-proxy']) {
         const dir = join(fixture, 'node_modules', name);
         mkdirSync(dir, { recursive: true });
         writeFileSync(
           join(dir, 'package.json'),
-          JSON.stringify({ main: 'index.js' }),
+          JSON.stringify({
+            version: '99.0.0',
+            main: name === 'mcp-proxy' ? 'dist/index.js' : 'index.js',
+          }),
         );
       }
       writeFileSync(
         join(fixture, 'node_modules/fastmcp/index.js'),
         'this.#capabilities.tools = {};\n  updateAuth(auth) {\n          streamEndpoint\n        });',
       );
-      const proxy = join(fixture, 'node_modules/mcp-proxy/index.js');
+      const proxy = join(fixture, 'node_modules/mcp-proxy/dist/index.js');
+      mkdirSync(dirname(proxy));
       writeFileSync(
         proxy,
         `async (req, res) => {
@@ -182,7 +247,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         res.writeHead(404).end();
       }`,
       );
-      const script = join(fixture, 'patch-fastmcp.mjs');
+      const script = join(fixture, 'scripts/patch-fastmcp.mjs');
       copyFileSync(join(root, 'scripts/patch-fastmcp.mjs'), script);
       execFileSync(process.execPath, [script], { stdio: 'pipe' });
       const patched = readFileSync(proxy, 'utf8');

@@ -837,7 +837,8 @@ export const preflightAgentCapabilities = async (
   if (required.length === 0) return;
 
   const url = new URL(agentUrl);
-  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.protocol =
+    url.protocol === 'wss:' || url.protocol === 'https:' ? 'https:' : 'http:';
   url.pathname += '/capabilities';
 
   const res = await fetch(url, {

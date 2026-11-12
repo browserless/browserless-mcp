@@ -1322,6 +1322,27 @@ describe('agent-client capability preflight', () => {
     expect(headers.get('x-browserless-mcp-tool')).to.equal('browserless_agent');
   });
 
+  it('keeps HTTPS for an agent URL that was not rewritten to wss', async () => {
+    const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          route: '/chromium/agent',
+          capabilities: { vision: { available: true } },
+        }),
+      ),
+    );
+
+    await preflightAgentCapabilities(
+      'https://production.example.com/chromium/agent?token=tok',
+      ['vision'],
+    );
+
+    const url = new URL(fetchStub.firstCall.args[0] as string);
+    expect(url.protocol).to.equal('https:');
+    expect(url.pathname).to.equal('/chromium/agent/capabilities');
+  });
+
   it('fails with the missing capability and the route where it is available', async () => {
     sinon.stub(globalThis, 'fetch').resolves(
       new Response(
