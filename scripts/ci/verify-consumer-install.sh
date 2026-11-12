@@ -16,6 +16,7 @@
 # built server cannot serve its tools on the consumer's resolved transport.
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 workdir=$(mktemp -d)
 install_log=$(mktemp)
 server_pid=""
@@ -127,3 +128,5 @@ if [ "${tools:-0}" -lt 1 ]; then
 fi
 
 echo "✓ Consumer install runs: mcp-proxy@${proxy_ver}, server healthy, tools/list → ${tools} tools"
+
+node "$script_dir/verify-consumer-replay.mjs" "http://127.0.0.1:${port}/mcp" "$sid"

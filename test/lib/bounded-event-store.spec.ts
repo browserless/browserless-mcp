@@ -19,9 +19,7 @@ describe('BoundedEventStore', () => {
     await store.storeEvent('request', makeMessage(3), 'A');
     expect(observed).to.deep.equal(['request']);
     expect(store.size).to.equal(2);
-    expect(
-      await store.replayEventsAfter(id, { send: async () => {} }),
-    ).to.equal('request');
+    expect(store.cursorContext(id)?.sessionId).to.equal(undefined);
   });
 
   it('looks up retained context without evicting expired entries', async () => {
@@ -47,6 +45,36 @@ describe('BoundedEventStore', () => {
     'replayEventsAfter',
     'replayEventsAfterSync',
   ] as const) {
+    it(`requires ownership on the cursor and every retained event (${replay})`, async () => {
+      const store = new BoundedEventStore();
+      const unowned = await store.storeEvent('request', makeMessage(1));
+      const emptyOwner = await store.storeEvent('request', makeMessage(2), '');
+      const owned = await store.storeEvent('request', makeMessage(3), 'one');
+      await store.storeEvent('request', makeMessage(4));
+      await store.storeEvent('request', makeMessage(5), '');
+      await store.storeEvent('request', makeMessage(6), 'two');
+      const last = await store.storeEvent('request', makeMessage(7), 'one');
+      const received: string[] = [];
+      const send = async (id: string) => {
+        received.push(id);
+      };
+      for (const cursor of [unowned, emptyOwner, owned]) {
+        for (const sessionId of [undefined, '', 'two']) {
+          expect(await store[replay](cursor, { send, sessionId })).to.equal('');
+        }
+      }
+      for (const cursor of [unowned, emptyOwner]) {
+        expect(
+          await store[replay](cursor, { send, sessionId: 'one' }),
+        ).to.equal('');
+      }
+      expect(received).to.deep.equal([]);
+      expect(await store[replay](owned, { send, sessionId: 'one' })).to.equal(
+        'request',
+      );
+      expect(received).to.deep.equal([last]);
+    });
+
     it(`retains request context within the shared event budget (${replay})`, async () => {
       const store = new BoundedEventStore(3);
       const first = await store.storeEvent('request', makeMessage(1), 'one');
@@ -111,11 +139,12 @@ describe('BoundedEventStore', () => {
     Date.now = () => now;
     try {
       const store = new BoundedEventStore();
-      const first = await store.storeEvent('request', makeMessage(1));
-      const second = await store.storeEvent('request', makeMessage(2));
+      const first = await store.storeEvent('request', makeMessage(1), 'A');
+      const second = await store.storeEvent('request', makeMessage(2), 'A');
       now += 10 * 60_000 - 1;
       const replayed: string[] = [];
       await store.replayEventsAfter(first, {
+        sessionId: 'A',
         send: async (id) => {
           replayed.push(id);
         },
@@ -123,17 +152,23 @@ describe('BoundedEventStore', () => {
       expect(replayed).to.deep.equal([second]);
       now++;
       expect(
-        await store.replayEventsAfter(first, { send: async () => {} }),
+        await store.replayEventsAfter(first, {
+          sessionId: 'A',
+          send: async () => {},
+        }),
       ).to.equal('');
       expect(store.size).to.equal(0);
       expect(store.storedBytes).to.equal(0);
-      const third = await store.storeEvent('request', makeMessage(3));
+      const third = await store.storeEvent('request', makeMessage(3), 'A');
       now += 10 * 60_000;
       await store.storeEvent('request', makeMessage(4));
       expect(store.size).to.equal(1);
       expect(store.storedBytes).to.equal(JSON.stringify(makeMessage(4)).length);
       expect(
-        await store.replayEventsAfter(third, { send: async () => {} }),
+        await store.replayEventsAfter(third, {
+          sessionId: 'A',
+          send: async () => {},
+        }),
       ).to.equal('');
     } finally {
       Date.now = originalNow;
@@ -142,28 +177,43 @@ describe('BoundedEventStore', () => {
 
   it('bounds retained payloads while keeping small start markers', async () => {
     const store = new BoundedEventStore();
-    const marker = await store.storeEvent('request-long', {} as JSONRPCMessage);
+    const marker = await store.storeEvent(
+      'request-long',
+      {} as JSONRPCMessage,
+      'A',
+    );
     const ids: string[] = [];
     for (let i = 0; i < 20; i++) {
       ids.push(
-        await store.storeEvent(`request-${i}`, {
-          jsonrpc: '2.0',
-          id: i,
-          result: { text: 'x'.repeat(5 * 1024 * 1024) },
-        }),
+        await store.storeEvent(
+          `request-${i}`,
+          {
+            jsonrpc: '2.0',
+            id: i,
+            result: { text: 'x'.repeat(5 * 1024 * 1024) },
+          },
+          'A',
+        ),
       );
     }
     expect(store.storedBytes).to.be.at.most(64 * 1024 * 1024);
     expect(store.size).to.be.at.most(13);
     expect(
-      await store.replayEventsAfter(ids[0], { send: async () => {} }),
+      await store.replayEventsAfter(ids[0], {
+        sessionId: 'A',
+        send: async () => {},
+      }),
     ).to.equal('');
     expect(
-      await store.replayEventsAfter(ids[19], { send: async () => {} }),
+      await store.replayEventsAfter(ids[19], {
+        sessionId: 'A',
+        send: async () => {},
+      }),
     ).to.equal('request-19');
     const replayed: string[] = [];
     expect(
       await store.replayEventsAfter(marker, {
+        sessionId: 'A',
         send: async (id) => {
           replayed.push(id);
         },
@@ -209,12 +259,13 @@ describe('BoundedEventStore', () => {
   it('stores and replays events for a stream', async () => {
     const store = new BoundedEventStore(100);
 
-    const id1 = await store.storeEvent('stream-1', makeMessage(1));
-    const id2 = await store.storeEvent('stream-1', makeMessage(2));
-    const id3 = await store.storeEvent('stream-1', makeMessage(3));
+    const id1 = await store.storeEvent('stream-1', makeMessage(1), 'A');
+    const id2 = await store.storeEvent('stream-1', makeMessage(2), 'A');
+    const id3 = await store.storeEvent('stream-1', makeMessage(3), 'A');
 
     const replayed: Array<{ eventId: string; message: JSONRPCMessage }> = [];
     const streamId = await store.replayEventsAfter(id1, {
+      sessionId: 'A',
       send: async (eventId, message) => {
         replayed.push({ eventId, message });
       },
@@ -250,12 +301,13 @@ describe('BoundedEventStore', () => {
   it('only replays events from the same stream', async () => {
     const store = new BoundedEventStore(100);
 
-    const id1 = await store.storeEvent('stream-a', makeMessage(1));
-    await store.storeEvent('stream-b', makeMessage(2));
-    const id3 = await store.storeEvent('stream-a', makeMessage(3));
+    const id1 = await store.storeEvent('stream-a', makeMessage(1), 'A');
+    await store.storeEvent('stream-b', makeMessage(2), 'A');
+    const id3 = await store.storeEvent('stream-a', makeMessage(3), 'A');
 
     const replayed: string[] = [];
     await store.replayEventsAfter(id1, {
+      sessionId: 'A',
       send: async (eventId) => {
         replayed.push(eventId);
       },
@@ -268,15 +320,16 @@ describe('BoundedEventStore', () => {
   it('evicts oldest events when exceeding max capacity', async () => {
     const store = new BoundedEventStore(3);
 
-    const id1 = await store.storeEvent('s', makeMessage(1));
-    await store.storeEvent('s', makeMessage(2));
-    await store.storeEvent('s', makeMessage(3));
+    const id1 = await store.storeEvent('s', makeMessage(1), 'A');
+    await store.storeEvent('s', makeMessage(2), 'A');
+    await store.storeEvent('s', makeMessage(3), 'A');
 
     // Store a 4th event — should evict the 1st
-    const id4 = await store.storeEvent('s', makeMessage(4));
+    const id4 = await store.storeEvent('s', makeMessage(4), 'A');
 
     // id1 was evicted, so replay returns empty
     const streamId = await store.replayEventsAfter(id1, {
+      sessionId: 'A',
       send: async () => {},
     });
     expect(streamId).to.equal('');
@@ -284,6 +337,7 @@ describe('BoundedEventStore', () => {
     // id4 still exists
     const replayed: string[] = [];
     await store.replayEventsAfter(id4, {
+      sessionId: 'A',
       send: async (eventId) => {
         replayed.push(eventId);
       },
@@ -294,13 +348,14 @@ describe('BoundedEventStore', () => {
   it('keeps exactly maxEvents entries after eviction', async () => {
     const store = new BoundedEventStore(2);
 
-    await store.storeEvent('s', makeMessage(1));
-    const id2 = await store.storeEvent('s', makeMessage(2));
-    const id3 = await store.storeEvent('s', makeMessage(3));
+    await store.storeEvent('s', makeMessage(1), 'A');
+    const id2 = await store.storeEvent('s', makeMessage(2), 'A');
+    const id3 = await store.storeEvent('s', makeMessage(3), 'A');
 
     // id2 and id3 should remain; replay after id2 should yield id3
     const replayed: string[] = [];
     await store.replayEventsAfter(id2, {
+      sessionId: 'A',
       send: async (eventId) => {
         replayed.push(eventId);
       },
@@ -324,12 +379,13 @@ describe('BoundedEventStore', () => {
   it('handles maxEvents of 1', async () => {
     const store = new BoundedEventStore(1);
 
-    await store.storeEvent('s', makeMessage(1));
-    const id2 = await store.storeEvent('s', makeMessage(2));
+    await store.storeEvent('s', makeMessage(1), 'A');
+    const id2 = await store.storeEvent('s', makeMessage(2), 'A');
 
     // Only the latest event should exist
     const replayed: string[] = [];
     await store.replayEventsAfter(id2, {
+      sessionId: 'A',
       send: async (eventId) => {
         replayed.push(eventId);
       },
@@ -339,11 +395,12 @@ describe('BoundedEventStore', () => {
 
   it('replays correctly when stream IDs contain underscores', async () => {
     const store = new BoundedEventStore(10);
-    const id1 = await store.storeEvent('stream_a', makeMessage(1));
-    const id2 = await store.storeEvent('stream_a', makeMessage(2));
+    const id1 = await store.storeEvent('stream_a', makeMessage(1), 'A');
+    const id2 = await store.storeEvent('stream_a', makeMessage(2), 'A');
 
     const replayed: string[] = [];
     const streamId = await store.replayEventsAfter(id1, {
+      sessionId: 'A',
       send: async (eventId) => {
         replayed.push(eventId);
       },
@@ -360,11 +417,12 @@ describe('BoundedEventStore', () => {
     try {
       const ids: string[] = [];
       for (let i = 0; i < 12; i++) {
-        ids.push(await store.storeEvent('s', makeMessage(i)));
+        ids.push(await store.storeEvent('s', makeMessage(i), 'A'));
       }
 
       const replayed: number[] = [];
       await store.replayEventsAfter(ids[0], {
+        sessionId: 'A',
         send: async (_eventId, message) => {
           replayed.push((message as unknown as { id: number }).id);
         },

@@ -446,16 +446,24 @@ const handleStreamRequest = async ({`,
   });
 }
 
-// Supply transport context alongside retained request history. Best-effort:
-// npm `overrides` pin mcp-proxy for THIS package but do not reach dependents,
-// so a consumer can resolve a different mcp-proxy/SDK build whose call sites
-// these snippets do not match. That build is left unpatched (it runs without
-// the extension) rather than failing `postinstall` — the behaviour before this
-// extension was added. This repo and the hosted deployment pin mcp-proxy via
-// `overrides`, and the package-integrity test asserts the patch applied there.
+// Supply transport context alongside retained request history. npm overrides
+// do not reach consumers, so resolve SDK v1 and v2 from the actual proxy too.
+// Unknown builds remain best-effort at install time; BoundedEventStore refuses
+// retained replay without ownership, and the consumer smoke checks owner replay.
 const transportDists = [];
 if (mcpProxyEntry) transportDists.push(dirname(mcpProxyEntry));
-for (const resolveFrom of [require, createRequire(fastmcpEntry)]) {
+for (const resolveFrom of [
+  require,
+  createRequire(fastmcpEntry),
+  ...(mcpProxyEntry ? [createRequire(mcpProxyEntry)] : []),
+]) {
+  try {
+    transportDists.push(
+      dirname(resolveFrom.resolve('@modelcontextprotocol/server')),
+    );
+  } catch (err) {
+    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+  }
   try {
     const sdkServerRoot = dirname(
       dirname(
@@ -482,7 +490,7 @@ for (const dist of [...new Set(transportDists)]) {
     patch({
       name: 'event-store write context',
       dist,
-      files: /\.(mjs|js)$/,
+      files: /\.(cjs|mjs|js)$/,
       from: `.storeEvent(${args})`,
       to: `.storeEvent(${args}, this.sessionId)`,
       required: false,
@@ -491,7 +499,7 @@ for (const dist of [...new Set(transportDists)]) {
   patch({
     name: 'event-store replay context',
     dist,
-    files: /\.(mjs|js)$/,
+    files: /\.(cjs|mjs|js)$/,
     from: '.replayEventsAfter(lastEventId, {',
     to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
     required: false,
