@@ -257,6 +257,12 @@ describe('Browserless OAuth redirect URI validation', () => {
       ],
       ['https://client.exämple.com/cb', 'https://*.exämple.com/cb', true],
       ['https://café.example/cb', 'https://*é.example/cb', true],
+      ['https://xn--caf-dma.example/cb', 'https://xn--*.example/cb', true],
+      [
+        'https://xn--caf-dma%2eevil.example/cb',
+        'https://xn--*.example/cb',
+        false,
+      ],
       ['http://127.0.0.1:3000/cb', 'http://127.0.*.1:*/cb', true],
       ['https://cl%69ent.example/cb', 'https://cl%69ent.example/cb', true],
       ['http://[::1]:3000/cb', 'http://[::1]:*/cb', true],

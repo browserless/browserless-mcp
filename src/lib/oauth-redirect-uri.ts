@@ -143,7 +143,9 @@ export function isAllowedOAuthRedirectUri(
     return (
       matcher !== undefined &&
       hasExpectedLoopbackHost(uri, pattern) &&
-      matcher.hostname.test(domainToUnicode(uri.hostname) || uri.hostname) &&
+      // Partial Punycode globs stay ASCII; Unicode label globs need decoding.
+      (matcher.hostname.test(uri.hostname) ||
+        matcher.hostname.test(domainToUnicode(uri.hostname) || uri.hostname)) &&
       matcher.uri.test(redirectUri)
     );
   });
