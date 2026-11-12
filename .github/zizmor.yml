@@ -1,0 +1,9 @@
+rules:
+  dependabot-cooldown:
+    config:
+      # Approved minimum; test.yml also checks past zizmor 1.32.0's early return.
+      days: 3
+    ignore:
+      # Preserve the existing Docker updater's absence of a cooldown.
+      # Revisit this exact exception when its update policy changes.
+      - dependabot.yml:49
