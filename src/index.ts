@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -128,8 +129,30 @@ const oauthProvider =
     : undefined;
 
 const surface = config.complianceMode ? 'connector' : 'full';
-const eventStore = new BoundedEventStore(10_000, undefined, undefined, () =>
-  noteMissingStoreContext(surface),
+// Re-check the actual dependency files rather than trust a stale installation
+// marker after a dependency change. Verification never writes them.
+const retainedReplayVerified =
+  config.transport !== 'httpStream' ||
+  spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(
+        new URL('../../scripts/patch-fastmcp.mjs', import.meta.url),
+      ),
+      '--check-replay',
+    ],
+    { stdio: 'ignore', timeout: 5000 },
+  ).status === 0;
+if (!retainedReplayVerified)
+  console.warn(
+    '[browserless-mcp] Retained replay disabled: transport patch is not verified. Last-Event-ID requests return 400; re-send the request instead.',
+  );
+// Keep an explicit store: mcp-proxy substitutes a retaining store if omitted.
+const eventStore = new BoundedEventStore(
+  retainedReplayVerified ? 10_000 : 0,
+  undefined,
+  undefined,
+  () => noteMissingStoreContext(surface),
 );
 
 // Hybrid authenticate, in order: (1) Authorization header with a plain API
@@ -159,6 +182,17 @@ const hybridAuthenticate =
         let owner: BrowserlessSession | undefined;
         let session: BrowserlessSession | undefined;
         try {
+          // Refuse before SDK dispatch: an unpatched replay implementation can
+          // turn an empty store result into an indefinitely open 200 stream.
+          if (
+            !retainedReplayVerified &&
+            method === 'GET' &&
+            request.headers['last-event-id'] !== undefined
+          )
+            throw new Response(
+              '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Retained replay unavailable; re-send the request"},"id":null}',
+              { status: 400, headers: { 'Content-Type': 'application/json' } },
+            );
           session = (await resolveBrowserlessRequestAuth(
             request,
             config,

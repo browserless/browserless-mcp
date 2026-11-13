@@ -225,20 +225,14 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const principalRef = (key: string) =>
   hashToken(`key:${createHash('sha256').update(key).digest('hex')}`);
 
-async function expectEmptyStream(response: Response): Promise<void> {
-  expect(response.status).to.equal(200);
-  expect(response.headers.get('content-type')).to.equal('text/event-stream');
-  const reader = response.body!.getReader();
-  try {
-    // SSE remains open; absence of replay bytes is the observable contract.
-    const chunk = await Promise.race([
-      reader.read(),
-      pause(200).then(() => undefined),
-    ]);
-    expect(chunk?.value?.byteLength ?? 0).to.equal(0);
-  } finally {
-    await reader.cancel();
-  }
+async function expectRefusedReplay(response: Response): Promise<void> {
+  expect(response.status).to.equal(400);
+  expect(response.headers.get('content-type')).to.equal('application/json');
+  expect(await response.json()).to.deep.equal({
+    jsonrpc: '2.0',
+    id: null,
+    error: { code: -32000, message: 'Invalid replay cursor' },
+  });
 }
 
 async function withLogServer(
@@ -607,7 +601,7 @@ describe('Session request diagnostic contracts', function () {
             [sidC, keys[1], false],
           ] as const) {
             const response = await request('GET', sid, token, cursor);
-            await expectEmptyStream(response);
+            await expectRefusedReplay(response);
             await expectCount(samePrincipal ? 1 : 2);
             const record = records.at(-1)!;
             expectCommon(record, compliant, sid, 'GET', 'request');
@@ -652,7 +646,7 @@ describe('Session request diagnostic contracts', function () {
           '12345678-1234-1234-1234-123456789abc_1000000000000_0_abcdef';
         expect(classifyCursor(priorCursor)).to.equal('prior_process');
         const prior = await request('GET', sid, keys[0], priorCursor);
-        await expectEmptyStream(prior);
+        await expectRefusedReplay(prior);
         await expectCount(0);
       });
     });

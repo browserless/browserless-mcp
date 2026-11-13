@@ -21,6 +21,8 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 // cwd-relative node_modules and fails when fastmcp is hoisted).
 
 const require = createRequire(import.meta.url);
+// Startup uses the same preflight, but must never repair or write dependencies.
+const checkReplay = process.argv.includes('--check-replay');
 
 let fastmcpEntry;
 try {
@@ -31,11 +33,12 @@ try {
   // fastmcp genuinely absent (e.g. an install that excludes it): nothing to
   // do. Any other resolution failure is a broken install — surface it rather
   // than silently shipping unpatched.
-  if (err.code === 'MODULE_NOT_FOUND') process.exit(0);
+  if (err.code === 'MODULE_NOT_FOUND') process.exit(checkReplay ? 1 : 0);
   throw err;
 }
 
 const patch = ({ name, dist, files, from, to, required = true }) => {
+  if (checkReplay) return;
   let changed = 0;
   let alreadyApplied = false;
   // A dist whose directory is absent (e.g. a future fastmcp without `edge`) is
@@ -446,16 +449,96 @@ const handleStreamRequest = async ({`,
   });
 }
 
-// Supply transport context alongside retained request history. Best-effort:
-// npm `overrides` pin mcp-proxy for THIS package but do not reach dependents,
-// so a consumer can resolve a different mcp-proxy/SDK build whose call sites
-// these snippets do not match. That build is left unpatched (it runs without
-// the extension) rather than failing `postinstall` — the behaviour before this
-// extension was added. This repo and the hosted deployment pin mcp-proxy via
-// `overrides`, and the package-integrity test asserts the patch applied there.
+// Supply transport context alongside retained request history. npm overrides
+// do not reach consumers, so resolve SDK v1 and v2 from the actual proxy too.
+// Preflight the coupled replay edits before writing any replay files. Unknown
+// layouts skip the group; our runtime independently refuses unverified resume.
+const replayWrites = new Map();
+const proxyRequire = mcpProxyEntry ? createRequire(mcpProxyEntry) : undefined;
+const activeTransportDists = new Set(
+  mcpProxyEntry ? [dirname(mcpProxyEntry)] : [],
+);
+let activeReplayTargets = 0;
+const patchReplay = (dist, context, refusalPatches) => {
+  let files;
+  try {
+    files = readdirSync(dist);
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  for (const file of files.filter((f) => /\.(cjs|mjs|js)$/.test(f))) {
+    const path = join(dist, file);
+    const original = readFileSync(path, 'utf8');
+    if (!/\.(?:storeEvent|replayEventsAfter)\s*\(/.test(original)) continue;
+    let source = original;
+    const mismatch = new Error(
+      `[patch-fastmcp] replay patch: target not found in ${path}; ` +
+        'no replay edits written — update scripts/patch-fastmcp.mjs',
+    );
+    const wasPatched =
+      source.includes(
+        `.replayEventsAfter(lastEventId, { sessionId: this.${context},`,
+      ) ||
+      source.includes(`, this.${context})`) ||
+      source.includes('resolveReplayResponse') ||
+      source.includes('"Invalid replay cursor"');
+    const apply = (from, to) => {
+      // Do not attempt to repair a half-patched file: leftover fragments could
+      // duplicate declarations or leave a dangling call after replacement.
+      if (wasPatched && !source.includes(to)) throw mismatch;
+      source = source.replaceAll(to, from);
+      if (!source.includes(from)) throw mismatch;
+      source = source.replaceAll(from, to);
+    };
+    for (const args of [
+      'streamId, {}',
+      'streamId, message',
+      'this._standaloneSseStreamId, message',
+    ]) {
+      const from = `.storeEvent(${args})`;
+      const to = `.storeEvent(${args}, this.${context})`;
+      if (source.includes(from) || source.includes(to)) apply(from, to);
+    }
+    // No event-store call may silently miss context because its shape drifted.
+    const writes = [...source.matchAll(/\.storeEvent\(([^\n;]+)\)/g)];
+    const calls = source.match(/\.storeEvent\s*\(/g) ?? [];
+    if (
+      writes.length !== calls.length ||
+      writes.some((match) => !match[1].endsWith(`, this.${context}`))
+    )
+      throw mismatch;
+    if (source.includes('replayEventsAfter')) {
+      if (activeTransportDists.has(dist)) activeReplayTargets++;
+      const replay = `.replayEventsAfter(lastEventId, { sessionId: this.${context},`;
+      apply('.replayEventsAfter(lastEventId, {', replay);
+      if (
+        (source.match(/\.replayEventsAfter\s*\(/g) ?? []).length !==
+        source.split(replay).length - 1
+      )
+        throw mismatch;
+      for (const [from, to] of refusalPatches(source)) apply(from, to);
+    }
+    replayWrites.set(path, source);
+  }
+};
 const transportDists = [];
 if (mcpProxyEntry) transportDists.push(dirname(mcpProxyEntry));
-for (const resolveFrom of [require, createRequire(fastmcpEntry)]) {
+for (const resolveFrom of [
+  require,
+  createRequire(fastmcpEntry),
+  ...(proxyRequire ? [proxyRequire] : []),
+]) {
+  try {
+    const dist = dirname(resolveFrom.resolve('@modelcontextprotocol/server'));
+    transportDists.push(dist);
+    if (resolveFrom === proxyRequire) activeTransportDists.add(dist);
+  } catch (err) {
+    if (
+      !['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(err.code)
+    )
+      throw err;
+  }
   try {
     const sdkServerRoot = dirname(
       dirname(
@@ -470,47 +553,93 @@ for (const resolveFrom of [require, createRequire(fastmcpEntry)]) {
       transportDists.push(join(sdkServerRoot, format, 'server'));
   } catch (err) {
     // A consumer that resolves no SDK server build simply goes unpatched.
-    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+    if (
+      !['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(err.code)
+    )
+      throw err;
   }
 }
-for (const dist of [...new Set(transportDists)]) {
-  for (const args of [
-    'streamId, {}',
-    'streamId, message',
-    'this._standaloneSseStreamId, message',
-  ]) {
-    patch({
-      name: 'event-store write context',
-      dist,
-      files: /\.(mjs|js)$/,
-      from: `.storeEvent(${args})`,
-      to: `.storeEvent(${args}, this.sessionId)`,
-      required: false,
+try {
+  for (const dist of [...new Set(transportDists)]) {
+    // Reject before registering a live stream. These anchors follow replay in
+    // the bundled proxy and both SDK versions, outside the other patch bodies.
+    patchReplay(dist, 'sessionId', (source) => {
+      const anchor = source.includes('// Do not await between catch-up')
+        ? '// Do not await between catch-up and live registration or terminal close.'
+        : 'if (this._closed || cancelled) {';
+      return [
+        [
+          anchor,
+          `if (!replayedStreamId) {
+                try { streamController.close(); } catch {}
+                return this.createJsonErrorResponse(400, -32000, "Invalid replay cursor");
+            }
+            ${anchor}`,
+        ],
+      ];
     });
   }
-  patch({
-    name: 'event-store replay context',
-    dist,
-    files: /\.(mjs|js)$/,
-    from: '.replayEventsAfter(lastEventId, {',
-    to: '.replayEventsAfter(lastEventId, { sessionId: this.sessionId,',
-    required: false,
-  });
+  const edgeDist = join(dirname(fastmcpEntry), 'edge');
+  // Edge replay writes with backpressure in a detached task. Wait only until a
+  // frame is ready or replay settles, so a refusal can still set the HTTP status
+  // without buffering history or deadlocking a valid replay's first write.
+  patchReplay(edgeDist, 'activeSessionId', () => [
+    [
+      'this._replaysInFlight += 1;\n    void (async () => {',
+      `let resolveReplayResponse;
+    const replayResponse = new Promise(resolve => { resolveReplayResponse = resolve; });
+    this._replaysInFlight += 1;
+    void (async () => {`,
+    ],
+    [
+      'send: async (eventId, message) => {\n            await this.writeSSEEventWithId(writer, eventId, message);',
+      'send: async (eventId, message) => {\n            resolveReplayResponse();\n            await this.writeSSEEventWithId(writer, eventId, message);',
+    ],
+    [
+      'if (this._streamGeneration !== generation) {',
+      `if (!streamId) {
+          resolveReplayResponse(this.createErrorResponse(400, -32000, "Invalid replay cursor"));
+          await this.closeQuietly(writer);
+          return;
+        }
+        resolveReplayResponse();
+        if (this._streamGeneration !== generation) {`,
+    ],
+    [
+      'this._replaysInFlight -= 1;',
+      'this._replaysInFlight -= 1;\n        resolveReplayResponse();',
+    ],
+    [
+      '})().catch(() => {\n    });\n    return new Response(readable, {',
+      `})().catch(() => {
+    });
+    const refusal = await replayResponse;
+    if (refusal) return refusal;
+    return new Response(readable, {`,
+    ],
+  ]);
+  if (checkReplay) {
+    if (activeReplayTargets === 0) {
+      throw new Error('No supported active replay transport found');
+    }
+    for (const [path, source] of replayWrites) {
+      if (readFileSync(path, 'utf8') !== source) {
+        throw new Error(`Replay patch not applied in ${path}`);
+      }
+    }
+  } else {
+    for (const [path, source] of replayWrites) {
+      if (readFileSync(path, 'utf8') !== source) writeFileSync(path, source);
+    }
+    process.stdout.write(
+      `[patch-fastmcp] replay patch: complete (${replayWrites.size} file(s) verified)\n`,
+    );
+  }
+} catch (error) {
+  process.stderr.write(
+    `[patch-fastmcp] retained replay disabled: ${error.message}; replay patch skipped\n`,
+  );
+  // Installation stays usable. Startup treats any verification failure as no
+  // replay support, and rejects Last-Event-ID before dispatching to the SDK.
+  if (checkReplay) process.exitCode = 1;
 }
-const edgeDist = join(dirname(fastmcpEntry), 'edge');
-patch({
-  name: 'edge event-store write context',
-  dist: edgeDist,
-  files: /\.(cjs|js)$/,
-  from: '.storeEvent(streamId, message)',
-  to: '.storeEvent(streamId, message, this.activeSessionId)',
-  required: false,
-});
-patch({
-  name: 'edge event-store replay context',
-  dist: edgeDist,
-  files: /\.(cjs|js)$/,
-  from: '.replayEventsAfter(lastEventId, {',
-  to: '.replayEventsAfter(lastEventId, { sessionId: this.activeSessionId,',
-  required: false,
-});

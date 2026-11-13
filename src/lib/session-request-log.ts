@@ -144,10 +144,7 @@ export const observeSessionRequest = (
           : 'missing_credentials');
     else if (input.auth && cursor === 'request') {
       if (!context) reason = 'unknown_cursor';
-      else if (
-        context.sessionId !== undefined &&
-        context.sessionId !== input.sessionId
-      )
+      else if (!input.sessionId || context.sessionId !== input.sessionId)
         reason = 'cursor_context_mismatch';
     }
     const detail: McpRequestDetail = {
