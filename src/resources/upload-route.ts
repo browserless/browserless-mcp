@@ -14,6 +14,7 @@ import type { McpConfig } from '../@types/types.js';
 // Same token as the MCP surface; the base64 never enters the model's context.
 export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   const app = server.getApp();
+  let verificationsInFlight = 0;
 
   app.post('/upload', async (c) => {
     const auth = await guardRouteAuth(c, config);
@@ -21,7 +22,13 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
 
     // Reject positively invalid plain keys before staging. Preserve existing
     // upload behavior when verification is unavailable or capacity-limited.
-    if (auth.authMethod !== 'oauth') {
+    if (auth.authMethod !== 'oauth' && verificationsInFlight >= 16) {
+      // Bound upstream work without adding a new upload rejection or queue.
+      console.warn(
+        '[browserless-mcp] Upload credential verification at capacity; allowing upload',
+      );
+    } else if (auth.authMethod !== 'oauth') {
+      verificationsInFlight++;
       try {
         const url = new URL(`${auth.apiUrl.replace(/\/+$/, '')}/pressure`);
         url.searchParams.set('token', auth.token);
@@ -36,17 +43,23 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
           /credits?|\bunits?\b|(?:spend|usage|concurrency|rate)[ _-]?(?:limit|cap)/i.test(
             message,
           );
+        const capabilityError =
+          /\bunsupported[ _-]*(?:plan|account[ _-]*type|endpoint)\b|\b(?:plan|account[ _-]*type|endpoint)(?: is)? (?:unsupported|not supported)\b|\b(?:plan|account) (?:does not|doesn't) support\b|\b(?:request|endpoint) requires (?:an? )?[\w-]+ (?:account|plan)\b/i.test(
+            message,
+          );
         const invalidKey =
           /\b(?:invalid|unknown|unrecognized)[ _-]*(?:api[ _-]*)?(?:key|token|credential)\b/i.test(
             message,
           );
         if (
           invalidKey ||
-          ([401, 403].includes(response.status) && !limitError)
+          ([401, 403].includes(response.status) &&
+            !limitError &&
+            !capabilityError)
         ) {
           return c.json({ ok: false, error: 'Unauthorized' }, 401);
         }
-        if (!response.ok || limitError) {
+        if (!response.ok || limitError || capabilityError) {
           // Do not log the upstream body or URL: they may contain credentials.
           console.warn(
             `[browserless-mcp] Upload credential verification inconclusive (HTTP ${response.status}); allowing upload`,
@@ -56,6 +69,8 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
         console.warn(
           '[browserless-mcp] Upload credential verification unavailable; allowing upload',
         );
+      } finally {
+        verificationsInFlight--;
       }
     }
 

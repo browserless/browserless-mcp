@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { FastMCP } from 'fastmcp';
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -178,6 +178,74 @@ describe('upload route', () => {
     });
   }
 
+  for (const message of [
+    'This request requires a cloud-unit account. Please contact support.',
+    "Your plan doesn't support this endpoint.",
+    'Unsupported account type',
+    'Endpoint is not supported',
+  ]) {
+    it(`preserves uploads with a warning for an explicit 401 capability error: ${message}`, async () => {
+      upstreamStatus = 401;
+      upstreamBody = message;
+      expect((await upload(app(), 'valid upload bytes')).status).to.equal(200);
+      expect(await readdir(directory)).to.have.length(1);
+      expect(warnings.args.flat().join(' ')).to.include('verification');
+      expect(warnings.args.flat().join(' ')).not.to.include(message);
+    });
+  }
+
+  it('still rejects explicit invalid keys in a capability-error response', async () => {
+    upstreamStatus = 401;
+    upstreamBody = 'Invalid API key. Unsupported account type.';
+    expect((await upload(app(), 'unverified bytes')).status).to.equal(401);
+    expect(await readdir(directory)).to.deep.equal([]);
+  });
+
+  it('bounds verification per route without rejecting uploads and releases slots after failures', async () => {
+    const pending: ServerResponse[] = [];
+    let reachedCapacity!: () => void;
+    const capacityReached = new Promise<void>((resolve) => {
+      reachedCapacity = resolve;
+    });
+    let holding = true;
+    upstream.removeAllListeners('request');
+    upstream.on('request', (_req, res) => {
+      if (!holding) {
+        res.writeHead(401).end();
+        return;
+      }
+      pending.push(res);
+      if (pending.length === 16) reachedCapacity();
+    });
+    const route = app();
+    const requests = Array.from({ length: 16 }, () => upload(route, 'bytes'));
+    await capacityReached;
+    try {
+      expect((await upload(route, 'overflow bytes')).status).to.equal(200);
+      expect(pending).to.have.length(16);
+      expect(warnings.args.flat().join(' ')).to.include('capacity');
+      expect(warnings.args.flat().join(' ')).not.to.include('owner-a');
+
+      // A different route registration must not share the saturated cap.
+      holding = false;
+      expect((await upload(app(), 'other route bytes')).status).to.equal(401);
+    } finally {
+      holding = false;
+      // Both early rejection and network failure must release their slots.
+      pending.forEach((res, index) => {
+        if (index % 2 === 0) res.writeHead(401).end();
+        else res.destroy();
+      });
+      await Promise.all(requests);
+    }
+    const subsequent = await Promise.all(
+      Array.from({ length: 16 }, () => upload(route, 'subsequent bytes')),
+    );
+    expect(subsequent.map((response) => response.status)).to.deep.equal(
+      Array(16).fill(401),
+    );
+  });
+
   for (const failure of ['offline', 'timeout'] as const) {
     it(`preserves uploads with a warning when verification is ${failure}`, async () => {
       upstreamFailure = failure;
@@ -240,6 +308,7 @@ describe('upload route', () => {
         },
       );
       expect(response.status).to.equal(200);
+      expect(warnings.called).to.equal(false);
     });
   }
 
