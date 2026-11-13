@@ -37,9 +37,7 @@ export const stubApiKeyCheck = (
     return new Response(
       answer === 401
         ? 'Invalid API key. Please check your API key and try again. (requestId: test)'
-        : answer === 204
-          ? null
-          : '',
+        : null,
       { status: answer },
     );
   });

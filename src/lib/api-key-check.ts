@@ -15,11 +15,6 @@ export class UnknownApiKeyError extends Error {
   }
 }
 
-const remember = (id: string, known: boolean): void => {
-  if (checks.size < MAX_ENTRIES)
-    checks.set(id, known, known ? KNOWN_TTL_MS : UNKNOWN_TTL_MS);
-};
-
 /**
  * Ask the Browserless API whether a plain key exists. Throws
  * `UnknownApiKeyError` only for a definitive unknown-key answer; every other
@@ -56,7 +51,8 @@ export const assertKnownApiKey = async (
     return;
   }
 
-  remember(id, known);
+  if (checks.size < MAX_ENTRIES)
+    checks.set(id, known, known ? KNOWN_TTL_MS : UNKNOWN_TTL_MS);
   if (!known) throw new UnknownApiKeyError();
 };
 
