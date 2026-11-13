@@ -1,6 +1,8 @@
 import { expect } from 'chai';
 import { FastMCP } from 'fastmcp';
+import sinon from 'sinon';
 import type { McpConfig } from '../../src/@types/types.js';
+import { stubApiKeyCheck } from '../helpers/api-key-check.js';
 import { registerDownloadRoute } from '../../src/resources/download-route.js';
 import { registerUploadRoute } from '../../src/resources/upload-route.js';
 
@@ -11,6 +13,9 @@ const config = {
 } as McpConfig;
 
 describe('upload route', () => {
+  beforeEach(() => stubApiKeyCheck());
+  afterEach(() => sinon.restore());
+
   const app = () => {
     const server = new FastMCP({ name: 'test', version: '1.0.0' });
     registerUploadRoute(server, config);

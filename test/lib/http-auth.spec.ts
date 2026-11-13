@@ -1,14 +1,18 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { Hono } from 'hono';
+import type { IncomingMessage } from 'node:http';
 import {
   authInputFromRequest,
   guardRouteAuth,
   presentsCredential,
   resolveBrowserlessAuth,
+  resolveBrowserlessRequestAuth,
 } from '../../src/lib/http-auth.js';
+import { UnknownApiKeyError } from '../../src/lib/api-key-check.js';
 import { InvalidApiUrlError } from '../../src/lib/api-url-guard.js';
 import { clearResolverCache } from '../../src/lib/account-resolver.js';
+import { isApiKeyCheck, stubApiKeyCheck } from '../helpers/api-key-check.js';
 
 const config = {
   browserlessApiUrl: 'https://api.example.com',
@@ -381,6 +385,9 @@ describe('guardRouteAuth', () => {
     return auth instanceof Response ? auth : c.json(auth);
   });
 
+  beforeEach(() => stubApiKeyCheck());
+  afterEach(() => sinon.restore());
+
   it('retains the authenticated token for file ownership', async () => {
     const response = await app.request('http://example.test/', {
       headers: { authorization: 'Bearer owner-token' },
@@ -413,5 +420,174 @@ describe('guardRouteAuth', () => {
       ok: false,
       error: 'Unauthorized',
     });
+  });
+});
+
+describe('API key check', () => {
+  const app = new Hono();
+  app.get('*', async (c) => {
+    const auth = await guardRouteAuth(c, config);
+    return auth instanceof Response ? auth : c.json(auth);
+  });
+
+  const request = (
+    url: string,
+    headers: Record<string, string> = {},
+    method = 'POST',
+  ) => ({ method, url, headers }) as unknown as IncomingMessage;
+
+  const checks = (fetch: sinon.SinonStub) =>
+    fetch.getCalls().filter((call) => isApiKeyCheck(call.args[0]));
+
+  const rejection = async (promise: Promise<unknown>): Promise<unknown> => {
+    try {
+      await promise;
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  afterEach(() => sinon.restore());
+
+  for (const [label, req] of [
+    ['header', request('/mcp', { authorization: 'Bearer junk-header' })],
+    ['query', request('/mcp?token=junk-query')],
+  ] as const) {
+    it(`refuses an unknown ${label} key on a session-opening request`, async () => {
+      const fetch = stubApiKeyCheck(401);
+      expect(
+        await rejection(resolveBrowserlessRequestAuth(req, config as never)),
+      ).to.be.instanceOf(UnknownApiKeyError);
+      expect(checks(fetch)).to.have.length(1);
+      expect(checks(fetch)[0].args[0]).to.equal(
+        config.browserlessApiUrl + '/active',
+      );
+    });
+  }
+
+  it('accepts a known key on a session-opening request', async () => {
+    stubApiKeyCheck(204);
+    expect(
+      await resolveBrowserlessRequestAuth(
+        request('/mcp', { authorization: 'Bearer good' }),
+        config as never,
+      ),
+    ).to.include({ token: 'good', authMethod: 'api_key_header' });
+  });
+
+  it('lets a billing-blocked key open a session', async () => {
+    stubApiKeyCheck(
+      async () =>
+        new Response(
+          'Your account has run out of credits, please upgrade your plan (requestId: test)',
+          { status: 401 },
+        ),
+    );
+    expect(
+      await resolveBrowserlessRequestAuth(
+        request('/mcp', { authorization: 'Bearer out-of-credits' }),
+        config as never,
+      ),
+    ).to.include({ token: 'out-of-credits' });
+  });
+
+  for (const [label, req] of [
+    [
+      'an mcp-session-id header',
+      request('/mcp', {
+        authorization: 'Bearer junk-live',
+        'mcp-session-id': 'live-session',
+      }),
+    ],
+    [
+      'a legacy SSE message post',
+      request('/messages?sessionId=live-session&token=junk-live'),
+    ],
+  ] as const) {
+    it(`does not check the key on a request naming ${label}`, async () => {
+      const fetch = stubApiKeyCheck(401);
+      expect(
+        await resolveBrowserlessRequestAuth(req, config as never),
+      ).to.include({ token: 'junk-live' });
+      expect(checks(fetch)).to.have.length(0);
+    });
+  }
+
+  it('never checks a JWT or a missing token', async () => {
+    const fetch = stubApiKeyCheck(401);
+    fetch
+      .withArgs(sinon.match(/\/auth\/v1\/user/))
+      .resolves(new Response('{}', { status: 401 }));
+    clearResolverCache();
+    await rejection(
+      resolveBrowserlessRequestAuth(
+        request('/mcp', { authorization: 'Bearer header.payload.sig' }),
+        config as never,
+      ),
+    );
+    await rejection(
+      resolveBrowserlessRequestAuth(request('/mcp'), config as never),
+    );
+    expect(checks(fetch)).to.have.length(0);
+    clearResolverCache();
+  });
+
+  it('rejects a disallowed override before any key check', async () => {
+    const fetch = stubApiKeyCheck(204);
+    expect(
+      await rejection(
+        resolveBrowserlessRequestAuth(
+          request('/mcp', {
+            authorization: 'Bearer good',
+            'x-browserless-api-url': 'http://127.0.0.1:9999',
+          }),
+          config as never,
+        ),
+      ),
+    ).to.be.instanceOf(InvalidApiUrlError);
+    expect(fetch.called).to.equal(false);
+  });
+
+  it('checks an allowed override against that API URL', async () => {
+    const fetch = stubApiKeyCheck(204);
+    await resolveBrowserlessRequestAuth(
+      request('/mcp', {
+        authorization: 'Bearer good',
+        'x-browserless-api-url': 'https://production-lon.browserless.io',
+      }),
+      config as never,
+    );
+    expect(checks(fetch)[0].args[0]).to.equal(
+      'https://production-lon.browserless.io/active',
+    );
+  });
+
+  it('refuses an unknown key on file routes and admits a known one', async () => {
+    const fetch = stubApiKeyCheck((key) =>
+      key === 'good'
+        ? new Response(null, { status: 204 })
+        : new Response(
+            'Invalid API key. Please check your API key and try again. (requestId: test)',
+            { status: 401 },
+          ),
+    );
+    const refused = await app.request('http://example.test/', {
+      headers: { authorization: 'Bearer junk-route' },
+    });
+    expect(refused.status).to.equal(401);
+    expect(await refused.json()).to.deep.equal({
+      ok: false,
+      error: 'Unauthorized',
+    });
+    const queried = await app.request('http://example.test/?token=junk-query');
+    expect(queried.status).to.equal(401);
+
+    const admitted = await app.request('http://example.test/', {
+      headers: { authorization: 'Bearer good' },
+    });
+    expect(admitted.status).to.equal(200);
+    expect(await admitted.json()).to.include({ token: 'good' });
+    expect(checks(fetch)).to.have.length(3);
   });
 });

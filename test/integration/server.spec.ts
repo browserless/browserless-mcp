@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { defineTool } from '../../src/lib/define-tool.js';
 import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
+import { isApiKeyCheck, stubApiKeyCheck } from '../helpers/api-key-check.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -60,6 +61,7 @@ describe('MCP Server Integration', () => {
   let server: FastMCP;
 
   it('runs the download recipe with a local owner token and fails safely otherwise', async () => {
+    stubApiKeyCheck();
     const port = await freePort();
     const dir = await mkdtemp(join(tmpdir(), 'mcp-curl-'));
     const owner = downloadOwner('owner-token');
@@ -125,6 +127,7 @@ describe('MCP Server Integration', () => {
           TRANSPORT: 'httpStream',
           PORT: String(port),
           MCP_COMPLIANCE_MODE: String(compliant),
+          BROWSERLESS_API_URL: 'http://127.0.0.1:9',
           OAUTH_ENABLED: 'false',
           REDIS_URL: '',
           AMPLITUDE_API_KEY: '',
@@ -1054,6 +1057,7 @@ describe('MCP Server Integration', () => {
   });
 
   it('emits attribution for a real streamable-HTTP session', async () => {
+    stubApiKeyCheck();
     const port = await freePort();
     const authenticatedServer = new FastMCP<BrowserlessSession>({
       name: 'attribution-test',
@@ -1241,6 +1245,7 @@ describe('MCP Server Integration', () => {
   });
 
   it('retains an allowed httpStream override in the authenticated session', async () => {
+    const check = stubApiKeyCheck();
     const port = await freePort();
     server = new FastMCP<BrowserlessSession>({
       name: 'browserless-mcp',
@@ -1280,6 +1285,12 @@ describe('MCP Server Integration', () => {
           text: 'https://production-lon.browserless.io',
         },
       ]);
+      expect(
+        check
+          .getCalls()
+          .filter((call) => isApiKeyCheck(call.args[0]))
+          .map((call) => call.args[0]),
+      ).to.deep.equal(['https://production-lon.browserless.io/active']);
     } finally {
       await client.close().catch(() => {});
       await server.stop();

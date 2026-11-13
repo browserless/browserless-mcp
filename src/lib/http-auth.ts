@@ -2,9 +2,11 @@ import type { IncomingMessage } from 'node:http';
 import type { Context } from 'hono';
 import { resolveApiKey } from './account-resolver.js';
 import type { BrowserlessSession, McpConfig } from '../@types/types.js';
+import { assertKnownApiKey } from './api-key-check.js';
 import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 import { sanitizeUserAgent } from './attribution.js';
 import { UNSAFE_DIAGNOSTIC_CHARACTERS } from './diagnostic-string.js';
+import { requestSessionId } from './session-binding.js';
 
 export type ResolvedBrowserlessAuth = BrowserlessSession;
 
@@ -19,6 +21,8 @@ export interface AuthInput {
   sourceQuery?: string;
   userAgentHeader?: string | string[];
   requestPath?: string;
+  // Ask the Browserless API whether a plain key exists (session-opening requests and file routes).
+  verifyApiKey?: boolean;
 }
 
 const tokenFromAuthHeader = (header?: string): string | undefined =>
@@ -57,8 +61,10 @@ export function authInputFromRequest(
  * Resolve a Browserless API token from an inbound HTTP request, in order:
  * (1) Authorization header with a plain API key, (2) `?token=` query param,
  * (3) Authorization header with a Supabase JWT → resolved via PostgREST.
- * Throws when none is present/valid. Shared by the FastMCP `authenticate`
- * callback and the custom `/upload` route so both gate on the same rules.
+ * Throws when none is present/valid. When `verifyApiKey` is set, a plain key is
+ * checked against the Browserless API and refused if the API calls it unknown.
+ * Shared by the FastMCP `authenticate` callback and the custom file routes so
+ * both gate on the same rules.
  */
 export const resolveBrowserlessAuth = async (
   input: AuthInput,
@@ -111,6 +117,7 @@ export const resolveBrowserlessAuth = async (
   if (plainKey) {
     const authMethod =
       !isJwt && headerToken ? 'api_key_header' : 'api_key_query';
+    if (input.verifyApiKey) await assertKnownApiKey(apiUrl, plainKey);
     return {
       token: plainKey,
       apiUrl,
@@ -155,7 +162,13 @@ export const resolveBrowserlessRequestAuth = (
   request: IncomingMessage,
   config: McpConfig,
 ): Promise<ResolvedBrowserlessAuth> => {
-  return resolveBrowserlessAuth(authInputFromRequest(request), config);
+  return resolveBrowserlessAuth(
+    {
+      ...authInputFromRequest(request),
+      verifyApiKey: requestSessionId(request) === undefined,
+    },
+    config,
+  );
 };
 
 export const guardRouteAuth = async (
@@ -169,6 +182,7 @@ export const guardRouteAuth = async (
         tokenQuery: c.req.query('token'),
         apiUrlHeader: c.req.header('x-browserless-api-url'),
         browserlessUrlQuery: c.req.query('browserlessUrl'),
+        verifyApiKey: true,
       },
       config,
     );

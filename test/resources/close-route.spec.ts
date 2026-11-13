@@ -8,6 +8,7 @@ import {
   getOrCreateSession,
   closeSessionByHandle,
 } from '../../src/lib/agent-client.js';
+import { isApiKeyCheck, stubApiKeyCheck } from '../helpers/api-key-check.js';
 import { makeAcceptingServer } from '../helpers/upgrade-server.js';
 
 const config = {
@@ -22,6 +23,9 @@ const app = () => {
 };
 
 describe('remote session close route', () => {
+  beforeEach(() => stubApiKeyCheck());
+  afterEach(() => Sinon.restore());
+
   it('requires authentication, isolates tokens, and reports absent sessions', async () => {
     const upstream = await makeAcceptingServer();
     try {
@@ -63,8 +67,10 @@ describe('remote session close route', () => {
       if (scope === 'attach') args[6] = 'attached-session';
       if (scope === 'profile') {
         args[5] = { name: 'creation-profile' };
-        Sinon.stub(globalThis, 'fetch').resolves(
-          new Response(JSON.stringify({ id: 'created-session' })),
+        (globalThis.fetch as Sinon.SinonStub).callsFake(async (input) =>
+          isApiKeyCheck(input)
+            ? new Response(null, { status: 204 })
+            : new Response(JSON.stringify({ id: 'created-session' })),
         );
       }
       if (scope === 'integration') {

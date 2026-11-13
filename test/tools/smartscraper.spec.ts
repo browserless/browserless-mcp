@@ -15,6 +15,7 @@ import {
 } from '../../src/tools/smartscraper.js';
 import type { McpConfig } from '../../src/@types/types.js';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
+import { isApiKeyCheck } from '../helpers/api-key-check.js';
 
 const mockConfig: McpConfig = {
   browserlessToken: 'test-token',
@@ -812,7 +813,9 @@ describe('browserless_smartscraper tool', () => {
           }
         }
         expect(handles[0]).not.to.equal(handles[1]);
-        expect(fetchStub.calledOnce).to.be.true;
+        expect(
+          fetchStub.getCalls().filter((call) => !isApiKeyCheck(call.args[0])),
+        ).to.have.length(1);
         clearSession(sessionId);
         if (transport === 'stdio') {
           expect(getDownload(handles[1], downloadOwner('session-token'))).to.be
