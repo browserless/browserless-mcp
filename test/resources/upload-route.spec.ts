@@ -136,6 +136,20 @@ describe('upload route', () => {
     });
   }
 
+  for (const status of [401, 403]) {
+    it(`rejects ${status} despite unrelated usage metadata`, async () => {
+      upstreamStatus = status;
+      upstreamBody = JSON.stringify({
+        error: 'Unauthorized',
+        credits: 0,
+        units: 100,
+        usage_limit: 1000,
+      });
+      expect((await upload(app(), 'unverified bytes')).status).to.equal(401);
+      expect(await readdir(directory)).to.deep.equal([]);
+    });
+  }
+
   for (const status of [200, 404]) {
     it(`rejects an explicit unknown-token response with status ${status}`, async () => {
       upstreamStatus = status;
@@ -167,6 +181,13 @@ describe('upload route', () => {
       'Your account has exceeded its cloud unit allocation and is now in overage',
     ],
     [403, 'Account credit limit reached'],
+    [
+      401,
+      JSON.stringify({
+        error: { message: 'Account credit limit reached' },
+        credits: 0,
+      }),
+    ],
   ] as const) {
     it(`preserves uploads with a warning for a ${status} credit/limit response: ${message}`, async () => {
       upstreamStatus = status;

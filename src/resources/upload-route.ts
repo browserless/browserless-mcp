@@ -39,9 +39,20 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
           signal: AbortSignal.timeout(5000),
         });
         const message = await response.text();
+        let errorMessage = message;
+        try {
+          // Usage metadata is not an error signal. Retain nested error messages.
+          errorMessage = JSON.stringify(JSON.parse(message), [
+            'error',
+            'message',
+            'error_description',
+          ]);
+        } catch {
+          // Older backends return plain-text errors.
+        }
         const limitError =
           /credits?|\bunits?\b|(?:spend|usage|concurrency|rate)[ _-]?(?:limit|cap)/i.test(
-            message,
+            errorMessage,
           );
         const capabilityError =
           /\bunsupported[ _-]*(?:plan|account[ _-]*type|endpoint)\b|\b(?:plan|account[ _-]*type|endpoint)(?: is)? (?:unsupported|not supported)\b|\b(?:plan|account) (?:does not|doesn't) support\b|\b(?:request|endpoint) requires (?:an? )?[\w-]+ (?:account|plan)\b/i.test(
