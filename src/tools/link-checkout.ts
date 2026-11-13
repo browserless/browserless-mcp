@@ -19,9 +19,12 @@ const MAX_CHECKOUT_AMOUNT_MINOR = 5_000;
 const OUTCOME_REPORT_TTL_MS = 15 * 60 * 1_000;
 const CHECKOUT_ID_RE = /^lkco_[A-Za-z0-9_-]{32}$/;
 const HANDLE_RE = /^(s:|attach:)[A-Za-z0-9:_-]{3,200}$/;
+const CHECKOUT_ENDED_MESSAGE =
+  'This Stripe Link checkout has ended and can no longer be resumed, cancelled, or reported. Do not submit payment again; check Link payment history before starting another checkout.';
 // Exact coordinator-owned validation messages only. Raw provider/frame errors
 // may contain payment credentials, so never forward arbitrary backend text.
 const CHECKOUT_VALIDATION_ERRORS = new Set([
+  'A Stripe Link payment in this browser session has an unknown outcome. Do not start another checkout; ask the user to check their Link payment history or the merchant receipt.',
   'selectors are required',
   'selectors require either expiry or both exp_month and exp_year',
   'selectors must identify distinct fields',
@@ -91,6 +94,7 @@ const STATUSES = new Set([
   'canceled',
   'succeeded',
   'submitted',
+  'recovery_required',
   'blocked',
   'abandoned',
 ]);
@@ -107,6 +111,7 @@ const TERMINAL_STATUSES = new Set([
   'canceled',
   'succeeded',
   'submitted',
+  'recovery_required',
   'blocked',
   'abandoned',
 ]);
@@ -600,6 +605,16 @@ export function registerStripeLinkCheckoutTool(
             );
           }
           if (response.error) {
+            if (
+              params.action !== 'create' &&
+              response.error.message ===
+                'Stripe Link checkout is unavailable in this browser session' &&
+              session.stripeLinkContinuation?.checkoutId === params.checkout_id
+            ) {
+              session.stripeLinkContinuation = undefined;
+              session.skillState.fired.delete('agentic-checkout');
+              throw new UserError(CHECKOUT_ENDED_MESSAGE);
+            }
             const code =
               typeof response.error.code === 'string' &&
               CHECKOUT_ERROR_CODES.has(response.error.code)

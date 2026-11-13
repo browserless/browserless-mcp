@@ -57,20 +57,29 @@ numbers, security codes, passwords, or one-time codes.
    snapshot to find it. Never clear secret gates before a terminal result
    or invent a readiness predicate. Then call checkout with
    `action: "report", outcome: "success"` to request backend confirmation, not
-   to assert the payment succeeded. A returned `succeeded` is a Link-confirmed
-   payment (Link Pay Token path). A returned `submitted` is the terminal result
-   for a one-time card: Link cannot confirm the merchant's charge, so success is
-   confirmable only on the merchant side. After a terminal result, confirm the
+   to assert the payment succeeded.
+
+   Never retry a payment. One Pay click per checkout. Uncertainty is never a reason to try again.
+
+   - `pending_approval`: give the user `approval_url`, then `resume` after approval.
+   - `requires_action`: show `action_message` and `action_url` when supplied; follow `action_resolution` using step 5's rules.
+   - `filled`: click the noted Pay/Submit selector exactly once, then `report`.
+   - `approved`: payment is not confirmed yet. Follow `_next` to resume confirmation; never click Pay again.
+   - `succeeded`: Link confirmed the payment (Link Pay Token path); read the merchant receipt.
+   - `submitted`: the one-time card was sent to the merchant. Only the merchant receipt can confirm the charge; never resume or resubmit.
+   - `recovery_required`: stop. Do not click Pay, resume, or create another checkout — in this or any new browser session. Tell the user the outcome is unknown and ask them to check Link payment history or the merchant receipt. Continue only if the user confirms no payment was taken.
+   - `expired`, `denied`, `failed`, `canceled`, `blocked`, `abandoned`: report the result to the user. A new checkout requires fresh user approval.
+
+   After a terminal result, confirm the
    fill has completed and secret-bearing content is gone from every tab,
    including hidden fields, before calling `clearSecrets`. If that cannot be
    confirmed, do not clear or capture. Otherwise request a fresh `snapshot` of
    the merchant's confirmation or receipt page and tell the user what it shows.
-   Never resume or resubmit after `submitted`. While the
-   result is still resumable (`_next.action: "resume"`), follow it for pending
-   confirmation; never submit again. If blocked or abandoned, report that
+   If blocked or abandoned, report that
    outcome instead. Use `action: "cancel"` if the user abandons before fill.
+
 7. Only report the sanitized `last4` returned by the tool. Never expose or ask
    for any other payment credential.
 
 This skill fires once at the payment step. A terminal checkout result rearms it
-for the next attempt.
+for a future purchase; it is not permission to retry a payment.
