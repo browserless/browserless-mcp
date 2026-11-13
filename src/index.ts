@@ -28,7 +28,6 @@ import {
   admitSessionRequest,
   authOutcome,
   requestSessionId,
-  requestSessions,
   type SessionRefusal,
   type SessionLike,
 } from './lib/session-binding.js';
@@ -197,15 +196,10 @@ const hybridAuthenticate =
             request,
             config,
           )) as BrowserlessSession;
-          admitSessionRequest(
-            sid,
-            session,
-            requestSessions(request, server.sessions),
-            (r, o) => {
-              refusal = r;
-              owner = o;
-            },
-          );
+          admitSessionRequest(sid, session, server.sessions, (r, o) => {
+            refusal = r;
+            owner = o;
+          });
           recordMcpRequest(
             'authenticated',
             performance.now() - authStartedAt,
@@ -218,7 +212,7 @@ const hybridAuthenticate =
               failed: false,
               auth: session,
               store: eventStore,
-              sessions: () => requestSessions(request, server.sessions),
+              sessions: () => server.sessions,
             }),
           );
           return session;
@@ -237,7 +231,7 @@ const hybridAuthenticate =
               refusal,
               owner,
               store: eventStore,
-              sessions: () => requestSessions(request, server.sessions),
+              sessions: () => server.sessions,
             }),
           );
           throw err;
