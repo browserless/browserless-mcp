@@ -9,15 +9,38 @@ permissions:
   contents: read
 
 jobs:
+  hermes:
+    name: Hermes mux (websockets ${{ matrix.websockets }})
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        websockets: ['14.2', '15.0.1']
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Install WebSocket dependency
+        run: python -m pip install 'websockets==${{ matrix.websockets }}'
+      - name: Test Hermes mux without external services
+        run: python -m unittest discover -s hermes/scripts -p 'test_*.py' -v
+
   test:
+    # Full build and test suite need headroom beyond slim's 1 vCPU/15-minute cap.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        node-version: [24.x]
+        node-version: [24.x, 26.x]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v7.1.0
@@ -26,7 +49,8 @@ jobs:
           cache: npm
           check-latest: true
       - name: Ensure npm >= 11.10.0 (min-release-age support)
-        run: npm install -g npm@11.17.0 --ignore-scripts
+        run: |
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); if (!(major > 11 || (major === 11 && minor >= 10))) process.exit(1)' "$(npm --version)"
 
       - name: Install dependencies
         run: npm ci
@@ -39,22 +63,55 @@ jobs:
 
   package-hygiene:
     name: Package hygiene
+    # Two prepack builds plus a fresh consumer install/server smoke need VM resources.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Use Node.js 24.x
+      - name: Use Node.js 26
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.x
+          node-version-file: .nvmrc
           cache: npm
           check-latest: true
       - name: Ensure npm >= 11.10.0 (min-release-age support)
-        run: npm install -g npm@11.17.0 --ignore-scripts
+        run: |
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); if (!(major > 11 || (major === 11 && minor >= 10))) process.exit(1)' "$(npm --version)"
 
       - name: Install dependencies
         run: npm ci
+
+      # zizmor 1.32.0 stops after its first compliant updater; check every entry.
+      - name: Enforce Dependabot cooldown policy
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { load } from 'js-yaml';
+          const { updates } = load(readFileSync('.github/dependabot.yml', 'utf8'));
+          for (const ecosystem of ['npm', 'github-actions']) {
+            assert(updates.some(update => update['package-ecosystem'] === ecosystem),
+              `Missing ${ecosystem} updater`);
+          }
+          const dockerUpdates = updates.filter(update =>
+            update['package-ecosystem'] === 'docker' && update.directory === '/docker');
+          assert(dockerUpdates.length === 1 && !dockerUpdates[0]['target-branch'],
+            'Only the existing default-branch Docker /docker updater is exempt');
+          for (const update of updates) {
+            if (update === dockerUpdates[0]) continue;
+            assert(update.cooldown?.['default-days'] >= 3,
+              `${update['package-ecosystem']} requires a cooldown of at least three days`);
+            for (const key of ['semver-major-days', 'semver-minor-days', 'semver-patch-days']) {
+              assert(!(key in update.cooldown) || update.cooldown[key] >= 3,
+                `${update['package-ecosystem']} ${key} must be at least three days`);
+            }
+            assert(!('include' in update.cooldown) && !('exclude' in update.cooldown),
+              `${update['package-ecosystem']} cooldown must cover all dependencies`);
+          }
+          NODE
 
       - name: Verify published tarball contents
         run: bash scripts/ci/verify-package-tarball.sh
@@ -67,3 +124,67 @@ jobs:
       # would produce identical results since the lockfile is shared.
       - name: npm audit (high+ severity)
         run: npm audit --audit-level=high
+
+  lockfile:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install and verify workflow lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-actions-lock --pin v0.4.1
+          gh actions-lock --verify
+
+  zizmor:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install zizmor 1.32.0
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --proto '=https' --tlsv1.2 \
+            https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+            -o zizmor.tar.gz
+          echo 'bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  zizmor.tar.gz' | sha256sum --check
+          mkdir -p workflow-tools
+          tar -xzf zizmor.tar.gz -C workflow-tools zizmor
+          echo "$RUNNER_TEMP/workflow-tools" >> "$GITHUB_PATH"
+      - name: Audit workflows from the repository root
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor .
+
+  actionlint:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint 1.7.12 and ShellCheck 0.11.0
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --proto '=https' --tlsv1.2 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o actionlint.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum --check
+          curl --fail --silent --show-error --location --retry 3 \
+            --proto '=https' --tlsv1.2 \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
+            -o shellcheck.tar.xz
+          echo '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  shellcheck.tar.xz' | sha256sum --check
+          mkdir -p workflow-tools
+          tar -xzf actionlint.tar.gz -C workflow-tools actionlint
+          tar -xJf shellcheck.tar.xz --strip-components=1 -C workflow-tools shellcheck-v0.11.0/shellcheck
+          echo "$RUNNER_TEMP/workflow-tools" >> "$GITHUB_PATH"
+      - name: Check workflow expressions and shell scripts
+        run: actionlint

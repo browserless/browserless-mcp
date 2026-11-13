@@ -96,6 +96,8 @@ export interface ToolRunContext<P> {
   uiEnabled: boolean;
   /** Server-derived caller/account/API scope, independent of the transport. */
   viewOwner: string;
+  /** Cancellation of the current MCP tool request. */
+  signal?: AbortSignal;
   /**
    * Pre-created browser session id to attach to (from the `x-browserless-session-id`
    * header). When set, the agent tool attaches to it instead of opening its own.
@@ -221,7 +223,7 @@ export function defineTool<P, R>(
     ...(def._meta ? { _meta: def._meta } : {}),
     execute: async (
       args,
-      { reportProgress, session, sessionId, log, client: mcpClient },
+      { reportProgress, session, sessionId, log, client: mcpClient, signal },
     ) => {
       // Inbound activity refreshes the idle clock so the reaper never closes a
       // live session between tool calls (see session-reaper.ts).
@@ -386,6 +388,7 @@ export function defineTool<P, R>(
             sessionId,
             uiEnabled,
             viewOwner,
+            signal,
             attachSessionId: s?.attachSessionId,
             userId: s?.userId,
             userRole: s?.userRole,

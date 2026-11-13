@@ -19,10 +19,78 @@ const config = {
 describe('resolveBrowserlessAuth', () => {
   afterEach(() => sinon.restore());
 
+  it('rejects unsafe attach IDs from headers and decoded query parameters without resolving credentials', async () => {
+    const fetch = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('Unexpected credential lookup'));
+    for (const char of [
+      '\u0000',
+      '\n',
+      '\r',
+      '\t',
+      '\u001b',
+      '\u0085',
+      '\u202e',
+      '\u200b',
+      '\ufeff',
+      '\u2028',
+      '\u2029',
+      '\u{e0001}',
+    ]) {
+      const id = 'browser' + char + 'id';
+      for (const [headers, query] of [
+        [{ 'x-browserless-session-id': id }, 'safe-browser'],
+        [{}, id],
+        [{ 'x-browserless-session-id': 'safe-browser' }, id],
+      ] as const) {
+        const input = authInputFromRequest({
+          headers: { authorization: 'Bearer a.b.c', ...headers },
+          url: '/mcp?browserlessSessionId=' + encodeURIComponent(query),
+        });
+        let error: unknown;
+        try {
+          await resolveBrowserlessAuth(input, config);
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).to.be.instanceOf(Response);
+        expect((error as Response).status).to.equal(400);
+        const body = await (error as Response).text();
+        expect(body).to.include('session ID');
+        expect(body).not.to.include(id);
+      }
+    }
+    expect(fetch.called).to.equal(false);
+    expect(
+      (
+        await resolveBrowserlessAuth(
+          {
+            authHeader: 'key',
+            sessionIdHeader: 'browser-header',
+            sessionIdQuery: 'browser-query',
+          },
+          config,
+        )
+      ).attachSessionId,
+    ).to.equal('browser-header');
+    expect(
+      (
+        await resolveBrowserlessAuth(
+          { authHeader: 'key', sessionIdQuery: 'browser-query' },
+          config,
+        )
+      ).attachSessionId,
+    ).to.equal('browser-query');
+  });
+
   it('distinguishes presented credentials without resolving them', () => {
     for (const [input, expected] of [
       [{}, false],
       [{ authHeader: 'Bearer ' }, false],
+      [{ authHeader: 'Bearer' }, false],
+      [{ authHeader: 'bearer' }, false],
+      [{ authHeader: ' \tBeArEr\t ' }, false],
+      [{ authHeader: '   ' }, false],
       [{ authHeader: 'Bearer abc' }, true],
       [{ authHeader: 'abc' }, true],
       [{ tokenQuery: 'x' }, true],
@@ -33,8 +101,15 @@ describe('resolveBrowserlessAuth', () => {
 
   for (const [input, token, authMethod] of [
     [{ authHeader: 'Bearer header-key' }, 'header-key', 'api_key_header'],
+    [{ authHeader: ' bearer\theader-key ' }, 'header-key', 'api_key_header'],
+    [{ authHeader: 'BearerPrefix-key' }, 'BearerPrefix-key', 'api_key_header'],
     [{ authHeader: 'header-key' }, 'header-key', 'api_key_header'],
     [{ tokenQuery: 'query-key' }, 'query-key', 'api_key_query'],
+    [
+      { authHeader: 'Bearer', tokenQuery: 'query-key' },
+      'query-key',
+      'api_key_query',
+    ],
     [
       { authHeader: 'Bearer header-key', tokenQuery: 'query-key' },
       'header-key',
@@ -241,6 +316,25 @@ describe('resolveBrowserlessAuth', () => {
     }
     expect(threw).to.be.true;
   });
+
+  for (const authHeader of [
+    'Bearer',
+    'Bearer ',
+    'bearer',
+    ' \tBeArEr\t ',
+    '   ',
+  ]) {
+    it(`rejects an empty credential ${JSON.stringify(authHeader)}`, async () => {
+      let error: unknown;
+      try {
+        await resolveBrowserlessAuth({ authHeader }, config);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(Error);
+      expect((error as Error).message).to.match(/No Browserless API token/);
+    });
+  }
 });
 
 describe('authInputFromRequest', () => {

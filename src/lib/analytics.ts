@@ -151,6 +151,17 @@ export class AnalyticsHelper {
     this.send('MCP Skill', djb2(token), { token, ...props }).catch(() => {});
   }
 
+  public fireSessionStarted(
+    token: string,
+    properties: Record<string, unknown>,
+  ): void {
+    // Queue-only: the authenticated consumer resolves the account.
+    this.send('MCP Session Started', djb2(token), {
+      ...sanitize(properties),
+      token,
+    }).catch(() => {});
+  }
+
   public fireSkillRetrieval(
     token: string,
     event: SkillRetrieval,

@@ -4,6 +4,7 @@ import { resolveApiKey } from './account-resolver.js';
 import type { BrowserlessSession, McpConfig } from '../@types/types.js';
 import { assertAllowedApiUrl, InvalidApiUrlError } from './api-url-guard.js';
 import { sanitizeUserAgent } from './attribution.js';
+import { UNSAFE_DIAGNOSTIC_CHARACTERS } from './diagnostic-string.js';
 
 export type ResolvedBrowserlessAuth = BrowserlessSession;
 
@@ -20,10 +21,14 @@ export interface AuthInput {
   requestPath?: string;
 }
 
+const tokenFromAuthHeader = (header?: string): string | undefined =>
+  header
+    ?.trim()
+    .replace(/^Bearer(?:\s+|$)/i, '')
+    .trim() || undefined;
+
 export const presentsCredential = (input: AuthInput): boolean => {
-  const headerToken = input.authHeader?.startsWith('Bearer ')
-    ? input.authHeader.slice(7)
-    : input.authHeader;
+  const headerToken = tokenFromAuthHeader(input.authHeader);
   return Boolean(headerToken || input.tokenQuery);
 };
 
@@ -76,14 +81,27 @@ export const resolveBrowserlessAuth = async (
   // A pre-created session id to attach to, threaded by the autologin runner.
   // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
   // own POST /profile.
+  if (
+    [input.sessionIdHeader, input.sessionIdQuery].some(
+      (id) =>
+        id !== undefined && id.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1,
+    )
+  ) {
+    throw Response.json(
+      {
+        error: 'invalid_request',
+        error_description:
+          'Invalid Browserless session ID: control, format, and line separator characters are not allowed.',
+      },
+      { status: 400 },
+    );
+  }
   const attachSessionId = input.sessionIdHeader ?? input.sessionIdQuery;
 
   // Analytics-only origin tag set by our own callers; absent for external LLMs.
   const source = input.sourceHeader ?? input.sourceQuery;
 
-  const headerToken = input.authHeader?.startsWith('Bearer ')
-    ? input.authHeader.slice(7)
-    : input.authHeader;
+  const headerToken = tokenFromAuthHeader(input.authHeader);
 
   // JWTs have 3 dot-separated base64url segments; plain API keys do not.
   const isJwt = headerToken ? headerToken.split('.').length === 3 : false;

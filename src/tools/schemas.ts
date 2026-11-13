@@ -1,17 +1,17 @@
 import { z } from 'zod';
+import { UNSAFE_DIAGNOSTIC_CHARACTERS } from '../lib/diagnostic-string.js';
 import {
   PERSONA_FIELDS,
   PersonaOptionsSchema,
   ProxyOptionsSchema,
 } from '../lib/agent-client.js';
 
-// NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
-// fromCharCode so the literal control character never appears in source.
+// NUL remains the legacy exported/diagnostic key separator in agent-client.ts.
+// Keep control characters out of these public string fields.
 const NUL = String.fromCharCode(0);
 
-// A trimmed, non-empty string that also rejects NUL. Every field feeding the
-// session-cache key (see getSessionKey) needs this, or a NUL lets a caller forge
-// extra key segments (NUL is KEY_SEP).
+// Preserve the existing trimmed, non-empty, NUL-free input contract. Internal
+// session lookup uses a structured tuple, not the legacy exported key string.
 const nulSafeString = (label: string) =>
   z
     .string()
@@ -48,7 +48,14 @@ export function profileField(whenLoaded: string, extra = '') {
   return nulSafeString('profile').optional().describe(description);
 }
 
-const sessionIdField = nulSafeString('sessionId')
+const sessionIdField = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => value.search(UNSAFE_DIAGNOSTIC_CHARACTERS) === -1, {
+    message:
+      'sessionId must not contain control, format, or line separator characters',
+  })
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +

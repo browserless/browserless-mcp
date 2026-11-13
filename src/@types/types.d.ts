@@ -217,8 +217,8 @@ export interface SnapshotResult {
 export interface ActiveSession {
   ws: WebSocket;
   msgId: number;
-  // Creation identity fields are immutable. Most feed the session-cache key;
-  // persona is retained on the handle and checked before reuse.
+  // Creation identity fields are immutable. Token/user scope keys the handle;
+  // browser configuration and integration binding are checked before reuse.
   readonly apiUrl: string;
   readonly token: string;
   readonly proxy?: ProxyOptions;
@@ -226,8 +226,7 @@ export interface ActiveSession {
   readonly persona?: PersonaOptions;
   readonly profile?: string;
   // When set, this session was opened in profile-creation mode: the WS is bound
-  // to a creation session from POST /profile rather than a fresh launch. Feeds
-  // the session-cache key (see getSessionKey), so it's readonly.
+  // to a creation session from POST /profile rather than a fresh launch.
   readonly createProfile?: CreateProfileParams;
   // The creation session id returned by POST /profile. Reconnects attach to it
   // via /chromium/agent?sessionId rather than launching a new browser.
@@ -237,7 +236,7 @@ export interface ActiveSession {
   readonly source?: string;
   readonly mcpTool?: string;
   // 1Password binding, re-sent on reconnect so loadSecret keeps its resolver
-  // after a drop. Feeds the session-cache key, so readonly.
+  // after a drop. Fixed for the handle and checked before reuse.
   readonly integrationId?: string;
   readonly allowedDomains?: string[];
   // Verified OAuth user identity. Accounts share API tokens, so this also feeds
@@ -784,6 +783,9 @@ export interface LiveURLOptions {
 export interface LiveURLCreated {
   liveURL: string;
   liveURLId: string;
+  timeout?: number;
+  browserExpiresAt?: number | null;
+  targetId?: string;
 }
 
 export interface LiveURLState {
@@ -814,7 +816,10 @@ export interface ApiClient {
   exportPage(params: ExportRequest): Promise<GenericApiResult>;
   search(params: SearchRequest): Promise<SearchResponse>;
   map(params: MapRequest): Promise<MapResponse>;
-  performance(params: PerformanceRequest): Promise<PerformanceResponse>;
+  performance(
+    params: PerformanceRequest,
+    signal?: AbortSignal,
+  ): Promise<PerformanceResponse>;
   crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
