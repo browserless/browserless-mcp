@@ -453,6 +453,13 @@ describe('API key check', () => {
   for (const [label, req] of [
     ['header', request('/mcp', { authorization: 'Bearer junk-header' })],
     ['query', request('/mcp?token=junk-query')],
+    [
+      'header with an empty mcp-session-id',
+      request('/mcp', {
+        authorization: 'Bearer junk-empty-session',
+        'mcp-session-id': '',
+      }),
+    ],
   ] as const) {
     it(`refuses an unknown ${label} key on a session-opening request`, async () => {
       const fetch = stubApiKeyCheck(401);

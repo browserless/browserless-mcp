@@ -392,7 +392,7 @@ close it before selecting a different persona.
 
 ## Configuration
 
-The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter. An API key the Browserless API does not recognise is refused with HTTP 401 when the session opens.
+The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter. An API key the Browserless API reports as invalid is refused with HTTP 401 when the session opens; if the API cannot be reached in time, the session opens and tool calls report the key error instead.
 
 Installing via an AI agent? See [install.md](install.md) for agent-readable setup instructions.
 

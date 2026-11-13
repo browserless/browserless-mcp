@@ -165,7 +165,7 @@ export const resolveBrowserlessRequestAuth = (
   return resolveBrowserlessAuth(
     {
       ...authInputFromRequest(request),
-      verifyApiKey: requestSessionId(request) === undefined,
+      verifyApiKey: !requestSessionId(request),
     },
     config,
   );
