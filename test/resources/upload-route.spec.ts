@@ -140,7 +140,7 @@ describe('upload route', () => {
     it(`rejects ${status} despite unrelated usage metadata`, async () => {
       upstreamStatus = status;
       upstreamBody = JSON.stringify({
-        error: 'Unauthorized',
+        error: { message: 'Unauthorized', units: 100 },
         credits: 0,
         units: 100,
         usage_limit: 1000,
@@ -188,6 +188,7 @@ describe('upload route', () => {
         credits: 0,
       }),
     ],
+    [403, JSON.stringify({ error: { code: 'CREDIT_LIMIT_REACHED' } })],
   ] as const) {
     it(`preserves uploads with a warning for a ${status} credit/limit response: ${message}`, async () => {
       upstreamStatus = status;

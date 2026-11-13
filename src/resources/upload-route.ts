@@ -46,6 +46,7 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
             'error',
             'message',
             'error_description',
+            'code',
           ]);
         } catch {
           // Older backends return plain-text errors.
