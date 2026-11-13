@@ -17,7 +17,9 @@ export function registerUploadRoute(server: FastMCP, config: McpConfig): void {
   let verificationsInFlight = 0;
 
   app.post('/upload', async (c) => {
-    const auth = await guardRouteAuth(c, config);
+    // This route performs its own bounded verification below; do not also run
+    // the session-opening /active check (or wait for it before applying the cap).
+    const auth = await guardRouteAuth(c, config, false);
     if (auth instanceof Response) return auth;
 
     // Reject positively invalid plain keys before staging. Preserve existing

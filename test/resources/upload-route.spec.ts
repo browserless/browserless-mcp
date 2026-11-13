@@ -97,6 +97,15 @@ describe('upload route', () => {
     return route.request('/upload?token=owner-a', { method: 'POST', body });
   };
 
+  it('verifies uploads once through pressure, not the session-opening active check', async () => {
+    const paths: string[] = [];
+    upstream.on('request', (req) =>
+      paths.push(new URL(req.url!, 'http://localhost').pathname),
+    );
+    expect((await upload(app(), 'upload bytes')).status).to.equal(200);
+    expect(paths).to.deep.equal(['/backend/pressure']);
+  });
+
   it('requires a token', async () => {
     const body = new FormData();
     body.set('file', new File(['data'], 'fixture.txt'));
@@ -243,7 +252,12 @@ describe('upload route', () => {
     const requests = Array.from({ length: 16 }, () => upload(route, 'bytes'));
     await capacityReached;
     try {
-      expect((await upload(route, 'overflow bytes')).status).to.equal(200);
+      const overflow = await Promise.all(
+        Array.from({ length: 4 }, () => upload(route, 'overflow bytes')),
+      );
+      expect(overflow.map((response) => response.status)).to.deep.equal(
+        Array(4).fill(200),
+      );
       expect(pending).to.have.length(16);
       expect(warnings.args.flat().join(' ')).to.include('capacity');
       expect(warnings.args.flat().join(' ')).not.to.include('owner-a');
@@ -305,6 +319,7 @@ describe('upload route', () => {
       headers: { Authorization: 'Bearer upload.payload.signature' },
     });
     expect(response.status).to.equal(200);
+    expect(fetch.callCount).to.equal(2); // Identity lookup only, no API-key check.
     const { handle } = (await response.json()) as { handle: string };
     const id = handle.replace('browserless-download://', '');
     const download = await route.request(

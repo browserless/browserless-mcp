@@ -174,6 +174,7 @@ export const resolveBrowserlessRequestAuth = (
 export const guardRouteAuth = async (
   c: Context,
   config: Parameters<typeof resolveBrowserlessAuth>[1],
+  verifyApiKey = true,
 ): Promise<Response | ResolvedBrowserlessAuth> => {
   try {
     return await resolveBrowserlessAuth(
@@ -182,7 +183,7 @@ export const guardRouteAuth = async (
         tokenQuery: c.req.query('token'),
         apiUrlHeader: c.req.header('x-browserless-api-url'),
         browserlessUrlQuery: c.req.query('browserlessUrl'),
-        verifyApiKey: true,
+        verifyApiKey,
       },
       config,
     );
