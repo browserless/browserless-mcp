@@ -128,6 +128,11 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 3. **evaluate** { content } — JS (IIFE): \`(() => { return ... })()\`
 4. **html** { selector } — raw HTML
 
+### Embedded PDF text
+Open the PDF in this browser first, then **readPdf** { url?, documentId?, page?, offset? }. Omit url to use the current page, or use the pdfDocumentId surfaced for a captured download. It reads only browser-observed bytes, never refetches a URL. page (physical, 1-based, default 1) and offset (default 0) set where reading starts. Results include documentId, totalPages, pages[] (each with page, status, text, offset, complete; at most 12000 characters and 20 pages in total) and next. Continue with documentId and next.page/next.offset until next is null, not a new download. Keep a persistent session; closing it invalidates the ID. Only the most recently read PDF is retained (up to 25 MiB or the file-transfer cap, whichever is smaller).
+Inline PDFs require a known, uncompressed response size to enforce the byte cap before buffering; otherwise the command reports a capture limitation. A captured download can still be read within the cap.
+**no_embedded_text** means that page has no extractable text, not that it has no content. Do not invent text or claim the document is empty; explain that scanned/image-only content needs visual reading/OCR, which this command does not provide. It does not fill PDF forms.
+
 ## Files (upload / download)
 **To download a file, DRIVE THE BROWSER — do not \`curl\`/\`wget\`/\`fetch\` the file yourself as a first move.** Many real downloads (login/cookie-gated, generated server-side on demand, or triggered by a click whose response headers force the download) have NO fetchable URL — a direct fetch silently gets the wrong bytes, an HTML error page, or 403. Click/goto in the agent and collect from the auto-surfaced ledger. The ONLY time a direct fetch is correct: the ledger hands you a URL to use — the single-use \`/download/<id>\` URL, or an over-cap \`sourceUrl\`. Reaching for \`curl\` first is a bug, not a shortcut.
 **NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.

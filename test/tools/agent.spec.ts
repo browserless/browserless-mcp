@@ -29,6 +29,7 @@ import {
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
+  AgentCommandSchema,
   AgentParamsSchema,
   AgentToolParamsSchema,
   CompliantAgentParamsSchema,
@@ -129,6 +130,58 @@ const mockContext = {
   streamContent: sinon.stub().resolves(),
   elicit: sinon.stub().resolves({ action: 'cancel' }),
 };
+
+describe('browserless_agent PDF reading', () => {
+  it('validates page and offset on the full surface only', () => {
+    for (const params of [
+      {},
+      { documentId: 'pdf-id', page: 3, offset: 12000 },
+    ]) {
+      expect(
+        AgentCommandSchema.safeParse({ method: 'readPdf', params }).success,
+      ).to.equal(true);
+    }
+    for (const params of [
+      { page: 0 },
+      { page: 1.5 },
+      { offset: -1 },
+      { offset: 0.5 },
+      { url: 'https://example.com/a.pdf', documentId: 'pdf-id' },
+    ]) {
+      expect(
+        AgentCommandSchema.safeParse({ method: 'readPdf', params }).success,
+      ).to.equal(false);
+    }
+    expect(
+      CompliantAgentParamsSchema.safeParse({
+        commands: [{ method: 'readPdf', params: {} }],
+      }).success,
+    ).to.equal(false);
+  });
+
+  it('surfaces retained PDF IDs without putting file bytes in context', async () => {
+    const content = await formatDownloads(
+      [
+        {
+          filename: 'guide.pdf',
+          error: 'Transfer unavailable',
+          pdfDocumentId: 'pdf-id',
+        },
+      ],
+      '',
+      '',
+      { transport: 'stdio', sessionOpen: true },
+    );
+    const text = content
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text)
+      .join('\n');
+    expect(text)
+      .to.include('readPdf')
+      .and.include('pdf-id')
+      .and.include('session');
+  });
+});
 
 describe('browserless_agent reserved methods', () => {
   it('rejects Stripe Link checkout through single and batch schemas', () => {
@@ -2448,6 +2501,132 @@ describe('browserless_agent one-shot sessions', () => {
     }
   });
 
+  it('rejects invalid direct PDF parameters before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ text: 'unexpected' }));
+    try {
+      const execute = getAgentExecute(srv.url);
+      for (const params of [
+        { page: 0 },
+        { offset: -1 },
+        { url: 'https://example.com/a.pdf', documentId: 'pdf-id' },
+      ]) {
+        let failure: unknown;
+        try {
+          await execute({ method: 'readPdf', params }, mockContext);
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).to.be.instanceOf(UserError);
+        expect((failure as { code?: string }).code).to.equal('INVALID_PARAMS');
+      }
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  for (const compliant of [false, true]) {
+    it(`only advertises PDF reading on a supported surface, compliant=${compliant}`, async () => {
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads'
+          ? {
+              downloads: [{ filename: 'guide.pdf', pdfDocumentId: 'pdf-id' }],
+            }
+          : { text: 'done' },
+      );
+      try {
+        const result = JSON.stringify(
+          await getAgentExecute(
+            srv.url,
+            'stdio',
+            undefined,
+            compliant,
+          )({ method: 'text', keepSessionAlive: true }, mockContext),
+        );
+        expect(result).to.include('guide.pdf');
+        expect(result.includes('readPdf')).to.equal(!compliant);
+        expect(result.includes('pdf-id')).to.equal(!compliant);
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const documentId of ['downloaded-pdf', 'other-pdf']) {
+    it(`only offers the retained PDF after a batch reads ${documentId}`, async () => {
+      let polls = 0;
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads'
+          ? {
+              downloads:
+                ++polls === 1
+                  ? [{ filename: 'guide.pdf', pdfDocumentId: 'downloaded-pdf' }]
+                  : [],
+            }
+          : { documentId, text: 'PDF evidence', page: 3 },
+      );
+      try {
+        const result = await getAgentExecute(srv.url)(
+          {
+            commands: [{ method: 'getDownloads' }, { method: 'readPdf' }],
+            keepSessionAlive: true,
+          },
+          mockContext,
+        );
+        const content = (result as { content: Content[] }).content;
+        const downloadNotice = content.find(
+          (item) => item.type === 'text' && item.text.includes('Downloads:'),
+        );
+        expect(JSON.stringify(downloadNotice)).to.include('guide.pdf');
+        expect(
+          JSON.stringify(downloadNotice).includes('downloaded-pdf'),
+        ).to.equal(documentId === 'downloaded-pdf');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('preserves downloaded files but not PDF continuation after fatal retries', async () => {
+    let polls = 0;
+    const srv = await makeRespondingServer((method) =>
+      method === 'getDownloads'
+        ? {
+            downloads:
+              ++polls === 1
+                ? [
+                    {
+                      filename: 'guide.pdf',
+                      data: 'c2FmZQ==',
+                      pdfDocumentId: 'crashed-pdf-id',
+                    },
+                  ]
+                : [],
+          }
+        : new AgentErrorFrame({ code: 'BROWSER_CRASHED', message: 'crashed' }),
+    );
+    try {
+      let failure: unknown;
+      try {
+        await getAgentExecute(srv.url)(
+          {
+            commands: [{ method: 'getDownloads' }, { method: 'text' }],
+            keepSessionAlive: true,
+          },
+          mockContext,
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(UserError);
+      expect(String(failure)).to.include('crashed').and.include('guide.pdf');
+      expect(String(failure)).not.to.include('crashed-pdf-id');
+      expect(String(failure)).not.to.include('readPdf');
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const failure of ['command', 'poll']) {
     it(`preserves completed downloads when a later ${failure} fails`, async () => {
       let polls = 0;
@@ -2541,6 +2720,7 @@ describe('browserless_agent one-shot sessions', () => {
                         data: 'b2s=',
                         mimeType: 'text/plain',
                         size: 2,
+                        pdfDocumentId: 'expired-pdf-id',
                       },
                       { filename: 'pending.txt', inProgress: true },
                     ]
@@ -2566,6 +2746,8 @@ describe('browserless_agent one-shot sessions', () => {
         const stored = getDownload(id, downloadOwner('test-token'))!;
         expect(await fsReadFile(stored.path, 'utf8')).to.equal('ok');
         expect(result).to.include('Browser session closed (one-shot)');
+        expect(result).not.to.include('expired-pdf-id');
+        expect(result).to.include('PDF reading requires');
         for (let i = 0; !srv.closedConnections() && i < 100; i++) {
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
@@ -2945,7 +3127,15 @@ describe('browserless_agent one-shot sessions', () => {
         methods.push(method);
         return method === 'text'
           ? { text: 'finished result' }
-          : { downloads: [] };
+          : {
+              downloads: [
+                {
+                  filename: 'guide.pdf',
+                  error: 'Transfer unavailable',
+                  pdfDocumentId: 'retained-pdf-id',
+                },
+              ],
+            };
       });
       try {
         const analytics = new AnalyticsHelper(false);
@@ -2974,6 +3164,8 @@ describe('browserless_agent one-shot sessions', () => {
           expect(serialized).not.to.include('closed (one-shot)');
           expect(serialized).not.to.include('This browser stays open');
           expect(serialized).not.to.include('Omitting it opens a blank one');
+          expect(serialized).to.include('readPdf');
+          expect(serialized).to.include('retained-pdf-id');
           await execute({ method: 'text', sessionId: handle }, mockContext);
           expect(srv.hits()).to.equal(1);
         } else {
@@ -2986,6 +3178,9 @@ describe('browserless_agent one-shot sessions', () => {
           expect(serialized).to.include('FIRST call');
           expect(serialized).not.to.include('sessionId:');
           expect(serialized).not.to.include('reportSkillOutcome');
+          expect(serialized).not.to.include('retained-pdf-id');
+          expect(serialized).not.to.include('readPdf');
+          expect(serialized).to.include('PDF reading requires');
         }
       } finally {
         await srv.close();

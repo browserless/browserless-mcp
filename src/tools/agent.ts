@@ -303,6 +303,7 @@ type DownloadEntry = {
   error?: string;
   maxBytes?: number;
   sourceUrl?: string;
+  pdfDocumentId?: string;
   inProgress?: boolean;
   receivedBytes?: number;
   totalBytes?: number;
@@ -491,6 +492,8 @@ type FormatOpts = {
   sessionId?: string;
   mcpBaseUrl?: string;
   token?: string;
+  sessionOpen?: boolean;
+  compliant?: boolean;
 };
 
 // stdio: file is already on the local disk → return its path (reuse as
@@ -531,6 +534,9 @@ export const formatDownloads = async (
   opts: FormatOpts,
 ): Promise<Content[]> => {
   const lines: string[] = [];
+  const retainedPdfId = [...downloads]
+    .reverse()
+    .find((d) => d.pdfDocumentId)?.pdfDocumentId;
   for (const d of downloads) {
     if (d.inProgress) {
       lines.push(`- ${describeInProgressDownload(d)}`);
@@ -540,6 +546,17 @@ export const formatDownloads = async (
     lines.push(
       `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
     );
+    if (
+      !opts.compliant &&
+      d.pdfDocumentId &&
+      d.pdfDocumentId === retainedPdfId
+    ) {
+      lines.push(
+        opts.sessionOpen
+          ? `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is read.`
+          : '  PDF reading requires `keepSessionAlive: true` on the initial call; this browser session is closed and its PDF ID has expired.',
+      );
+    }
   }
   const header =
     opts.transport === 'stdio'
@@ -1153,13 +1170,14 @@ export const runAgentCommands = async (
   // import accepts it; re-validate a provided batch against the full
   // per-command contract here (the method/key guards above own their
   // specific messages). Legacy single-command calls stay loose except for
-  // outcome reports and credential writes.
+  // outcome reports, credential writes and PDF reads.
   if (
     params.commands?.length ||
     params.method === 'reportOutcome' ||
     params.method === 'reportSkillOutcome' ||
     params.method === 'reportProfileAuthentication' ||
-    params.method === 'saveSecret'
+    params.method === 'saveSecret' ||
+    params.method === 'readPdf'
   ) {
     const list = params.commands?.length ? params.commands : commands;
     const parsedCommands: Array<{
@@ -1593,6 +1611,8 @@ export const runAgentCommands = async (
       );
       return runCommands(true, retryPersona);
     }
+    // A retry may preserve downloaded files, but not references into its old browser.
+    for (const download of completedDownloads) delete download.pdfDocumentId;
     lastSession = agentSession;
     agentSessionHandle = agentSession.handle;
     const repetition = detectRepetition(agentSession.repeatState, commands);
@@ -2006,6 +2026,14 @@ export const runAgentCommands = async (
           ).filter((download) => !download.inProgress),
         );
       }
+      if (cmd.method === 'readPdf') {
+        const documentId = (resp.result as { documentId?: string } | undefined)
+          ?.documentId;
+        for (const download of completedDownloads) {
+          if (download.pdfDocumentId !== documentId)
+            delete download.pdfDocumentId;
+        }
+      }
       const observedUrl = (resp.result as { url?: unknown } | undefined)?.url;
       const activeSnapshot =
         cmd.method === SNAPSHOT_METHOD &&
@@ -2203,6 +2231,11 @@ export const runAgentCommands = async (
       extraText ? `${base}\n\n${extraText}` : base;
 
     const skillsText = extraText;
+    const sessionOpen =
+      !closedDuringBatch &&
+      Boolean(
+        keepAlive || downloadsPending || createProfile || attachSessionId,
+      );
     let baseContent: Content[];
 
     if (lastSnapshot) {
@@ -2279,6 +2312,8 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        sessionOpen,
+        compliant,
       });
     } else if (last.method === 'stopRecording') {
       // Video is never inlined → always a single-use download handle.
@@ -2337,6 +2372,8 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        sessionOpen,
+        compliant,
       });
       baseContent = [...baseContent, ...notice];
     }
@@ -2440,6 +2477,11 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          sessionOpen:
+            options.closeAfter !== 'always' &&
+            !!lastSession &&
+            lastSession.ws.readyState === lastSession.ws.OPEN,
+          compliant,
         });
         err.message += `\n\n${files
           .filter((content) => content.type === 'text')

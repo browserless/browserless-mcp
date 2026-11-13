@@ -383,6 +383,22 @@ const TextCommandSchema = z.object({
     .default({}),
 });
 
+const ReadPdfCommandSchema = z.object({
+  method: z.literal('readPdf'),
+  params: z
+    .object({
+      url: httpUrlString('url').max(8192).optional(),
+      documentId: z.string().min(1).optional(),
+      page: z.number().int().min(1).optional(),
+      offset: z.number().int().min(0).optional(),
+    })
+    .refine((p) => p.url === undefined || p.documentId === undefined, {
+      message: 'Use either PDF documentId or url, not both',
+    })
+    .optional()
+    .default({}),
+});
+
 const HtmlCommandSchema = z.object({
   method: z.literal('html'),
   params: z
@@ -845,6 +861,7 @@ const specificCommandSchemas = [
   ScrollCommandSchema,
   EvaluateCommandSchema,
   TextCommandSchema,
+  ReadPdfCommandSchema,
   HtmlCommandSchema,
   WaitForSelectorCommandSchema,
   WaitForNavigationCommandSchema,
