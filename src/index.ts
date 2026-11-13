@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -26,8 +27,12 @@ import { resolveBrowserlessRequestAuth } from './lib/http-auth.js';
 import {
   admitSessionRequest,
   authOutcome,
+  requestSessionId,
+  requestSessions,
   type SessionRefusal,
+  type SessionLike,
 } from './lib/session-binding.js';
+import { recordSessionOpen, whenSessionReady } from './lib/session-open.js';
 import { BoundedEventStore } from './lib/bounded-event-store.js';
 import {
   observeSessionRequest,
@@ -124,8 +129,30 @@ const oauthProvider =
     : undefined;
 
 const surface = config.complianceMode ? 'connector' : 'full';
-const eventStore = new BoundedEventStore(10_000, undefined, undefined, () =>
-  noteMissingStoreContext(surface),
+// Re-check the actual dependency files rather than trust a stale installation
+// marker after a dependency change. Verification never writes them.
+const retainedReplayVerified =
+  config.transport !== 'httpStream' ||
+  spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(
+        new URL('../../scripts/patch-fastmcp.mjs', import.meta.url),
+      ),
+      '--check-replay',
+    ],
+    { stdio: 'ignore', timeout: 5000 },
+  ).status === 0;
+if (!retainedReplayVerified)
+  console.warn(
+    '[browserless-mcp] Retained replay disabled: transport patch is not verified. Last-Event-ID requests return 400; re-send the request instead.',
+  );
+// Keep an explicit store: mcp-proxy substitutes a retaining store if omitted.
+const eventStore = new BoundedEventStore(
+  retainedReplayVerified ? 10_000 : 0,
+  undefined,
+  undefined,
+  () => noteMissingStoreContext(surface),
 );
 
 // Hybrid authenticate, in order: (1) Authorization header with a plain API
@@ -139,8 +166,7 @@ const hybridAuthenticate =
         // reaper from closing a session that is merely between calls or only
         // listing tools. `initialize` carries no session id yet; the reaper's
         // first discovery stamps sessions that never send another request.
-        const sidHeader = request.headers?.['mcp-session-id'];
-        const sid = Array.isArray(sidHeader) ? sidHeader[0] : sidHeader;
+        const sid = requestSessionId(request);
         const method =
           request.method === 'POST' ||
           request.method === 'GET' ||
@@ -156,14 +182,30 @@ const hybridAuthenticate =
         let owner: BrowserlessSession | undefined;
         let session: BrowserlessSession | undefined;
         try {
+          // Refuse before SDK dispatch: an unpatched replay implementation can
+          // turn an empty store result into an indefinitely open 200 stream.
+          if (
+            !retainedReplayVerified &&
+            method === 'GET' &&
+            request.headers['last-event-id'] !== undefined
+          )
+            throw new Response(
+              '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Retained replay unavailable; re-send the request"},"id":null}',
+              { status: 400, headers: { 'Content-Type': 'application/json' } },
+            );
           session = (await resolveBrowserlessRequestAuth(
             request,
             config,
           )) as BrowserlessSession;
-          admitSessionRequest(sid, session, server.sessions, (r, o) => {
-            refusal = r;
-            owner = o;
-          });
+          admitSessionRequest(
+            sid,
+            session,
+            requestSessions(request, server.sessions),
+            (r, o) => {
+              refusal = r;
+              owner = o;
+            },
+          );
           recordMcpRequest(
             'authenticated',
             performance.now() - authStartedAt,
@@ -176,7 +218,7 @@ const hybridAuthenticate =
               failed: false,
               auth: session,
               store: eventStore,
-              sessions: () => server.sessions,
+              sessions: () => requestSessions(request, server.sessions),
             }),
           );
           return session;
@@ -195,7 +237,7 @@ const hybridAuthenticate =
               refusal,
               owner,
               store: eventStore,
-              sessions: () => server.sessions,
+              sessions: () => requestSessions(request, server.sessions),
             }),
           );
           throw err;
@@ -285,6 +327,15 @@ server.on('connect', (event) => {
   }
   // Only the full surface asks clients to refresh the tool list on connect.
   announceToolListOnConnect(event.session, config);
+  if (config.transport === 'httpStream' && !config.complianceMode) {
+    const session = event.session;
+    whenSessionReady(session, () => {
+      const auth = (session as unknown as SessionLike).auth as
+        BrowserlessSession | undefined;
+      if (auth)
+        recordSessionOpen(auth, session.server.getClientVersion(), analytics);
+    });
+  }
 });
 
 if (amplitudeAnalytics || telemetryShutdown) {

@@ -1,10 +1,12 @@
-import { App, applyDocumentTheme } from '@modelcontextprotocol/ext-apps';
+import { App } from '@modelcontextprotocol/ext-apps';
+import { applyHostContext } from './host.mjs';
 import Player from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
 import './view.css';
 import { mountHandoff } from './handoff.mjs';
+import { mountLiveURL } from './live-url.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
-import { mountPerformance } from './performance.mjs';
+import { mountPerformance, mountPerformancePreview } from './performance.mjs';
 import { mountLogs } from './logs.mjs';
 import { mountAccountView } from './account-view.mjs';
 import {
@@ -32,6 +34,9 @@ const textBytes = new TextEncoder();
 let hostContext = {};
 let handoff;
 const handoffRoot = byId('handoff');
+let liveURL;
+const liveURLRoot = byId('live-url');
+const isLiveURLView = () => document.body.dataset.viewKind === 'live-url';
 let media;
 const mediaRoot = byId('agent-media');
 let performanceReport;
@@ -46,12 +51,36 @@ const isAccountView = () =>
 const isPerformanceView = () =>
   document.body.dataset.viewKind === 'performance' ||
   lastResult?.structuredContent?.kind === 'performance';
+const previews = {
+  performance: { root: () => performanceRoot, mount: mountPerformancePreview },
+};
+let preview;
+let inputPhase = 'waiting';
+function startPreview() {
+  const entry = previews[document.body.dataset.viewKind];
+  if (!entry) return;
+  card.hidden = true;
+  handoffRoot.hidden = true;
+  mediaRoot.hidden = true;
+  entry.root().hidden = false;
+  preview = entry.mount(entry.root());
+}
+function acceptInput(args, complete) {
+  if (!preview || inputPhase === 'settled' || inputPhase === 'complete') return;
+  try {
+    preview.update(args ?? {}, { complete });
+    inputPhase = complete ? 'complete' : 'partial';
+  } catch {
+    /* Partial input is best-effort; keep the current preview. */
+  }
+}
 function updateHost(context) {
   hostContext = { ...hostContext, ...context };
-  if (context.theme) applyDocumentTheme(context.theme);
+  applyHostContext(hostContext);
   handoff?.updateHost(context);
   media?.updateHost(context);
   logs?.updateHost(context);
+  accountView?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
     !hostContext.availableDisplayModes?.includes('fullscreen') &&
@@ -95,6 +124,8 @@ function updateTime(ms) {
   );
 }
 function dispose() {
+  preview?.dispose();
+  preview = undefined;
   clearTimeout(expiryTimer);
   player?.getReplayer().destroy();
   player?.$destroy();
@@ -103,6 +134,9 @@ function dispose() {
   enable(false);
   handoff?.dispose();
   handoff = undefined;
+  liveURL?.dispose();
+  liveURL = undefined;
+  liveURLRoot.hidden = true;
   media?.dispose();
   media = undefined;
   performanceReport?.dispose();
@@ -116,6 +150,13 @@ function dispose() {
 }
 function fail(error) {
   loading.abort();
+  if (isLiveURLView()) {
+    card.hidden = true;
+    liveURLRoot.hidden = false;
+    liveURL ??= mountLiveURL(liveURLRoot, { isError: true }, app);
+    liveURL.fail(error);
+    return;
+  }
   if (isAccountView()) {
     clearTimeout(expiryTimer);
     card.hidden = true;
@@ -328,6 +369,7 @@ async function loadData(rawSource, viewRef, signal) {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data));
 }
 async function render(result) {
+  inputPhase = 'settled';
   const current = ++generation;
   loading.abort();
   loading = new AbortController();
@@ -344,6 +386,12 @@ async function render(result) {
   progress('Loading your recording…');
   byId('state').textContent = 'Loading';
   try {
+    if (isLiveURLView()) {
+      liveURL = mountLiveURL(liveURLRoot, result, app);
+      card.hidden = true;
+      liveURLRoot.hidden = !liveURL;
+      return;
+    }
     if (result.isError)
       throw new Error(
         result.content?.find((item) => item.type === 'text')?.text ||
@@ -355,6 +403,12 @@ async function render(result) {
       performanceReport = mountPerformance(
         performanceRoot,
         result.structuredContent,
+        app,
+        (reply) => {
+          if (current !== generation) return;
+          lastResult = reply;
+          void render(reply);
+        },
       );
       card.hidden = true;
       performanceRoot.hidden = false;
@@ -369,7 +423,7 @@ async function render(result) {
     }
     const expires = Date.parse(view.expiresAt);
     if (['usage', 'active-sessions'].includes(view.kind)) {
-      accountView = mountAccountView(accountRoot, view, app);
+      accountView = mountAccountView(accountRoot, view, app, hostContext);
       card.hidden = true;
       accountRoot.hidden = false;
       return;
@@ -484,11 +538,15 @@ resize.observe(stage);
 byId('retry').onclick = () => {
   if (lastResult) void render(lastResult);
 };
+app.ontoolinputpartial = (params) => acceptInput(params?.arguments, false);
+app.ontoolinput = (params) => acceptInput(params?.arguments, true);
 app.ontoolresult = (result) => {
+  if (performanceReport?.acceptResult?.(result)) return;
   lastResult = result;
   void render(result);
 };
 app.ontoolcancelled = (params) => {
+  inputPhase = 'settled';
   generation++;
   fail(
     new Error(
@@ -498,12 +556,15 @@ app.ontoolcancelled = (params) => {
           ? params?.reason || 'Account view was cancelled.'
           : isPerformanceView()
             ? params?.reason || 'Performance audit was cancelled.'
-            : 'Replay loading was cancelled.',
+            : isLiveURLView()
+              ? params?.reason || 'Live viewer was cancelled.'
+              : 'Replay loading was cancelled.',
     ),
   );
 };
 app.onhostcontextchanged = updateHost;
 app.onteardown = async () => {
+  inputPhase = 'settled';
   generation++;
   loading.abort();
   dispose();
@@ -511,6 +572,7 @@ app.onteardown = async () => {
   resize.disconnect();
   return {};
 };
+startPreview();
 app
   .connect()
   .then(() => {

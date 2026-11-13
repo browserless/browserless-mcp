@@ -50,6 +50,10 @@ updates:
     directory: /docker
     schedule:
       interval: weekly
+    ignore:
+      # Keep Node 26 and the Dockerfile's Trixie variant; allow digest refreshes.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /

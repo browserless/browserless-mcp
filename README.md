@@ -439,7 +439,7 @@ https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://prod
 
 When both headers and query parameters are present, headers take precedence.
 
-API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
+API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Overrides for `browserless.io` and its subdomains must use `https://`, because the API token travels with each request; the configured origin is exempt. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
 
 ### Claude Desktop
 
@@ -621,6 +621,26 @@ completions / valid completions. Do not add the separate server `Skill Lookup`
 events to either denominator. Tests use local/mock sinks; a configured exporter
 or console message is not proof of remote receipt.
 
+### Session and analytics-delivery diagnostics
+
+On the full `httpStream` surface, each ready session emits an INFO `browserless.mcp.session.open`
+OTLP record with `transport`, `auth_method`, `key_fp` (a 16-hex token fingerprint),
+`source`, `client_family`, `user_agent_family`, and `usage_mode`. Known account IDs are included.
+Client names/versions use 128-code-point escaped previews in both logs and queue events.
+Source and UA families use known labels or `unknown`; no raw token or UA in log/event properties.
+The compliant surface and stdio do not emit session-open records.
+
+`MCP Session Started` uses only the existing authenticated analytics queue,
+never the SDK transport: full-surface SSE sessions only, when analytics is
+enabled. The queue consumer resolves identity using its authentication field.
+
+`browserless.mcp.amplitude.delivery_failed` WARN records aggregate `event_type`,
+integer `status`, sanitized `reason`, `count`, and `window_s=60`. Each window
+holds at most 12 distinct keys plus one overflow record. Reasons drop text
+after the first colon, redact key-like runs and email-like words, and escape a bounded preview.
+One stderr summary per window replaces per-failure SDK lines; real status counts survive overflow.
+Shutdown awaits final/in-flight exports with the exporter's one-second deadline.
+
 ### Failure diagnostics
 
 `MCP Tool Request` retains `analytics_version=2`, the existing coarse
@@ -672,7 +692,25 @@ before treating these properties as available in production.
 ## Live URL instructions
 
 `browserless_live_url` creates viewer links over REST for an existing browser.
-Set `action: "create"`, `browserId`, and `interactable: true` for a human handoff:
+On the full HTTP surface, `action: "create"` opens an inline live viewer for
+clients that advertise MCP Apps support. The original JSON result, including
+the viewer URL, remains in `content` for clients that advertise Apps support
+but do not render widgets. The widget reads its viewer URL from `_meta`; IDs
+and lifetime metadata are available in `structuredContent`. Direct viewers do
+not use the shared snapshot store. If a successful create cannot be embedded,
+its JSON result is still returned instead of failing the mutation or creating
+another link.
+
+Non-create actions render no widget content. The viewer's local disconnect timer
+uses the server-reported remaining duration, not the client's wall clock. The
+backend enforces the actual link lifetime, including for delayed or restored
+results; the local timer is not an authorization check.
+
+`status` and `close` return lifecycle results without embedding a viewer. Direct
+creation does not keep the browser alive or pause automation. To pause an agent
+for human input, use `handoff` → `browserless_show` and then `handoff_status`.
+
+Set `action: "create"`, `browserId`, and `interactable: true` for an interactive viewer:
 
 ```json
 {
@@ -747,7 +785,9 @@ The test suite uses [Mocha](https://mochajs.org/) with [Chai](https://www.chaijs
 - `npm test` — compiles TypeScript and runs every `*.spec.js` under `build/test/`. No external services or `BROWSERLESS_TOKEN` are required; the API client is stubbed.
 - `npm run coverage` — runs the suite under [c8](https://github.com/bcoe/c8) with the thresholds configured in `package.json` (lines ≥ 80%, branches ≥ 70%, functions ≥ 80%).
 
-Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24. PRs must keep the suite green before they can merge.
+Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24.x and 26.x. Development and publishing use Node 26 from `.nvmrc`; with nvm, run `nvm install` and `nvm use`. PRs must keep the suite green before they can merge.
+
+The published package retains its Node.js >=24 engine requirement; Node 22 is not supported. Use an LTS release (24 or 26). Docker uses a digest-pinned Node 26 Trixie image, with weekly Dependabot digest updates and Node-major upgrades excluded. Official Linux Node 26 binaries require `libatomic`; the image includes `libatomic1`. Container publishing targets Linux amd64 and arm64.
 
 ## API Token
 

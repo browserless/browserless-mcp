@@ -13,6 +13,8 @@ import {
   COMPLIANT_EXPORT_DESCRIPTION,
   COMPLIANT_MAP_DESCRIPTION,
   COMPLIANT_PERFORMANCE_DESCRIPTION,
+  PERFORMANCE_RUN_DESCRIPTION,
+  PERFORMANCE_RESULT_DESCRIPTION,
   COMPLIANT_SEARCH_DESCRIPTION,
   READ_PAGE_DESCRIPTION,
   visibleSkills,
@@ -253,18 +255,20 @@ describe('compliance mode — compliant tool surface', () => {
     }
   });
 
-  it('registers exactly the five connector tools', () => {
+  it('registers exactly the seven connector tools including inline audit readers', () => {
     const { names } = captureTools(true);
     expect(names).to.deep.equal([
       'browserless_export',
       'browserless_map',
       'browserless_performance',
+      'browserless_performance_result',
+      'browserless_performance_run',
       'browserless_read_page',
       'browserless_search',
     ]);
   });
 
-  it('full stdio mode registers exactly the 19 tools (regression guard)', () => {
+  it('full stdio mode registers exactly the 21 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
@@ -278,6 +282,8 @@ describe('compliance mode — compliant tool surface', () => {
       'browserless_logs',
       'browserless_map',
       'browserless_performance',
+      'browserless_performance_result',
+      'browserless_performance_run',
       'browserless_profiles',
       'browserless_search',
       'browserless_sessions',
@@ -312,10 +318,10 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('full HTTP adds stage_file and the handoff reader for exactly 21 tools', () => {
+  it('full HTTP adds stage_file and the handoff reader for exactly 23 tools', () => {
     const stdio = captureTools(false).names;
     const http = captureTools(false, 'httpStream').names;
-    expect(http).to.have.length(21);
+    expect(http).to.have.length(23);
     expect(http).to.deep.equal(
       [...stdio, 'browserless_stage_file', 'browserless_handoff_state'].sort(),
     );
@@ -369,7 +375,9 @@ describe('compliance mode — compliant tool surface', () => {
     it('compliant mode exposes only the self-contained performance UI resource', () => {
       const { promptNames, resourceUris } = captureTools(true);
       expect(promptNames).to.deep.equal([]);
-      expect(resourceUris).to.deep.equal([PERFORMANCE_URI]);
+      expect(resourceUris).to.deep.equal(
+        [PERFORMANCE_URI, 'ui://browserless/performance/v3.html'].sort(),
+      );
     });
 
     it('full mode serves the prompts + api-docs resource', () => {
@@ -911,6 +919,8 @@ describe('compliance mode — compliant tool surface', () => {
         'waitForTimeout',
       ],
       browserless_performance: ['categories', 'device', 'timeout', 'url'],
+      browserless_performance_run: ['auditRef'],
+      browserless_performance_result: ['auditRef'],
       browserless_search: [
         'categories',
         'country',
@@ -992,6 +1002,8 @@ describe('compliance mode — compliant tool surface', () => {
         browserless_export: COMPLIANT_EXPORT_DESCRIPTION,
         browserless_map: COMPLIANT_MAP_DESCRIPTION,
         browserless_performance: COMPLIANT_PERFORMANCE_DESCRIPTION,
+        browserless_performance_run: PERFORMANCE_RUN_DESCRIPTION,
+        browserless_performance_result: PERFORMANCE_RESULT_DESCRIPTION,
         browserless_read_page: READ_PAGE_DESCRIPTION,
         browserless_search: COMPLIANT_SEARCH_DESCRIPTION,
       };

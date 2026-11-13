@@ -215,6 +215,42 @@
   font-size: 10px;
 }
 @media (max-width: 480px) {
+  .logs-view table {
+    min-width: 0;
+  }
+  .logs-view :is(table, tbody, tr, td) {
+    display: block;
+  }
+  .logs-view thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .logs-view tr:not(.logs-detail) {
+    border-bottom: 1px solid var(--border);
+  }
+  .logs-view td {
+    display: grid;
+    grid-template-columns: minmax(0, 35%) minmax(0, 1fr);
+    max-width: none;
+    border: 0;
+  }
+  .logs-view td[data-label]::before {
+    content: attr(data-label);
+    color: var(--muted);
+  }
+  .logs-view td[data-label] > small {
+    grid-column: 2;
+  }
+  .logs-view .logs-detail td {
+    display: block;
+  }
+  .logs-view tr[hidden] {
+    display: none;
+  }
   .logs-filter-grid {
     grid-template-columns: minmax(0, 1fr);
   }

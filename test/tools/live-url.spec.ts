@@ -229,7 +229,10 @@ describe('browserless_live_url', () => {
   });
 
   it('retries plain page listing on 503', async () => {
-    const clock = sinon.useFakeTimers();
+    // Keep native microtasks for Response.text() on Node 26; only advance retry timers.
+    const clock = sinon.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'Date'],
+    });
     fetchStub
       .onFirstCall()
       .resolves(new Response('Unavailable', { status: 503 }));
@@ -410,7 +413,10 @@ describe('browserless_live_url', () => {
   });
 
   it('retries transient status failures', async () => {
-    const clock = sinon.useFakeTimers();
+    // Keep native microtasks for Response.text() on Node 26; only advance retry timers.
+    const clock = sinon.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'Date'],
+    });
     fetchStub
       .onFirstCall()
       .resolves(new Response('Temporary failure', { status: 500 }));

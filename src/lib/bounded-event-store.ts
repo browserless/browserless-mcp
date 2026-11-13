@@ -99,14 +99,34 @@ export class BoundedEventStore implements EventStore {
 
   async replayEventsAfter(
     lastEventId: string,
-    {
-      send,
-      sessionId,
-    }: {
+    options: {
       send: (eventId: string, message: JSONRPCMessage) => Promise<void>;
       sessionId?: string;
     },
   ): Promise<string> {
+    const events: [string, JSONRPCMessage][] = [];
+    const streamId = this.replayEventsAfterSync(lastEventId, {
+      sessionId: options.sessionId,
+      send: (id, message) => {
+        events.push([id, message]);
+      },
+    });
+    for (const [id, message] of events) await options.send(id, message);
+    return streamId;
+  }
+
+  // The transport uses this for a final catch-up and registers its live stream
+  // in the same turn, with no promise gap in which a result can be missed.
+  replayEventsAfterSync(
+    lastEventId: string,
+    {
+      send,
+      sessionId,
+    }: {
+      send: (eventId: string, message: JSONRPCMessage) => void;
+      sessionId?: string;
+    },
+  ): string {
     this.evictExpired(Date.now());
     if (
       lastEventId &&
@@ -119,7 +139,7 @@ export class BoundedEventStore implements EventStore {
     }
 
     const context = this.events.get(lastEventId)!.sessionId;
-    if (context !== undefined && context !== sessionId) return '';
+    if (!sessionId || context !== sessionId) return '';
 
     const streamId = this.getStreamIdFromEventId(lastEventId);
     if (!streamId) {
@@ -127,17 +147,16 @@ export class BoundedEventStore implements EventStore {
     }
 
     let foundLastEvent = false;
-    // Snapshot to avoid absorbing events added concurrently during async send()
+    // Snapshot so a callback cannot extend its own replay by adding events.
     const snapshot = [...this.events.entries()];
     for (const [eventId, event] of snapshot) {
       if (event.streamId !== streamId) continue;
-      if (event.sessionId !== undefined && event.sessionId !== sessionId)
-        continue;
+      if (event.sessionId !== sessionId) continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
         continue;
       }
-      await send(eventId, event.message);
+      send(eventId, event.message);
     }
 
     return streamId;

@@ -1,6 +1,8 @@
 import { FastMCP, UserError } from 'fastmcp';
+import type { ContentResult } from 'fastmcp';
 import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
+import { LIVE_URL_URI, liveURLView } from '../lib/live-url-view.js';
 import { getActiveSessionByHandle } from '../lib/agent-client.js';
 import { prepareHandoff, findHandoff, readHandoff } from '../lib/handoff.js';
 import { VIEW_UNAVAILABLE } from '../lib/view-store.js';
@@ -109,6 +111,7 @@ export function registerLiveURLTool(
   config: McpConfig,
   analytics?: AnalyticsHelper,
 ): void {
+  const inline = !isCompliant(config) && config.transport === 'httpStream';
   defineTool<
     z.infer<typeof LiveURLParamsSchema>,
     | LiveURLCreated
@@ -116,10 +119,12 @@ export function registerLiveURLTool(
     | BrowserPages
     | PreparedView
     | { closed: true }
+    | ContentResult
   >(server, config, analytics, {
     name: 'browserless_live_url',
     description:
       'Create, inspect, or close a live viewer link for an existing browser through REST, without an agent connection. ' +
+      'In MCP Apps clients, create displays the viewer inline; other clients receive the viewer URL as JSON. Direct create does not pause automation. ' +
       'Use pages to list browser tabs; mint=true adds per-tab live links. Reused links may be interactive, while new bulk links are view-only and pinned to their tabs. ' +
       'Pages returns targetId, url, title, active, and browserContextId. Create accepts targetId to stream a specific tab; mode follow jumps to new tabs, while tab stays on one tab. ' +
       'Create options default on the server: view-only, jpeg, quality 70, not resizable, browser interface shown (hidden with targetId). ' +
@@ -135,6 +140,14 @@ export function registerLiveURLTool(
         ? 'For MCP Apps, use action handoff with the existing agent sessionId and plain-text instructions. Keep the browser open first. This pauses automation and returns a viewRef: display it with browserless_show. Wait for the person, then use handoff_status with that viewRef; continue with a fresh snapshot in the same session only when reason is userDone. Never open a replacement browser.'
         : ''),
     parameters: LiveURLParamsSchema,
+    ...(inline
+      ? {
+          _meta: {
+            ui: { resourceUri: LIVE_URL_URI },
+            'openai/outputTemplate': LIVE_URL_URI,
+          },
+        }
+      : {}),
     annotations: {
       title: 'Browserless Live URL',
       readOnlyHint: false,
@@ -222,7 +235,19 @@ export function registerLiveURLTool(
         ) {
           throw new UserError('PNG only supports explicit quality 100.');
         }
-        return client.createLiveURL(browserId, options);
+        const started = Date.now();
+        const result = await client.createLiveURL(browserId, options);
+        return inline && uiEnabled
+          ? liveURLView(
+              result,
+              browserId,
+              apiUrl,
+              started,
+              apiUrl === config.browserlessApiUrl
+                ? config.publicBrowserlessUrl
+                : undefined,
+            )
+          : result;
       }
       if (!liveURLId)
         throw new UserError('liveURLId is required for status and close.');
@@ -231,6 +256,15 @@ export function registerLiveURLTool(
       return { closed: true };
     },
     analyticsProps: (params) => ({ action: params.action }),
-    format: (result) => [{ type: 'text', text: JSON.stringify(result) }],
+    format: (result, params, { uiEnabled }) => {
+      if ('content' in result) return result;
+      const content = [{ type: 'text' as const, text: JSON.stringify(result) }];
+      return inline && uiEnabled
+        ? {
+            content,
+            structuredContent: { kind: 'live-url', action: params.action },
+          }
+        : content;
+    },
   });
 }

@@ -4,13 +4,18 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { BrowserlessSession } from '../../src/@types/types.js';
 import {
   authInputFromRequest,
   resolveBrowserlessAuth,
 } from '../../src/lib/http-auth.js';
-import { admitSessionRequest } from '../../src/lib/session-binding.js';
+import {
+  admitSessionRequest,
+  requestSessionId,
+  requestSessions,
+} from '../../src/lib/session-binding.js';
 import { clearResolverCache } from '../../src/lib/account-resolver.js';
 import { BoundedEventStore } from '../../src/lib/bounded-event-store.js';
 
@@ -107,11 +112,10 @@ async function fixture() {
     version: '1.0.0',
     authenticate: async (req) => {
       const auth = await resolveBrowserlessAuth(authInputFromRequest(req), cfg);
-      const header = req.headers['mcp-session-id'];
       admitSessionRequest(
-        Array.isArray(header) ? header[0] : header,
+        requestSessionId(req),
         auth,
-        server.sessions,
+        requestSessions(req, server.sessions),
       );
       return auth;
     },
@@ -119,20 +123,22 @@ async function fixture() {
   server.addTool({
     name: 'probe',
     description: 'Local probe',
-    parameters: z.object({}),
-    execute: async (_args, { log }) => {
+    parameters: z.object({ wait: z.boolean().optional() }),
+    execute: async ({ wait }, { log }) => {
       calls++;
       log.info('probe ran');
+      if (wait) await delay(300);
       return 'ok';
     },
   });
   const streams: ReturnType<typeof readFrames>[] = [];
+  const store = new BoundedEventStore();
   await server.start({
     transportType: 'httpStream',
     httpStream: {
       host: '127.0.0.1',
       port,
-      eventStore: new BoundedEventStore(),
+      eventStore: store,
     },
   });
   const url = `http://127.0.0.1:${port}/mcp`;
@@ -191,6 +197,7 @@ async function fixture() {
   };
   return {
     url,
+    store,
     headers,
     post,
     initialize,
@@ -249,39 +256,70 @@ describe('session request identity', () => {
     });
   }
 
-  it('replays request results only for the opening identity and session', async () => {
-    const a = await f.initialize(A),
-      b = await f.initialize(B);
-    const original = f.track(
-      await f.post(a, A, 'tools/call', { name: 'probe', arguments: {} }, 42),
-    );
-    await waitFor(() =>
-      original.frames.some((frame) => frame.data.includes('"id":42')),
-    );
-    const cursor = original.frames[0].id!;
-    expect(cursor).to.be.a('string').and.not.empty;
-    for (const [key, status] of [
-      [undefined, 401],
-      [B, 404],
-      ['x', 404],
-    ] as const) {
-      const denied = await f.get(a, key, cursor);
-      expect(denied.status).to.equal(status);
-      expect(await denied.text()).not.to.include('"result"');
-    }
-    const other = f.track(await f.get(b, B, cursor));
-    const owner = f.track(await f.get(a, A, cursor));
-    await waitFor(() =>
-      owner.frames.some((frame) => frame.data.includes('"id":42')),
-    );
-    expect(
-      JSON.parse(
-        owner.frames.find((frame) => frame.data.includes('"id":42'))!.data,
-      ).result,
-    ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
-    await delay(100);
-    expect(other.frames).to.deep.equal([]);
-  });
+  const jwt = (sub: string, account: string, jti: string) =>
+    `e30.${Buffer.from(JSON.stringify({ sub, account, jti })).toString('base64url')}.test`;
+  for (const { label, ownerKey, refreshedKey, foreignKeys } of [
+    { label: 'API keys', ownerKey: A, refreshedKey: A, foreignKeys: [B, 'x'] },
+    {
+      label: 'OAuth users',
+      ownerKey: jwt('u1', 'account1', 'original'),
+      refreshedKey: jwt('u1', 'account1', 'refreshed'),
+      foreignKeys: [
+        jwt('u2', 'account1', 'other-user'),
+        jwt('u1', 'account2', 'other-account'),
+        A,
+      ],
+    },
+  ]) {
+    it(`replays offline results only for the opening identity and session (${label})`, async () => {
+      const a = await f.initialize(ownerKey),
+        b = await f.initialize(foreignKeys[0]),
+        otherOwnerSession = await f.initialize(refreshedKey);
+      const original = f.track(
+        await f.post(
+          a,
+          ownerKey,
+          'tools/call',
+          { name: 'probe', arguments: { wait: true } },
+          42,
+        ),
+      );
+      await waitFor(() => original.frames.some((frame) => frame.id));
+      const cursor = original.frames[0].id!;
+      expect(cursor).to.be.a('string').and.not.empty;
+      expect(
+        original.frames.some((frame) => frame.data.includes('"id":42')),
+      ).to.equal(false);
+      const retained = f.store.size;
+      await original.close();
+      await waitFor(() => f.store.size > retained);
+      for (const key of [undefined, ...foreignKeys]) {
+        const denied = await f.get(a, key, cursor);
+        expect(denied.status).to.equal(key === undefined ? 401 : 404);
+        expect(await denied.text()).not.to.include('"result"');
+      }
+      for (const [session, key, replayCursor] of [
+        [b, foreignKeys[0], cursor],
+        [otherOwnerSession, refreshedKey, cursor],
+        [a, refreshedKey, 'unknown-cursor'],
+      ]) {
+        const denied = await f.get(session, key, replayCursor);
+        expect(denied.status).to.equal(400);
+        expect(await denied.text()).not.to.include('"result"');
+      }
+      const owner = f.track(await f.get(a, refreshedKey, cursor));
+      await waitFor(() =>
+        owner.frames.some((frame) => frame.data.includes('"id":42')),
+      );
+      expect(
+        JSON.parse(
+          owner.frames.find((frame) => frame.data.includes('"id":42'))!.data,
+        ).result,
+      ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+      await delay(100);
+      expect(f.calls()).to.equal(1);
+    });
+  }
 
   it('admits calls and termination only for the opening identity', async () => {
     const sid = await f.initialize(A);
@@ -365,7 +403,25 @@ describe('session request identity', () => {
     }
   });
 
-  it('keeps legacy SSE message delivery unchanged', async () => {
+  it('supports a standard query-authenticated SSE client without header injection', async () => {
+    const client = new Client({ name: 'sse-query', version: '1' });
+    try {
+      await client.connect(
+        new SSEClientTransport(
+          new URL(f.url.replace('/mcp', `/sse?token=${A}`)),
+        ),
+      );
+      expect(
+        (await client.listTools()).tools.map((tool) => tool.name),
+      ).to.include('probe');
+      await client.callTool({ name: 'probe', arguments: {} });
+      expect(f.calls()).to.equal(1);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('requires the opening identity for legacy SSE message posts', async () => {
     const stream = f.track(
       await fetch(f.url.replace('/mcp', `/sse?token=${A}`)),
     );
@@ -376,6 +432,44 @@ describe('session request identity', () => {
       stream.frames.find((frame) => frame.event === 'endpoint')!.data,
       f.url,
     );
+    const advertisedEndpoint = new URL(endpoint);
+    expect(endpoint.searchParams.get('token')).to.equal(A);
+    endpoint.searchParams.delete('token');
+    const denied = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 90,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'sse', version: '1' },
+        },
+      }),
+    });
+    expect(denied.status).to.equal(401);
+    expect(await denied.json()).to.have.nested.property('error.code', -32000);
+    const send = (
+      target: URL,
+      key: string | undefined,
+      id: number | undefined,
+      method = 'tools/call',
+      params: object = { name: 'probe', arguments: {} },
+    ) =>
+      fetch(target, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      });
+    // Refusals also identify the opening session before initialize completes.
+    const firstOther = await send(endpoint, B, 91);
+    expect(firstOther.status).to.equal(404);
+    expect(await firstOther.text()).to.equal(notFound);
     for (const [id, method, params] of [
       [
         1,
@@ -388,9 +482,11 @@ describe('session request identity', () => {
       ],
       [2, 'tools/list', {}],
     ] as const) {
-      const response = await fetch(endpoint, {
+      const response = await fetch(advertisedEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
       });
       expect(response.status).to.equal(202);
@@ -401,6 +497,135 @@ describe('session request identity', () => {
     expect(
       stream.frames.find((frame) => frame.data.includes('"id":2'))!.data,
     ).to.include('probe');
+    expect(
+      (await send(endpoint, A, undefined, 'notifications/initialized', {}))
+        .status,
+    ).to.equal(202);
+    expect((await send(endpoint, A, 3)).status).to.equal(202);
+    await waitFor(() =>
+      stream.frames.some((frame) => frame.data.includes('"id":3')),
+    );
+    expect(f.calls()).to.equal(1);
+    for (const [key, status, id] of [
+      [undefined, 401, 92],
+      [B, 404, 93],
+      ['a.b.c', 401, 94],
+    ] as const) {
+      const response = await send(endpoint, key, id);
+      expect(response.status).to.equal(status);
+      if (status === 404) expect(await response.text()).to.equal(notFound);
+      else
+        expect(await response.json()).to.have.nested.property(
+          'error.code',
+          -32000,
+        );
+    }
+    for (const sid of ['unknown', 'x'.repeat(10000)]) {
+      const target = new URL(endpoint);
+      target.searchParams.set('sessionId', sid);
+      const response = await send(target, A, 95);
+      expect(response.status).to.equal(404);
+      expect(await response.text()).to.equal(notFound);
+    }
+    const prefix = new URL(endpoint);
+    prefix.pathname = '/messagesX';
+    const otherPrefix = await send(prefix, B, 96);
+    expect(otherPrefix.status).to.equal(404);
+    expect(await otherPrefix.text()).to.equal(notFound);
+    expect((await send(prefix, A, 4, 'tools/list', {})).status).to.equal(202);
+    const duplicate = new URL(endpoint);
+    duplicate.searchParams.append('sessionId', 'unknown');
+    expect((await send(duplicate, A, 5, 'tools/list', {})).status).to.equal(
+      202,
+    );
+    const query = new URL(endpoint);
+    query.searchParams.set('token', B);
+    expect((await send(query, undefined, 97)).status).to.equal(404);
+    query.searchParams.set('token', A);
+    expect((await send(query, undefined, 6, 'tools/list', {})).status).to.equal(
+      202,
+    );
+    for (const value of ['', undefined]) {
+      const target = new URL(endpoint);
+      if (value === undefined) target.searchParams.delete('sessionId');
+      else target.searchParams.set('sessionId', value);
+      expect((await send(target, A, 98)).status).to.equal(400);
+      expect((await send(target, undefined, 99)).status).to.equal(401);
+    }
+    expect(
+      (
+        await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${A}`,
+          },
+          body: '{',
+        })
+      ).status,
+    ).to.equal(400);
+    expect((await send(endpoint, A, 7, 'tools/list', {})).status).to.equal(202);
+    await waitFor(() =>
+      stream.frames.some((frame) => frame.data.includes('"id":7')),
+    );
+    await delay(500);
+    expect(
+      stream.frames
+        .filter((frame) => frame.event === 'message')
+        .some((frame) => JSON.parse(frame.data).id >= 90),
+    ).to.equal(false);
+    expect(f.calls()).to.equal(1);
+  });
+
+  it('accepts refreshed OAuth identities on legacy SSE posts', async () => {
+    const jwt = (sub: string, jti: string) =>
+      `e30.${Buffer.from(JSON.stringify({ sub, account: 'account-binding', jti })).toString('base64url')}.test`;
+    const stream = f.track(
+      await fetch(f.url.replace('/mcp', '/sse'), {
+        headers: { Authorization: `Bearer ${jwt('u1', 'one')}` },
+      }),
+    );
+    await waitFor(() =>
+      stream.frames.some((frame) => frame.event === 'endpoint'),
+    );
+    const endpoint = new URL(
+      stream.frames.find((frame) => frame.event === 'endpoint')!.data,
+      f.url,
+    );
+    const post = (key: string, id: number, method: string, params: object) =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      });
+    expect(
+      (
+        await post(jwt('u1', 'two'), 1, 'initialize', {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'sse', version: '1' },
+        })
+      ).status,
+    ).to.equal(202);
+    await waitFor(() =>
+      stream.frames.some((frame) => frame.data.includes('"id":1')),
+    );
+    expect(
+      (await post(jwt('u1', 'three'), 2, 'tools/list', {})).status,
+    ).to.equal(202);
+    await waitFor(() =>
+      stream.frames.some((frame) => frame.data.includes('"id":2')),
+    );
+    const denied = await post(jwt('u2', 'four'), 3, 'tools/call', {
+      name: 'probe',
+      arguments: {},
+    });
+    expect(denied.status).to.equal(404);
+    expect(await denied.text()).to.equal(notFound);
+    expect(f.calls()).to.equal(0);
   });
 
   it('answers malformed session and credential inputs without disrupting the session', async () => {
