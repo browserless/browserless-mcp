@@ -57,10 +57,16 @@ numbers, security codes, passwords, or one-time codes.
    snapshot to find it. Never clear secret gates before a terminal result
    or invent a readiness predicate. Then call checkout with
    `action: "report", outcome: "success"` to request backend confirmation, not
-   to assert the payment succeeded. A returned `succeeded` is a Link-confirmed
-   payment (Link Pay Token path). A returned `submitted` is the terminal result
+   to assert the payment succeeded. Only `succeeded` with
+   `verified.payment_confirmed: true` is a Link-confirmed payment. A returned
+   `submitted` is the terminal result
    for a one-time card: Link cannot confirm the merchant's charge, so success is
-   confirmable only on the merchant side. After a terminal result, confirm the
+   confirmable only on the merchant side. A returned `recovery_required` means
+   Link recorded a payment that does not match the approval. Do not resubmit or
+   create a new checkout; tell the user to review the payment in Link activity.
+   Label `verified` facts as "confirmed by Link" and merchant-page facts as
+   "seen on the merchant page". Never call a purchase confirmed from page
+   content alone. After a terminal result, confirm the
    fill has completed and secret-bearing content is gone from every tab,
    including hidden fields, before calling `clearSecrets`. If that cannot be
    confirmed, do not clear or capture. Otherwise request a fresh `snapshot` of

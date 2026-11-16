@@ -93,6 +93,7 @@ const STATUSES = new Set([
   'submitted',
   'blocked',
   'abandoned',
+  'recovery_required',
 ]);
 const RESUMABLE_STATUSES = new Set([
   'created',
@@ -109,6 +110,7 @@ const TERMINAL_STATUSES = new Set([
   'submitted',
   'blocked',
   'abandoned',
+  'recovery_required',
 ]);
 const STRIPE_LINK_HOSTS = (host: string): boolean =>
   host === 'link.com' ||
@@ -485,6 +487,82 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
   }
   if (typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4)) {
     result.last4 = body.last4;
+  }
+  if (body.verified !== undefined) {
+    const schema = z.object({
+      source: z.literal('stripe_link'),
+      payment_confirmed: z.boolean(),
+      link_status: z.enum([
+        'created',
+        'pending_approval',
+        'requires_action',
+        'approved',
+        'submitted',
+        'succeeded',
+        'denied',
+        'failed',
+        'canceled',
+        'expired',
+      ]),
+      amount_minor: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(Number.MAX_SAFE_INTEGER)
+        .optional(),
+      currency: z
+        .string()
+        .regex(/^[a-z]{3}$/)
+        .optional(),
+      merchant: z
+        .string()
+        .max(160)
+        .refine((value) => Boolean(value.trim()) && !/[\r\n]/.test(value))
+        .optional(),
+      last4: z
+        .string()
+        .regex(/^\d{4}$/)
+        .optional(),
+      charged_amount_minor: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(Number.MAX_SAFE_INTEGER)
+        .optional(),
+      charged_at: z
+        .string()
+        .refine((value) => Number.isFinite(Date.parse(value)))
+        .optional(),
+      mismatch: z
+        .array(
+          z.enum([
+            'amount_minor',
+            'currency',
+            'merchant',
+            'charged_amount_minor',
+            'charged_currency',
+            'charge_outcome',
+          ]),
+        )
+        .nonempty()
+        .refine((values) => new Set(values).size === values.length)
+        .optional(),
+    });
+    const parsed = schema.safeParse(body.verified);
+    if (!parsed.success) {
+      throw new Error('Browserless returned an invalid checkout verification');
+    }
+    result.verified = parsed.data;
+  }
+  if (
+    (result.status === 'recovery_required' &&
+      (!result.verified?.mismatch || result.verified.payment_confirmed)) ||
+    (result.status !== 'recovery_required' && result.verified?.mismatch) ||
+    (result.verified?.payment_confirmed &&
+      (result.status !== 'succeeded' ||
+        result.verified.link_status !== 'succeeded'))
+  ) {
+    throw new Error('Browserless returned an invalid checkout verification');
   }
   return result;
 };
