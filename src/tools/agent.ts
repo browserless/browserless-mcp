@@ -553,7 +553,7 @@ export const formatDownloads = async (
     ) {
       lines.push(
         opts.sessionOpen
-          ? `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is read.`
+          ? `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is captured.`
           : '  PDF reading requires `keepSessionAlive: true` on the initial call; this browser session is closed and its PDF ID has expired.',
       );
     }
@@ -2026,9 +2026,14 @@ export const runAgentCommands = async (
           ).filter((download) => !download.inProgress),
         );
       }
-      if (cmd.method === 'readPdf') {
-        const documentId = (resp.result as { documentId?: string } | undefined)
-          ?.documentId;
+      if (
+        cmd.method === 'readPdf' ||
+        MEDIA_URL_CHANGING_METHODS.has(cmd.method)
+      ) {
+        const documentId =
+          cmd.method === 'readPdf'
+            ? (resp.result as { documentId?: string } | undefined)?.documentId
+            : undefined;
         for (const download of completedDownloads) {
           if (download.pdfDocumentId !== documentId)
             delete download.pdfDocumentId;

@@ -2576,6 +2576,50 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
+  for (const method of ['goto', 'click', 'evaluate']) {
+    it(`omits earlier PDF guidance after ${method} may capture another PDF`, async () => {
+      let polls = 0;
+      const srv = await makeRespondingServer((method) =>
+        method === 'getDownloads'
+          ? {
+              downloads:
+                ++polls === 1
+                  ? [{ filename: 'old.pdf', pdfDocumentId: 'downloaded-pdf' }]
+                  : [],
+            }
+          : { url: 'https://example.com/new.pdf' },
+      );
+      try {
+        const result = await getAgentExecute(srv.url)(
+          {
+            commands: [
+              { method: 'getDownloads' },
+              {
+                method,
+                params:
+                  method === 'goto'
+                    ? { url: 'https://example.com/new.pdf' }
+                    : method === 'click'
+                      ? { selector: 'a' }
+                      : { content: 'location.href' },
+              },
+            ],
+            keepSessionAlive: true,
+          },
+          mockContext,
+        );
+        const content = (result as { content: Content[] }).content;
+        const notice = content.find(
+          (item) => item.type === 'text' && item.text.includes('Downloads:'),
+        );
+        expect(JSON.stringify(notice)).to.include('old.pdf');
+        expect(JSON.stringify(notice)).not.to.include('downloaded-pdf');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
   it('preserves downloaded files but not PDF continuation after fatal retries', async () => {
     let polls = 0;
     const srv = await makeRespondingServer((method) =>
