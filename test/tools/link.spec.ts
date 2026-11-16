@@ -1490,8 +1490,6 @@ describe('Stripe Link tools', () => {
       { ...verified, last4: '4242\n' },
       { ...verified, charged_at: 'nope' },
       { ...verified, mismatch: [] },
-      { ...verified, mismatch: ['bogus'] },
-      { ...verified, mismatch: ['amount_minor', 'amount_minor'] },
       { ...verified, mismatch: ['amount_minor'] },
     ].map((verified) => ({ status: 'succeeded', verified }));
     invalid.push(
@@ -1501,6 +1499,22 @@ describe('Stripe Link tools', () => {
         verified: { ...verified, link_status: 'submitted' },
       },
       { status: 'recovery_required', verified: undefined },
+      {
+        status: 'recovery_required',
+        verified: {
+          ...verified,
+          payment_confirmed: false,
+          mismatch: ['bogus'],
+        },
+      },
+      {
+        status: 'recovery_required',
+        verified: {
+          ...verified,
+          payment_confirmed: false,
+          mismatch: ['amount_minor', 'amount_minor'],
+        },
+      },
       {
         status: 'recovery_required',
         verified: { ...verified, payment_confirmed: false, mismatch: [] },
