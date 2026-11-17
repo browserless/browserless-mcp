@@ -61,9 +61,12 @@ numbers, security codes, passwords, or one-time codes.
    `verified.payment_confirmed: true` is a Link-confirmed payment. A returned
    `submitted` is the terminal result
    for a one-time card: Link cannot confirm the merchant's charge, so success is
-   confirmable only on the merchant side. A returned `recovery_required` means
-   Link recorded a payment that does not match the approval. Do not resubmit or
-   create a new checkout; tell the user to review the payment in Link activity.
+   confirmable only on the merchant side. A returned `recovery_required` with
+   `verified.mismatch` means Link recorded a payment that does not match the
+   approval. Without `verified`, the payment outcome is uncertain, such as when
+   confirmation times out; do not claim a confirmed payment or mismatch.
+   In either case, do not resubmit, resume, or create a new checkout; tell the
+   user to review Link activity and the merchant receipt before taking action.
    Label `verified` facts as "confirmed by Link" and merchant-page facts as
    "seen on the merchant page". Never call a purchase confirmed from page
    content alone. After a terminal result, confirm the

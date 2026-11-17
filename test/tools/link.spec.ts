@@ -1410,6 +1410,12 @@ describe('Stripe Link tools', () => {
       { status: 'succeeded', verified },
       {
         status: 'recovery_required',
+        verified: undefined,
+        instruction:
+          'Payment confirmation timed out. Do not submit again, resume, or create a new checkout. Review Link activity and the merchant receipt before taking further action.',
+      },
+      {
+        status: 'recovery_required',
         verified: {
           ...verified,
           payment_confirmed: false,
@@ -1424,7 +1430,7 @@ describe('Stripe Link tools', () => {
       },
     ];
     for (const body of cases) {
-      it(`forwards sanitized ${body.status} verification and retires the checkout`, async () => {
+      it(`retires ${body.status} checkout ${body.verified ? 'with' : 'without'} verification`, async () => {
         const browser = await makeRespondingServer(() => body);
         try {
           const session = await getOrCreateSession(
@@ -1458,6 +1464,9 @@ describe('Stripe Link tools', () => {
           expect(result.verified).to.deep.equal(
             body.status === 'recovery_required' ? body.verified : verified,
           );
+          if (!body.verified) {
+            expect(result).not.to.have.property('verified');
+          }
           expect(result.instruction).to.equal(body.instruction);
           expect(session.stripeLinkContinuation).to.equal(undefined);
           expect(session.skillState.fired.has('agentic-checkout')).to.equal(
@@ -1498,7 +1507,11 @@ describe('Stripe Link tools', () => {
         status: 'succeeded',
         verified: { ...verified, link_status: 'submitted' },
       },
-      { status: 'recovery_required', verified: undefined },
+      { status: 'recovery_required', verified: null },
+      {
+        status: 'recovery_required',
+        verified: { ...verified, payment_confirmed: false },
+      },
       {
         status: 'recovery_required',
         verified: {

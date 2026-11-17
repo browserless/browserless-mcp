@@ -556,7 +556,8 @@ const normalize = (value: unknown): StripeLinkCheckoutResponse => {
   }
   if (
     (result.status === 'recovery_required' &&
-      (!result.verified?.mismatch || result.verified.payment_confirmed)) ||
+      result.verified &&
+      (!result.verified.mismatch || result.verified.payment_confirmed)) ||
     (result.status !== 'recovery_required' && result.verified?.mismatch) ||
     (result.verified?.payment_confirmed &&
       (result.status !== 'succeeded' ||
