@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.2](https://github.com/browserless/browserless-mcp/compare/v1.49.1...v1.49.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* include patch prerequisites in Docker build ([#572](https://github.com/browserless/browserless-mcp/issues/572)) ([c843420](https://github.com/browserless/browserless-mcp/commit/c843420847389df7cd8aaaeb86be98b5931af9ba))
+
 ## [1.49.1](https://github.com/browserless/browserless-mcp/compare/v1.49.0...v1.49.1) (2026-11-17)
 
 
