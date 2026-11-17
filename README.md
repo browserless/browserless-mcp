@@ -20,6 +20,16 @@ Get an API token from [browserless.io](https://browserless.io) (free tier availa
 
 No local install — see [Configuration](#configuration) for per-client snippets.
 
+### Migrating from legacy SSE
+
+Remote connections use Streamable HTTP at `/mcp`. The legacy `GET /sse` and
+`POST /messages` endpoints return 404, including in self-hosted
+`TRANSPORT=httpStream` installs. Update your client's server URL to `/mcp` and
+use `Authorization: Bearer <token>` for authentication. For clients that store
+server bindings or credentials remotely, update those resources as well.
+Streamable HTTP still uses SSE for streaming responses; `/mcp` streaming and
+stdio connections remain supported.
+
 ## Tools
 
 | Tool                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
