@@ -2,8 +2,12 @@ FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 COPY scripts/ scripts/
+COPY patches/ patches/
 RUN npm ci
 
 COPY tsconfig.json ./
