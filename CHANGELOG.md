@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.49.0](https://github.com/browserless/browserless-mcp/compare/v1.48.0...v1.49.0) (2026-11-17)
+
+
+### Features
+
+* retire legacy SSE transport ([#544](https://github.com/browserless/browserless-mcp/issues/544)) ([6b72795](https://github.com/browserless/browserless-mcp/commit/6b7279504876e76ccdf81565b7e476a0503d5b6b))
+
+
+### Bug Fixes
+
+* isolate resumed browser session scope ([#547](https://github.com/browserless/browserless-mcp/issues/547)) ([c77e8c4](https://github.com/browserless/browserless-mcp/commit/c77e8c403bef172ad6107c3059601f6c161dc539))
+* refuse unknown API keys when an MCP session opens ([#551](https://github.com/browserless/browserless-mcp/issues/551)) ([75fe91b](https://github.com/browserless/browserless-mcp/commit/75fe91b98df50d2cf8861db54757d0ad8a5778b5))
+* scope retained replay to its session ([#545](https://github.com/browserless/browserless-mcp/issues/545)) ([045bf73](https://github.com/browserless/browserless-mcp/commit/045bf732daaac8d645bb0b3767de5bff57812866))
+
 ## [1.48.0](https://github.com/browserless/browserless-mcp/compare/v1.47.1...v1.48.0) (2026-11-12)
 
 
