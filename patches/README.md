@@ -22,9 +22,12 @@ is equivalent to an optional copy. Captures represent that collapsed copy,
 not the last iteration of the original repeated capture.
 
 Other repeated wildcard forms (including alternatives, character classes,
-nested groups and paths) use picomatch's existing literal-matching fallback
+nested groups, literal dots and paths) use picomatch's existing literal-matching fallback
 unless its existing analysis supplies a safe equivalent. This deliberately
 restricts complex extglobs rather than assuming a semantics-preserving rewrite.
+For example, `+(*.js)` matches the literal `+(*.js)`, not `a.js` or `a.js.js`,
+and `*(*.ts)` matches the literal `*(*.ts)`, not `x.ts`. These dotted repeated
+extglobs are intentionally outside the supported collapsing cases.
 In Bash mode, repeated wildcard branches containing question marks or literal
 line breaks also fall back to literal matching: Bash's star cannot absorb the
 line breaks that a question mark or literal can match.
