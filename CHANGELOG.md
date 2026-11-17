@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.49.1](https://github.com/browserless/browserless-mcp/compare/v1.49.0...v1.49.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* include replay verifier scripts in runtime image ([#569](https://github.com/browserless/browserless-mcp/issues/569)) ([7b9a18c](https://github.com/browserless/browserless-mcp/commit/7b9a18c4603286122abf06d3ffaf17803accf339))
+* mitigate picomatch repeated extglobs in development tooling ([#570](https://github.com/browserless/browserless-mcp/issues/570)) ([64eeb24](https://github.com/browserless/browserless-mcp/commit/64eeb24c60f680f3193bd6c8a9d97bca43d1b341))
+
 ## [1.49.0](https://github.com/browserless/browserless-mcp/compare/v1.48.0...v1.49.0) (2026-11-17)
 
 
