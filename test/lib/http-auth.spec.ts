@@ -166,7 +166,6 @@ describe('resolveBrowserlessAuth', () => {
   });
 
   for (const [requestPath, transport] of [
-    ['/sse?token=x', 'sse'],
     ['/mcp?next=/sse', 'streamable-http'],
     [undefined, 'streamable-http'],
   ] as const) {
@@ -344,7 +343,7 @@ describe('resolveBrowserlessAuth', () => {
 describe('authInputFromRequest', () => {
   it('maps headers and query parameters without conflating their precedence', () => {
     const url =
-      '/sse?token=q&browserlessUrl=https://y&browserlessSessionId=s2&mcpSource=script_builder';
+      '/mcp?token=q&browserlessUrl=https://y&browserlessSessionId=s2&mcpSource=script_builder';
     expect(
       authInputFromRequest({
         headers: {
@@ -499,27 +498,19 @@ describe('API key check', () => {
     ).to.include({ token: 'out-of-credits' });
   });
 
-  for (const [label, req] of [
-    [
-      'an mcp-session-id header',
-      request('/mcp', {
-        authorization: 'Bearer junk-live',
-        'mcp-session-id': 'live-session',
-      }),
-    ],
-    [
-      'a legacy SSE message post',
-      request('/messages?sessionId=live-session&token=junk-live'),
-    ],
-  ] as const) {
-    it(`does not check the key on a request naming ${label}`, async () => {
-      const fetch = stubApiKeyCheck(401);
-      expect(
-        await resolveBrowserlessRequestAuth(req, config as never),
-      ).to.include({ token: 'junk-live' });
-      expect(checks(fetch)).to.have.length(0);
-    });
-  }
+  it('does not check the key on a request naming an mcp-session-id header', async () => {
+    const fetch = stubApiKeyCheck(401);
+    expect(
+      await resolveBrowserlessRequestAuth(
+        request('/mcp', {
+          authorization: 'Bearer junk-live',
+          'mcp-session-id': 'live-session',
+        }),
+        config as never,
+      ),
+    ).to.include({ token: 'junk-live' });
+    expect(checks(fetch)).to.have.length(0);
+  });
 
   it('never checks a JWT or a missing token', async () => {
     const fetch = stubApiKeyCheck(401);

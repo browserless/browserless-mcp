@@ -156,7 +156,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         );
         writeFileSync(
           join(dist, 'FastMCP.cjs'),
-          'this.#capabilities.tools = {};\n  updateAuth(auth) {',
+          'this.#capabilities.tools = {};\n  updateAuth(auth) {\n          streamEndpoint\n        });',
         );
         for (const format of ['js', 'cjs'])
           writeFileSync(
@@ -238,7 +238,7 @@ describe('package integrity — installable by --omit=dev consumers', () => {
         );
         writeFileSync(
           join(dist, 'FastMCP.cjs'),
-          'this.#capabilities.tools = {};\n  updateAuth(auth) {',
+          'this.#capabilities.tools = {};\n  updateAuth(auth) {\n          streamEndpoint\n        });',
         );
         const prime = join(dist, 'edge/a.js');
         const drifted = join(dist, 'edge/z.js');
