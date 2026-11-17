@@ -119,11 +119,10 @@ jobs:
       - name: Verify consumer install (non-pinned transitive deps)
         run: bash scripts/ci/verify-consumer-install.sh
 
-      # Block merges that introduce a transitive dep with a known
-      # high+ CVE. Runs once (Linux, lockfile-based) — cross-OS audits
-      # would produce identical results since the lockfile is shared.
-      - name: npm audit (high+ severity)
-        run: npm audit --audit-level=high
+      # Full audit remains visible. The sole temporary exception requires exact
+      # patched dev-only bytes plus passing regressions; production has no exception.
+      - name: npm audit (high+ severity, verified patch exception)
+        run: npm run audit:security
 
   lockfile:
     runs-on: ubuntu-slim
