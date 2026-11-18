@@ -59,6 +59,7 @@ export const downloadExtension = (mimeType: string): string =>
   EXTENSION_BY_MIME[mimeType.split(';')[0].trim().toLowerCase()] ?? '.bin';
 
 const store = new Map<string, StoreEntry>();
+const pendingWrites = new Set<{ sessionId?: string; cancelled: boolean }>();
 
 // Where captured files land on the MCP server. Defaults to a temp dir; override
 // with BROWSERLESS_DOWNLOAD_DIR (e.g. a stable folder in local/stdio setups).
@@ -110,12 +111,24 @@ export const storeDownload = async (
     throw new Error('Invalid download filename.');
   }
   const dir = downloadsDir();
-  await mkdir(dir, { recursive: true });
   const id = randomBytes(16).toString('hex');
   const safe = basename(filename) || 'download';
   // Prefix with the id so files that share a name don't collide.
   const path = join(dir, `${id}-${safe}`);
-  await writeFile(path, data);
+  const pending = { sessionId, cancelled: false };
+  pendingWrites.add(pending);
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(path, data);
+    if (pending.cancelled) {
+      throw new Error('MCP session ended before the download was saved.');
+    }
+  } catch (error) {
+    await rm(path, { force: true }).catch(() => {});
+    throw error;
+  } finally {
+    pendingWrites.delete(pending);
+  }
 
   const timer = setTimeout(() => {
     store.delete(id);
@@ -174,6 +187,9 @@ export const consumeDownload = (
 /** Drop every file owned by an MCP session (called when the session ends). */
 export const clearSession = (sessionId: string | undefined): void => {
   if (!sessionId) return;
+  for (const pending of pendingWrites) {
+    if (pending.sessionId === sessionId) pending.cancelled = true;
+  }
   for (const entry of [...store.values()]) {
     if (entry.sessionId === sessionId) dropEntry(entry);
   }

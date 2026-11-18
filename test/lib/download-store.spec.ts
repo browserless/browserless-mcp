@@ -1,9 +1,10 @@
 import { expect } from 'chai';
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import fs, { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import sinon from 'sinon';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   clearSession,
   consumeDownload,
@@ -29,6 +30,7 @@ describe('download-store', () => {
 
   afterEach(() => {
     sinon.restore();
+    syncBuiltinESMExports();
     if (prev === undefined) delete process.env.BROWSERLESS_DOWNLOAD_DIR;
     else process.env.BROWSERLESS_DOWNLOAD_DIR = prev;
   });
@@ -148,6 +150,48 @@ describe('download-store', () => {
     expect(consumeDownload(downloadUri(rec.id), ownerA)).to.be.undefined;
     expect(getDownload(rec.id, ownerA)).to.be.undefined;
   });
+
+  for (const phase of ['mkdir', 'writeFile']) {
+    it(`does not retain artifacts when the session ends during ${phase}`, async () => {
+      const sessionId = `ending-during-${phase}`;
+      if (phase === 'writeFile') {
+        const write = fs.writeFile;
+        sinon.stub(fs, 'writeFile').callsFake(async (...args) => {
+          clearSession(sessionId);
+          await write(...args);
+        });
+        syncBuiltinESMExports();
+      }
+      const surviving = storeDownload(
+        'active.txt',
+        'text/plain',
+        Buffer.from('active session artifact'),
+        ownerB,
+        'active-session',
+      );
+      const saving = storeDownload(
+        'unfinished.txt',
+        'text/plain',
+        Buffer.from('private unfinished artifact'),
+        ownerA,
+        sessionId,
+      );
+      if (phase === 'mkdir') clearSession(sessionId);
+      const outcome = await saving.then(
+        (record) => ({ record }),
+        (error: unknown) => ({ error }),
+      );
+      expect(outcome).to.have.property('error').that.is.instanceOf(Error);
+      const other = await surviving;
+      expect(getDownload(other.id, ownerB)?.id).to.equal(other.id);
+      expect(await readFile(other.path, 'utf8')).to.equal(
+        'active session artifact',
+      );
+      expect(
+        await readdir(process.env.BROWSERLESS_DOWNLOAD_DIR!),
+      ).to.deep.equal([basename(other.path)]);
+    });
+  }
 
   it('clearSession drops files owned by the session', async () => {
     const mine = await storeDownload(
