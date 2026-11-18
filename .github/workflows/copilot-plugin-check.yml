@@ -1,0 +1,30 @@
+name: Copilot plugin checks
+
+on:
+  pull_request:
+    paths:
+      - 'copilot/**'
+      - '.github/plugin/**'
+      - 'scripts/ci/verify-copilot-plugin*.mjs'
+      - '.github/workflows/copilot-plugin-check.yml'
+      - 'release-please-config.json'
+      - 'package.json'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: node scripts/ci/verify-copilot-plugin.mjs
+      - run: node --test scripts/ci/verify-copilot-plugin.test.mjs
