@@ -5,6 +5,8 @@ import { defineTool, assertHttpScheme } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { isCompliant, COMPLIANT_EXPORT_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { downloadExtension } from '../lib/download-store.js';
+import { formatDownloads } from './agent.js';
 import type {
   ExportParams,
   GenericApiResult,
@@ -60,6 +62,12 @@ export const ExportParamsSchema = z.object({
     .optional()
     .describe('Request timeout in milliseconds'),
   profile: profileField('before the page is exported'),
+  toDisk: z
+    .boolean()
+    .optional()
+    .describe(
+      'Save the result outside model context. Native MCP sessions default binary results to saving; false explicitly requests inline output. Legacy/stdio omission preserves existing output.',
+    ),
 });
 
 // Fail-closed param allowlist (.pick, not .omit) — a new full-schema field stays
@@ -159,7 +167,11 @@ export function registerExportTool(
       include_resources: params.includeResources ?? false,
       profile_used: !!params.profile,
     }),
-    format: (response, params) => {
+    format: async (
+      response,
+      params,
+      { token, sessionId, artifactDelivery },
+    ) => {
       if (!response.ok) {
         throw new UserError(
           `Export failed (status ${response.statusCode}): ${response.data.slice(0, 500)}`,
@@ -169,6 +181,36 @@ export function registerExportTool(
         /filename[^;=\n]*=["']?([^"';\n]*)["']?/,
       );
       const filename = filenameMatch?.[1] ?? new URL(params.url).hostname;
+      if (
+        !compliant &&
+        (params.toDisk === true ||
+          (params.toDisk === undefined &&
+            artifactDelivery === 'mcp-resource' &&
+            response.isBinary))
+      ) {
+        return formatDownloads(
+          [
+            {
+              filename:
+                filenameMatch?.[1] ??
+                `${filename}${downloadExtension(response.contentType)}`,
+              mimeType: response.contentType,
+              data: response.isBinary
+                ? response.data
+                : Buffer.from(response.data).toString('base64'),
+            },
+          ],
+          '',
+          '',
+          {
+            transport: config.transport,
+            mcpBaseUrl: config.mcpBaseUrl,
+            token,
+            sessionId,
+            artifactDelivery,
+          },
+        );
+      }
       const blocks: Content[] = [];
       if (response.isBinary) {
         blocks.push({

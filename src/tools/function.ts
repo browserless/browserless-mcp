@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
 import { profileField } from './schemas.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
+import { downloadExtension } from '../lib/download-store.js';
+import { formatDownloads } from './agent.js';
 import type {
   FunctionParams,
   GenericApiResult,
@@ -33,6 +35,12 @@ export const FunctionParamsSchema = z.object({
     .optional()
     .describe('Request timeout in milliseconds'),
   profile: profileField('before the function executes'),
+  toDisk: z
+    .boolean()
+    .optional()
+    .describe(
+      'Save the result outside model context, including JSON/text. Native MCP sessions default binary results to saving; false explicitly requests inline analysis. Legacy/stdio omission preserves existing output.',
+    ),
 });
 
 /**
@@ -41,13 +49,6 @@ export const FunctionParamsSchema = z.object({
  * 200,000 chars ≈ 50,000 tokens.
  */
 export const MAX_TEXT_RESPONSE_CHARS = 200_000;
-
-const EXTENSION_BY_MIME: Record<string, string> = {
-  'application/pdf': '.pdf',
-  'application/zip': '.zip',
-  'application/octet-stream': '.bin',
-  'application/json': '.json',
-};
 
 const buildMetadata = (response: GenericApiResult): string =>
   [
@@ -82,7 +83,7 @@ export const formatFunctionContent = (
         { type: 'audio', data: response.data, mimeType: baseMime },
       ];
     }
-    const ext = EXTENSION_BY_MIME[baseMime] ?? '.bin';
+    const ext = downloadExtension(baseMime);
     return [
       { type: 'text', text: metadata },
       {
@@ -130,6 +131,11 @@ export function registerFunctionTool(
     description:
       'Execute custom Puppeteer JavaScript code on the Browserless cloud. ' +
       'Your function receives a Puppeteer `page` object and optional `context` data. ' +
+      '\n\n' +
+      'Set toDisk=true to save any result, including JSON/text, outside the conversation. ' +
+      'Native MCP sessions save binary results by default; toDisk=false explicitly requests inline analysis. ' +
+      'Saving follows the returned delivery instructions and requires a verified client path. ' +
+      '\n\nFor inline analysis:\n' +
       'What the function returns decides the response:\n' +
       '  - Bytes (a Uint8Array), e.g. `return await page.screenshot({ type: "jpeg" })` or ' +
       '`return await page.pdf()`: the file type is detected from the bytes. PNG/JPEG/WebP → ' +
@@ -179,10 +185,41 @@ export function registerFunctionTool(
       size: result.size,
       profile_used: !!params.profile,
     }),
-    format: (response) => {
+    format: async (
+      response,
+      params,
+      { token, sessionId, artifactDelivery },
+    ) => {
       if (!response.ok) {
         throw new UserError(
           `Function execution failed (status ${response.statusCode}): ${response.data.slice(0, 500)}`,
+        );
+      }
+      if (
+        params.toDisk === true ||
+        (params.toDisk === undefined &&
+          artifactDelivery === 'mcp-resource' &&
+          response.isBinary)
+      ) {
+        return formatDownloads(
+          [
+            {
+              filename: `function-result${downloadExtension(response.contentType)}`,
+              mimeType: response.contentType,
+              data: response.isBinary
+                ? response.data
+                : Buffer.from(response.data).toString('base64'),
+            },
+          ],
+          '',
+          '',
+          {
+            transport: config.transport,
+            mcpBaseUrl: config.mcpBaseUrl,
+            token,
+            sessionId,
+            artifactDelivery,
+          },
         );
       }
       return formatFunctionContent(response);

@@ -39,9 +39,13 @@ import type { AuthMethod, McpTransport } from '../lib/attribution.js';
 /*  Session & auth                                                     */
 /* ------------------------------------------------------------------ */
 
+export type ArtifactDelivery = 'http' | 'mcp-resource';
+
 export interface BrowserlessSession extends Record<string, unknown> {
   token: string;
   apiUrl: string;
+  /** Explicit connection preference, not a capability or authorization grant. */
+  artifactDelivery?: 'mcp-resource';
   /**
    * A pre-created browser session id to ATTACH to (via /chromium/agent?sessionId),
    * threaded by the caller through the `x-browserless-session-id` header. Used by
