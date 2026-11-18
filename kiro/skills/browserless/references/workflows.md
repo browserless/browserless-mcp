@@ -63,11 +63,14 @@ First call to `browserless_agent`:
 
 ```json
 {
+  "keepSessionAlive": true,
   "commands": [{ "method": "goto", "params": { "url": "https://example.com" } }]
 }
 ```
 
-Read the resulting snapshot and retain the returned session ID. For a requested
+The first call must opt in to persistence; retaining a session ID alone does
+not keep a one-shot browser open. Read the resulting snapshot and retain the
+returned session ID. For a requested
 screenshot, the next call uses that exact ID:
 
 ```json

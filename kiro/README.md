@@ -13,36 +13,78 @@ user MCP configuration (`"disabled": true`) and save. This prevents the earlier
 direct-install connection from being mistaken for the Power's connection.
 Do not delete credentials or change other server entries.
 
-For local review, open Kiro's Powers panel, choose **Add Custom Power**, then **Import power from a folder**, and select this `kiro/` directory. Review the requested capabilities.
+### Local import
 
-For draft testing, use a checkout of branch
-`feat/kiro-power` in `browserless/browserless-mcp` and select its
-`kiro/` folder. The package is not yet available from the default branch or
-Kiro's curated catalog. Select the `kiro/` folder for this test.
+1. Open a project folder in Kiro before testing. An empty folder is sufficient;
+   **Try power** fails when no workspace folder is open.
+2. Open **Powers > Add Custom Power > Import power from a folder** and select
+   this `kiro/` directory. For draft review, use branch `feat/kiro-power` of
+   `browserless/browserless-mcp`. The draft is not yet on the default branch
+   or in Kiro's curated catalog.
+3. Confirm Browserless appears under **Installed** and its details show the
+   Browserless skill and MCP configuration.
 
-Once this directory has been published, users can import it from the public `browserless/browserless-mcp` repository, selecting the `kiro` power. Repository import is separate from a curated Kiro catalog listing.
+After publication, test **Import power from GitHub** against the public
+repository/package path. Local folder import does not establish that this
+route or curated catalog installation works.
 
-The MCP configuration uses Streamable HTTP without a token header. Kiro supports browser-based OAuth for remote MCP servers. Complete Browserless sign-in when prompted and review the consent request. Do not add a client secret or API token to these files. Actual Browserless OAuth compatibility still needs a client test; it is not proven by manifest validation.
+### OAuth sign-in
 
-Kiro namespaces power server names. Inspect the client to identify the actual server name instead of assuming it is literally `browserless`. Avoid creating a same-purpose manual MCP entry during the acceptance test: that would not establish that the power configuration works.
+The MCP configuration uses Streamable HTTP without a token header. Do not add
+an API token, client secret, or hand-written callback to these files.
 
-## Acceptance checks
+1. Open **MCP Servers** in Kiro. To find it, open the command palette, select
+   **View: Open View**, and search for **MCP Servers**.
+2. Locate the Power-managed server. In the tested folder import it was named
+   `power-kiro-browserless`; Kiro may use a different namespace for another
+   import path. Leave any old manual `browserless` entry disabled.
+3. If its status is **Unauthenticated**, click **Authenticate**. The initial
+   connection check can report Unauthorized without opening a browser.
+4. Accept Kiro's external-site prompt for `https://mcp.browserless.io/oauth/authorize`,
+   then complete Browserless sign-in and review any consent request in the browser.
+5. Return to Kiro and confirm **Connected** with tools available. The browser's
+   authorization-success page alone does not prove token exchange succeeded.
 
-1. Import into a clean Kiro profile; verify metadata and skill detection.
-2. Use a browser/extraction prompt and confirm power activation.
-3. Complete Browserless OAuth and verify the namespaced server discovers tools.
-4. Ask Kiro to use Browserless tools to read `https://example.com` and return the title. Inspect the tool trace to verify execution. This uses model and Browserless quota.
-5. Test restart/auth reuse and cancelled authentication without committing or logging credentials.
+If the callback page says the request expired or already completed, check
+Kiro's connection status first. If disconnected, start a fresh attempt through
+**Retry**, then **Authenticate** if shown. Do not refresh or reuse the old
+callback URL. One such failure occurred in testing and a subsequent attempt
+succeeded; the original cause has not been established. No callback allowlist
+change or extra OAuth configuration was required for the successful test.
 
-Kiro Power import, activation and live OAuth/tool execution have not been tested
-in this draft. On November 17, 2026, a separate direct MCP install-link test
-successfully added the endpoint to Kiro's user configuration. After enabling
-that entry, Kiro started a localhost callback listener and reported
-`Failed to connect: Unauthorized`; no OAuth prompt was observed. That result
-does not identify the failing OAuth stage and does not validate this Power.
+### Safe first tool call
 
-If sign-in fails, record the Kiro version, the Power's actual server name, and
-the redacted connection error. Do not paste API keys, OAuth codes, tokens,
+Open the Power details and choose **Try power**, then ask:
+
+> Use the connected Browserless Power's `browserless_smartscraper` tool to read
+> only https://example.com and return its main heading and a one-sentence
+> summary. Make one request without following links. Use the actual MCP tool,
+> not another browsing method. If the call fails, report the error and stop.
+
+Approve only the requested tool call if prompted. Expand the tool trace and
+verify the namespaced Browserless scraper ran successfully and returned
+**Example Domain**. Smart Scraper can use a direct HTTP fetch for simple pages;
+that does not imply Kiro bypassed Browserless when the MCP trace confirms the call.
+
+## Validation record and remaining checks
+
+Local user test on November 17, 2026, macOS, Kiro IDE **1.4.215**:
+
+- Folder import and recognition of the Browserless skill passed.
+- Explicit **Authenticate** completed OAuth; the Power server showed
+  **Connected (23 tools)**. Tool counts can change with the hosted server.
+- The user confirmed the trace contained **Tool Load** and
+  `@kiro/browserless/browserless_smartscraper`; the example.com request returned
+  **Example Domain**. No API key was added to the package.
+- The old manually configured server remained disabled during the Power test.
+
+Still pending: restart/auth reuse, clean cancellation/recovery, installation
+from the final public GitHub location, and catalog discovery after acceptance.
+This was a local folder test, not a clean-profile or public catalog test.
+Multi-step browser, proxy, stealth and CAPTCHA features were not exercised.
+
+For failures, record the Kiro version, the Power's actual server name, and the
+redacted connection error. Do not paste API keys, OAuth codes, tokens,
 authorization URLs with query parameters, or passwords into chat or issues.
 Do not substitute an API key and report the OAuth test as passed.
 
