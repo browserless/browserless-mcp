@@ -4,7 +4,22 @@ A code-free Agent Plugins 1.0 power connecting Kiro to Browserless cloud browser
 
 ## Import and authenticate
 
+Prerequisites: Kiro IDE with Powers and MCP support, internet access to the
+hosted Browserless service, and a Browserless account with available quota.
+Browserless operations and Kiro model requests may consume account quota.
+
+Before this local test, disable any manually added `browserless` server in the
+user MCP configuration (`"disabled": true`) and save. This prevents the earlier
+direct-install connection from being mistaken for the Power's connection.
+Do not delete credentials or change other server entries.
+
 For local review, open Kiro's Powers panel, choose **Add Custom Power**, then **Import power from a folder**, and select this `kiro/` directory. Review the requested capabilities.
+
+While PR #518 is in draft, use a checkout of branch
+`feat/agent-plugin-copilot-kiro` in `browserless/browserless-mcp` and select its
+`kiro/` folder. The package is not yet available from the default branch or
+Kiro's curated catalog. The draft also contains the related Copilot package;
+select only `kiro/` for this test.
 
 Once this directory has been published, users can import it from the public `browserless/browserless-mcp` repository, selecting the `kiro` power. Repository import is separate from a curated Kiro catalog listing.
 
@@ -20,15 +35,43 @@ Kiro namespaces power server names. Inspect the client to identify the actual se
 4. Ask Kiro to use Browserless tools to read `https://example.com` and return the title. Inspect the tool trace to verify execution. This uses model and Browserless quota.
 5. Test restart/auth reuse and cancelled authentication without committing or logging credentials.
 
-Kiro IDE import, activation and live OAuth/tool execution have not been tested in this draft.
+Kiro Power import, activation and live OAuth/tool execution have not been tested
+in this draft. On November 17, 2026, a separate direct MCP install-link test
+successfully added the endpoint to Kiro's user configuration. After enabling
+that entry, Kiro started a localhost callback listener and reported
+`Failed to connect: Unauthorized`; no OAuth prompt was observed. That result
+does not identify the failing OAuth stage and does not validate this Power.
+
+If sign-in fails, record the Kiro version, the Power's actual server name, and
+the redacted connection error. Do not paste API keys, OAuth codes, tokens,
+authorization URLs with query parameters, or passwords into chat or issues.
+Do not substitute an API key and report the OAuth test as passed.
 
 ## Curated catalog submission
 
-The official submission route is [Submit a power](https://kiro.dev/powers/submit/), linked by `kirodotdev/powers/CONTRIBUTING.md`. It requires a tested, complete power, public source, license, privacy/support information, and a non-preview MCP service. Confirm Browserless service eligibility before submission. A local manifest or GitHub import does not imply catalog acceptance.
+Submit through the [Kiro registry form](https://kiro.dev/registry/submit/),
+selecting **Power**. Confirm current requirements and service eligibility before
+submission. Obtain company approval for Kiro's publisher terms and explicit
+approval of the final listing before submitting. Local import is a test, not
+a public catalog listing.
+
+The intended published experience is Powers > Available Powers > search
+"Browser" > Browserless > Install > OAuth sign-in > a successful MCP tool call.
+Kiro documents filtering Available Powers by display name. Verify that exact
+search and installation flow after acceptance; keywords for activation alone
+are not evidence of search visibility. The catalog display name and final
+description remain subject to review and Kiro acceptance.
 
 ## Maintenance and license
 
 The portable manifest, MCP configuration, skill, references and license are mirrored in `copilot/`. Update both together; run `node scripts/ci/verify-agent-plugins.mjs` to detect drift and validate boundaries. Keep client-specific instructions separate. Use independent plugin versions and tags outside the root `v*` release pattern. Root release calculation excludes this folder.
+
+Follow the existing Hermes release-isolation pattern: `release-please-config.json`
+excludes `kiro`, `copilot`, and `.github/plugin` from the root MCP release.
+The root npm `files` allowlist omits these packages. Do not widen it for a Power.
+PR titles still follow the repository's Conventional Commit check; use
+`docs(kiro): ...` for documentation and `chore(kiro): ...` for package maintenance.
+Folder exclusions do not exempt a PR from title, formatting, or validation checks.
 
 SSPL-1.0, consistent with this repository. Hermes's MIT license is not inherited.
 
