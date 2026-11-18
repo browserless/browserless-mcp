@@ -66,7 +66,9 @@ database and are shared by the Gateway's operator-managed sessions (see
 [Sharing a Gateway](#sharing-a-gateway)).
 
 To sign in from a terminal, add a matching server entry, which lets the CLI see
-it, then log in. The Gateway must be stopped while `login` runs:
+it, then log in. This sets up the Gateway's shared sign-in; with per-requester
+sign-in (see [Sharing a Gateway](#sharing-a-gateway)), each person signs in
+from their own chat instead. The Gateway must be stopped while `login` runs:
 
 ```bash
 openclaw mcp set browserless '{"url":"https://mcp.browserless.io/mcp","transport":"streamable-http","auth":"oauth","requestTimeoutMs":360000}'
@@ -101,6 +103,13 @@ out of committed config.
    openclaw mcp set browserless '{"url":"https://mcp.browserless.io/mcp","transport":"streamable-http","requestTimeoutMs":360000,"headers":{"Authorization":"Bearer ${BROWSERLESS_TOKEN}"}}'
    ```
 
+   If the Gateway was already running, restart it so it reads the new
+   variable:
+
+   ```bash
+   openclaw gateway restart
+   ```
+
 3. Check the connection:
 
    ```bash
@@ -118,8 +127,11 @@ OAuth definition, but it removes the whole entry, including any tool filter.
 ### Server entries
 
 `openclaw mcp set` replaces the whole `browserless` entry. Each time you run
-it, keep `"requestTimeoutMs":360000` in the JSON, and re-apply any tool filter
-from [Sharing a Gateway](#sharing-a-gateway) afterwards. Crawls can run for
+it, keep `"requestTimeoutMs":360000` and any headers you added (such as a
+[regional endpoint](#regional-endpoints)) in the JSON, and re-apply any tool
+filter from [Sharing a Gateway](#sharing-a-gateway) afterwards. Each
+`mcp tools --exclude` replaces the previous list, so name every tool you want
+hidden. Crawls can run for
 up to five minutes and Lighthouse audits for up to two, so a shorter request
 timeout cuts them off.
 

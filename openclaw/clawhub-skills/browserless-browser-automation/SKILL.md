@@ -28,6 +28,10 @@ They connect from the Browserless plugin page in the OpenClaw Control UI
 README. Never ask the user to paste a token, password or one-time code into
 chat.
 
+If the plugin is installed but the tools are still missing, the agent may be
+on OpenClaw's `minimal` tool profile, which hides MCP tools. Tell the user to
+switch to a profile that includes them, such as `coding` or `messaging`.
+
 ## Before you open a browser
 
 - If the user only needs to read a page, use `browserless_smartscraper` instead

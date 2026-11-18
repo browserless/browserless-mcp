@@ -26,6 +26,10 @@ They connect from the Browserless plugin page in the OpenClaw Control UI
 (**Accounts → Connect**), or with an API token as described in the plugin's
 README. Never ask the user to paste a token into chat.
 
+If the plugin is installed but the tools are still missing, the agent may be
+on OpenClaw's `minimal` tool profile, which hides MCP tools. Tell the user to
+switch to a profile that includes them, such as `coding` or `messaging`.
+
 ## Pick the tool
 
 | Need                                   | Tool                                           |
@@ -60,9 +64,11 @@ Add `"links"` to `formats` when the user also wants the page's links, or
 1. `browserless_search` with `query` and a small `limit` (3–5). Use
    `sources: ["news"]` for recent events and `tbs` (`"day"`, `"week"`,
    `"month"`, `"year"`) to limit by date.
-2. To read the results in the same call, set `formats: ["markdown"]`;
-   otherwise scrape the most relevant results with `browserless_smartscraper`.
-3. Cite the URLs you used.
+2. Search returns titles, URLs and short descriptions. For web results,
+   `scrapeOptions: { "formats": ["markdown"] }` adds a short excerpt of each
+   page; news results never include page content.
+3. Read the two or three most relevant results in full with
+   `browserless_smartscraper` before answering, and cite the URLs you used.
 
 ### Find specific pages on a site
 

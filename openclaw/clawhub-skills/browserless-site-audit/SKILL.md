@@ -26,6 +26,10 @@ They connect from the Browserless plugin page in the OpenClaw Control UI
 (**Accounts → Connect**), or with an API token as described in the plugin's
 README. Never ask the user to paste a token into chat.
 
+If the plugin is installed but the tools are still missing, the agent may be
+on OpenClaw's `minimal` tool profile, which hides MCP tools. Tell the user to
+switch to a profile that includes them, such as `coding` or `messaging`.
+
 ## Pick the tool
 
 | Need                                               | Tool                                                                   |
@@ -47,8 +51,12 @@ README. Never ask the user to paste a token into chat.
 2. Report the scores and lab metrics: FCP, LCP, TBT, CLS, Speed Index, server
    response time and transfer size. TBT stands in for responsiveness; INP is
    not measured by this audit.
-3. The full Lighthouse report is saved outside the conversation. Read only the
-   audits you need from it to explain the biggest problems.
+3. The full Lighthouse report is saved outside the conversation, and the
+   result explains how to download it. Read only the audits you need from it
+   to explain the biggest problems. If you can't download it (the download
+   needs a Browserless API token in `BROWSERLESS_TOKEN`, which OAuth sign-in
+   doesn't provide), answer from the scores and metrics in the result and tell
+   the user the per-audit details weren't available.
 
 Audits take 30–120 seconds. Tell the user it is running.
 
@@ -58,7 +66,8 @@ Audits take 30–120 seconds. Tell the user it is running.
 
 1. `browserless_performance` with `categories: ["accessibility", "seo"]`.
 2. List the failing audits with the elements they point to, most severe first,
-   and suggest a fix for each.
+   and suggest a fix for each. These details come from the full report; if you
+   can't download it, report the category scores and say so.
 
 ### Compare two pages or a before and after
 
