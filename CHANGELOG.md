@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.50.0](https://github.com/browserless/browserless-mcp/compare/v1.49.2...v1.50.0) (2026-11-18)
+
+
+### Features
+
+* add authenticated MCP artifact saving ([#577](https://github.com/browserless/browserless-mcp/issues/577)) ([d143b35](https://github.com/browserless/browserless-mcp/commit/d143b35236771c66982799c25d0a2e43fc81e995))
+
+
+### Bug Fixes
+
+* correct browserless_function return-value guidance ([#576](https://github.com/browserless/browserless-mcp/issues/576)) ([1bf89b2](https://github.com/browserless/browserless-mcp/commit/1bf89b2e60345178b3bf6b5f608d457256e84428))
+
 ## [1.49.2](https://github.com/browserless/browserless-mcp/compare/v1.49.1...v1.49.2) (2026-11-17)
 
 
