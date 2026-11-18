@@ -1039,6 +1039,7 @@ export function registerAgentTools(
     },
     run: async (ctx) => {
       const run = await runAgentCommands(ctx, config, AGENT_RUN_OPTIONS);
+      let mediaHint: Content | undefined;
       if (ctx.uiEnabled && !compliant && mediaOrigin(config)) {
         try {
           const view = await prepareAgentMedia(
@@ -1048,13 +1049,10 @@ export function registerAgentTools(
             ctx.params.rationale,
           );
           if (view) {
-            return [
-              ...run.content,
-              {
-                type: 'text' as const,
-                text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}). Related screenshots can be captured in one command batch for one gallery.`,
-              },
-            ];
+            mediaHint = {
+              type: 'text',
+              text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}). Related screenshots can be captured in one command batch for one gallery.`,
+            };
           }
         } catch {
           ctx.log.warn(
@@ -1063,7 +1061,8 @@ export function registerAgentTools(
         }
       }
       // The ordinary formatter already includes the last reportable result.
-      // Preserve earlier captures too when no gallery can carry their bytes.
+      // Explicit saves need descriptors even when a gallery carries previews.
+      // Earlier inline images are needed only when no gallery is available.
       const reportable = run.results.filter(
         (command) => command.method !== 'close',
       );
@@ -1086,13 +1085,15 @@ export function registerAgentTools(
                   '',
                   opts,
                 )
-              : formatScreenshotContent(command.result, command, '', '')
+              : mediaHint
+                ? null
+                : formatScreenshotContent(command.result, command, '', '')
             : command.method === 'stopRecording'
               ? formatRecordingToDisk(command.result, '', '', opts)
               : null;
         if (capture) earlier.push(...capture);
       }
-      return [...earlier, ...run.content];
+      return [...earlier, ...run.content, ...(mediaHint ? [mediaHint] : [])];
     },
     format: (content) => content,
   });
