@@ -1,6 +1,8 @@
 import { expect } from 'chai';
 import { FastMCP } from 'fastmcp';
+import sinon from 'sinon';
 import type { McpConfig } from '../../src/@types/types.js';
+import { stubApiKeyCheck } from '../helpers/api-key-check.js';
 import { downloadOwner, storeDownload } from '../../src/lib/download-store.js';
 import { registerDownloadRoute } from '../../src/resources/download-route.js';
 
@@ -11,6 +13,9 @@ const config = {
 } as McpConfig;
 
 describe('download route', () => {
+  beforeEach(() => stubApiKeyCheck());
+  afterEach(() => sinon.restore());
+
   const app = () => {
     const server = new FastMCP({ name: 'test', version: '1.0.0' });
     registerDownloadRoute(server, config);

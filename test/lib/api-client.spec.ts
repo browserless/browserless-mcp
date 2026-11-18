@@ -1,5 +1,8 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import {
   createApiClient,
   ProfileNotFoundError,
@@ -44,6 +47,55 @@ const mockSuccessResponse = {
   rawText: null,
   metadata: null,
 };
+
+describe('REST API base URL normalization', () => {
+  it('joins REST paths with one slash, preserves prefixes and leaves the input unchanged', async () => {
+    const paths: string[] = [];
+    const server = createServer((req, res) => {
+      req.resume();
+      const path = new URL(req.url!, 'http://localhost').pathname;
+      paths.push(path);
+      if (!/^\/(gateway\/)?(smart-scrape|function|active)$/.test(path)) {
+        res.writeHead(404).end('Unexpected path');
+      } else if (path.endsWith('/function')) {
+        res.setHeader('Content-Type', 'text/plain');
+        res.end('function result');
+      } else {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(mockSuccessResponse));
+      }
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const { port } = server.address() as AddressInfo;
+      for (const prefix of ['', '/gateway']) {
+        for (const suffix of ['', '/', '///']) {
+          const browserlessApiUrl = `http://127.0.0.1:${port}${prefix}${suffix}`;
+          const config = Object.freeze({ ...mockConfig, browserlessApiUrl });
+          const client = createApiClient(config);
+          expect(
+            (await client.smartScrape({ url: 'https://example.com' })).markdown,
+          ).to.equal('# Hello');
+          expect(
+            (await client.runFunction({ code: 'return 1;' })).data,
+          ).to.equal('function result');
+          expect((await client.getStatus()).ok).to.equal(true);
+          expect(paths.splice(0)).to.deep.equal([
+            `${prefix}/smart-scrape`,
+            `${prefix}/function`,
+            `${prefix}/active`,
+          ]);
+          expect(config.browserlessApiUrl).to.equal(browserlessApiUrl);
+        }
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
 
 describe('createApiClient', () => {
   let fetchStub: sinon.SinonStub;
@@ -95,6 +147,183 @@ describe('createApiClient', () => {
   });
 
   describe('smartScrape', () => {
+    it('separates schemas while reusing recursively equivalent JSON options', async () => {
+      fetchStub.callsFake(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...mockSuccessResponse,
+              json: { request: fetchStub.callCount },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+      const cache = new ResponseCache(mockConfig.cacheTtlMs);
+      const cacheSet = sinon.spy(cache, 'set');
+      const client = createApiClient(mockConfig, cache);
+      const base: SmartScrapeRequest = {
+        url: 'https://example.com',
+        profile: 'my-profile',
+        formats: ['json'],
+      };
+      const first = await client.smartScrape({
+        ...base,
+        jsonOptions: {
+          schema: {
+            type: 'object',
+            properties: { title: { type: 'string', description: 'Title' } },
+          },
+        },
+      });
+      const different = await client.smartScrape({
+        ...base,
+        jsonOptions: {
+          schema: {
+            type: 'object',
+            properties: { heading: { type: 'string' } },
+          },
+        },
+      });
+      const reordered = await client.smartScrape({
+        ...base,
+        jsonOptions: {
+          schema: {
+            properties: { title: { description: 'Title', type: 'string' } },
+            type: 'object',
+          },
+        },
+      });
+      expect(fetchStub.callCount).to.equal(2);
+      expect(cacheSet.firstCall.args[0]).not.to.equal(
+        cacheSet.secondCall.args[0],
+      );
+      expect(first.json).to.deep.equal({ request: 1 });
+      expect(different.json).to.deep.equal({ request: 2 });
+      expect(reordered.json).to.deep.equal({ request: 1 });
+      expect(reordered.cacheHit).to.be.true;
+    });
+
+    it('forwards JSON options unchanged but hashes them in the cache key', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({
+            ...mockSuccessResponse,
+            json: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+      const cache = new ResponseCache(mockConfig.cacheTtlMs);
+      const cacheSet = sinon.spy(cache, 'set');
+      const client = createApiClient(mockConfig, cache);
+      const jsonOptions = {
+        schema: { type: 'object' },
+        prompt: 'PRIVATE extraction prompt',
+      };
+      await client.smartScrape({
+        url: 'https://example.com',
+        formats: ['json'],
+        jsonOptions,
+      });
+      expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.equal({
+        url: 'https://example.com',
+        formats: ['json'],
+        onlyMainContent: false,
+        jsonOptions,
+      });
+      const key = cacheSet.firstCall.args[0];
+      expect(JSON.parse(key).jsonOptions).to.match(/^[0-9a-f]{16}$/);
+      expect(key).not.to.include(jsonOptions.prompt);
+    });
+
+    for (const format of ['json', 'summary'] as const) {
+      for (const missing of format === 'summary'
+        ? [null, undefined, '']
+        : [null, undefined]) {
+        it(`retries ${format} extraction when its result is ${String(missing)}`, async () => {
+          fetchStub.callsFake(
+            async () =>
+              new Response(
+                JSON.stringify({
+                  ...mockSuccessResponse,
+                  [format]: missing,
+                  warning: 'Extraction failed; retry',
+                }),
+                {
+                  status: 200,
+                  headers: { 'Content-Type': 'application/json' },
+                },
+              ),
+          );
+          const client = createApiClient(mockConfig);
+          const params: SmartScrapeRequest = {
+            url: 'https://example.com',
+            formats: [format],
+            ...(format === 'json'
+              ? { jsonOptions: { prompt: 'get title' } }
+              : {}),
+          };
+          const first = await client.smartScrape(params);
+          const second = await client.smartScrape(params);
+          expect(fetchStub.callCount).to.equal(2);
+          expect(first.cacheHit).to.be.false;
+          expect(second.cacheHit).to.be.false;
+        });
+      }
+    }
+
+    it('still caches a non-empty summary', async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({ ...mockSuccessResponse, summary: 'Page summary' }),
+        ),
+      );
+      const client = createApiClient(mockConfig);
+      const params: SmartScrapeRequest = {
+        url: 'https://example.com',
+        formats: ['summary'],
+      };
+      await client.smartScrape(params);
+      const repeated = await client.smartScrape(params);
+      expect(fetchStub.callCount).to.equal(1);
+      expect(repeated.cacheHit).to.be.true;
+      expect(repeated.summary).to.equal('Page summary');
+    });
+
+    it('isolates JSON extraction cache entries by token', async () => {
+      fetchStub.callsFake(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...mockSuccessResponse,
+              json: { request: fetchStub.callCount },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+      const cache = new ResponseCache(mockConfig.cacheTtlMs);
+      const clientA = createApiClient(
+        { ...mockConfig, browserlessToken: 'a' },
+        cache,
+      );
+      const clientB = createApiClient(
+        { ...mockConfig, browserlessToken: 'b' },
+        cache,
+      );
+      const params: SmartScrapeRequest = {
+        url: 'https://example.com',
+        formats: ['json'],
+        jsonOptions: { prompt: 'get title' },
+      };
+      const first = await clientA.smartScrape(params);
+      const second = await clientB.smartScrape(params);
+      expect(fetchStub.callCount).to.equal(2);
+      expect(first.json).to.deep.equal({ request: 1 });
+      expect(second.json).to.deep.equal({ request: 2 });
+      expect(first.cacheHit).to.be.false;
+      expect(second.cacheHit).to.be.false;
+    });
+
     it('sends correct request to the /smart-scrape endpoint', async () => {
       fetchStub.resolves(
         new Response(JSON.stringify(mockSuccessResponse), {
@@ -116,8 +345,32 @@ describe('createApiClient', () => {
       expect(body).to.deep.equal({
         url: 'https://example.com',
         formats: ['markdown'],
+        onlyMainContent: false,
       });
     });
+
+    for (const onlyMainContent of [true, false]) {
+      it(`forwards explicit onlyMainContent: ${onlyMainContent}`, async () => {
+        fetchStub.resolves(
+          new Response(JSON.stringify(mockSuccessResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+        const client = createApiClient(mockConfig);
+        await client.smartScrape({
+          url: 'https://example.com',
+          onlyMainContent,
+        });
+
+        expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.equal({
+          url: 'https://example.com',
+          formats: ['markdown'],
+          onlyMainContent,
+        });
+      });
+    }
 
     it('preserves the exact request URL for an allowed API override', async () => {
       fetchStub.resolves(

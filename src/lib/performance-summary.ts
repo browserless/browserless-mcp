@@ -1,7 +1,81 @@
 import { z } from 'zod';
 import type { PerformanceParams } from '../@types/types.js';
 
-export const PERFORMANCE_URI = 'ui://browserless/performance/v3.html';
+export const PERFORMANCE_URI = 'ui://browserless/performance/v4.html';
+export const LighthouseCategorySchema = z.enum([
+  'accessibility',
+  'best-practices',
+  'performance',
+  'pwa',
+  'seo',
+]);
+export const LighthouseDeviceSchema = z.enum(['mobile', 'desktop']);
+export const PerformancePendingSchema = z.object({
+  kind: z.literal('performance-pending'),
+  auditRef: z.uuid(),
+  requestTimeoutMs: z.number().int().positive(),
+  input: z.object({
+    url: z.string().max(2048),
+    device: LighthouseDeviceSchema.optional(),
+    categories: z.array(LighthouseCategorySchema).optional(),
+  }),
+});
+export type PerformancePending = z.infer<typeof PerformancePendingSchema>;
+export const PERFORMANCE_CATEGORY_TITLES = {
+  performance: 'Performance',
+  accessibility: 'Accessibility',
+  'best-practices': 'Best practices',
+  seo: 'SEO',
+  pwa: 'PWA',
+} as const;
+
+export type PerformanceInputPreview = {
+  target: string | null;
+  device: 'mobile' | 'desktop' | null;
+  categories: Array<{ id: string; title: string }>;
+};
+
+export function previewPerformanceInput(
+  args: unknown,
+): PerformanceInputPreview {
+  const preview: PerformanceInputPreview = {
+    target: null,
+    device: null,
+    categories: [],
+  };
+  if (
+    !args ||
+    typeof args !== 'object' ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(args))
+  )
+    return preview;
+  const input = args as Record<string, unknown>;
+  if (typeof input.url === 'string' && input.url.length <= 2048) {
+    try {
+      const url = new URL(input.url);
+      if (['http:', 'https:'].includes(url.protocol) && url.hostname)
+        preview.target = (
+          url.hostname + (url.pathname === '/' ? '' : url.pathname)
+        ).slice(0, 2048);
+    } catch {
+      /* Incomplete URLs are expected while arguments stream. */
+    }
+  }
+  const device = LighthouseDeviceSchema.safeParse(input.device);
+  if (device.success) preview.device = device.data;
+  if (Array.isArray(input.categories)) {
+    for (const value of new Set(input.categories)) {
+      const category = LighthouseCategorySchema.safeParse(value);
+      if (category.success)
+        preview.categories.push({
+          id: category.data,
+          title: PERFORMANCE_CATEGORY_TITLES[category.data],
+        });
+    }
+  }
+  return preview;
+}
+
 const Score = z.number().int().min(0).max(100).nullable();
 export const PerformanceViewSchema = z.object({
   kind: z.literal('performance'),
@@ -71,19 +145,14 @@ export function summarizePerformance(
 ): PerformanceView {
   const audits = object(data.audits);
   const categories = object(data.categories);
-  const categoryTitles = {
-    performance: 'Performance',
-    accessibility: 'Accessibility',
-    'best-practices': 'Best practices',
-    seo: 'SEO',
-    pwa: 'PWA',
-  } as const;
-  const result = Object.entries(categoryTitles)
+  const result = Object.entries(PERFORMANCE_CATEGORY_TITLES)
     .filter(
       ([id]) =>
         categories[id] &&
         (!params.categories ||
-          params.categories.includes(id as keyof typeof categoryTitles)),
+          params.categories.includes(
+            id as keyof typeof PERFORMANCE_CATEGORY_TITLES,
+          )),
     )
     .map(([id, title]) => {
       const category = object(categories[id]);

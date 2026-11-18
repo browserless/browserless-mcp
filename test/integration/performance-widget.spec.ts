@@ -11,6 +11,7 @@ import { clearSession } from '../../src/lib/download-store.js';
 import {
   PERFORMANCE_URI,
   PerformanceViewSchema,
+  PerformancePendingSchema,
 } from '../../src/lib/performance-summary.js';
 
 const fixture = JSON.parse(
@@ -26,11 +27,21 @@ describe('performance scorecard over real MCP HTTP', () => {
   for (const compliant of [false, true]) {
     it(`renders one audit on the ${compliant ? 'compliant' : 'full'} surface and preserves legacy output`, async () => {
       let calls = 0;
+      let started!: () => void;
+      let release!: () => void;
+      const backendStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       const backend = createServer(async (request, response) => {
         calls++;
+        started();
         let body = '';
         for await (const chunk of request) body += chunk;
         expect(JSON.parse(body).url).to.equal('https://example.test/');
+        await gate;
         response.setHeader('content-type', 'application/json');
         response.end(JSON.stringify({ type: 'json', data: fixture }));
       });
@@ -47,7 +58,10 @@ describe('performance scorecard over real MCP HTTP', () => {
       const server = new FastMCP({
         name: 'scorecard-test',
         version: '1.0.0',
-        authenticate: async () => ({ token: 'synthetic-token', apiUrl: base }),
+        authenticate: async (request) => ({
+          token: request.headers.authorization?.slice(7) ?? 'synthetic-token',
+          apiUrl: base,
+        }),
       });
       registerSurface(server, {
         ...getConfig(),
@@ -58,7 +72,7 @@ describe('performance scorecard over real MCP HTTP', () => {
         maxRetries: 0,
       });
       const clients: Client[] = [];
-      const connect = async (ui: boolean) => {
+      const connect = async (ui: boolean, owner = 'synthetic-token') => {
         const client = new Client(
           { name: 'scorecard-host', version: '1.0.0' },
           { capabilities: ui ? capabilities : {} },
@@ -67,6 +81,7 @@ describe('performance scorecard over real MCP HTTP', () => {
         await client.connect(
           new StreamableHTTPClientTransport(
             new URL(`http://127.0.0.1:${port}/mcp`),
+            { requestInit: { headers: { Authorization: `Bearer ${owner}` } } },
           ),
         );
         return client;
@@ -84,7 +99,11 @@ describe('performance scorecard over real MCP HTTP', () => {
           ui: { resourceUri: PERFORMANCE_URI },
           'openai/outputTemplate': PERFORMANCE_URI,
         });
-        if (compliant) expect(tools).to.have.length(5);
+        if (compliant) expect(tools).to.have.length(7);
+        expect(
+          tools.find((tool) => tool.name === 'browserless_performance_run')!
+            ._meta,
+        ).to.deep.include({ ui: { visibility: ['app'] } });
         const resource = (await ui.readResource({ uri: PERFORMANCE_URI }))
           .contents[0];
         expect(resource.mimeType).to.equal('text/html;profile=mcp-app');
@@ -95,16 +114,53 @@ describe('performance scorecard over real MCP HTTP', () => {
           'Performance report',
         );
         const args = { url: 'https://example.test/', categories: ['seo'] };
-        const visual = await ui.callTool({
+        const shell = await ui.callTool({
           name: 'browserless_performance',
           arguments: args,
         });
+        const pending = PerformancePendingSchema.parse(shell.structuredContent);
+        expect(calls).to.equal(0);
+        const foreign = await connect(true, 'another-token');
+        for (const name of [
+          'browserless_performance_run',
+          'browserless_performance_result',
+        ]) {
+          const denied = await foreign.callTool({
+            name,
+            arguments: { auditRef: pending.auditRef },
+          });
+          expect(denied.isError).to.equal(true);
+        }
+        expect(calls).to.equal(0);
+        const completion = ui.callTool({
+          name: 'browserless_performance_run',
+          arguments: { auditRef: pending.auditRef },
+        });
+        await backendStarted;
+        const duplicate = ui.callTool({
+          name: 'browserless_performance_run',
+          arguments: { auditRef: pending.auditRef },
+        });
+        const waiting = await ui.callTool({
+          name: 'browserless_performance_result',
+          arguments: { auditRef: pending.auditRef },
+        });
+        expect(JSON.stringify(waiting)).to.include('still pending');
+        release();
+        const visual = await completion;
+        expect(await duplicate).to.deep.equal(visual);
         expect(visual.isError).not.to.equal(true);
         const summary = PerformanceViewSchema.parse(visual.structuredContent);
         expect(summary.categories.map((category) => category.id)).to.deep.equal(
           ['seo'],
         );
         expect(summary.metrics).to.deep.equal([]);
+        expect(calls).to.equal(1);
+        const retained = await ui.callTool({
+          name: 'browserless_performance_result',
+          arguments: { auditRef: pending.auditRef },
+        });
+        expect(retained).to.deep.equal(visual);
         expect(calls).to.equal(1);
         const legacy = await connect(false);
         const plain = await legacy.callTool({
@@ -126,8 +182,27 @@ describe('performance scorecard over real MCP HTTP', () => {
           expect(visualText[0]).to.deep.equal(legacyText[0]);
           expect(visualText[1]).to.deep.equal(legacyText[1]);
           expect(visualText.at(-1)).to.deep.equal(legacyText.at(-1));
+          const privateInput = await ui.callTool({
+            name: 'browserless_performance',
+            arguments: {
+              url: 'https://user:password@example.test/path?token=QUERY_SECRET#FRAGMENT_SECRET',
+              profile: 'PRIVATE_PROFILE',
+              config: {
+                settings: { extraHeaders: { Authorization: 'CONFIG_SECRET' } },
+              },
+            },
+          });
+          expect(
+            PerformancePendingSchema.parse(privateInput.structuredContent).input
+              .url,
+          ).to.equal('https://example.test/path');
+          expect(JSON.stringify(privateInput)).not.to.match(
+            /password|QUERY_SECRET|FRAGMENT_SECRET|PRIVATE_PROFILE|CONFIG_SECRET/,
+          );
+          expect(calls).to.equal(2);
         }
       } finally {
+        release();
         for (const session of server.sessions) clearSession(session.sessionId);
         await Promise.allSettled(clients.map((client) => client.close()));
         await server.stop();

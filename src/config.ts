@@ -63,6 +63,7 @@ export function getConfig(): McpConfig & { uploadDirs: string[] } {
       'OAUTH_REGISTER_RATE_LIMIT_PER_HOUR must be a positive safe integer',
     );
   }
+  const complianceMode = parseComplianceMode(process.env.MCP_COMPLIANCE_MODE);
   return {
     browserlessToken: process.env.BROWSERLESS_TOKEN,
     browserlessApiUrl: process.env.BROWSERLESS_API_URL ?? DEFAULT_API_URL,
@@ -79,12 +80,14 @@ export function getConfig(): McpConfig & { uploadDirs: string[] } {
     requestTimeout: parseInt(process.env.BROWSERLESS_TIMEOUT ?? '30000', 10),
     maxRetries: parseInt(process.env.BROWSERLESS_MAX_RETRIES ?? '3', 10),
     cacheTtlMs: parseInt(process.env.BROWSERLESS_CACHE_TTL ?? '60000', 10),
-    analyticsEnabled: process.env.ANALYTICS_ENABLED === 'true',
-    amplitudeApiKey: process.env.AMPLITUDE_API_KEY,
+    // The compliant surface collects no usage analytics, whatever the env says.
+    analyticsEnabled:
+      !complianceMode && process.env.ANALYTICS_ENABLED === 'true',
+    amplitudeApiKey: complianceMode ? undefined : process.env.AMPLITUDE_API_KEY,
     // Per-process toggle for the compliant surface used by the OpenAI/Anthropic
     // directory listings: registers fewer tools and de-fangs the agent (see
     // tools/compliance.ts). Fails closed — see parseComplianceMode.
-    complianceMode: parseComplianceMode(process.env.MCP_COMPLIANCE_MODE),
+    complianceMode,
     sqsQueueUrl: process.env.SQS_QUEUE_URL,
     sqsRegion: process.env.SQS_REGION ?? 'us-west-2',
     // OAuth (Supabase)

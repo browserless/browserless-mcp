@@ -5,14 +5,14 @@ import { accountQuery } from '../lib/account-api.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import { defineTool } from '../lib/define-tool.js';
 import type { McpConfig } from '../@types/types.js';
+import { replayViews } from '../lib/view-store.js';
+import { isCompliant } from './compliance.js';
+import { UsageTimeframeSchema } from '../lib/account-view-schemas.js';
 
 export const UsageParamsSchema = z.object({
-  timeframe: z
-    .enum(['hour', 'day', 'week'])
-    .optional()
-    .describe(
-      'Window the usage counts cover: the last hour, day, or week. Defaults to day.',
-    ),
+  timeframe: UsageTimeframeSchema.optional().describe(
+    'Window the usage counts cover: the last hour, day, or week. Defaults to day.',
+  ),
   apiKeyIds: z
     .array(z.string())
     .max(50)
@@ -179,7 +179,8 @@ export function registerUsageTool(
       'the current API token: successes, errors, timeouts, queueing, peak ' +
       'concurrency, captchas, proxy bytes and units. Use it to answer "how ' +
       'much have I used" or "why is my bill high". For per-request detail on ' +
-      'failures, use browserless_logs instead. Read-only.',
+      'failures, use browserless_logs instead. Read-only. ' +
+      'MCP Apps clients receive a viewRef; call browserless_show with that exact reference to display the usage meter. Timeframe affects request counters only; billed units cover the billing period.',
     parameters: UsageParamsSchema,
     annotations: {
       title: 'Browserless Usage',
@@ -209,13 +210,38 @@ export function registerUsageTool(
       key_filter_count: params.apiKeyIds?.length ?? 0,
       units_used: result?.accountSummary?.cloudUnits?.used ?? undefined,
     }),
-    format: (usage, params) => [
-      {
-        type: 'text' as const,
-        text: usage
-          ? formatUsage(usage, params)
-          : 'No usage has been recorded for this account yet.',
-      },
-    ],
+    format: (usage, params, { uiEnabled, viewOwner }) => {
+      const content = [
+        {
+          type: 'text' as const,
+          text: usage
+            ? formatUsage(usage, params)
+            : 'No usage has been recorded for this account yet.',
+        },
+      ];
+      const view =
+        uiEnabled && !isCompliant(config)
+          ? replayViews.prepareSnapshot(
+              viewOwner,
+              'usage',
+              'Account usage snapshot.',
+              {
+                timeframe: params.timeframe ?? DEFAULT_TIMEFRAME,
+                apiKeyIds: params.apiKeyIds,
+                fetchedAt: new Date().toISOString(),
+                units: usage?.accountSummary?.cloudUnits ?? null,
+                currentPeriodEnd:
+                  usage?.accountSummary?.currentPeriodEnd ?? null,
+                counters: usage?.accountUsage?.summary ?? null,
+              },
+            )
+          : undefined;
+      if (!view) return content;
+      content.push({
+        type: 'text',
+        text: `Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to display usage inline.`,
+      });
+      return { content, structuredContent: view };
+    },
   });
 }

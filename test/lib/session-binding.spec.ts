@@ -4,6 +4,7 @@ import {
   admitSessionRequest,
   assertSessionPrincipal,
   authOutcome,
+  requestSessionId,
   sessionNotFoundResponse,
   sessionPrincipal,
   type SessionLike,
@@ -44,6 +45,41 @@ async function notFound(run: () => void) {
 
 describe('session binding', () => {
   afterEach(() => resetSessionReaperForTests());
+
+  it('uses only the session header for identity binding', () => {
+    expect(requestSessionId({})).to.equal(undefined);
+    expect(requestSessionId({ headers: { 'mcp-session-id': 'h' } })).to.equal(
+      'h',
+    );
+    expect(
+      requestSessionId({ headers: { 'mcp-session-id': ['h1', 'h2'] } }),
+    ).to.equal('h1');
+  });
+
+  it('observes refusal reasons without changing admission or responses', async () => {
+    const admit = admitSessionRequest;
+    const observed: unknown[] = [];
+    const observe = (reason: string, owner?: BrowserlessSession) =>
+      observed.push([reason, owner]);
+    admit(undefined, key, [], observe);
+    admit('S', key, [{ sessionId: 'S', auth: key }], observe);
+    expect(observed).to.deep.equal([]);
+    await notFound(() => admit('S', key, [], observe));
+    await notFound(() => admit('S', key, [{ sessionId: 'S' }], observe));
+    await notFound(() =>
+      admit('S', oauth, [{ sessionId: 'S', auth: key }], observe),
+    );
+    expect(observed).to.deep.equal([
+      ['unknown_session', undefined],
+      ['unknown_session', undefined],
+      ['principal_mismatch', key],
+    ]);
+    await notFound(() =>
+      admit('S', oauth, [{ sessionId: 'S', auth: key }], () => {
+        throw new Error('observer unavailable');
+      }),
+    );
+  });
 
   it('admits initialization, the same key through either source, and refreshed OAuth identities', () => {
     assertSessionPrincipal(undefined, key, []);

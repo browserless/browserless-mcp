@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { exportLogRecord } from './otlp-log.js';
 
 const common = {
   domain: z
@@ -48,7 +49,6 @@ export const skillSource = (source: string): string =>
     ? source
     : 'unknown';
 
-let inFlight = 0;
 let nextDiagnosticAt = 0;
 
 /** OTLP/HTTP JSON to the operator's collector. Disabled unless configured. */
@@ -56,67 +56,12 @@ export const logSkillEvent = async (
   event: 'skill.retrieval.failed' | 'skill.telemetry.delivery_failed',
   fields: Record<string, string | number>,
 ): Promise<void> => {
-  // Prefer the explicit logs endpoint; else derive from the shared base, but only
-  // when the OTLP SDK is active (OTEL_ENABLED + httpStream) — not stdio/disabled.
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-  const fallback =
-    base &&
-    process.env.OTEL_ENABLED === 'true' &&
-    process.env.TRANSPORT === 'httpStream'
-      ? `${base.replace(/\/+$/, '')}/v1/logs`
-      : undefined;
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? fallback;
-  if (!endpoint || inFlight >= 16) return;
-  inFlight++;
-  try {
-    const attributes = Object.entries({ ...fields, 'event.name': event }).map(
-      ([key, value]) => ({
-        key,
-        value:
-          typeof value === 'number'
-            ? { intValue: String(value) }
-            : { stringValue: value },
-      }),
-    );
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(1000),
-      body: JSON.stringify({
-        resourceLogs: [
-          {
-            resource: {
-              attributes: [
-                {
-                  key: 'service.name',
-                  value: { stringValue: 'browserless-mcp' },
-                },
-              ],
-            },
-            scopeLogs: [
-              {
-                scope: { name: 'skill-catalog' },
-                logRecords: [
-                  {
-                    timeUnixNano: String(BigInt(Date.now()) * 1_000_000n),
-                    severityNumber: 13,
-                    severityText: 'WARN',
-                    body: { stringValue: event },
-                    attributes,
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      }),
-    });
-    await response.body?.cancel();
-  } catch {
-    // An exporter cannot report its own failure through itself. No retries.
-  } finally {
-    inFlight--;
-  }
+  await exportLogRecord({
+    scope: 'skill-catalog',
+    event,
+    severity: 'WARN',
+    attributes: fields,
+  });
 };
 
 export const skillDeliveryFailed = (event: string): void => {

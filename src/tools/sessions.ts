@@ -407,7 +407,7 @@ export function registerSessionsTool(
       'Always show the replay — never just summarise it in words.' +
       (isCompliant(config)
         ? ''
-        : ' For MCP Apps clients, action replay returns a viewRef without rendering. Call browserless_show with that exact reference to display the recording; do not read or repeat the recording data.'),
+        : ' For MCP Apps clients, actions active and replay return a viewRef without rendering. Call browserless_show with that exact reference to display the result; do not read or repeat recording data.'),
     parameters: SessionsParamsSchema,
     annotations: {
       title: 'Browserless Sessions',
@@ -532,7 +532,35 @@ export function registerSessionsTool(
         result?.integrations?.length ??
         0,
     }),
-    format: async (result, params, { token, sessionId }) => {
+    format: async (
+      result,
+      params,
+      { token, sessionId, uiEnabled, viewOwner },
+    ) => {
+      if (params.action === 'active' && uiEnabled && !isCompliant(config)) {
+        const view = replayViews.prepareSnapshot(
+          viewOwner,
+          'active-sessions',
+          'Active browser sessions snapshot.',
+          {
+            fetchedAt: new Date().toISOString(),
+            limit: params.limit ?? 50,
+            skip: params.skip ?? 0,
+            count: result.active?.count ?? null,
+            sessions: result.active?.sessions ?? [],
+          },
+        );
+        if (view)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `${formatActive(result)}\n\nCall browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to display active sessions inline.`,
+              },
+            ],
+            structuredContent: view,
+          };
+      }
       const replay = result?.replay;
       let downloads: string | undefined;
       if (replay && !replay.local && !replay.inlined) {

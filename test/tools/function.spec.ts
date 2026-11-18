@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
+  FunctionParamsSchema,
   MAX_TEXT_RESPONSE_CHARS,
   formatFunctionContent,
   registerFunctionTool,
@@ -68,6 +69,34 @@ describe('browserless_function tool', () => {
   it('registers the tool on the server', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     expect(() => registerFunctionTool(server, mockConfig)).to.not.throw();
+  });
+
+  it('drops the wrapper advice from the tool description', () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    registerFunctionTool(server, mockConfig);
+    const { description } = addTool.firstCall.args[0];
+    expect(description).not.to.include('Return { data, type }');
+    expect(description).not.to.include('to a real MIME');
+    expect(description).not.to.include('set `type`');
+  });
+
+  it('gives the working method in the tool description', () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const addTool = sinon.spy(server, 'addTool');
+    registerFunctionTool(server, mockConfig);
+    const { description } = addTool.firstCall.args[0];
+    expect(description).to.include('return await page.screenshot(');
+    expect(description).to.include('NOT unwrapped');
+    expect(description).to.include('Buffer');
+    expect(description).to.include('200,000 characters');
+  });
+
+  it('describes direct byte returns and JSON text in the code parameter', () => {
+    const { description } = FunctionParamsSchema.shape.code;
+    expect(description).not.to.include('should return { data, type }');
+    expect(description).to.include('page.screenshot()');
+    expect(description).to.include('JSON text');
   });
 
   for (const [status, reason, source, category] of [
@@ -140,8 +169,9 @@ describe('browserless_function tool', () => {
       success: false,
       ok: true,
       status_code: 200,
-      error_reason: 'unknown',
-      error_source: 'unknown',
+      error_reason: 'response_too_large',
+      error_source: 'script',
+      error_code: 'RESPONSE_TOO_LARGE',
       error_category: 'user_error',
     });
     expect(props).not.to.have.property('error_status_code');
@@ -468,6 +498,20 @@ describe('formatFunctionContent', () => {
     expect(() =>
       formatFunctionContent(makeResponse({ data: huge, size: huge.length })),
     ).to.throw(UserError, /exceeding the .* limit/);
+  });
+
+  it('gives the working method in the size error', () => {
+    const huge = 'a'.repeat(MAX_TEXT_RESPONSE_CHARS + 1);
+    try {
+      formatFunctionContent(makeResponse({ data: huge, size: huge.length }));
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).to.be.instanceOf(UserError);
+      expect(err).to.have.property('code', 'RESPONSE_TOO_LARGE');
+      expect((err as Error).message).not.to.match(/return \{ ?type:/);
+      expect((err as Error).message).to.include('return the bytes directly');
+      expect((err as Error).message).to.include('exceeding the 200000-char');
+    }
   });
 
   it('error message points to image/audio types as the fix', () => {

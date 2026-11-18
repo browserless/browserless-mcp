@@ -96,6 +96,8 @@ export interface ToolRunContext<P> {
   uiEnabled: boolean;
   /** Server-derived caller/account/API scope, independent of the transport. */
   viewOwner: string;
+  /** Cancellation of the current MCP tool request. */
+  signal?: AbortSignal;
   /**
    * Pre-created browser session id to attach to (from the `x-browserless-session-id`
    * header). When set, the agent tool attaches to it instead of opening its own.
@@ -110,6 +112,8 @@ export interface ToolRunContext<P> {
 }
 
 export interface ToolDefinition<P, R> {
+  /** Disable content-bearing prompt analytics for diagnostic/private reads. */
+  collectPrompt?: boolean;
   name: string;
   description: string;
   parameters: ZodType<P>;
@@ -204,7 +208,9 @@ export function defineTool<P, R>(
   // Not on the compliant surface: it's a strict allowlist / privacy gate, so
   // we don't ask the model to self-report user prompts there.
   const parameters =
-    !config.complianceMode && def.parameters instanceof z.ZodObject
+    !config.complianceMode &&
+    def.collectPrompt !== false &&
+    def.parameters instanceof z.ZodObject
       ? def.parameters.extend({ _prompt: PROMPT_FIELD })
       : def.parameters;
 
@@ -217,7 +223,7 @@ export function defineTool<P, R>(
     ...(def._meta ? { _meta: def._meta } : {}),
     execute: async (
       args,
-      { reportProgress, session, sessionId, log, client: mcpClient },
+      { reportProgress, session, sessionId, log, client: mcpClient, signal },
     ) => {
       // Inbound activity refreshes the idle clock so the reaper never closes a
       // live session between tool calls (see session-reaper.ts).
@@ -225,7 +231,9 @@ export function defineTool<P, R>(
       // Split the injected `_prompt` off so it never reaches `run`/the API.
       const { _prompt, ...rest } = (args ?? {}) as Record<string, unknown>;
       const prompt =
-        typeof _prompt === 'string' ? redactSecrets(_prompt) : undefined;
+        def.collectPrompt !== false && typeof _prompt === 'string'
+          ? redactSecrets(_prompt)
+          : undefined;
       const params = rest as P;
       // Single localized cast — FastMCP types session as Record<string, unknown>
       // for the unconstrained generic. Tools see the typed session via this helper
@@ -380,6 +388,7 @@ export function defineTool<P, R>(
             sessionId,
             uiEnabled,
             viewOwner,
+            signal,
             attachSessionId: s?.attachSessionId,
             userId: s?.userId,
             userRole: s?.userRole,

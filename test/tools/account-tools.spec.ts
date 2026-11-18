@@ -410,7 +410,7 @@ describe('account-data tools', () => {
         }
       });
 
-      it('fetches the artifact from the signed link and attaches a player resource', async () => {
+      it('fetches the artifact from the signed link for local replay', async () => {
         fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
         fetchStub.onSecondCall().resolves(
           new Response(JSON.stringify(artifact), {
@@ -432,14 +432,6 @@ describe('account-data tools', () => {
         expect(requestBody(fetchStub).variables.sessionId).to.equal('sr_1');
         expect(String(fetchStub.secondCall.args[0])).to.equal(SIGNED_URL);
 
-        const resource = result.content.find(
-          (c) => (c as { type: string }).type === 'resource',
-        ) as { resource: { mimeType: string; text: string } };
-        expect(resource, 'player attached as a resource').to.exist;
-        expect(resource.resource.mimeType).to.equal('text/html');
-        expect(resource.resource.text).to.include('rrweb-player');
-        // The events must be inlined so the page plays offline.
-        expect(resource.resource.text).to.include('replay-data');
         expect(result).not.to.have.property('structuredContent');
 
         expect(textOf(result)).to.include('sr_1');
@@ -501,11 +493,14 @@ describe('account-data tools', () => {
         expect(text).to.include('never rebuild the player');
         expect(text).to.not.include('browserless-replay-');
         expect(text).to.not.include("open '");
-        expect(
-          result.content.some(
-            (c) => (c as { type: string }).type === 'resource',
-          ),
-        ).to.equal(true);
+        const resource = result.content.find(
+          (c) => (c as { type: string }).type === 'resource',
+        ) as { resource: { mimeType: string; text: string } };
+        expect(resource, 'player attached as a resource').to.exist;
+        expect(resource.resource.mimeType).to.equal('text/html');
+        expect(resource.resource.text).to.include('rrweb-player');
+        // The events must be inlined so the page plays offline.
+        expect(resource.resource.text).to.include('replay-data');
       });
 
       for (const lifecycle of ['fetch', 'expiry', 'session end']) {

@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { once } from 'node:events';
+import WebSocket, { WebSocketServer } from 'ws';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
 import {
@@ -23,6 +25,7 @@ import {
   closeReminder,
   nextProfileAuthState,
   SAVED_LOGIN_REMINDER,
+  SKILL_OUTCOME_NOT_RECORDED as skillNotRecorded,
 } from '../../src/tools/agent.js';
 import { fileTransferModeNote } from '../../src/skills/system-prompt.js';
 import {
@@ -34,15 +37,18 @@ import {
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile as fsReadFile,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   clearSession,
+  consumeDownload,
   downloadOwner,
   downloadUri,
   FILE_TRANSFER_MAX_BYTES,
@@ -51,6 +57,7 @@ import {
 } from '../../src/lib/download-store.js';
 import {
   getActiveSessionByHandle,
+  PersonaConflictError,
   ProfileNotFoundError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
@@ -183,7 +190,7 @@ describe('browserless_agent reserved methods', () => {
 });
 
 describe('agent secret-capture preflight', () => {
-  it('allows a protected navigation wait before a snapshot', () => {
+  it('keeps capture blocked after a protected navigation wait', () => {
     expect(() =>
       validateSecretCaptureOrdering([
         { method: 'loadSecret' },
@@ -191,7 +198,7 @@ describe('agent secret-capture preflight', () => {
         { method: 'waitForNavigation' },
         { method: 'snapshot' },
       ]),
-    ).not.to.throw();
+    ).to.throw('snapshot cannot run after loadSecret');
   });
 
   it('allows response waits without allowing subsequent page reads', () => {
@@ -300,20 +307,33 @@ describe('agent secret-capture preflight', () => {
     }
   });
 
-  it('allows capture after clearSecrets or navigation', () => {
-    for (const method of ['clearSecrets', 'goto']) {
+  it('allows capture only after explicit clear, not navigation', () => {
+    for (const method of [
+      'goto',
+      'back',
+      'forward',
+      'reload',
+      'waitForNavigation',
+    ]) {
       expect(() =>
         validateSecretCaptureOrdering([
           { method: 'loadSecret', params: { ref: 'password' } },
           { method, params: {} },
           { method: 'screenshot', params: {} },
         ]),
-      ).not.to.throw();
+      ).to.throw('screenshot cannot run after loadSecret');
     }
+    expect(() =>
+      validateSecretCaptureOrdering([
+        { method: 'loadSecret' },
+        { method: 'clearSecrets' },
+        { method: 'snapshot' },
+      ]),
+    ).not.to.throw();
   });
 
   it('rejects unclassified readbacks after loadSecret', () => {
-    for (const method of ['getTabs', 'querySelectorAll', 'title', 'url']) {
+    for (const method of ['querySelectorAll', 'title', 'url']) {
       expect(() =>
         validateSecretCaptureOrdering([{ method: 'loadSecret' }, { method }]),
       ).to.throw(`${method} cannot run after loadSecret`);
@@ -330,14 +350,14 @@ describe('secretVisibleAfter', () => {
     [false, 'loadSecret', { ok: 'true' }, false],
     [false, 'loadSecret', undefined, false],
     [true, 'clearSecrets', { ok: true }, false],
-    [true, 'goto', { url: 'https://example.com' }, false],
+    [true, 'goto', { url: 'https://example.com' }, true],
     [true, 'goto', { rejected: true }, true],
     [true, 'goto', null, true],
     [
       true,
       'waitForNavigation',
       { url: 'https://example.com/', status: 200 },
-      false,
+      true,
     ],
     [true, 'waitForNavigation', { rejected: true }, true],
     [
@@ -877,7 +897,9 @@ describe('normalizeUploadCommand', () => {
 
   it('retains the size cap for an allowed local file', async () => {
     const path = join(allowed, 'large.bin');
-    await writeFile(path, Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1));
+    await writeFile(path, '');
+    // Sparse: exceeds readFile's own ceiling without allocating gigabytes.
+    await truncate(path, 2 ** 31 + 1);
     const file: Record<string, unknown> = { path };
     const error = await normalizeUploadCommand(
       { method: 'uploadFile', params: { files: [file] } },
@@ -888,6 +910,128 @@ describe('normalizeUploadCommand', () => {
       () => undefined,
       (error: unknown) => error,
     );
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message)
+      .to.include('"large.bin"')
+      .and.include(`${2 ** 31 + 1} bytes, over the 50MB limit`);
+    expect(file).not.to.have.property('content');
+  });
+
+  it('bounds an oversized stored handle before reading it', async () => {
+    const token = 'handle-cap-token';
+    const record = await storeDownload(
+      'huge.bin',
+      'application/octet-stream',
+      Buffer.from('small'),
+      downloadOwner(token),
+    );
+    try {
+      // Sparse growth after staging: the handle branch must not buffer it all.
+      await truncate(record.path, 2 ** 31 + 1);
+      const file: Record<string, unknown> = { handle: downloadUri(record.id) };
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'httpStream',
+        undefined,
+        token,
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include('"huge.bin"')
+        .and.include(`${2 ** 31 + 1} bytes, over the 50MB limit`);
+      expect(file).not.to.have.property('content');
+    } finally {
+      consumeDownload(downloadUri(record.id), downloadOwner(token));
+    }
+  });
+
+  it('reports an expired stored handle without exposing the server path', async () => {
+    const token = 'expired-handle-token';
+    const record = await storeDownload(
+      'gone.bin',
+      'application/octet-stream',
+      Buffer.from('bytes'),
+      downloadOwner(token),
+    );
+    try {
+      await rm(record.path);
+      const handle = downloadUri(record.id);
+      const error = await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [{ handle }] } },
+        'httpStream',
+        undefined,
+        token,
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message)
+        .to.include('could not be read')
+        .and.not.include(record.path);
+    } finally {
+      consumeDownload(downloadUri(record.id), downloadOwner(token));
+    }
+  });
+
+  it('rejects directories as non-regular upload files', async () => {
+    const path = join(allowed, 'directory');
+    await mkdir(path);
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).catch((error: unknown) => error);
+    expect(error).to.be.instanceOf(UserError);
+    expect((error as Error).message).to.include('regular file');
+    expect(file).not.to.have.property('content');
+  });
+
+  for (const size of [0, 50 * 1024 * 1024 - 1, 50 * 1024 * 1024]) {
+    it(`accepts a local file of ${size} bytes`, async () => {
+      const path = join(allowed, 'boundary.bin');
+      await writeFile(path, '');
+      await truncate(path, size);
+      const file: Record<string, unknown> = { path };
+      await normalizeUploadCommand(
+        { method: 'uploadFile', params: { files: [file] } },
+        'stdio',
+        undefined,
+        'test-token',
+      );
+      const result = Buffer.from(file.content as string, 'base64');
+      expect(result.length).to.equal(size);
+      expect(result.every((byte) => byte === 0)).to.equal(true);
+      expect(file.name).to.equal('boundary.bin');
+      expect(file).not.to.have.property('path');
+    });
+  }
+
+  it('rejects a file that grows over the cap after descriptor inspection', async () => {
+    const path = join(allowed, 'growing.bin');
+    await writeFile(path, 'initial');
+    const probe = await open(path, 'r');
+    const prototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const stat = prototype.stat;
+    // Keep real descriptor I/O; inject growth at the otherwise racy boundary.
+    sinon.stub(prototype, 'stat').callsFake(async function (this: unknown) {
+      const result = await stat.call(this);
+      await truncate(path, 50 * 1024 * 1024 + 1);
+      return result;
+    });
+    const file: Record<string, unknown> = { path };
+    const error = await normalizeUploadCommand(
+      { method: 'uploadFile', params: { files: [file] } },
+      'stdio',
+      undefined,
+      'test-token',
+    ).catch((error: unknown) => error);
     expect(error).to.be.instanceOf(UserError);
     expect((error as Error).message).to.include('50MB limit');
     expect(file).not.to.have.property('content');
@@ -1330,12 +1474,12 @@ describe('formatErrorMessage', () => {
     const out = formatErrorMessage({
       category: 'SESSION_LOST',
       prefix: 'click failed: ',
-      message: 'WebSocket closed while waiting for "click" response',
+      message: 'Agent WebSocket closed while waiting for "click" response',
       recovery: 'A fresh session was opened automatically.',
     });
     expect(out).to.match(/^Category: SESSION_LOST\n\n/);
     expect(out).to.include(
-      'click failed: WebSocket closed while waiting for "click" response',
+      'click failed: Agent WebSocket closed while waiting for "click" response',
     );
     expect(out).to.not.include('[');
     expect(out).to.include('Recovery: A fresh session was opened');
@@ -1588,6 +1732,210 @@ const getAgentExecute = (
     .find((c) => c.args[0].name === 'browserless_agent');
   return agentCall!.args[0].execute as (args: unknown, ctx: unknown) => unknown;
 };
+
+describe('browserless_agent session diagnostics', () => {
+  afterEach(() => sinon.restore());
+
+  it('escapes transport errors in retry warnings', async () => {
+    const server = await makeRespondingServer(() => ({
+      url: 'https://example.com',
+      status: 200,
+    }));
+    const reason =
+      'transport' +
+      'x'.repeat(100) +
+      '\n\u202e"\\end; code=1008, reason="peer:\\u202e"';
+    const warn = sinon.stub();
+    sinon
+      .stub(WebSocket.prototype, 'send')
+      .callThrough()
+      .onFirstCall()
+      .throws(new Error(reason));
+    try {
+      const result = await getAgentExecute(server.url)(
+        { method: 'goto', params: { url: 'https://example.com' } },
+        { ...mockContext, log: { ...mockContext.log, warn } },
+      );
+      expect(JSON.stringify(result)).to.include('https://example.com');
+      expect(server.hits()).to.equal(2);
+      const warning = warn
+        .getCalls()
+        .map((call) => String(call.args[0]))
+        .find((line) => line.includes('retrying once'));
+      expect(warning).to.be.a('string');
+      expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(warning!.slice(warning!.indexOf('): ') + 3)).to.equal(
+        'transport' +
+          'x'.repeat(100) +
+          '\\u000a\\u202e"\\end; code=1008, reason="peer:\\u202e"',
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('escapes canonical attach IDs as a backstop when HTTP validation is bypassed', async () => {
+    const warn = sinon.stub();
+    const attachSessionId = 'browser\t\u202e';
+    await getAgentExecute('http://127.0.0.1:1')(
+      { method: 'close', sessionId: 's:foreign' },
+      {
+        ...mockContext,
+        log: { ...mockContext.log, warn },
+        session: { attachSessionId },
+      },
+    );
+    const warning = warn.firstCall.args[0] as string;
+    expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(
+      JSON.parse(warning.slice(warning.indexOf('canonical=') + 10)),
+    ).to.equal(`attach:${attachSessionId}`);
+  });
+
+  it('escapes echoed session controls as a backstop when schema validation is bypassed', async () => {
+    const sessionId =
+      's:\n\r\t\u001b\u007f\u0085\u009b\u2028\u2029\u202e\u2066\u200b\u{e0001}"\\end';
+    const stderr = sinon.spy(process.stderr, 'write');
+    // Closing an absent session reaches the diagnostics without a connection.
+    const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
+    let result: unknown;
+    try {
+      result = await execute(
+        { method: 'close', sessionId },
+        { ...mockContext, sessionId },
+      );
+    } catch (error) {
+      result = error;
+    }
+    expect(result).to.be.instanceOf(PersonaConflictError);
+    const lines = stderr.getCalls().map((call) => String(call.args[0]));
+    const diagnostic = lines.find((line) => line.startsWith('[agent] handle '));
+    expect(diagnostic).to.be.a('string');
+    expect(diagnostic!.slice(0, -1)).not.to.match(
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u,
+    );
+    const encoded = diagnostic!.slice('[agent] handle echoed='.length, -1);
+    expect(JSON.parse(encoded)).to.equal(sessionId);
+  });
+
+  it('preserves complete handles and bounds previews by code point before escaping', async () => {
+    const stderr = sinon.spy(process.stderr, 'write');
+    const execute = getAgentExecute('http://127.0.0.1:1', 'httpStream');
+    const handle = 's:12345678-1234-1234-1234-123456789abc';
+    for (const sessionId of [
+      handle,
+      'x'.repeat(80),
+      'a'.repeat(79) + '😀',
+      'a'.repeat(79) + '😀z',
+      '\u202e'.repeat(1024),
+    ]) {
+      let result: unknown;
+      try {
+        result = await execute({ method: 'close', sessionId }, mockContext);
+      } catch (error) {
+        result = error;
+      }
+      if (sessionId.startsWith('\u202e'))
+        expect(result).to.be.instanceOf(PersonaConflictError);
+      else expect(JSON.stringify(result)).to.include('Browser session closed.');
+    }
+    await execute(
+      { method: 'close' },
+      { ...mockContext, sessionId: undefined },
+    );
+    const lines = stderr.getCalls().map((call) => String(call.args[0]));
+    expect(lines).to.include(`[agent] handle echoed="${handle}"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'x'.repeat(80)}"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'a'.repeat(79)}😀"\n`);
+    expect(lines).to.include(`[agent] handle echoed="${'a'.repeat(79)}😀"…\n`);
+    expect(lines).to.include(
+      `[agent] handle echoed="${'\\u202e'.repeat(80)}"…\n`,
+    );
+    expect(lines).to.include('[agent] handle absent (mcp=none)\n');
+    await execute(
+      { method: 'close' },
+      { ...mockContext, sessionId: 'server-uuid' },
+    );
+    expect(String(stderr.lastCall.args[0])).to.equal(
+      '[agent] handle absent (mcp=server-uuid)\n',
+    );
+  });
+});
+
+describe('browserless_agent null-ID protocol errors', () => {
+  it('keeps the same browser and does not replay a command after a protocol error', async () => {
+    const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await once(peer, 'listening');
+    const address = peer.address();
+    if (!address || typeof address === 'string')
+      throw new Error('Missing port');
+    const url = `http://127.0.0.1:${address.port}`;
+    let connections = 0;
+    let rejectedCommands = 0;
+    peer.on('connection', (ws) => {
+      connections++;
+      ws.on('message', (data) => {
+        const { id, method } = JSON.parse(data.toString());
+        if (method === 'getCookies') {
+          rejectedCommands++;
+          ws.send(
+            JSON.stringify({ id: null, error: { message: 'Invalid JSON' } }),
+          );
+        } else {
+          ws.send(
+            JSON.stringify({
+              id,
+              result:
+                method === 'snapshot'
+                  ? {
+                      url: 'https://example.com',
+                      title: 'Example',
+                      elements: [],
+                      time: 0,
+                    }
+                  : { text: 'original browser state' },
+            }),
+          );
+        }
+      });
+    });
+    try {
+      const execute = getAgentExecute(url);
+      const first = JSON.stringify(
+        await execute({ method: 'text', keepSessionAlive: true }, mockContext),
+      );
+      const sessionId = /sessionId:\s*(\S+)/.exec(first)?.[1];
+      expect(sessionId).to.be.a('string');
+      const session = getActiveSessionByHandle(sessionId!, url, 'test-token');
+      expect(session).to.not.equal(undefined);
+      let error: unknown;
+      try {
+        await execute(
+          { sessionId, method: 'getCookies', keepSessionAlive: true },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error)?.message).to.include('Invalid JSON');
+      expect(rejectedCommands).to.equal(1);
+      expect(getActiveSessionByHandle(sessionId!, url, 'test-token')).to.equal(
+        session,
+      );
+      const next = JSON.stringify(
+        await execute(
+          { sessionId, method: 'text', keepSessionAlive: true },
+          mockContext,
+        ),
+      );
+      expect(next).to.include('original browser state');
+      expect(connections).to.equal(1);
+    } finally {
+      for (const ws of peer.clients) ws.terminate();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  });
+});
 
 describe('browserless_agent close reminder surface', () => {
   afterEach(() => sinon.restore());
@@ -1890,6 +2238,216 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  for (const row of [
+    {
+      name: 'dead handle',
+      sessionId: 's:dead-a',
+      methods: ['reportSkillOutcome'],
+    },
+    {
+      name: 'with close',
+      sessionId: 's:dead-f',
+      methods: ['reportSkillOutcome', 'close'],
+    },
+    {
+      name: 'with verdict and close',
+      sessionId: 's:dead-c',
+      methods: ['reportSkillOutcome', 'reportOutcome', 'close'],
+    },
+    {
+      name: 'repeated reports and verdicts',
+      sessionId: 's:dead-g',
+      methods: [
+        'reportOutcome',
+        'reportSkillOutcome',
+        'reportSkillOutcome',
+        'reportOutcome',
+      ],
+    },
+    { name: 'no handle', methods: ['reportSkillOutcome'] },
+    {
+      name: 'no handle kept',
+      keepSessionAlive: true,
+      methods: ['reportSkillOutcome'],
+    },
+  ]) {
+    it(`drops late skill reports without connecting: ${row.name}`, async () => {
+      const methods: string[] = [];
+      const srv = await makeRespondingServer((method) => {
+        methods.push(method);
+        return { recorded: true };
+      });
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const commands = row.methods.map((method, index) => ({
+        method,
+        ...(method === 'reportSkillOutcome'
+          ? { params: { domain: 'example.com', task: 'read', success: true } }
+          : method === 'reportOutcome'
+            ? {
+                params: {
+                  success: index === 0,
+                  reason: index === 0 ? 'completed' : 'timeout',
+                },
+              }
+            : {}),
+      }));
+      try {
+        const result = await getAgentExecute(
+          srv.url,
+          'stdio',
+          analytics,
+        )(
+          {
+            sessionId: row.sessionId,
+            keepSessionAlive: row.keepSessionAlive,
+            commands,
+          },
+          mockContext,
+        );
+        const hasVerdict = row.methods.includes('reportOutcome');
+        expect(result).to.deep.equal({
+          content: [
+            {
+              type: 'text',
+              text: (hasVerdict ? 'Outcome recorded. ' : '') + skillNotRecorded,
+            },
+          ],
+        });
+        expect(srv.hits()).to.equal(0);
+        expect(methods).to.deep.equal([]);
+        expect(fire.callCount).to.equal(1);
+        expect(fire.firstCall.args[2]).to.include({
+          agent_session_handle: row.sessionId ?? null,
+          methods: row.methods.join(','),
+          command_count: commands.length,
+          success: true,
+        });
+        if (hasVerdict) {
+          expect(fire.firstCall.args[2]).to.include({
+            verdict_delivery: 'late',
+            self_reported_success: false,
+            outcome_reason: 'timeout',
+          });
+        } else {
+          expect(fire.firstCall.args[2]).not.to.have.any.keys(
+            'verdict_delivery',
+            'self_reported_success',
+            'outcome_reason',
+          );
+        }
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const withVerdict of [false, true]) {
+    for (const otherToken of [false, true]) {
+      it(`routes skill reports only to the caller's live browser (verdict=${withVerdict}, otherToken=${otherToken})`, async () => {
+        const methods: string[] = [];
+        const srv = await makeRespondingServer((method) => {
+          methods.push(method);
+          return method === 'text' ? { text: 'done' } : { recorded: true };
+        });
+        const analytics = new AnalyticsHelper(false);
+        const fire = sinon.stub(analytics, 'fireToolRequest');
+        try {
+          const execute = getAgentExecute(srv.url, 'stdio', analytics);
+          const opened = await execute(
+            { method: 'text', keepSessionAlive: true },
+            mockContext,
+          );
+          const sessionId = /sessionId: (\S+) /.exec(
+            JSON.stringify(opened),
+          )![1];
+          methods.length = 0;
+          fire.resetHistory();
+          const result = await execute(
+            {
+              sessionId,
+              commands: [
+                {
+                  method: 'reportSkillOutcome',
+                  params: {
+                    domain: 'example.com',
+                    task: 'read',
+                    success: true,
+                  },
+                },
+                ...(withVerdict
+                  ? [
+                      {
+                        method: 'reportOutcome',
+                        params: { success: false, reason: 'timeout' },
+                      },
+                    ]
+                  : []),
+              ],
+            },
+            otherToken
+              ? { ...mockContext, session: { token: 'other-token' } }
+              : mockContext,
+          );
+          expect(srv.hits()).to.equal(1);
+          expect(methods).to.deep.equal(
+            otherToken
+              ? []
+              : withVerdict
+                ? ['reportSkillOutcome', 'reportOutcome']
+                : ['reportSkillOutcome'],
+          );
+          expect(result).to.deep.equal({
+            content: [
+              {
+                type: 'text',
+                text: otherToken
+                  ? (withVerdict ? 'Outcome recorded. ' : '') + skillNotRecorded
+                  : 'Done.',
+              },
+            ],
+          });
+          expect(fire.callCount).to.equal(1);
+          if (withVerdict)
+            expect(fire.firstCall.args[2]).to.include({
+              verdict_delivery: otherToken ? 'late' : 'in_session',
+              self_reported_success: false,
+            });
+        } finally {
+          await srv.close();
+        }
+      });
+    }
+  }
+
+  it('rejects invalid late skill reports before connecting', async () => {
+    const srv = await makeRespondingServer(() => ({ recorded: true }));
+    try {
+      let error: unknown;
+      try {
+        await getAgentExecute(srv.url)(
+          {
+            sessionId: 's:dead-i',
+            commands: [
+              {
+                method: 'reportSkillOutcome',
+                params: { domain: 'example.com', task: 'read', success: 'yes' },
+              },
+            ],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).to.be.instanceOf(UserError);
+      expect((error as Error).message).not.to.equal(skillNotRecorded);
+      expect(srv.hits()).to.equal(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const failure of ['command', 'poll']) {
     it(`preserves completed downloads when a later ${failure} fails`, async () => {
       let polls = 0;
@@ -2165,7 +2723,7 @@ describe('browserless_agent one-shot sessions', () => {
     }
   });
 
-  it('delivers only the skill report after recording a late task outcome once', async () => {
+  it('records a late outcome and drops the skill report without opening a browser', async () => {
     const methods: string[] = [];
     const srv = await makeRespondingServer((method) => {
       methods.push(method);
@@ -2173,6 +2731,9 @@ describe('browserless_agent one-shot sessions', () => {
     });
     const analytics = new AnalyticsHelper(false);
     const fire = sinon.stub(analytics, 'fireToolRequest');
+    const fetch = sinon
+      .stub(globalThis, 'fetch')
+      .rejects(new Error('No probe expected'));
     try {
       const result = await getAgentExecute(
         srv.url,
@@ -2182,6 +2743,7 @@ describe('browserless_agent one-shot sessions', () => {
         {
           sessionId: 's:finished-skill',
           keepSessionAlive: false,
+          requiredCapabilities: ['reportOutcome'],
           commands: [
             {
               method: 'reportSkillOutcome',
@@ -2195,15 +2757,15 @@ describe('browserless_agent one-shot sessions', () => {
         },
         mockContext,
       );
-      expect(JSON.stringify(result)).to.include(
-        'Browser session closed (one-shot)',
-      );
-      expect(JSON.stringify(result)).not.to.include(
-        'report whether the task worked',
-      );
-      expect(srv.hits()).to.equal(1);
-      expect(methods).to.deep.equal(['reportSkillOutcome']);
-      expect(fire.callCount).to.equal(2);
+      expect(result).to.deep.equal({
+        content: [
+          { type: 'text', text: 'Outcome recorded. ' + skillNotRecorded },
+        ],
+      });
+      expect(srv.hits()).to.equal(0);
+      expect(methods).to.deep.equal([]);
+      expect(fetch.called).to.equal(false);
+      expect(fire.callCount).to.equal(1);
       expect(fire.firstCall.args[2]).to.include({
         agent_session_handle: 's:finished-skill',
         verdict_delivery: 'late',
@@ -2212,10 +2774,8 @@ describe('browserless_agent one-shot sessions', () => {
         methods: 'reportSkillOutcome,reportOutcome',
         command_count: 2,
       });
-      expect(fire.lastCall.args[2]).not.to.have.any.keys(
-        'verdict_delivery',
-        'self_reported_success',
-        'outcome_reason',
+      expect(JSON.stringify(fire.firstCall.args[2])).not.to.include(
+        'test-token',
       );
     } finally {
       await srv.close();
@@ -2940,6 +3500,217 @@ describe('browserless_agent integration binding guard', () => {
     }
   });
 
+  it('checks protected tabs after a markerless redirect without exposing metadata or unlocking captures', async () => {
+    const secret = 'SYNTHETIC-TAB-SECRET';
+    let active = 'destination';
+    let failSwitch = false;
+    let clearBusy = true;
+    let hiddenFieldPresent = true;
+    let malformedTab: { value: unknown } | undefined;
+    const sent: string[] = [];
+    const srv = await makeRespondingServer((method, params) => {
+      sent.push(method);
+      if (malformedTab && (method === 'getTabs' || method === 'switchTab'))
+        return malformedTab.value;
+      if (method === 'loadSecret') return { ok: true };
+      if (method === 'waitForNavigation')
+        return { url: 'https://example.com/orders', status: 200 };
+      if (method === 'getTabs')
+        return {
+          tabs: ['destination', 'other'].map((targetId) => ({
+            targetId,
+            active: targetId === active,
+            title: secret,
+            url: `https://example.com/${secret}`,
+            extra: secret,
+          })),
+          activeTargetId: active,
+          extra: secret,
+        };
+      if (method === 'switchTab') {
+        if (failSwitch)
+          return new AgentErrorFrame({
+            code: 'TAB_ERROR',
+            message: secret,
+            suggestion: secret,
+          });
+        active = (params as { targetId: string }).targetId;
+        return {
+          success: true,
+          targetId: active,
+          title: secret,
+          url: `https://example.com/${secret}`,
+        };
+      }
+      if (
+        method === 'waitForSelector' &&
+        active === 'other' &&
+        hiddenFieldPresent
+      )
+        return new AgentErrorFrame({
+          code: 'TIMEOUT',
+          message: 'Hidden filled field still present',
+        });
+      if (method === 'snapshot')
+        return {
+          url: 'https://example.com/orders',
+          title: 'Orders',
+          elements: [],
+        };
+      if (method === 'clearSecrets') {
+        if (clearBusy)
+          return new AgentErrorFrame({
+            code: 'BUSY',
+            message: 'Fill in progress',
+          });
+        return { ok: true };
+      }
+      return {};
+    });
+    const execute = getAgentExecute(srv.url);
+    const context = { ...mockContext, sessionId: 'protected-tab-verification' };
+    let handle: string | undefined;
+    try {
+      const loaded = (await execute(
+        {
+          commands: [
+            { method: 'loadSecret', params: { ref: 'password' } },
+            { method: 'waitForNavigation' },
+          ],
+          keepSessionAlive: true,
+        },
+        context,
+      )) as { content: Array<{ text?: string }> };
+      handle = /sessionId: (\S+)/.exec(loaded.content[0].text ?? '')?.[1];
+      expect(handle).to.match(/^s:/);
+      for (const command of [
+        { method: 'getTabs' },
+        { method: 'switchTab', params: { targetId: 'other' } },
+      ]) {
+        const result = await execute(
+          { ...command, sessionId: handle },
+          context,
+        );
+        expect(JSON.stringify(result)).not.to.include(secret);
+        expect(JSON.stringify(result)).to.include('other');
+      }
+      try {
+        await execute(
+          {
+            method: 'waitForSelector',
+            params: { selector: 'body:not(:has(input[type="password"]))' },
+            sessionId: handle,
+          },
+          context,
+        );
+        expect.fail('expected hidden field to prevent verification');
+      } catch (err) {
+        expect((err as Error).message).to.include('Hidden filled field');
+      }
+      expect(sent).not.to.include('clearSecrets');
+      failSwitch = true;
+      try {
+        await execute(
+          {
+            method: 'switchTab',
+            params: { targetId: 'destination' },
+            sessionId: handle,
+          },
+          context,
+        );
+        expect.fail('expected protected tab failure');
+      } catch (err) {
+        expect((err as Error).message).not.to.include(secret);
+        expect((err as Error).message).to.include(
+          'Protected tab operation failed',
+        );
+      }
+      failSwitch = false;
+      for (const method of ['getTabs', 'switchTab']) {
+        for (const value of [
+          null,
+          {
+            tabs: [{ targetId: 'other', active: { secret } }],
+            activeTargetId: 'other',
+            success: { secret },
+            targetId: 'other',
+          },
+        ]) {
+          malformedTab = { value };
+          try {
+            await execute(
+              {
+                method,
+                params:
+                  method === 'switchTab' ? { targetId: 'destination' } : {},
+                sessionId: handle,
+              },
+              context,
+            );
+            expect.fail('expected invalid protected reply rejection');
+          } catch (err) {
+            expect((err as Error).message).to.include(
+              'Protected tab operation failed',
+            );
+            expect((err as Error).message).not.to.include(secret);
+          }
+        }
+      }
+      malformedTab = undefined;
+      for (const method of ['clearSecrets', 'snapshot']) {
+        try {
+          await execute({ method, sessionId: handle }, context);
+          expect.fail('expected capture guard');
+        } catch (err) {
+          expect((err as Error).message).to.match(
+            /Fill in progress|snapshot cannot run after loadSecret/,
+          );
+        }
+      }
+      expect(sent).not.to.include('snapshot');
+      hiddenFieldPresent = false;
+      const verified = await execute(
+        {
+          commands: [
+            { method: 'getTabs' },
+            { method: 'switchTab', params: { targetId: 'other' } },
+            {
+              method: 'waitForSelector',
+              params: { selector: 'body:not(:has(input[type="password"]))' },
+            },
+            { method: 'switchTab', params: { targetId: 'destination' } },
+            {
+              method: 'waitForSelector',
+              params: { selector: 'body:not(:has(input[type="password"]))' },
+            },
+          ],
+          sessionId: handle,
+        },
+        context,
+      );
+      expect(JSON.stringify(verified)).not.to.include(secret);
+      clearBusy = false;
+      const destination = await execute(
+        {
+          commands: [{ method: 'clearSecrets' }, { method: 'snapshot' }],
+          sessionId: handle,
+        },
+        context,
+      );
+      expect(JSON.stringify(destination)).to.include('Orders');
+      expect(sent).to.include('snapshot');
+      const unprotected = await execute(
+        { method: 'getTabs', sessionId: handle },
+        context,
+      );
+      expect(JSON.stringify(unprotected)).to.include(secret);
+    } finally {
+      if (handle)
+        await execute({ method: 'close', sessionId: handle }, context);
+      await srv.close();
+    }
+  });
+
   it('does not recommend capture recovery after a secret-backed selector miss', async () => {
     const captureBlocked =
       'CaptureBlocked: screenshots and page-content reads are disabled after a secret has been filled in this session.';
@@ -3080,6 +3851,7 @@ describe('browserless_agent persona creation guard', () => {
         's:foreign',
         '',
         'x'.repeat(1024),
+        's:\n\r\u001b[31m\u0085\u2028\u2029\u202e\u200b"\\end',
       ];
       for (const echo of echoes) {
         warn.resetHistory();
@@ -3092,9 +3864,15 @@ describe('browserless_agent persona creation guard', () => {
         );
         expect(server.upgradeUrls()).to.have.length(1);
         expect(warn.calledOnce).to.equal(true);
-        expect(warn.firstCall.args[0]).to.equal(
-          `[agent] attach handle mismatch ignored: echoed=${echo.slice(0, 24)}… canonical=attach:existing-browser`,
-        );
+        const warning = warn.firstCall.args[0] as string;
+        expect(warning).not.to.match(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+        const fields =
+          /^\[agent\] attach handle mismatch ignored: echoed=(".*")(…?) canonical=(.*)$/.exec(
+            warning,
+          )!;
+        expect(JSON.parse(fields[1])).to.equal(echo.slice(0, 80));
+        expect(fields[2]).to.equal(echo.length > 80 ? '…' : '');
+        expect(fields[3]).to.equal('"attach:existing-browser"');
         expect(warn.firstCall.args[0]).to.not.include('test-token');
       }
       warn.resetHistory();
@@ -3409,7 +4187,7 @@ describe('browserless_agent live URL handoff', () => {
 
   for (const complianceMode of [false, true]) {
     for (const batched of [false, true]) {
-      it(`defaults live URL timeout and preserves instructions (compliant=${complianceMode}, batch=${batched})`, async () => {
+      it(`defaults interactive live URL instructions and timeout (compliant=${complianceMode}, batch=${batched})`, async () => {
         const sent: Array<Record<string, unknown>> = [];
         const srv = await makeRespondingServer((method, params) => {
           if (method === 'liveURL') {
@@ -3435,6 +4213,11 @@ describe('browserless_agent live URL handoff', () => {
           for (const params of [
             undefined,
             {},
+            { timeout: 120_000 },
+            { interactable: true },
+            { interactable: false },
+            { instructions: '' },
+            { instructions: '   ' },
             { instructions },
             { timeout: 120_000, instructions: 'Sign in, then click Done.' },
             { timeout: 600_000, instructions },
@@ -3450,6 +4233,13 @@ describe('browserless_agent live URL handoff', () => {
             expect(sent.at(-1)).to.deep.equal({
               ...params,
               timeout: params?.timeout ?? 300_000,
+              ...(params?.interactable !== false &&
+              params?.instructions === undefined
+                ? {
+                    instructions:
+                      'Complete the step shown on screen, then use the completion button.',
+                  }
+                : {}),
             });
             expect(JSON.stringify(result)).not.to.include('closed (one-shot)');
             const handle = /sessionId: (\S+) /.exec(JSON.stringify(result))![1];
@@ -3578,6 +4368,46 @@ describe('browserless_agent _prompt capture', () => {
     expect(fire.firstCall.args[2]).not.to.have.property('failed_command_index');
   });
 
+  for (const [label, params] of [
+    [
+      'secret capture ordering',
+      {
+        commands: [
+          {
+            method: 'loadSecret',
+            params: { ref: 'op://v/i/password', selector: '#password' },
+          },
+          { method: 'snapshot', params: {} },
+        ],
+      },
+    ],
+    [
+      'upload input',
+      {
+        method: 'uploadFile',
+        params: { selector: '#f', files: [{ handle: 'missing-handle' }] },
+      },
+    ],
+  ] as const) {
+    it(`reports rejected ${label} as invalid params`, async () => {
+      const { execute, fire } = registerWithAnalytics(mockConfig);
+      try {
+        await execute(params, {
+          ...mockContext,
+          sessionId: `diagnostic-${label}`,
+        });
+      } catch {
+        /* assert event */
+      }
+      expect(fire.calledOnce).to.equal(true);
+      expect(fire.firstCall.args[2]).to.include({
+        error_reason: 'invalid_params',
+        error_source: 'validation',
+        error_category: 'user_error',
+      });
+    });
+  }
+
   it('does not label a failed connection without an HTTP response as an API response', async () => {
     const srv = await makeRejectingServer(403, 'unused');
     await srv.close();
@@ -3641,6 +4471,8 @@ describe('browserless_agent _prompt capture', () => {
     ['', 'goto', 'HTTP 403', 'forbidden'],
     ['', 'goto', 'HTTP 404', 'not_found'],
     ['', 'goto', 'HTTP 503', 'server_error'],
+    ['INTERNAL_ERROR', 'screenshot', 'internal', 'server_error'],
+    ['TAB_NOT_FOUND', 'switchTab', 'stale tab', 'not_found'],
     ['opaque-private-code', 'snapshot', 'unrecognized', 'unknown'],
   ]) {
     it(`preserves ${reason} as a detailed agent reason`, async () => {
@@ -3671,6 +4503,35 @@ describe('browserless_agent _prompt capture', () => {
         );
         if (reason === 'unknown')
           expect(fire.firstCall.args[2]).not.to.have.property('error_code');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  for (const [code, category] of [
+    ['INTERNAL_ERROR', 'api_error'],
+    ['TAB_NOT_FOUND', 'user_error'],
+  ]) {
+    it(`reports the ${code} fallback in the coarse category`, async () => {
+      const srv = await makeRespondingServer(
+        () => new AgentErrorFrame({ code, message: 'opaque' }),
+      );
+      try {
+        const { execute, fire } = registerWithAnalytics({
+          ...mockConfig,
+          browserlessApiUrl: srv.url,
+        });
+        try {
+          await execute(
+            { method: 'snapshot', params: {} },
+            { ...mockContext, sessionId: `diagnostic-category-${code}` },
+          );
+        } catch {
+          /* assert event */
+        }
+        expect(fire.calledOnce).to.equal(true);
+        expect(fire.firstCall.args[2]).to.include({ error_category: category });
       } finally {
         await srv.close();
       }
@@ -5065,10 +5926,15 @@ describe('browserless_agent skill outcome forwarding', () => {
     const forwarded: unknown[] = [];
     const srv = await makeRespondingServer((method, params) => {
       if (method === 'reportSkillOutcome') forwarded.push(params);
-      return { recorded: true };
+      return method === 'text' ? { text: 'done' } : { recorded: true };
     });
     try {
       const execute = getAgentExecute(srv.url);
+      const opened = await execute(
+        { method: 'text', keepSessionAlive: true },
+        mockContext,
+      );
+      const sessionId = /sessionId: (\S+) /.exec(JSON.stringify(opened))![1];
       const legacy = { domain: 'example.com', task: 'search', success: true };
       const tampered = {
         ...receipt,
@@ -5084,6 +5950,7 @@ describe('browserless_agent skill outcome forwarding', () => {
       ] as const) {
         await execute(
           {
+            sessionId,
             method: 'reportSkillOutcome',
             params: {
               ...legacy,
@@ -5102,6 +5969,7 @@ describe('browserless_agent skill outcome forwarding', () => {
       }
       await execute(
         {
+          sessionId,
           commands: [
             { method: 'reportSkillOutcome', params: { ...legacy, ...receipt } },
             { method: 'close' },

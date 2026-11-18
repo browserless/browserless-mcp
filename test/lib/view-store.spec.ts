@@ -10,6 +10,7 @@ import {
   VIEW_UNAVAILABLE,
 } from '../../src/lib/view-store.js';
 import {
+  ReplaySummarySchema,
   VIEW_CHUNK_MAX_BYTES,
   VIEW_DATA_MAX_BYTES,
   VIEW_RESULT_MAX_BYTES,
@@ -36,7 +37,9 @@ describe('owned replay view snapshots', () => {
     artifact.website =
       'https://name:secret@example.com/page?token=private#secret';
     const prepared = store.prepare('owner', artifact)!;
-    expect(prepared.data.website).to.equal('example.com');
+    expect(ReplaySummarySchema.parse(prepared.data).website).to.equal(
+      'example.com',
+    );
     expect(JSON.stringify(prepared)).not.to.match(
       /secret|private|Step 1|events/,
     );
@@ -187,6 +190,14 @@ describe('owned replay view snapshots', () => {
     await store.read(prepared.viewRef, 'a', 'gzip');
     store.clear();
     expect(store.prepare('b', artifact)).not.to.equal(undefined);
+  });
+
+  it('does not consume another owner slot when caching gzip at the owner limit', async () => {
+    const views = Array.from({ length: 4 }, () => store.prepare('a', fixture)!);
+    await store.read(views[0].viewRef, 'a', 'gzip');
+    for (const view of views)
+      expect(store.show(view.viewRef, 'a')).to.have.property('content');
+    expect(store.prepare('b', fixture)).not.to.equal(undefined);
   });
 
   it('never evicts another owner or the requested view to cache gzip', async () => {

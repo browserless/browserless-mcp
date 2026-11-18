@@ -70,10 +70,13 @@ describe('buildReplayHtml', () => {
 
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
     expect(script).to.be.a('string');
-    const context: { rrwebPlayer?: { default?: unknown } } = {};
+    const context: { rrwebPlayer?: unknown; Ctor?: unknown } = {};
+    Object.assign(context, { window: context });
     runInNewContext(script!, context);
-    expect(context.rrwebPlayer?.default).to.be.a('function');
-    expect(squashed(html)).to.include('rrwebPlayer.default');
+    const constructor = html.match(/var Ctor = [^;]+;/)?.[0];
+    expect(constructor).to.be.a('string');
+    runInNewContext(constructor!, context);
+    expect(context.Ctor).to.be.a('function');
     expect(html).to.include('.rr-player');
   });
 

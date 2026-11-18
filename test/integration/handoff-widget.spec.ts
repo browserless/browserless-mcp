@@ -33,7 +33,10 @@ describe('direct agent human handoff over MCP', () => {
       closedLinks = 0;
     let rejectClose = false,
       rejectMint = false;
+    const viewerPath = `/e/53616c7465645f5f${'ab'.repeat(48)}/live/index.html`;
+    let liveURLOverride: string | undefined;
     const commands: string[] = [];
+    const liveOptions: Array<Record<string, unknown>> = [];
     const states = new Map<string, any>();
     const backend = createServer((request, response) => {
       const url = new URL(request.url!, 'http://fixture');
@@ -80,6 +83,7 @@ describe('direct agent human handoff over MCP', () => {
             elements: [],
           };
           if (message.method === 'liveURL') {
+            liveOptions.push(message.params);
             if (rejectMint) {
               ws.send(
                 JSON.stringify({
@@ -102,7 +106,9 @@ describe('direct agent human handoff over MCP', () => {
             result = {
               browserId: 'browser-1',
               liveURLId: id,
-              liveURL: `http://127.0.0.1:${(backend.address() as AddressInfo).port}/live/index.html?i=${id}`,
+              liveURL:
+                liveURLOverride?.replace('CAPABILITY_ID', id) ??
+                `http://127.0.0.1:${(backend.address() as AddressInfo).port}${viewerPath}?i=${id}`,
               timeout: 60_000,
               browserExpiresAt: Date.now() + 120_000,
             };
@@ -185,15 +191,26 @@ describe('direct agent human handoff over MCP', () => {
       assert.ok(!opened.isError, text(opened));
       const handle = text(opened).match(/s:[a-f0-9-]+/)?.[0];
       assert.ok(handle);
+      for (const instructions of ['', '   ', { steps: ['Enter code'] }]) {
+        const invalid = await alice.callTool({
+          name: 'browserless_live_url',
+          arguments: { action: 'handoff', sessionId: handle, instructions },
+        });
+        assert.equal(invalid.isError, true);
+      }
+      assert.equal(minted, 0);
       const prepared = await alice.callTool({
         name: 'browserless_live_url',
         arguments: {
           action: 'handoff',
           sessionId: handle,
-          instructions: 'Enter the code, then choose Done.',
         },
       });
       assert.ok(!prepared.isError, text(prepared));
+      assert.equal(
+        liveOptions.at(-1)?.instructions,
+        'Complete the step shown on screen, then use the completion button.',
+      );
       const first = ref(prepared);
       assert.ok(first);
       assert.equal(/live-1|\/live\/|fixture-key/.test(text(prepared)), false);
@@ -215,6 +232,11 @@ describe('direct agent human handoff over MCP', () => {
         assert.ok(!shown.isError, text(shown));
         assert.equal((shown.structuredContent as any).kind, 'handoff');
         assert.ok((shown._meta!.payload as any).liveURL.includes('/live/'));
+        assert.equal(
+          new URL((shown._meta!.payload as any).liveURL).pathname,
+          viewerPath,
+          'the worker routing prefix must reach the widget unchanged',
+        );
         assert.equal(
           JSON.stringify(shown.structuredContent).includes('/live/'),
           false,
@@ -441,6 +463,27 @@ describe('direct agent human handoff over MCP', () => {
         text(orphaned).includes('Never ask the user to paste passwords'),
       );
       assert.ok(!(await snapshot()).isError);
+      rejectMint = false;
+      for (const invalidURL of [
+        `${base}/e/not-hex/live/index.html?i=CAPABILITY_ID`,
+        `${base}/other/live/index.html?i=CAPABILITY_ID`,
+        `${base}/e/abcdef/not-live/index.html?i=CAPABILITY_ID`,
+        `${base}/live/index.html?i=wrong-id`,
+        'https://untrusted.example/live/index.html?i=CAPABILITY_ID',
+      ]) {
+        liveURLOverride = invalidURL;
+        const rejected = await alice.callTool({
+          name: 'browserless_live_url',
+          arguments: {
+            action: 'handoff',
+            sessionId: handle,
+            instructions: 'Reject an invalid viewer URL.',
+          },
+        });
+        assert.equal(rejected.isError, true);
+        assert.ok(text(rejected).includes('verified inline handoff'));
+        assert.ok(!(await snapshot()).isError);
+      }
     } finally {
       clearHandoffs();
       await Promise.allSettled(clients.map((client) => client.close()));

@@ -30,6 +30,7 @@ export class BoundedEventStore implements EventStore {
     private readonly maxEvents = 10_000,
     private readonly maxAgeMs = 10 * 60_000,
     private readonly maxBytes = 64 * 1024 * 1024,
+    private readonly onMissingContext?: (streamId: string) => void,
   ) {}
 
   get size(): number {
@@ -48,6 +49,14 @@ export class BoundedEventStore implements EventStore {
     // Keep standalone cursors for reattachment without retaining keepalives.
     if (streamId === STANDALONE_STREAM_ID)
       return this.generateEventId(streamId);
+
+    if (sessionId === undefined) {
+      try {
+        this.onMissingContext?.(streamId);
+      } catch {
+        // Observation does not affect retention.
+      }
+    }
 
     const now = Date.now();
     this.evictExpired(now);
@@ -77,16 +86,47 @@ export class BoundedEventStore implements EventStore {
     return eventId;
   }
 
+  cursorContext(
+    eventId: string,
+  ): { sessionId?: string; ageMs: number } | undefined {
+    const event = this.events.get(eventId);
+    if (!event) return undefined;
+    const ageMs = Date.now() - event.storedAt;
+    return ageMs < this.maxAgeMs
+      ? { sessionId: event.sessionId, ageMs }
+      : undefined;
+  }
+
   async replayEventsAfter(
+    lastEventId: string,
+    options: {
+      send: (eventId: string, message: JSONRPCMessage) => Promise<void>;
+      sessionId?: string;
+    },
+  ): Promise<string> {
+    const events: [string, JSONRPCMessage][] = [];
+    const streamId = this.replayEventsAfterSync(lastEventId, {
+      sessionId: options.sessionId,
+      send: (id, message) => {
+        events.push([id, message]);
+      },
+    });
+    for (const [id, message] of events) await options.send(id, message);
+    return streamId;
+  }
+
+  // The transport uses this for a final catch-up and registers its live stream
+  // in the same turn, with no promise gap in which a result can be missed.
+  replayEventsAfterSync(
     lastEventId: string,
     {
       send,
       sessionId,
     }: {
-      send: (eventId: string, message: JSONRPCMessage) => Promise<void>;
+      send: (eventId: string, message: JSONRPCMessage) => void;
       sessionId?: string;
     },
-  ): Promise<string> {
+  ): string {
     this.evictExpired(Date.now());
     if (
       lastEventId &&
@@ -99,7 +139,7 @@ export class BoundedEventStore implements EventStore {
     }
 
     const context = this.events.get(lastEventId)!.sessionId;
-    if (context !== undefined && context !== sessionId) return '';
+    if (!sessionId || context !== sessionId) return '';
 
     const streamId = this.getStreamIdFromEventId(lastEventId);
     if (!streamId) {
@@ -107,17 +147,16 @@ export class BoundedEventStore implements EventStore {
     }
 
     let foundLastEvent = false;
-    // Snapshot to avoid absorbing events added concurrently during async send()
+    // Snapshot so a callback cannot extend its own replay by adding events.
     const snapshot = [...this.events.entries()];
     for (const [eventId, event] of snapshot) {
       if (event.streamId !== streamId) continue;
-      if (event.sessionId !== undefined && event.sessionId !== sessionId)
-        continue;
+      if (event.sessionId !== sessionId) continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
         continue;
       }
-      await send(eventId, event.message);
+      send(eventId, event.message);
     }
 
     return streamId;

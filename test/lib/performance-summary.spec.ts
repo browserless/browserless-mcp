@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
 import {
   PerformanceViewSchema,
+  previewPerformanceInput,
   summarizePerformance,
 } from '../../src/lib/performance-summary.js';
 
@@ -10,6 +11,81 @@ const recorded = JSON.parse(
   readFileSync('test/fixtures/lighthouse-performance.json', 'utf8'),
 );
 const params = { url: 'https://example.test/' };
+
+describe('previewPerformanceInput', () => {
+  it('accepts only plain objects and safe, bounded HTTP target labels', () => {
+    for (const value of [undefined, null, 'x', [], 42, new Date()])
+      expect(previewPerformanceInput(value)).to.deep.equal({
+        target: null,
+        device: null,
+        categories: [],
+      });
+    for (const [url, target] of [
+      ['https://example.com/', 'example.com'],
+      ['https://example.com/pricing?token=abc#frag', 'example.com/pricing'],
+      ['https://user:pass@example.com/a', 'example.com/a'],
+      ['https://exa', 'exa'],
+      ['https:/', null],
+      ['ftp://example.com', null],
+      ['javascript:alert(1)', null],
+      [7, null],
+      [
+        'https://example.com/' + 'a'.repeat(2028),
+        'example.com/' + 'a'.repeat(2028),
+      ],
+      ['https://example.com/' + 'a'.repeat(2029), null],
+    ])
+      expect(previewPerformanceInput({ url }).target).to.equal(target);
+  });
+
+  it('validates devices and deduplicates complete category names in input order', () => {
+    for (const [device, expected] of [
+      ['mobile', 'mobile'],
+      ['desktop', 'desktop'],
+      ['tablet', null],
+      ['mob', null],
+      [undefined, null],
+    ])
+      expect(previewPerformanceInput({ device }).device).to.equal(expected);
+    expect(
+      previewPerformanceInput({ categories: ['seo', 'acc'] }).categories,
+    ).to.deep.equal([{ id: 'seo', title: 'SEO' }]);
+    expect(
+      previewPerformanceInput({ categories: ['seo', 'seo', 'performance'] })
+        .categories,
+    ).to.deep.equal([
+      { id: 'seo', title: 'SEO' },
+      { id: 'performance', title: 'Performance' },
+    ]);
+    expect(
+      previewPerformanceInput({ categories: 'seo' }).categories,
+    ).to.deep.equal([]);
+  });
+
+  it('never forwards unrelated or sensitive input fields', () => {
+    const result = previewPerformanceInput({
+      url: 'https://example.com/',
+      profile: 'secret-profile',
+      config: { extraHeaders: { Authorization: 'Bearer x' } },
+      budgets: [{}],
+      timeout: 5,
+    });
+    expect(result).to.deep.equal({
+      target: 'example.com',
+      device: null,
+      categories: [],
+    });
+    for (const secret of [
+      'secret-profile',
+      'Authorization',
+      'Bearer',
+      'extraHeaders',
+      'budgets',
+      'timeout',
+    ])
+      expect(JSON.stringify(result)).not.to.include(secret);
+  });
+});
 
 describe('Lighthouse scorecard summary', () => {
   it('converts Markdown links to labels before limiting audit descriptions', () => {

@@ -20,16 +20,26 @@ Get an API token from [browserless.io](https://browserless.io) (free tier availa
 
 No local install — see [Configuration](#configuration) for per-client snippets.
 
+### Migrating from legacy SSE
+
+Remote connections use Streamable HTTP at `/mcp`. The legacy `GET /sse` and
+`POST /messages` endpoints return 404, including in self-hosted
+`TRANSPORT=httpStream` installs. Update your client's server URL to `/mcp` and
+use `Authorization: Bearer <token>` for authentication. For clients that store
+server bindings or credentials remotely, update those resources as well.
+Streamable HTTP still uses SSE for streaming responses; `/mcp` streaming and
+stdio connections remain supported.
+
 ## Tools
 
 | Tool                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `browserless_smartscraper` | Scrape a single webpage and return its content as markdown or HTML. Handles JavaScript-heavy pages and anti-bot measures automatically. For content across multiple pages, use `browserless_crawl`; to list a site's URLs, use `browserless_map`.                                                                                                                                                                                                           |
+| `browserless_smartscraper` | Scrape a single webpage and return its content as markdown or HTML, or AI-extracted JSON and summaries. Handles JavaScript-heavy pages and anti-bot measures automatically. For content across multiple pages, use `browserless_crawl`; to list a site's URLs, use `browserless_map`.                                                                                                                                                                       |
 | `browserless_search`       | Search the web using Browserless and optionally scrape each result. Supports web, news, and image search with geo-targeting and time filters.                                                                                                                                                                                                                                                                                                               |
 | `browserless_map`          | Discover and map all URLs on a website. Scans via sitemaps and link extraction. Returns URLs with optional titles and descriptions. Useful for site audits and content discovery.                                                                                                                                                                                                                                                                           |
 | `browserless_crawl`        | Crawl a website and scrape every discovered page. Supports depth control, path filtering, sitemap strategies, and configurable scrape options. Returns scraped content and metadata for each page.                                                                                                                                                                                                                                                          |
 | `browserless_performance`  | Run Lighthouse audits on any URL. Returns category scores inline and saves the full JSON report outside the conversation: a local path (stdio) or authenticated single-use download URL (HTTP). Download to disk and inspect only needed fields with `jq`; files expire after 15 minutes or when the MCP session ends. Optionally filter by category, emulate a mobile or desktop device, supply a custom Lighthouse config, or supply performance budgets. |
-| `browserless_function`     | Execute custom Puppeteer JavaScript on the Browserless cloud. The function receives a `page` object and optional `context`; return `{ data, type }` to control the payload and Content-Type.                                                                                                                                                                                                                                                                |
+| `browserless_function`     | Execute custom Puppeteer JavaScript on the Browserless cloud. The function receives a `page` object and optional `context`; return bytes (e.g. `await page.screenshot()`) directly for an image or file, a string for text, or any other value for JSON text.                                                                                                                                                                                               |
 | `browserless_export`       | Export a webpage via the Browserless `/export` API. Fetches the URL and returns its native content (HTML, PDF, image, etc.) with automatic content-type detection.                                                                                                                                                                                                                                                                                          |
 | `browserless_agent`        | Drive a persistent browser session via a ReAct loop: snapshot the page, plan, batch interactions (click, type, scroll, evaluate, etc.), and re-snapshot. Uses ref-based selectors derived from snapshots, supports multi-tab workflows, screenshots, captcha solving, live URLs, and file upload/download (captured downloads auto-surface as handles; bytes never enter context).                                                                          |
 | `browserless_skill`        | Load an on-demand recipe for a non-trivial page mechanic (shadow DOM, cookie consent, modals, captchas, dynamic content, snapshot misses, screenshots, tabs). Companion to `browserless_agent`.                                                                                                                                                                                                                                                             |
@@ -75,6 +85,83 @@ views on the owning process; shared view storage is required for arbitrary
 cross-worker reads. Restart or eviction makes a view unavailable and never
 reruns the original operation. Replay presentation tools/resources are absent
 from the compliant surface, whose existing tool list is unchanged.
+
+### Inline request-log explorer
+
+On the full surface, MCP Apps clients can inspect logs without copying the
+complete result into the conversation:
+
+```text
+browserless_logs({ levels: ["ERROR", "WARN"], limit: 50 })
+browserless_show({ viewRef: "<returned-view-reference>" })
+```
+
+The explorer shows timestamp, severity, endpoint/event, outcome/status,
+category/reason, duration, units, and region. Expand a row for every returned
+field, including the complete message, target URL, request ID, and session ID.
+IDs have Copy buttons when the host grants clipboard write access. URLs remain
+plain text and never open automatically.
+
+Filters cover the tool's existing time range, severity, endpoint, outcome,
+category, reason, request ID, target URL, event names, API key, page size, and
+ordering. Omitted time bounds use the account plan's server-defined window;
+retention errors appear in the widget. Refresh, Apply filters, and Load more
+call the authorized read-only logs tool through the bridge, without a new chat
+turn or another widget. Overlapping pages are deduplicated. Loaded entries are
+bounded to 500 rows and 2 MiB; each result page is limited to 100 rows and 1 MiB.
+If a result cannot fit in a view or storage is full, the tool returns its
+existing Markdown result instead of failing the log read.
+
+When a view is prepared, rows, filter values, and opaque pagination cursors
+travel in widget-only metadata. Model-visible results contain a compact
+summary and view reference. The Markdown fallback includes entries and the
+next-page cursor as before. A mounted explorer that receives this fallback
+keeps its last successful snapshot and offers Retry.
+It also explains how to request the logs as text in chat and suggests narrower
+filters or fewer entries for large pages.
+Prompt text and filter values are excluded from logs-tool analytics. Existing
+Markdown output is unchanged for clients without MCP Apps. The compliant
+connector remains unchanged.
+
+Snapshots expire after 15 minutes and share the existing bounded, process-local
+view store. Display rechecks account access. Refresh and pagination prepare a
+new snapshot; the mounted explorer adopts its expiry while older references
+keep their original deadline. Errors preserve the last successful result;
+expiry, cancellation, and loss of access stop further reads. Host locale and
+timezone control displayed timestamps. The optional model-diagnosis handoff is
+not included.
+
+### Inline account usage and active sessions
+
+On the full surface, MCP Apps clients can display account snapshots:
+
+```text
+browserless_usage({ timeframe: "day" })
+browserless_show({ viewRef: "<returned-view-reference>" })
+
+browserless_sessions({ action: "active" })
+browserless_show({ viewRef: "<returned-view-reference>" })
+```
+
+Usage shows billed units against the plan allotment, highlights overage, and
+shows request counters when available. Billing-period units always cover the
+whole account; the hour/day/week selector applies only to request counters and
+preserves any API-key filter. Empty request counters never erase billed usage.
+Missing values remain unavailable.
+
+Active sessions shows the browser ID, browser name/type, start time, and elapsed
+time at the snapshot. The API does not provide page URLs. Refresh preserves the
+original limit/skip filters and never stops or reconnects a browser.
+
+Both controls call the original data tool through the widget bridge and update
+the mounted view without another chat turn or `browserless_show` call. Refresh
+errors preserve the last successful snapshot with a retry option. There is no
+automatic polling. Snapshots are independent, owned, bounded, and expire after
+15 minutes; refreshing prepares a new reference and never renews an old one.
+The mounted widget adopts the new snapshot's expiry after a successful refresh.
+Showing a snapshot rechecks account access under the current credential.
+Clients without MCP Apps retain their original text output. These tools and
+widgets remain absent from the compliant connector.
 
 ### Inline Lighthouse scorecard
 
@@ -201,7 +288,9 @@ artifact until expiry; preview and Save requests are repeatable and do not
 consume the original single-use download.
 
 Views expire after 15 minutes and share the replay store's 16-view, 128 MiB
-budget. A gallery shows the first 12 valid captures, each at most 50 MiB; its
+budget. Each caller scope retains at most four views across widget kinds. New
+views evict that caller's oldest views; they never evict another caller's
+views. A gallery shows the first 12 valid captures, each at most 50 MiB; its
 summary reports when more captures were returned. Invalid screenshots are
 skipped without discarding valid captures. Preview files are removed on expiry
 or eviction. Before the first media view is created, cleanup removes stale
@@ -313,7 +402,7 @@ close it before selecting a different persona.
 
 ## Configuration
 
-The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter.
+The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter. An API key the Browserless API reports as invalid is refused with HTTP 401 when the session opens; if the API cannot be reached in time, the session opens and tool calls report the key error instead.
 
 Installing via an AI agent? See [install.md](install.md) for agent-readable setup instructions.
 
@@ -360,7 +449,7 @@ https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://prod
 
 When both headers and query parameters are present, headers take precedence.
 
-API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
+API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Overrides for `browserless.io` and its subdomains must use `https://`, because the API token travels with each request; the configured origin is exempt. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
 
 ### Claude Desktop
 
@@ -542,31 +631,53 @@ completions / valid completions. Do not add the separate server `Skill Lookup`
 events to either denominator. Tests use local/mock sinks; a configured exporter
 or console message is not proof of remote receipt.
 
+### Session and analytics-delivery diagnostics
+
+On the full `httpStream` surface, each ready session emits an INFO `browserless.mcp.session.open`
+OTLP record with `transport`, `auth_method`, `key_fp` (a 16-hex token fingerprint),
+`source`, `client_family`, `user_agent_family`, and `usage_mode`. Known account IDs are included.
+Client names/versions use 128-code-point escaped previews in both logs and queue events.
+Source and UA families use known labels or `unknown`; no raw token or UA in log/event properties.
+The compliant surface and stdio do not emit session-open records.
+
+`MCP Session Started` uses only the existing authenticated analytics queue,
+never the SDK transport: full-surface SSE sessions only, when analytics is
+enabled. The queue consumer resolves identity using its authentication field.
+
+`browserless.mcp.amplitude.delivery_failed` WARN records aggregate `event_type`,
+integer `status`, sanitized `reason`, `count`, and `window_s=60`. Each window
+holds at most 12 distinct keys plus one overflow record. Reasons drop text
+after the first colon, redact key-like runs and email-like words, and escape a bounded preview.
+One stderr summary per window replaces per-failure SDK lines; real status counts survive overflow.
+Shutdown awaits final/in-flight exports with the exporter's one-second deadline.
+
 ### Failure diagnostics
 
 `MCP Tool Request` retains `analytics_version=2`, the existing coarse
 `error_category`, `status_code`, timing and tool-specific properties. These
 additive diagnostic fields are failure-only; a successful retry has none of them.
 
-| Property               | Meaning                                                                                                                                                                                                                                                                                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `error_reason`         | `selector_miss`, `invalid_params`, `unknown_method`, `script_error`, `unauthorized`, `forbidden`, `not_found`, `server_error`, `session_lost`, `navigation_failed`, `timeout`, `rate_limited`, or `unknown`. Agent errors retain their existing detailed classification; local URL/batch validation is `invalid_params`. |
-| `error_source`         | `validation`, `script`, `target_website`, `api`, `transport`, or `unknown`. This identifies the observed failure boundary, not blame. A 403 alone does not identify its source.                                                                                                                                          |
-| `failed_command_index` | Zero-based index in the invocation's command batch, not the session-wide command counter. Omitted when setup/validation fails before a command starts.                                                                                                                                                                   |
-| `failed_method`        | The failed command's recognized typed method name. Unrecognized free-form method names are omitted to avoid emitting arbitrary input; the index still identifies the command.                                                                                                                                            |
-| `error_code`           | Allowlisted structured codes: the uppercase reason names above, `SELECTOR_NOT_FOUND`, `BROWSER_CRASHED`, `ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `ETIMEDOUT`. Opaque/unrecognized codes are omitted, not copied into messages.                                                                           |
-| `error_status_code`    | An integer HTTP status (100–599) carried by structured error metadata. Never extracted from error prose.                                                                                                                                                                                                                 |
-| `error_status_origin`  | `api` for an observed API response/upgrade, `target_website` for a failed navigation result, otherwise `unknown`. Omitted when no structured status is available.                                                                                                                                                        |
-| `error_message`        | A synthesized summary capped at 500 characters. Raw error messages, response bodies, HTML, scripts, selectors, credentials, cookies, authorization headers and URLs are never copied into this field.                                                                                                                    |
+| Property               | Meaning                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `error_reason`         | `selector_miss`, `invalid_params`, `unknown_method`, `script_error`, `unauthorized`, `forbidden`, `not_found`, `server_error`, `session_lost`, `navigation_failed`, `timeout`, `rate_limited`, `no_results`, `response_too_large`, or `unknown`. Agent errors retain their existing detailed classification; local URL/batch validation is `invalid_params`. |
+| `error_source`         | `validation`, `script`, `target_website`, `api`, `transport`, or `unknown`. This identifies the observed failure boundary, not blame. A 403 alone does not identify its source.                                                                                                                                                                              |
+| `failed_command_index` | Zero-based index in the invocation's command batch, not the session-wide command counter. Omitted when setup/validation fails before a command starts.                                                                                                                                                                                                       |
+| `failed_method`        | The failed command's recognized typed method name. Unrecognized free-form method names are omitted to avoid emitting arbitrary input; the index still identifies the command.                                                                                                                                                                                |
+| `error_code`           | Allowlisted structured codes: the uppercase reason names above, `SELECTOR_NOT_FOUND`, `BROWSER_CRASHED`, `ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `ETIMEDOUT`. Opaque/unrecognized codes are omitted, not copied into messages.                                                                                                               |
+| `error_status_code`    | An integer HTTP status (100–599) carried by structured error metadata. Never extracted from error prose.                                                                                                                                                                                                                                                     |
+| `error_status_origin`  | `api` for an observed API response/upgrade, `target_website` for a failed navigation result, otherwise `unknown`. Omitted when no structured status is available.                                                                                                                                                                                            |
+| `error_message`        | A synthesized summary capped at 500 characters. Raw error messages, response bodies, HTML, scripts, selectors, credentials, cookies, authorization headers and URLs are never copied into this field.                                                                                                                                                        |
 
 For `browserless_function`, `browserless_export` and `browserless_smartscraper`,
 a failed result's recorded `status_code` sets the reason: 400 from the function
-tool → `script_error` (source `script`), 401 → `unauthorized`, 403 → `forbidden`,
-404 → `not_found`, 408 → `timeout`, 429 → `rate_limited`, 5xx → `server_error`,
-anything else → `unknown`. Function and export statuses are the Browserless API's
+tool → `script_error` (source `script`), other 400 and 422 → `invalid_params`,
+401 → `unauthorized`, 403 → `forbidden`, 404 → `not_found`, 408 → `timeout`,
+429 → `rate_limited`, 5xx → `server_error`, anything else → `unknown`. Function and export statuses are the Browserless API's
 (`error_status_origin=api`); smart scraper statuses are the target website's
-(`error_status_origin=target_website`, `error_source=target_website`). Export 400
-remains `unknown`, with its status retained.
+(`error_status_origin=target_website`, `error_source=target_website`). A function
+text result over the size limit is `response_too_large` (source `script`). Without
+a status, the generic codes `INTERNAL_ERROR` and `TAB_NOT_FOUND` map to
+`server_error` and `not_found`.
 
 `status_code` keeps its original tool-specific meaning; the new status fields
 do not replace it or turn successful target-page HTTP responses into failures.
@@ -574,7 +685,10 @@ HTTP failures retain API response status even when thrown. Codes are retained
 when already available in structured errors or the JSON body read by the existing
 4xx error handler; diagnostics do not read additional bodies on 5xx failures.
 
-An unsuccessful search without structured evidence reports `error_reason=unknown`
+An unsuccessful search classifies the backend's `errorCode` (source `api`, kept
+in `error_code`): `upstream_timeout` → `timeout`, `upstream_unavailable` →
+`server_error`, `no_results` → `no_results`. One without structured evidence
+reports `error_reason=unknown`
 and `error_message="Unclassified search failure."`. Its legacy `user_error`
 category remains for chart compatibility, not as evidence of caller fault.
 
@@ -588,7 +702,25 @@ before treating these properties as available in production.
 ## Live URL instructions
 
 `browserless_live_url` creates viewer links over REST for an existing browser.
-Set `action: "create"`, `browserId`, and `interactable: true` for a human handoff:
+On the full HTTP surface, `action: "create"` opens an inline live viewer for
+clients that advertise MCP Apps support. The original JSON result, including
+the viewer URL, remains in `content` for clients that advertise Apps support
+but do not render widgets. The widget reads its viewer URL from `_meta`; IDs
+and lifetime metadata are available in `structuredContent`. Direct viewers do
+not use the shared snapshot store. If a successful create cannot be embedded,
+its JSON result is still returned instead of failing the mutation or creating
+another link.
+
+Non-create actions render no widget content. The viewer's local disconnect timer
+uses the server-reported remaining duration, not the client's wall clock. The
+backend enforces the actual link lifetime, including for delayed or restored
+results; the local timer is not an authorization check.
+
+`status` and `close` return lifecycle results without embedding a viewer. Direct
+creation does not keep the browser alive or pause automation. To pause an agent
+for human input, use `handoff` → `browserless_show` and then `handoff_status`.
+
+Set `action: "create"`, `browserId`, and `interactable: true` for an interactive viewer:
 
 ```json
 {
@@ -609,6 +741,14 @@ Set `action: "create"`, `browserId`, and `interactable: true` for a human handof
 }
 ```
 
+Interactive `browserless_agent` live URLs and `browserless_live_url` interactive creates
+and inline handoffs default to "Complete the step shown on screen, then use the
+completion button." when `instructions` is omitted. Pass specific instructions
+when possible. Agent links with `interactable: false` and view-only REST creates have no default
+instructions. An explicit empty or whitespace-only string disables the card and
+Done button for agent links and REST creates. Inline `handoff` requires nonblank
+plain-text instructions when supplied; blank text is rejected.
+
 Plain string instructions still work. With a string, use top-level
 `instructionsTitle`, `steps`, `currentStep`, and `instructionsFormat`.
 With an object, put these values inside `instructions` as `title`, `steps`,
@@ -622,15 +762,15 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI                    | Description                                                               |
-| ------------------------------- | ------------------------------------------------------------------------- |
-| `browserless://api-docs`        | Smart scraper API documentation                                           |
-| `browserless://status`          | Live service health status                                                |
-| `ui://browserless/view/v9.html` | Bundled replay, screenshot, video, and handoff widget (full surface only) |
+| Resource URI                     | Description                                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `browserless://api-docs`         | Smart scraper API documentation                                                                                                 |
+| `browserless://status`           | Live service health status                                                                                                      |
+| `ui://browserless/view/v12.html` | Bundled replay, screenshot, video, handoff, account usage, active sessions, and request-log explorer widget (full surface only) |
 
-The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v8.html`
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v11.html`
 resources remain readable as aliases of the current widget. Newly discovered
-tools advertise v9 so hosts do not reuse a cached pre-handoff v3 widget.
+tools advertise v12 so hosts discover the request-log explorer.
 
 ## MCP Prompts
 
@@ -655,7 +795,9 @@ The test suite uses [Mocha](https://mochajs.org/) with [Chai](https://www.chaijs
 - `npm test` — compiles TypeScript and runs every `*.spec.js` under `build/test/`. No external services or `BROWSERLESS_TOKEN` are required; the API client is stubbed.
 - `npm run coverage` — runs the suite under [c8](https://github.com/bcoe/c8) with the thresholds configured in `package.json` (lines ≥ 80%, branches ≥ 70%, functions ≥ 80%).
 
-Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24. PRs must keep the suite green before they can merge.
+Tests run automatically on every pull request via the [Test workflow](.github/workflows/test.yml) on Node 24.x and 26.x. Development and publishing use Node 26 from `.nvmrc`; with nvm, run `nvm install` and `nvm use`. PRs must keep the suite green before they can merge.
+
+The published package retains its Node.js >=24 engine requirement; Node 22 is not supported. Use an LTS release (24 or 26). Docker uses a digest-pinned Node 26 Trixie image, with weekly Dependabot digest updates and Node-major upgrades excluded. Official Linux Node 26 binaries require `libatomic`; the image includes `libatomic1`. Container publishing targets Linux amd64 and arm64.
 
 ## API Token
 

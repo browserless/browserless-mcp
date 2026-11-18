@@ -19,6 +19,20 @@ export function hashToken(input: string): string {
   return createHash('sha256').update(input).digest('hex').slice(0, 16);
 }
 
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 /**
  * djb2 string hash. Matches the Browserless backend's session ID hashing —
  * kept compatible so analytics `user_id` values stay consistent across services.

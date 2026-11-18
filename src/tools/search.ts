@@ -4,12 +4,22 @@ import { z } from 'zod';
 import { defineTool } from '../lib/define-tool.js';
 import { isCompliant, COMPLIANT_SEARCH_DESCRIPTION } from './compliance.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
-import { failureDetails } from '../lib/failure-details.js';
+import {
+  failureDetails,
+  type FailureCategory,
+} from '../lib/failure-details.js';
 import type {
   McpConfig,
   SearchParams,
   SearchResponse,
 } from '../@types/types.js';
+
+// The backend reports search failures as HTTP 200 with a fixed `errorCode`.
+const errorCodeCategories = {
+  upstream_timeout: 'TIMEOUT',
+  upstream_unavailable: 'SERVER_ERROR',
+  no_results: 'NO_RESULTS',
+} satisfies Record<NonNullable<SearchResponse['errorCode']>, FailureCategory>;
 
 export const SearchSourceSchema = z.enum(['web', 'news', 'images']);
 
@@ -147,9 +157,23 @@ export function registerSearchTool(
       return response;
     },
     analyticsProps: (params, result) => {
-      const details = failureDetails(
-        typeof result.error === 'object' ? result.error : result,
-      );
+      const errorCode = Object.hasOwn(
+        errorCodeCategories,
+        result.errorCode ?? '',
+      )
+        ? result.errorCode
+        : undefined;
+      const details = errorCode
+        ? {
+            ...failureDetails(undefined, {
+              category: errorCodeCategories[errorCode],
+              source: 'api',
+            }),
+            error_code: errorCode,
+          }
+        : failureDetails(
+            typeof result.error === 'object' ? result.error : result,
+          );
       return {
         query: params.query,
         limit: params.limit ?? 10,

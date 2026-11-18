@@ -8,8 +8,10 @@ import { UserError } from 'fastmcp';
 import type { ContentResult } from 'fastmcp';
 import type { ReplayArtifact } from './session-replay-artifact.js';
 import type { MediaInput } from './agent-media.js';
+import { LogPayloadSchema, LOG_PAGE_MAX_BYTES } from './log-view-schemas.js';
 import {
   ReplayPayloadSchema,
+  ShowOutputSchema,
   VIEW_CHUNK_MAX_BYTES,
   VIEW_DATA_MAX_BYTES,
   VIEW_RESULT_MAX_BYTES,
@@ -19,6 +21,7 @@ import {
 
 export { VIEW_UNAVAILABLE } from './view-schemas.js';
 export const VIEW_TTL_MS = 15 * 60 * 1000;
+const MAX_VIEWS_PER_OWNER = 4;
 const PAGE_BYTES = 72 * 1024; // 96 KiB base64, leaving room for the result envelope.
 const gzipAsync = promisify(gzip);
 type Encoding = 'identity' | 'gzip';
@@ -178,13 +181,6 @@ export class ViewStore {
     const needed =
       json.length + media.reduce((total, item) => total + item.bytes, 0);
     if (!this.room(needed, owner)) return;
-    while (this.views.size >= (this.options.maxEntries ?? 16)) {
-      const victim = [...this.views].find(
-        ([, view]) => view.owner === owner,
-      )?.[0];
-      if (!victim) return;
-      this.drop(victim);
-    }
     const timer = setTimeout(() => this.drop(ref), VIEW_TTL_MS);
     timer.unref?.();
     const view: StoredView = {
@@ -242,11 +238,58 @@ export class ViewStore {
     }
     const maxBytes = this.options.maxBytes ?? 128 * 1024 * 1024;
     if (extra > maxBytes) return false;
-    for (const [ref, view] of this.views) {
-      if (this.bytes + extra <= maxBytes) break;
-      if (ref !== keep && view.owner === owner) this.drop(ref);
+    const owned = [...this.views].filter(
+      ([ref, view]) => ref !== keep && view.owner === owner,
+    );
+    // New views share one owner quota across kinds. Gzip grows an existing view.
+    while (
+      this.bytes + extra > maxBytes ||
+      (!keep &&
+        (this.views.size >= (this.options.maxEntries ?? 16) ||
+          owned.length >= MAX_VIEWS_PER_OWNER))
+    ) {
+      const victim = owned.shift()?.[0];
+      if (!victim) return false;
+      this.drop(victim);
     }
-    return this.bytes + extra <= maxBytes;
+    return true;
+  }
+
+  prepareSnapshot(
+    owner: string,
+    kind: 'usage' | 'active-sessions',
+    summary: string,
+    data: unknown,
+  ): PreparedView | undefined {
+    const viewRef = `view_${randomUUID()}`;
+    const expires = this.now() + VIEW_TTL_MS;
+    const parsed = ShowOutputSchema.safeParse({
+      viewRef,
+      kind,
+      summary,
+      data,
+      expiresAt: new Date(expires).toISOString(),
+    });
+    if (!parsed.success) return;
+    const json = Buffer.from(JSON.stringify(parsed.data));
+    if (
+      json.length > VIEW_RESULT_MAX_BYTES / 2 ||
+      !this.room(json.length, owner)
+    )
+      return;
+    const timer = setTimeout(() => this.drop(viewRef), VIEW_TTL_MS);
+    timer.unref?.();
+    this.views.set(viewRef, {
+      prepared: parsed.data,
+      owner,
+      sessionId: '',
+      expires,
+      json,
+      timer,
+      cursors: {},
+    });
+    this.bytes += json.length;
+    return structuredClone(parsed.data);
   }
 
   prepare(owner: string, artifact: ReplayArtifact): PreparedView | undefined {
@@ -254,13 +297,6 @@ export class ViewStore {
     const json = Buffer.from(JSON.stringify(artifact));
     if (json.length > VIEW_DATA_MAX_BYTES || !this.room(json.length, owner))
       return undefined;
-    while (this.views.size >= (this.options.maxEntries ?? 16)) {
-      const victim = [...this.views].find(
-        ([, view]) => view.owner === owner,
-      )?.[0];
-      if (!victim) return undefined;
-      this.drop(victim);
-    }
     const events = artifact.events as Array<{ timestamp: number }>;
     const duration = Math.max(
       0,
@@ -300,6 +336,41 @@ export class ViewStore {
     return structuredClone(prepared);
   }
 
+  prepareLogs(owner: string, rawPayload: unknown): PreparedView | undefined {
+    const parsed = LogPayloadSchema.safeParse(rawPayload);
+    if (!parsed.success) return;
+    const json = Buffer.from(JSON.stringify(parsed.data));
+    if (json.length > LOG_PAGE_MAX_BYTES || !this.room(json.length, owner))
+      return;
+    const now = this.now();
+    const expires = now + VIEW_TTL_MS;
+    const viewRef = `view_${randomUUID()}`;
+    const prepared: PreparedView = {
+      viewRef,
+      kind: 'request-logs',
+      summary: `Request log explorer: ${parsed.data.entries.length} entries.`,
+      expiresAt: new Date(expires).toISOString(),
+      data: {
+        fetchedAt: new Date(now).toISOString(),
+        entryCount: parsed.data.entries.length,
+        hasMore: Boolean(parsed.data.nextCursor),
+      },
+    };
+    const timer = setTimeout(() => this.drop(viewRef), VIEW_TTL_MS);
+    timer.unref?.();
+    this.views.set(viewRef, {
+      prepared,
+      owner,
+      sessionId: '',
+      expires,
+      json,
+      timer,
+      cursors: {},
+    });
+    this.bytes += json.length;
+    return structuredClone(prepared);
+  }
+
   require(ref: string, owner: string): StoredView {
     const view = this.views.get(ref);
     if (view && view.expires <= this.now()) this.drop(ref);
@@ -315,6 +386,17 @@ export class ViewStore {
 
   show(ref: string, owner: string, origin?: string): ContentResult {
     const view = this.require(ref, owner);
+    if (view.prepared.kind === 'request-logs')
+      return {
+        content: [{ type: 'text', text: view.prepared.summary }],
+        structuredContent: structuredClone(view.prepared),
+        _meta: { payload: JSON.parse(view.json.toString('utf8')) },
+      };
+    if (['usage', 'active-sessions'].includes(view.prepared.kind))
+      return {
+        content: [{ type: 'text', text: view.prepared.summary }],
+        structuredContent: structuredClone(view.prepared),
+      };
     if (view.media) {
       if (!origin) throw new UserError(VIEW_UNAVAILABLE);
       const payload = JSON.parse(view.json.toString('utf8'));
@@ -363,7 +445,7 @@ export class ViewStore {
     cursor?: string,
   ): Promise<ContentResult> {
     const view = this.require(ref, owner);
-    if (view.media) throw new UserError(VIEW_UNAVAILABLE);
+    if (view.prepared.kind !== 'replay') throw new UserError(VIEW_UNAVAILABLE);
     if (encoding === 'gzip' && !view.gzip) {
       await (view.gzipPromise ??= gzipAsync(view.json)
         .then((compressed) => {

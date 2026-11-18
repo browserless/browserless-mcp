@@ -5,6 +5,11 @@ import { z } from 'zod';
 import { createSkillState } from '../skills/index.js';
 import { hashToken, isMeaningfulBody } from './utils.js';
 import {
+  diagnosticPreview,
+  diagnosticString,
+  UNSAFE_DIAGNOSTIC_CHARACTERS,
+} from './diagnostic-string.js';
+import {
   recordUpstreamCall,
   recordSessionLifetime,
 } from './metrics-recorders.js';
@@ -32,6 +37,13 @@ export type {
 const AGENT_TOOL_NAME = 'browserless_agent';
 
 const stripeLinkOperations = new WeakMap<ActiveSession, Promise<void>>();
+
+type PendingResponse = {
+  method: string;
+  resolve: (response: AgentResponse) => void;
+  reject: (error: Error) => void;
+};
+const pendingResponses = new WeakMap<WebSocket, Map<number, PendingResponse>>();
 
 // Count of agent commands awaiting a response per session. A command may run
 // past the idle TTL (an explicit long timeoutMs), so the sweep must not evict a
@@ -450,6 +462,7 @@ export const getActiveSessionByHandle = (
   userId?: string,
   touch = true,
 ): ActiveSession => {
+  handle = normalizeSessionHandle(handle) ?? '';
   const matches = [...sessions.values()].filter(
     (session) =>
       session.handle === handle &&
@@ -529,8 +542,41 @@ const properClose = (
       } catch {
         /* ignore */
       }
+      // Bound caller-controlled values, keeping all scope suffixes intact.
+      const displayKey = getSessionKey(
+        undefined,
+        session.token,
+        session.proxy,
+        session.profile,
+        session.createProfile,
+        session.createProfile ? undefined : session.creationSessionId,
+        session.handle,
+        session.integrationId,
+        session.allowedDomains,
+        session.userId,
+      );
+      const handleStart = displayKey.indexOf('conv#') + 'conv#'.length;
+      const preview = diagnosticPreview(session.handle);
+      let suffix = displayKey.slice(handleStart + session.handle.length);
+      const attachId = session.creationSessionId;
+      if (attachId) {
+        const attachPreview = diagnosticPreview(attachId);
+        suffix = suffix.replace(
+          KEY_SEP + 'attach#' + attachId,
+          () =>
+            KEY_SEP +
+            'attach#' +
+            attachPreview +
+            (attachPreview.length < attachId.length ? '…' : ''),
+        );
+      }
+      const diagnosticKey =
+        displayKey.slice(0, handleStart) +
+        preview +
+        (preview.length < session.handle.length ? '…' : '') +
+        suffix;
       console.error(
-        `[agent-client] evicted session key=${key} reason=${reason}`,
+        `[agent-client] evicted session key=${diagnosticString(diagnosticKey, Infinity)} reason=${reason}`,
       );
     });
 };
@@ -605,9 +651,8 @@ export const stopSweepTimer = (): void => {
   sweepTimer = undefined;
 };
 
-// Separator between the host segment (mcpSessionId or stdio:<hash>) and
-// the proxy fingerprint in a session key. NUL is illegal in any
-// user-supplied field, so the two segments cannot ambiguously concatenate.
+// Readable labels in diagnostics; tuple serialization, not this separator,
+// keeps caller-controlled values from forging other session-key segments.
 const KEY_SEP = '\u0000';
 
 // Hash externalProxyServer rather than serialize it raw: the session key is
@@ -643,8 +688,57 @@ export const sessionHandle = (
   echoed?: string,
 ): string => echoed ?? mcpSessionId ?? `stdio:${hashToken(token)}`;
 
-// Profile and OAuth user ids are hashed so the eviction-logged key cannot leak
-// them; token-prefixed so a caller cannot echo another account's handle.
+// Match MCP trimming while preserving blank library echoes as "no handle".
+const normalizeSessionHandle = (handle?: string): string | undefined => {
+  const normalized = handle?.trim();
+  if (normalized && normalized.search(UNSAFE_DIAGNOSTIC_CHARACTERS) !== -1) {
+    throw new PersonaConflictError(
+      'sessionId must not contain control, format, or line separator characters',
+    );
+  }
+  return normalized || undefined;
+};
+
+// A handle owns one browser per token/user. Scope is checked on the session,
+// not included in its lookup key: changing scope must not fork that browser.
+const sessionCacheKey = (handle: string, token: string, userId?: string) =>
+  JSON.stringify([hashToken(token), handle, userId ? hashToken(userId) : null]);
+
+const integrationScope = (integrationId?: string, allowedDomains?: string[]) =>
+  JSON.stringify([
+    integrationId || null,
+    integrationId ? [...(allowedDomains ?? [])].sort() : [],
+  ]);
+
+const assertSessionBinding = (
+  session: ActiveSession,
+  integrationId?: string,
+  allowedDomains?: string[],
+  attachSessionId?: string,
+  createProfile?: CreateProfileParams,
+): void => {
+  if (
+    integrationScope(session.integrationId, session.allowedDomains) !==
+    integrationScope(integrationId, allowedDomains)
+  ) {
+    throw new PersonaConflictError(
+      'Integration binding and allowed domains must match the browser session.',
+    );
+  }
+  if (attachSessionId && session.creationSessionId !== attachSessionId) {
+    throw new PersonaConflictError(
+      'Attach target must match the browser session owning this handle.',
+    );
+  }
+  if (createProfile && session.createProfile?.name !== createProfile.name) {
+    throw new PersonaConflictError(
+      'Profile creation target must match the browser session owning this handle.',
+    );
+  }
+};
+
+// Legacy exported/diagnostic format; never use this delimiter-joined value as
+// a security lookup key. The pool uses the private structured tuple above.
 export const getSessionKey = (
   mcpSessionId: string | undefined,
   token: string,
@@ -657,31 +751,30 @@ export const getSessionKey = (
   allowedDomains?: string[],
   userId?: string,
 ): string =>
-  `t:${hashToken(token)}` +
-  KEY_SEP +
-  'conv#' +
-  (attachSessionId
-    ? `attach:${attachSessionId}`
-    : sessionHandle(mcpSessionId, token, echoedSessionId)) +
-  // A returned handle identifies proxy and profile state, so neither is folded
-  // into the key for an echoed handle; integration bindings remain contractual
-  // scope and must be repeated on every call.
-  (echoedSessionId ? '' : proxyFingerprint(proxy)) +
-  (echoedSessionId || !profile
-    ? ''
-    : KEY_SEP + 'profile#' + hashToken(profile)) +
-  (createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '') +
-  (attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '') +
-  // Different integration scope must key to a different WS. Sorted so domain
-  // order doesn't fork the key.
-  (integrationId
-    ? KEY_SEP +
-      'int#' +
-      hashToken(
-        JSON.stringify([integrationId, [...(allowedDomains ?? [])].sort()]),
-      )
-    : '') +
-  (userId ? KEY_SEP + 'user#' + hashToken(userId) : '');
+  [
+    `t:${hashToken(token)}`,
+    KEY_SEP +
+      'conv#' +
+      (attachSessionId
+        ? `attach:${attachSessionId}`
+        : sessionHandle(mcpSessionId, token, echoedSessionId)),
+    // A returned handle identifies proxy and profile state, so neither is folded
+    // into the key for an echoed handle; integration bindings remain contractual
+    // scope and must be repeated on every call.
+    echoedSessionId ? '' : proxyFingerprint(proxy),
+    echoedSessionId || !profile
+      ? ''
+      : KEY_SEP + 'profile#' + hashToken(profile),
+    createProfile ? KEY_SEP + 'create#' + hashToken(createProfile.name) : '',
+    attachSessionId ? KEY_SEP + 'attach#' + attachSessionId : '',
+    // Preserve the exported integration fingerprint, independent of domain order.
+    integrationId
+      ? KEY_SEP +
+        'int#' +
+        hashToken(integrationScope(integrationId, allowedDomains))
+      : '',
+    userId ? KEY_SEP + 'user#' + hashToken(userId) : '',
+  ].join('');
 
 // Concatenating a path onto the base breaks when the base carries a query:
 // `host?token=x` + `/chromium/agent` parses as path `/`, the raw CDP socket.
@@ -808,7 +901,8 @@ export const preflightAgentCapabilities = async (
   if (required.length === 0) return;
 
   const url = new URL(agentUrl);
-  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.protocol =
+    url.protocol === 'wss:' || url.protocol === 'https:' ? 'https:' : 'http:';
   url.pathname += '/capabilities';
 
   const res = await fetch(url, {
@@ -860,7 +954,8 @@ export const preflightAgentCapabilities = async (
 // UpgradeError), so a 1006 close here only means a transport failure or a
 // server crash before any HTTP response.
 const describeConnectCloseCode = (code: number, reason: string): string => {
-  if (reason) return `code=${code}, reason="${reason}"`;
+  if (reason)
+    return `code=${code}, reason=${diagnosticString(reason, Infinity)}`;
   if (code === 1006)
     return 'code=1006 (abnormal close before HTTP response — likely a network failure or server crash)';
   if (code === 1008) return 'code=1008 (policy violation)';
@@ -1092,6 +1187,95 @@ const connect = (
     if (source) headers['x-browserless-mcp-source'] = source;
     if (handle) headers['x-browserless-agent-session'] = handle;
     const ws = new WebSocket(wsUrl, { headers });
+    const requests = new Map<number, PendingResponse>();
+    pendingResponses.set(ws, requests);
+    let terminated = false;
+    // Validate once per socket, including frames received between commands.
+    ws.on('message', (data: WebSocket.RawData) => {
+      if (terminated) return;
+      const raw = data.toString('utf8');
+      let response: AgentResponse;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          throw new Error('Invalid response envelope');
+        }
+        if (!('id' in parsed) && !('error' in parsed)) {
+          console.error('[agent-client] ignored id-less WS frame');
+          return;
+        }
+        // An uncorrelated protocol error can only identify a command when
+        // exactly one is pending. Resolve it through the normal error path
+        // so callers do not discard the browser and replay the command.
+        if (
+          (!('id' in parsed) || parsed.id === null) &&
+          'error' in parsed &&
+          typeof parsed.error === 'object' &&
+          parsed.error !== null &&
+          !Array.isArray(parsed.error) &&
+          'message' in parsed.error &&
+          typeof parsed.error.message === 'string'
+        ) {
+          if (requests.size === 1) {
+            const [id, request] = requests.entries().next().value!;
+            const error: NonNullable<AgentResponse['error']> = {
+              message: parsed.error.message,
+            };
+            if ('code' in parsed.error && typeof parsed.error.code === 'string')
+              error.code = parsed.error.code;
+            if (
+              'retryable' in parsed.error &&
+              typeof parsed.error.retryable === 'boolean'
+            )
+              error.retryable = parsed.error.retryable;
+            if (
+              'suggestion' in parsed.error &&
+              typeof parsed.error.suggestion === 'string'
+            )
+              error.suggestion = parsed.error.suggestion;
+            request.resolve({ id, error });
+          } else {
+            console.error('[agent-client] uncorrelated WS error');
+          }
+          return;
+        }
+        if (
+          !('id' in parsed) ||
+          typeof parsed.id !== 'number' ||
+          !Number.isFinite(parsed.id)
+        ) {
+          throw new Error('Invalid response envelope');
+        }
+        response = parsed as AgentResponse;
+      } catch {
+        console.error('[agent-client] malformed WS frame');
+        for (const request of requests.values()) {
+          request.reject(
+            new Error(
+              `Agent WebSocket closed while waiting for "${request.method}" response after a malformed response`,
+            ),
+          );
+        }
+        terminated = true;
+        ws.terminate();
+        return;
+      }
+      // Well-formed replies for unknown or expired IDs are harmless.
+      requests.get(response.id)?.resolve(response);
+    });
+    ws.on('close', () => {
+      for (const request of requests.values()) {
+        request.reject(
+          new Error(
+            `Agent WebSocket closed while waiting for "${request.method}" response`,
+          ),
+        );
+      }
+    });
     let settled = false;
 
     const settle = (err: Error | null, value?: WebSocket): void => {
@@ -1160,10 +1344,22 @@ const sendMessage = (
   timeoutMs: number = DEFAULT_TIMEOUT,
 ): Promise<AgentResponse> =>
   new Promise((resolve, reject) => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      reject(
+        new Error(
+          `Agent WebSocket closed before sending "${msg.method}" command`,
+        ),
+      );
+      return;
+    }
+    const requests = pendingResponses.get(ws);
+    if (!requests) {
+      reject(new Error('Agent WebSocket has no response dispatcher'));
+      return;
+    }
     const cleanup = () => {
       clearTimeout(timeout);
-      ws.off('message', handler);
-      ws.off('close', closeHandler);
+      requests.delete(msg.id);
     };
 
     const timeout = setTimeout(() => {
@@ -1175,36 +1371,23 @@ const sendMessage = (
       );
     }, timeoutMs);
 
-    const closeHandler = () => {
+    requests.set(msg.id, {
+      method: msg.method,
+      resolve: (response) => {
+        cleanup();
+        resolve(response);
+      },
+      reject: (error) => {
+        cleanup();
+        reject(error);
+      },
+    });
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch (error) {
       cleanup();
-      reject(
-        new Error(
-          `WebSocket closed while waiting for "${msg.method}" response`,
-        ),
-      );
-    };
-
-    const handler = (data: WebSocket.RawData) => {
-      let response: AgentResponse;
-      const raw = data.toString('utf8');
-      try {
-        response = JSON.parse(raw) as AgentResponse;
-      } catch {
-        console.error(
-          '[agent-client] dropping unparseable WS frame:',
-          raw.slice(0, 200),
-        );
-        return;
-      }
-      // Only accept the response whose id matches the request we sent.
-      if (response.id !== msg.id) return;
-      cleanup();
-      resolve(response);
-    };
-
-    ws.on('message', handler);
-    ws.on('close', closeHandler);
-    ws.send(JSON.stringify(msg));
+      reject(error);
+    }
   });
 
 export const getOrCreateSession = async (
@@ -1228,6 +1411,11 @@ export const getOrCreateSession = async (
   userId?: string,
   mcpTool = AGENT_TOOL_NAME,
 ): Promise<ActiveSession> => {
+  // Attached browsers ignore the echo, including its validation.
+  echoedSessionId = attachSessionId
+    ? undefined
+    : normalizeSessionHandle(echoedSessionId);
+  allowedDomains = allowedDomains ? [...allowedDomains] : undefined;
   const requestedHandle = attachSessionId
     ? `attach:${attachSessionId}`
     : echoedSessionId;
@@ -1276,20 +1464,17 @@ export const getOrCreateSession = async (
   const handle = attachSessionId
     ? `attach:${attachSessionId}`
     : (echoedSessionId ?? `s:${randomUUID()}`);
-  const key = getSessionKey(
-    mcpSessionId,
-    token,
-    proxy,
-    profile,
-    createProfile,
-    attachSessionId,
-    handle,
-    integrationId,
-    allowedDomains,
-    userId,
-  );
+  const key = sessionCacheKey(handle, token, userId);
   noteMcpSession(mcpSessionId);
   const existing = sessions.get(key);
+  if (existing)
+    assertSessionBinding(
+      existing,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
   const retainedPersona = retainedPersonas.get(key);
   const hasRetainedProxy = retainedProxies.has(key);
   const retainedProxy = retainedProxies.get(key);
@@ -1400,6 +1585,13 @@ export const getOrCreateSession = async (
   const inFlight = pending.get(key);
   if (inFlight) {
     const session = await inFlight;
+    assertSessionBinding(
+      session,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
     if (
       proxy !== undefined &&
       proxyFingerprint(session.proxy) !== proxyFingerprint(proxy)
@@ -1531,7 +1723,7 @@ export const getOrCreateSession = async (
     ws.on('close', (code: number, reason: Buffer) => {
       if (code !== 1000) {
         console.error(
-          `[agent-client] WebSocket closed unexpectedly: code=${code} reason=${reason?.toString('utf8') || 'none'}`,
+          `[agent-client] WebSocket closed unexpectedly: code=${code} reason=${reason?.length ? diagnosticString(reason.toString('utf8')) : 'none'}`,
         );
       }
       // Delete by identity, not by the captured key: adoption re-keys a live
@@ -1645,8 +1837,8 @@ export class SessionCloseConflictError extends Error {}
 export const closeSession = (
   mcpSessionId: string | undefined,
   token: string,
-  proxy?: ProxyOptions,
-  profile?: string,
+  _proxy?: ProxyOptions,
+  _profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
@@ -1655,22 +1847,29 @@ export const closeSession = (
   onSession?: (reused: boolean, ageMs: number) => void,
   userId?: string,
 ): void | Promise<void> => {
-  const key = getSessionKey(
-    mcpSessionId,
-    token,
-    proxy,
-    profile,
-    createProfile,
-    attachSessionId,
-    echoedSessionId,
-    integrationId,
-    allowedDomains,
-    userId,
-  );
+  const handle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : sessionHandle(
+        mcpSessionId,
+        token,
+        normalizeSessionHandle(echoedSessionId),
+      );
+  const key = sessionCacheKey(handle, token, userId);
+  const session =
+    sessions.get(key) ??
+    [...handoffHandles.values()].find((entry) => entry.key === key)?.session;
+  if (session)
+    assertSessionBinding(
+      session,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
   return closeSessionByKey(key, onSession);
 };
 
-/** Close the exact cached key, including profile, attach, and integration scope. */
+/** Close the exact cached browser, including its retained configuration. */
 const closeSessionByKey = (
   key: string,
   onSession?: (reused: boolean, ageMs: number) => void,
@@ -1731,12 +1930,13 @@ const closeSessionByKey = (
   finish();
 };
 
-/** Handles are token/user scoped but can identify more than one integration binding. */
+/** Close the browser owning this token/user-scoped handle. */
 export const closeSessionByHandle = (
   handle: string,
   token: string,
   userId?: string,
 ): boolean | Promise<boolean> => {
+  handle = normalizeSessionHandle(handle) ?? '';
   const candidates = new Map(sessions);
   for (const entry of handoffHandles.values())
     if (!candidates.has(entry.key)) candidates.set(entry.key, entry.session);
@@ -1764,8 +1964,8 @@ export const closeSessionByHandle = (
 export const destroySession = (
   mcpSessionId: string | undefined,
   token: string,
-  proxy?: ProxyOptions,
-  profile?: string,
+  _proxy?: ProxyOptions,
+  _profile?: string,
   createProfile?: CreateProfileParams,
   attachSessionId?: string,
   echoedSessionId?: string,
@@ -1774,21 +1974,25 @@ export const destroySession = (
   userId?: string,
   expectedSession?: ActiveSession,
 ): void => {
-  const key = getSessionKey(
-    mcpSessionId,
-    token,
-    proxy,
-    profile,
-    createProfile,
-    attachSessionId,
-    echoedSessionId,
-    integrationId,
-    allowedDomains,
-    userId,
-  );
+  const handle = attachSessionId
+    ? `attach:${attachSessionId}`
+    : sessionHandle(
+        mcpSessionId,
+        token,
+        normalizeSessionHandle(echoedSessionId),
+      );
+  const key = sessionCacheKey(handle, token, userId);
   const session = sessions.get(key);
   // A failed command may belong to a browser evicted before its reply arrived.
   if (expectedSession && session !== expectedSession) return;
+  if (session)
+    assertSessionBinding(
+      session,
+      integrationId,
+      allowedDomains,
+      attachSessionId,
+      createProfile,
+    );
   if (session) {
     try {
       session.ws.close();

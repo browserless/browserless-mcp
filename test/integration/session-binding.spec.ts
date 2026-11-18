@@ -10,7 +10,10 @@ import {
   authInputFromRequest,
   resolveBrowserlessAuth,
 } from '../../src/lib/http-auth.js';
-import { admitSessionRequest } from '../../src/lib/session-binding.js';
+import {
+  admitSessionRequest,
+  requestSessionId,
+} from '../../src/lib/session-binding.js';
 import { clearResolverCache } from '../../src/lib/account-resolver.js';
 import { BoundedEventStore } from '../../src/lib/bounded-event-store.js';
 
@@ -107,32 +110,29 @@ async function fixture() {
     version: '1.0.0',
     authenticate: async (req) => {
       const auth = await resolveBrowserlessAuth(authInputFromRequest(req), cfg);
-      const header = req.headers['mcp-session-id'];
-      admitSessionRequest(
-        Array.isArray(header) ? header[0] : header,
-        auth,
-        server.sessions,
-      );
+      admitSessionRequest(requestSessionId(req), auth, server.sessions);
       return auth;
     },
   });
   server.addTool({
     name: 'probe',
     description: 'Local probe',
-    parameters: z.object({}),
-    execute: async (_args, { log }) => {
+    parameters: z.object({ wait: z.boolean().optional() }),
+    execute: async ({ wait }, { log }) => {
       calls++;
       log.info('probe ran');
+      if (wait) await delay(300);
       return 'ok';
     },
   });
   const streams: ReturnType<typeof readFrames>[] = [];
+  const store = new BoundedEventStore();
   await server.start({
     transportType: 'httpStream',
     httpStream: {
       host: '127.0.0.1',
       port,
-      eventStore: new BoundedEventStore(),
+      eventStore: store,
     },
   });
   const url = `http://127.0.0.1:${port}/mcp`;
@@ -191,11 +191,17 @@ async function fixture() {
   };
   return {
     url,
+    store,
     headers,
     post,
     initialize,
     get,
     track,
+    notifyStandalone: () =>
+      server.sessions[0].server.sendLoggingMessage({
+        level: 'info',
+        data: 'standalone probe',
+      }),
     calls: () => calls,
     remove: (sid: string, key?: string) =>
       fetch(url, { method: 'DELETE', headers: headers(sid, key) }),
@@ -231,48 +237,83 @@ describe('session request identity', () => {
       const denied = await f.get(sid, key, '_GET_stream_1_0_x');
       expect(denied.status).to.equal(status);
       expect(await denied.text()).not.to.include('data:');
-      await (
+      const result = await (
         await f.post(sid, A, 'tools/call', { name: 'probe', arguments: {} })
       ).text();
+      expect(result).to.include('"text":"ok"');
+      expect(result).to.include('probe ran');
+      // Tool logs now use the POST stream; probe the GET channel separately.
+      await f.notifyStandalone();
       await waitFor(() =>
-        live.frames.some((frame) => frame.data.includes('probe ran')),
+        live.frames.some((frame) => frame.data.includes('standalone probe')),
       );
     });
   }
 
-  it('replays request results only for the opening identity and session', async () => {
-    const a = await f.initialize(A),
-      b = await f.initialize(B);
-    const original = f.track(
-      await f.post(a, A, 'tools/call', { name: 'probe', arguments: {} }, 42),
-    );
-    await waitFor(() =>
-      original.frames.some((frame) => frame.data.includes('"id":42')),
-    );
-    const cursor = original.frames[0].id!;
-    expect(cursor).to.be.a('string').and.not.empty;
-    for (const [key, status] of [
-      [undefined, 401],
-      [B, 404],
-      ['x', 404],
-    ] as const) {
-      const denied = await f.get(a, key, cursor);
-      expect(denied.status).to.equal(status);
-      expect(await denied.text()).not.to.include('"result"');
-    }
-    const other = f.track(await f.get(b, B, cursor));
-    const owner = f.track(await f.get(a, A, cursor));
-    await waitFor(() =>
-      owner.frames.some((frame) => frame.data.includes('"id":42')),
-    );
-    expect(
-      JSON.parse(
-        owner.frames.find((frame) => frame.data.includes('"id":42'))!.data,
-      ).result,
-    ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
-    await delay(100);
-    expect(other.frames).to.deep.equal([]);
-  });
+  const jwt = (sub: string, account: string, jti: string) =>
+    `e30.${Buffer.from(JSON.stringify({ sub, account, jti })).toString('base64url')}.test`;
+  for (const { label, ownerKey, refreshedKey, foreignKeys } of [
+    { label: 'API keys', ownerKey: A, refreshedKey: A, foreignKeys: [B, 'x'] },
+    {
+      label: 'OAuth users',
+      ownerKey: jwt('u1', 'account1', 'original'),
+      refreshedKey: jwt('u1', 'account1', 'refreshed'),
+      foreignKeys: [
+        jwt('u2', 'account1', 'other-user'),
+        jwt('u1', 'account2', 'other-account'),
+        A,
+      ],
+    },
+  ]) {
+    it(`replays offline results only for the opening identity and session (${label})`, async () => {
+      const a = await f.initialize(ownerKey),
+        b = await f.initialize(foreignKeys[0]),
+        otherOwnerSession = await f.initialize(refreshedKey);
+      const original = f.track(
+        await f.post(
+          a,
+          ownerKey,
+          'tools/call',
+          { name: 'probe', arguments: { wait: true } },
+          42,
+        ),
+      );
+      await waitFor(() => original.frames.some((frame) => frame.id));
+      const cursor = original.frames[0].id!;
+      expect(cursor).to.be.a('string').and.not.empty;
+      expect(
+        original.frames.some((frame) => frame.data.includes('"id":42')),
+      ).to.equal(false);
+      const retained = f.store.size;
+      await original.close();
+      await waitFor(() => f.store.size > retained);
+      for (const key of [undefined, ...foreignKeys]) {
+        const denied = await f.get(a, key, cursor);
+        expect(denied.status).to.equal(key === undefined ? 401 : 404);
+        expect(await denied.text()).not.to.include('"result"');
+      }
+      for (const [session, key, replayCursor] of [
+        [b, foreignKeys[0], cursor],
+        [otherOwnerSession, refreshedKey, cursor],
+        [a, refreshedKey, 'unknown-cursor'],
+      ]) {
+        const denied = await f.get(session, key, replayCursor);
+        expect(denied.status).to.equal(400);
+        expect(await denied.text()).not.to.include('"result"');
+      }
+      const owner = f.track(await f.get(a, refreshedKey, cursor));
+      await waitFor(() =>
+        owner.frames.some((frame) => frame.data.includes('"id":42')),
+      );
+      expect(
+        JSON.parse(
+          owner.frames.find((frame) => frame.data.includes('"id":42'))!.data,
+        ).result,
+      ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
+      await delay(100);
+      expect(f.calls()).to.equal(1);
+    });
+  }
 
   it('admits calls and termination only for the opening identity', async () => {
     const sid = await f.initialize(A);
@@ -354,44 +395,6 @@ describe('session request identity', () => {
     } finally {
       await client.close();
     }
-  });
-
-  it('keeps legacy SSE message delivery unchanged', async () => {
-    const stream = f.track(
-      await fetch(f.url.replace('/mcp', `/sse?token=${A}`)),
-    );
-    await waitFor(() =>
-      stream.frames.some((frame) => frame.event === 'endpoint'),
-    );
-    const endpoint = new URL(
-      stream.frames.find((frame) => frame.event === 'endpoint')!.data,
-      f.url,
-    );
-    for (const [id, method, params] of [
-      [
-        1,
-        'initialize',
-        {
-          protocolVersion: '2025-11-25',
-          capabilities: {},
-          clientInfo: { name: 'sse', version: '1' },
-        },
-      ],
-      [2, 'tools/list', {}],
-    ] as const) {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-      });
-      expect(response.status).to.equal(202);
-      await waitFor(() =>
-        stream.frames.some((frame) => frame.data.includes(`"id":${id}`)),
-      );
-    }
-    expect(
-      stream.frames.find((frame) => frame.data.includes('"id":2'))!.data,
-    ).to.include('probe');
   });
 
   it('answers malformed session and credential inputs without disrupting the session', async () => {

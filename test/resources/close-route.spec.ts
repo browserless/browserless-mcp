@@ -7,7 +7,9 @@ import {
   acquireStripeLinkSessionOperation,
   getOrCreateSession,
   closeSessionByHandle,
+  PersonaConflictError,
 } from '../../src/lib/agent-client.js';
+import { isApiKeyCheck, stubApiKeyCheck } from '../helpers/api-key-check.js';
 import { makeAcceptingServer } from '../helpers/upgrade-server.js';
 
 const config = {
@@ -22,6 +24,9 @@ const app = () => {
 };
 
 describe('remote session close route', () => {
+  beforeEach(() => stubApiKeyCheck());
+  afterEach(() => Sinon.restore());
+
   it('requires authentication, isolates tokens, and reports absent sessions', async () => {
     const upstream = await makeAcceptingServer();
     try {
@@ -34,6 +39,14 @@ describe('remote session close route', () => {
       expect(
         (await route.request(`${url}?token=other`, { method: 'DELETE' }))
           .status,
+      ).to.equal(404);
+      expect(
+        (
+          await route.request(
+            `/agent/session/${encodeURIComponent('s:\u202ebad')}?token=owner`,
+            { method: 'DELETE' },
+          )
+        ).status,
       ).to.equal(404);
       expect(session.ws.readyState).to.equal(1);
       for (let i = 0; i < 2; i++) {
@@ -63,8 +76,10 @@ describe('remote session close route', () => {
       if (scope === 'attach') args[6] = 'attached-session';
       if (scope === 'profile') {
         args[5] = { name: 'creation-profile' };
-        Sinon.stub(globalThis, 'fetch').resolves(
-          new Response(JSON.stringify({ id: 'created-session' })),
+        (globalThis.fetch as Sinon.SinonStub).callsFake(async (input) =>
+          isApiKeyCheck(input)
+            ? new Response(null, { status: 204 })
+            : new Response(JSON.stringify({ id: 'created-session' })),
         );
       }
       if (scope === 'integration') {
@@ -87,7 +102,7 @@ describe('remote session close route', () => {
     });
   }
 
-  it('refuses an ambiguous handle without closing either integration binding', async () => {
+  it('keeps close-by-handle usable after refusing a different integration binding', async () => {
     const upstream = await makeAcceptingServer();
     const open = (integration: string) =>
       getOrCreateSession(
@@ -105,16 +120,18 @@ describe('remote session close route', () => {
       );
     try {
       const first = await open('first-integration');
-      const second = await open('second-integration');
+      const second = await open('second-integration').catch(
+        (error: unknown) => error,
+      );
+      expect(second).to.be.instanceOf(PersonaConflictError);
+      expect(first.ws.readyState).to.equal(1);
       const response = await app().request(
         '/agent/session/s%3Ashared?token=owner',
         { method: 'DELETE' },
       );
-      expect(response.status).to.equal(409);
-      const body = (await response.json()) as { error: string };
-      expect(body.error).to.include('Multiple browser sessions');
-      expect(first.ws.readyState).to.equal(1);
-      expect(second.ws.readyState).to.equal(1);
+      expect(response.status).to.equal(200);
+      expect(await response.json()).to.deep.equal({ ok: true });
+      expect(first.ws.readyState).not.to.equal(1);
     } finally {
       await upstream.close();
     }

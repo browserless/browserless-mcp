@@ -211,10 +211,17 @@ describe('agent system prompt contextual snapshot guidance', () => {
     });
   }
 
-  it('guides full-mode agents through SPA capture recovery after loadSecret', () => {
+  it('guides full-mode agents through safe capture recovery after loadSecret', () => {
     expect(AGENT_SYSTEM_PROMPT).to.include('clearSecrets');
-    expect(AGENT_SYSTEM_PROMPT).to.include('single-page app');
-    expect(AGENT_SYSTEM_PROMPT).to.include('CaptureBlockedError');
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'Navigation alone does not unlock backend captures',
+    );
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'secret-bearing content is gone from all tabs, including hidden fields',
+    );
+    expect(AGENT_SYSTEM_PROMPT).to.include(
+      'request a new snapshot after unlocking',
+    );
     expect(AGENT_SYSTEM_PROMPT).to.include('screenshot');
     expect(AGENT_SYSTEM_PROMPT).to.include('liveURL');
     expect(AGENT_SYSTEM_PROMPT).to.include('PDF');

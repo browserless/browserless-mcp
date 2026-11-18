@@ -1,17 +1,17 @@
 import { z } from 'zod';
+import { UNSAFE_DIAGNOSTIC_CHARACTERS } from '../lib/diagnostic-string.js';
 import {
   PERSONA_FIELDS,
   PersonaOptionsSchema,
   ProxyOptionsSchema,
 } from '../lib/agent-client.js';
 
-// NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
-// fromCharCode so the literal control character never appears in source.
+// NUL remains the legacy exported/diagnostic key separator in agent-client.ts.
+// Keep control characters out of these public string fields.
 const NUL = String.fromCharCode(0);
 
-// A trimmed, non-empty string that also rejects NUL. Every field feeding the
-// session-cache key (see getSessionKey) needs this, or a NUL lets a caller forge
-// extra key segments (NUL is KEY_SEP).
+// Preserve the existing trimmed, non-empty, NUL-free input contract. Internal
+// session lookup uses a structured tuple, not the legacy exported key string.
 const nulSafeString = (label: string) =>
   z
     .string()
@@ -48,7 +48,14 @@ export function profileField(whenLoaded: string, extra = '') {
   return nulSafeString('profile').optional().describe(description);
 }
 
-const sessionIdField = nulSafeString('sessionId')
+const sessionIdField = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => value.search(UNSAFE_DIAGNOSTIC_CHARACTERS) === -1, {
+    message:
+      'sessionId must not contain control, format, or line separator characters',
+  })
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +
@@ -269,10 +276,11 @@ const ClearSecretsCommandSchema = z.object({
   method: z
     .literal('clearSecrets')
     .describe(
-      'Re-enable screenshot, PDF, liveURL, and page-content-read captures ' +
-        '(evaluate/html/text/querySelector/cookies) after a loadSecret login ' +
-        'once the credential is no longer visible. Required for single-page apps ' +
-        'that do not navigate; replay remains masked.',
+      'Re-enable snapshot, screenshot, PDF, liveURL, and page-content reads ' +
+        '(evaluate/html/text/querySelector/cookies) after a secret fill completes ' +
+        'and secret-bearing content is gone from all tabs. Hidden fields still ' +
+        'carry values. Navigation alone does not unlock captures. After an ' +
+        'accepted clear, request a fresh snapshot; replay remains masked.',
     ),
   params: z.object({}).strict().optional().default({}),
 });
@@ -454,6 +462,9 @@ const WaitForResponseCommandSchema = z.object({
   }),
 });
 
+export const DEFAULT_LIVE_URL_INSTRUCTIONS =
+  'Complete the step shown on screen, then use the completion button.';
+
 export const LiveURLInstructionsSchema = z.union([
   z.string(),
   z.object({
@@ -477,7 +488,7 @@ const LiveURLCommandSchema = z.object({
           'Link lifetime in ms (default 300000, five minutes), capped by the remaining browser session time.',
         ),
       instructions: LiveURLInstructionsSchema.optional().describe(
-        'Tell the person what to do, for example: Sign in, then click Done.',
+        'Tell the person what to do, for example: Sign in, then click Done. Interactive links default to a generic instruction when omitted; an empty string disables the card and Done button.',
       ),
       interactable: z
         .boolean()
