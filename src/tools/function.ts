@@ -15,8 +15,10 @@ export const FunctionParamsSchema = z.object({
     .string()
     .describe(
       'JavaScript (ESM) code to execute. The default export receives ' +
-        '{ page, context } and should return { data, type } where data ' +
-        'is the response payload and type is the Content-Type string.',
+        '{ page, context }, and what it returns is the response: return bytes ' +
+        '(the Uint8Array from page.screenshot() or page.pdf()) directly to get ' +
+        'an image, audio or file back; a string comes back as text; any other ' +
+        'object comes back as JSON text. A { data, type } wrapper is not unwrapped.',
     ),
   context: z
     .record(z.string(), z.unknown())
@@ -102,9 +104,10 @@ export const formatFunctionContent = (
       new UserError(
         `Function returned ${response.data.length} chars (~${approxTokens} tokens), ` +
           `exceeding the ${MAX_TEXT_RESPONSE_CHARS}-char (~${capTokens}-token) limit. ` +
-          `Either filter/summarize inside your function, or — for binary outputs — ` +
-          `return { type: "image/jpeg" } / "image/png" / "audio/mpeg" / "application/pdf" ` +
-          `from your function so the bytes come back as a proper content block instead of base64 text.`,
+          `Either filter/summarize inside your function, or — for binary outputs such as ` +
+          `image/jpeg, image/png, audio/mpeg or application/pdf — return the bytes directly ` +
+          `(for example return await page.screenshot({ type: "jpeg" })) instead of wrapping ` +
+          `them in an object or a base64 string, so they come back as a proper content block.`,
       ),
       { code: 'RESPONSE_TOO_LARGE' },
     );
@@ -127,17 +130,21 @@ export function registerFunctionTool(
     description:
       'Execute custom Puppeteer JavaScript code on the Browserless cloud. ' +
       'Your function receives a Puppeteer `page` object and optional `context` data. ' +
-      'Return { data, type } to control the response payload and Content-Type. ' +
-      '\n\n' +
-      'For binary outputs, set `type` to a real MIME so the bytes come back as a proper ' +
-      'content block instead of base64 text:\n' +
-      '  - `image/png` / `image/jpeg` / `image/webp` → vision content block (~1.5K tokens)\n' +
-      '  - `audio/mpeg` / `audio/wav` → audio content block\n' +
-      '  - `application/pdf` and other binaries → resource content block (attachment)\n' +
+      'What the function returns decides the response:\n' +
+      '  - Bytes (a Uint8Array), e.g. `return await page.screenshot({ type: "jpeg" })` or ' +
+      '`return await page.pdf()`: the file type is detected from the bytes. PNG/JPEG/WebP → ' +
+      'vision content block (~1.5K tokens); MP3/WAV → audio content block; PDF and other ' +
+      'files → resource content block (attachment)\n' +
+      '  - A string → text\n' +
+      '  - Any other object or array → JSON text. A `{ data, type }` wrapper is NOT unwrapped, ' +
+      'so wrapped bytes come back as a huge JSON text that fails the limit below\n' +
+      '\n' +
+      'Return the Uint8Array as-is: `Buffer` is not available inside the function, and a ' +
+      'base64 string comes back as text, not an image.\n' +
       '\n' +
       'Text responses are capped at 200,000 characters (~50K tokens). Larger text payloads ' +
-      'will be rejected — filter or summarize inside your function, or switch to a binary ' +
-      'type if you actually meant to return bytes.\n' +
+      'will be rejected — filter or summarize inside your function, or return the raw bytes ' +
+      'if you actually meant to return a file.\n' +
       '\n' +
       'Useful for complex scraping, form filling, or any browser automation that requires custom code.',
     parameters: FunctionParamsSchema,
