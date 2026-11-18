@@ -45,6 +45,8 @@ The native route enforces a conservative **10 MiB decoded** maximum before consu
 
 In native sessions, export/function binary results and smart-scraper attachments default to saving. `toDisk: true` also saves function/export JSON or text; smart-scraper requested text remains text. `toDisk: false` explicitly requests inline analysis and can expose the payload to the model. Legacy/stdio omission retains existing output. Agent screenshots retain their explicit `params.toDisk: true` selection. The restricted connector does not expose binary artifact resources or the new save parameters.
 
+Replay playback is not a save-only operation: without an MCP Apps view, players at or below the existing inline limit still return HTML containing recording data in the tool result, including in native sessions. That content can enter model requests. Only saved replay files use metadata-only native descriptors; the delivery header does not make inline playback context-free.
+
 ## Tools
 
 | Tool                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

@@ -300,20 +300,21 @@ describe('authenticated artifact resources', () => {
         return response.ok;
       };
       const mcp = async () => {
+        let result;
         try {
-          const result = await client.readResource({
+          result = await client.readResource({
             uri: `browserless-download://${rec.id}/race.pdf`,
           });
-          expect(
-            Buffer.from(
-              (result.contents[0] as { blob: string }).blob,
-              'base64',
-            ).toString(),
-          ).to.equal('race winner');
-          return true;
         } catch {
           return false;
         }
+        expect(
+          Buffer.from(
+            (result.contents[0] as { blob: string }).blob,
+            'base64',
+          ).toString(),
+        ).to.equal('race winner');
+        return true;
       };
       const outcomes =
         order === 'race'
