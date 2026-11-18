@@ -1799,6 +1799,47 @@ const getAgentExecute = (
 describe('browserless_agent session diagnostics', () => {
   afterEach(() => sinon.restore());
 
+  it('refuses native local uploads without suggesting shell authentication', async () => {
+    const server = await makeRespondingServer(() => ({ ok: true }));
+    try {
+      const execute = getAgentExecute(server.url, 'httpStream');
+      let failure: unknown;
+      try {
+        await execute(
+          {
+            method: 'uploadFile',
+            params: {
+              selector: 'input',
+              files: [{ path: '/private/report.pdf' }],
+            },
+          },
+          {
+            ...mockContext,
+            session: {
+              token: 'native-upload-token',
+              artifactDelivery: 'mcp-resource',
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(UserError);
+      const message = (failure as Error).message;
+      expect(message).to.include('unsupported');
+      for (const forbidden of [
+        'curl',
+        'BROWSERLESS_TOKEN',
+        'Authorization:',
+        'native-upload-token',
+      ]) {
+        expect(message).not.to.include(forbidden);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it('escapes transport errors in retry warnings', async () => {
     const server = await makeRespondingServer(() => ({
       url: 'https://example.com',

@@ -384,6 +384,7 @@ export const normalizeUploadCommand = async (
   transport: McpConfig['transport'],
   mcpBaseUrl: string | undefined,
   token: string,
+  artifactDelivery?: ArtifactDelivery,
 ): Promise<void> => {
   if (cmd.method !== 'uploadFile') return;
   const files = cmd.params.files;
@@ -418,6 +419,15 @@ export const normalizeUploadCommand = async (
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
+        if (artifactDelivery === 'mcp-resource') {
+          throw new UserError(
+            'Local file uploads are unsupported in this native HTTP profile: ' +
+              'the server cannot read your filesystem and native staging is disabled. ' +
+              'An existing unconsumed download handle can be reused with uploadFile. ' +
+              'Otherwise report the limitation; do not read local credentials, ' +
+              'substitute a shell upload, or inline file bytes.',
+          );
+        }
         const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
         throw new UserError(
           'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
@@ -2381,6 +2391,7 @@ export const runAgentCommands = async (
           config.transport,
           config.mcpBaseUrl,
           token,
+          artifactDelivery,
         );
       } catch (err) {
         if (err instanceof UserError) {
