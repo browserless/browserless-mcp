@@ -20,6 +20,7 @@ export interface AuthInput {
   sourceHeader?: string;
   sourceQuery?: string;
   userAgentHeader?: string | string[];
+  artifactDeliveryHeader?: string | string[];
   requestPath?: string;
   // Ask the Browserless API whether a plain key exists (session-opening requests and file routes).
   verifyApiKey?: boolean;
@@ -53,6 +54,7 @@ export function authInputFromRequest(
       string | undefined,
     sourceQuery: params.get('mcpSource') || undefined,
     userAgentHeader: request.headers['user-agent'],
+    artifactDeliveryHeader: request.headers['x-browserless-artifact-delivery'],
     requestPath: request.url,
   };
 }
@@ -83,6 +85,21 @@ export const resolveBrowserlessAuth = async (
   const override = input.apiUrlHeader ?? input.browserlessUrlQuery;
   if (override !== undefined) assertAllowedApiUrl(override, config);
   const apiUrl = override ?? config.browserlessApiUrl;
+
+  if (
+    input.artifactDeliveryHeader !== undefined &&
+    input.artifactDeliveryHeader !== 'mcp-resource'
+  ) {
+    throw Response.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid artifact delivery mode.',
+      },
+      { status: 400 },
+    );
+  }
+  const artifactDelivery = input.artifactDeliveryHeader as
+    'mcp-resource' | undefined;
 
   // A pre-created session id to attach to, threaded by the autologin runner.
   // The agent tool opens /chromium/agent?sessionId=<this> instead of doing its
@@ -126,6 +143,7 @@ export const resolveBrowserlessAuth = async (
       authMethod,
       transport,
       userAgent,
+      ...(artifactDelivery ? { artifactDelivery } : {}),
     };
   }
 
@@ -148,6 +166,7 @@ export const resolveBrowserlessAuth = async (
       userId,
       userRole,
       identityToken: headerToken,
+      ...(artifactDelivery ? { artifactDelivery } : {}),
     };
   }
 

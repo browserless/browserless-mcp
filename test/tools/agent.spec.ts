@@ -815,11 +815,12 @@ describe('fileTransferModeNote', () => {
     expect(note).to.not.include('/upload');
   });
 
-  it('tells the model to stage via /upload in HTTP mode', () => {
+  it('distinguishes native and legacy staging in HTTP mode', () => {
     const note = fileTransferModeNote('httpStream', 'https://mcp.example.com');
     expect(note).to.match(/HTTP/);
     expect(note).to.include('https://mcp.example.com/upload');
-    expect(note).to.include('Authorization: Bearer ${BROWSERLESS_TOKEN:?');
+    expect(note).to.include('mcp-resource');
+    expect(note).to.include('unsupported');
     expect(note).to.not.include('?token=');
     expect(note).to.match(/never base64/i);
   });
@@ -1212,6 +1213,7 @@ describe('describeReadyDownload', () => {
     filename: 'replay.html',
     mimeType: 'text/html',
     size: 123,
+    expiresAt: 900000,
     owner: 'owner',
   };
 
@@ -1256,6 +1258,67 @@ describe('describeReadyDownload', () => {
 });
 
 describe('formatDownloads (httpStream)', () => {
+  it('returns native metadata without payloads, credential instructions or server paths', async () => {
+    const opts = {
+      transport: 'httpStream' as const,
+      artifactDelivery: 'mcp-resource' as const,
+      token: 'native-private-token',
+    };
+    const content = await formatDownloads(
+      [
+        {
+          filename: 'résumé 50%.pdf',
+          mimeType: 'application/pdf',
+          data: Buffer.from('native-private-bytes').toString('base64'),
+        },
+      ],
+      '',
+      '',
+      opts,
+    );
+    const text = JSON.stringify(content);
+    expect(text).to.include('delivery: mcp-resource');
+    expect(text).to.match(
+      /resourceUri: browserless-download:\/\/[0-9a-f]{32}\/r%C3%A9sum%C3%A9%2050%25.pdf/,
+    );
+    expect(text).to.include('expiresAt:');
+    for (const forbidden of [
+      'native-private-token',
+      'native-private-bytes',
+      Buffer.from('native-private-bytes').toString('base64'),
+      'curl',
+      'BROWSERLESS_TOKEN',
+      '/tmp/',
+      'each GET',
+    ]) {
+      expect(text).not.to.include(forbidden);
+    }
+  });
+
+  it('never offers a source URL escape hatch for oversize native downloads', async () => {
+    const opts = {
+      transport: 'httpStream' as const,
+      artifactDelivery: 'mcp-resource' as const,
+    };
+    const content = await formatDownloads(
+      [
+        {
+          filename: 'large.zip',
+          error: 'FileTooLarge',
+          maxBytes: 50,
+          sourceUrl: 'https://private.example/secret-download',
+        },
+      ],
+      '',
+      '',
+      opts,
+    );
+    const text = JSON.stringify(content);
+    expect(text).to.include('FileTooLarge');
+    expect(text).not.to.include('secret-download');
+    expect(text).not.to.include('fetch directly');
+  });
+
   it('surfaces a notification + single-use GET URL, never the base64 bytes', async () => {
     const content = await formatDownloads(
       [{ filename: 'report.csv', mimeType: 'text/csv', size: 3, data: 'YWJj' }],

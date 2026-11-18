@@ -17,6 +17,7 @@ export interface StoredDownload {
   filename: string;
   mimeType: string;
   size: number;
+  expiresAt: number;
   owner: DownloadOwner;
   sessionId?: string;
 }
@@ -32,6 +33,31 @@ const TTL_MS = 15 * 60 * 1000;
 // Hard ceiling on a single file transfer (mirrors the enterprise cap).
 export const FILE_TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
 
+// Conservative decoded limit verified with Claude Code's 16 MB SSE-event cap.
+export const NATIVE_ARTIFACT_MAX_BYTES = 10 * 1024 * 1024;
+
+const EXTENSION_BY_MIME: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/zip': '.zip',
+  'application/json': '.json',
+  'text/plain': '.txt',
+  'text/html': '.html',
+  'text/csv': '.csv',
+  'application/xml': '.xml',
+  'text/xml': '.xml',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'audio/mpeg': '.mp3',
+  'audio/wav': '.wav',
+  'video/webm': '.webm',
+};
+
+/** Use a known extension for client persistence, never a MIME-derived path. */
+export const downloadExtension = (mimeType: string): string =>
+  EXTENSION_BY_MIME[mimeType.split(';')[0].trim().toLowerCase()] ?? '.bin';
+
 const store = new Map<string, StoreEntry>();
 
 // Where captured files land on the MCP server. Defaults to a temp dir; override
@@ -43,6 +69,11 @@ export const downloadsDir = (): string =>
 /** Build the handle URI for a stored download id. */
 export const downloadUri = (id: string): string =>
   `${DOWNLOAD_URI_SCHEME}://${id}`;
+
+/** Canonical read URI; the existing short URI remains the upload handle. */
+export const downloadResourceUri = (
+  record: Pick<StoredDownload, 'id' | 'filename'>,
+): string => `${downloadUri(record.id)}/${encodeURIComponent(record.filename)}`;
 
 const idFromHandle = (handle: string): string =>
   handle.startsWith(`${DOWNLOAD_URI_SCHEME}://`)
@@ -70,6 +101,14 @@ export const storeDownload = async (
   owner: DownloadOwner,
   sessionId?: string,
 ): Promise<StoredDownload> => {
+  if (data.byteLength > FILE_TRANSFER_MAX_BYTES) {
+    throw new Error(
+      `File exceeds the ${FILE_TRANSFER_MAX_BYTES}-byte transfer limit.`,
+    );
+  }
+  if (/\p{Cc}/u.test(filename)) {
+    throw new Error('Invalid download filename.');
+  }
   const dir = downloadsDir();
   await mkdir(dir, { recursive: true });
   const id = randomBytes(16).toString('hex');
@@ -90,6 +129,7 @@ export const storeDownload = async (
     filename: safe,
     mimeType,
     size: data.byteLength,
+    expiresAt: Date.now() + TTL_MS,
     owner,
     sessionId,
     timer,
@@ -107,6 +147,10 @@ export const getDownload = (
   const entry =
     store.get(idFromHandle(handle)) ??
     [...store.values()].find((r) => r.owner === owner && r.path === handle);
+  if (entry && Date.now() >= entry.expiresAt) {
+    dropEntry(entry);
+    return undefined;
+  }
   return entry?.owner === owner ? toRecord(entry) : undefined;
 };
 
@@ -118,6 +162,10 @@ export const consumeDownload = (
 ): StoredDownload | undefined => {
   const entry = store.get(idFromHandle(handle));
   if (!entry || entry.owner !== owner) return undefined;
+  if (Date.now() >= entry.expiresAt) {
+    dropEntry(entry);
+    return undefined;
+  }
   if (entry.timer) clearTimeout(entry.timer);
   store.delete(entry.id);
   return toRecord(entry);

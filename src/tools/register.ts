@@ -26,6 +26,7 @@ import { registerStatusResource } from '../resources/status.js';
 import { registerScrapeUrlPrompt } from '../prompts/scrape-url.js';
 import { registerExtractContentPrompt } from '../prompts/extract-content.js';
 import { registerStageFileTool } from './stage-file.js';
+import { registerDownloadResource } from '../resources/download-resource.js';
 
 // Registers the whole surface (tools/resources/prompts) so the compliance gate
 // covers all a reviewer lists. Each item declares 'both'|'full'|'compliant' — no positional
@@ -41,6 +42,10 @@ export function registerSurface(
     surface: Surface;
     register: () => void;
   }> = [
+    {
+      surface: 'full',
+      register: () => registerDownloadResource(server, config),
+    },
     {
       surface: 'full',
       register: () => {

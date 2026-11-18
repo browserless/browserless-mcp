@@ -16,10 +16,12 @@ import {
 } from '../lib/upload-path-guard.js';
 import {
   downloadOwner,
+  downloadResourceUri,
   downloadUri,
   getDownload,
   storeDownload,
   FILE_TRANSFER_MAX_BYTES,
+  NATIVE_ARTIFACT_MAX_BYTES,
   type StoredDownload,
 } from '../lib/download-store.js';
 import {
@@ -39,6 +41,7 @@ import {
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
+  ArtifactDelivery,
   ErrorCategory,
   McpConfig,
   PersonaOptions,
@@ -457,13 +460,13 @@ export const normalizeUploadCommand = async (
   }
 };
 
-const describeFailedDownload = (d: DownloadEntry): string => {
+const describeFailedDownload = (d: DownloadEntry, native = false): string => {
   let s =
     `${d.filename ?? 'unknown'}: ${d.error ?? 'no data'}` +
     (d.maxBytes ? ` (max ${d.maxBytes} bytes)` : '');
   // Over-cap files can't go through the transfer flow — point at the source so
   // the caller can fetch it directly (e.g. curl) if it has network access.
-  if (d.error === 'FileTooLarge' && d.sourceUrl) {
+  if (!native && d.error === 'FileTooLarge' && d.sourceUrl) {
     s += ` — too large to transfer; fetch directly: ${d.sourceUrl}`;
   }
   return s;
@@ -476,7 +479,7 @@ const persistDownload = async (
   token: string | undefined,
   sessionId?: string,
 ): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
-  if (d.error || !d.data || !d.filename) return null;
+  if (d.error || d.data === undefined || !d.filename) return null;
   return storeDownload(
     d.filename,
     d.mimeType ?? 'application/octet-stream',
@@ -491,6 +494,7 @@ type FormatOpts = {
   sessionId?: string;
   mcpBaseUrl?: string;
   token?: string;
+  artifactDelivery?: ArtifactDelivery;
 };
 
 // stdio: file is already on the local disk → return its path (reuse as
@@ -505,6 +509,21 @@ export const describeReadyDownload = (
       `${record.path} (${record.mimeType}, ${record.size} bytes) — ` +
       `reuse as uploadFile { path: "${record.path}" }`
     );
+  }
+  if (opts.artifactDelivery === 'mcp-resource') {
+    if (record.size > NATIVE_ARTIFACT_MAX_BYTES) {
+      return `${record.filename} (${record.mimeType}, ${record.size} bytes): exceeds the ${NATIVE_ARTIFACT_MAX_BYTES}-byte native transfer limit. Saving is unsupported in this profile. Do not read the resource, fetch local credentials, inline its bytes, or regenerate automatically.`;
+    }
+    return [
+      `delivery: mcp-resource`,
+      `    handle: ${downloadUri(record.id)}`,
+      `    resourceUri: ${downloadResourceUri(record)}`,
+      `    filename: ${record.filename}`,
+      `    mimeType: ${record.mimeType}`,
+      `    size: ${record.size}`,
+      `    expiresAt: ${new Date(record.expiresAt).toISOString()}`,
+      '    Save only through a verified client resource-to-disk tool, then use its saved-file path; check existence and byte count before reporting success. If unavailable or unverified, report unsupported saving. Do not read local credentials or fall back to shell authentication or inline bytes. Single use across MCP and HTTP; session cleanup may invalidate it earlier. If delivery fails after consumption, do not regenerate automatically.',
+    ].join('\n');
   }
   const baseUrl = URL.parse(opts.mcpBaseUrl ?? '');
   const base =
@@ -538,11 +557,11 @@ export const formatDownloads = async (
     }
     const record = await persistDownload(d, opts.token, opts.sessionId);
     lines.push(
-      `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
+      `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d, opts.artifactDelivery === 'mcp-resource')}`,
     );
   }
   const header =
-    opts.transport === 'stdio'
+    opts.transport === 'stdio' || opts.artifactDelivery === 'mcp-resource'
       ? 'Downloads:'
       : 'Downloads (save the ones you need — each GET works once):';
   const text = downloads.length
@@ -1044,6 +1063,7 @@ export function registerAgentTools(
         sessionId: ctx.sessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token: ctx.token,
+        artifactDelivery: ctx.artifactDelivery,
       };
       for (const command of reportable.slice(0, -1)) {
         const capture =
@@ -1079,6 +1099,7 @@ export const runAgentCommands = async (
     token,
     apiUrl,
     sessionId: mcpSessionId,
+    artifactDelivery,
     attachSessionId,
     userId,
     uiEnabled,
@@ -2279,6 +2300,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        artifactDelivery,
       });
     } else if (last.method === 'stopRecording') {
       // Video is never inlined → always a single-use download handle.
@@ -2287,6 +2309,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        artifactDelivery,
       });
     } else if (
       last.method === 'screenshot' &&
@@ -2303,12 +2326,15 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          artifactDelivery,
         },
       );
       baseContent = saved ?? [
         {
           type: 'text' as const,
-          text: appendExtra(batchPrefix + JSON.stringify(lastResult, null, 2)),
+          text: appendExtra(
+            batchPrefix + 'Screenshot could not be saved; no inline fallback.',
+          ),
         },
       ];
     } else {
@@ -2337,6 +2363,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        artifactDelivery,
       });
       baseContent = [...baseContent, ...notice];
     }
@@ -2440,6 +2467,7 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          artifactDelivery,
         });
         err.message += `\n\n${files
           .filter((content) => content.type === 'text')

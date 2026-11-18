@@ -30,6 +30,21 @@ server bindings or credentials remotely, update those resources as well.
 Streamable HTTP still uses SSE for streaming responses; `/mcp` streaming and
 stdio connections remain supported.
 
+### Authenticated artifact saving
+
+On the full hosted surface, initialize a connection with the non-secret header `x-browserless-artifact-delivery: mcp-resource` to request metadata-only saved-file results. Omission preserves legacy HTTP guidance. Later requests may omit the header and inherit the session preference; reconnect to change it. This is a routing preference, not authorization or client capability negotiation. Local stdio is unchanged. Release the corresponding plugin opt-in only after deploying a compatible server and passing an authenticated hosted smoke test.
+
+Save-mode results identify a `browserless-download://<id>/<encoded-filename>` resource and its filename, MIME type, decoded byte count and expiry. Explicit `resources/read` returns a binary `blob`, including for saved JSON; it never returns saved content as `text`. The short `browserless-download://<id>` upload handle remains distinct. Both MCP reads and existing `GET /download/:id` require authentication and token-derived ownership; knowing a URI does not authorize access. The first authorized consumption wins across both routes. Files expire after 15 minutes or earlier session cleanup. A failed delivery after consumption cannot be retried or automatically regenerated.
+
+| Client profile                                                | Saving without binary payload in model requests                                                                                                                                                                             |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code 2.1.327 Linux CLI, explicit `ReadMcpResourceTool` | Verified against the implemented server for PDF, ZIP, PNG, saved JSON, empty files, Unicode/percent filenames, 1 MiB and 10 MiB payloads. The client reports `blobSavedTo`; verify the file and copy it to the destination. |
+| Other versions, modes, Claude Desktop, or other MCP clients   | Not verified. The resource protocol alone does not guarantee context-free saving. Refuse this path until the client's handling has been tested.                                                                             |
+
+The native route enforces a conservative **10 MiB decoded** maximum before consumption. Claude Code rejects SSE events larger than 16 MB; the 50 MiB store ceiling is not a native-client transfer guarantee. Oversized native reads remain unconsumed and do not invalidate authenticated HTTP access, whose limit remains **50 MiB**. Native results do not suggest local credential reads, shell-authentication fallbacks or inline payloads. Client-side saved files, transcripts and diagnostics have their own retention; absence from model requests is not absence from the user's disk.
+
+In native sessions, export/function binary results and smart-scraper attachments default to saving. `toDisk: true` also saves function/export JSON or text; smart-scraper requested text remains text. `toDisk: false` explicitly requests inline analysis and can expose the payload to the model. Legacy/stdio omission retains existing output. Agent screenshots retain their explicit `params.toDisk: true` selection. The restricted connector does not expose binary artifact resources or the new save parameters.
+
 ## Tools
 
 | Tool                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

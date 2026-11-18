@@ -1,5 +1,6 @@
 import { expect } from 'chai';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import sinon from 'sinon';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,7 @@ import {
   consumeDownload,
   downloadOwner,
   downloadUri,
+  FILE_TRANSFER_MAX_BYTES,
   getDownload,
   storeDownload,
 } from '../../src/lib/download-store.js';
@@ -26,6 +28,7 @@ describe('download-store', () => {
   });
 
   afterEach(() => {
+    sinon.restore();
     if (prev === undefined) delete process.env.BROWSERLESS_DOWNLOAD_DIR;
     else process.env.BROWSERLESS_DOWNLOAD_DIR = prev;
   });
@@ -35,6 +38,73 @@ describe('download-store', () => {
     expect(downloadOwner(token)).to.equal(downloadOwner(token));
     expect(downloadOwner(token)).to.not.equal(downloadOwner('other-token'));
     expect(downloadOwner(token)).to.not.include(token);
+  });
+
+  it('expires at the deadline even when the cleanup timer has not run', async () => {
+    const now = sinon.stub(Date, 'now').returns(1000);
+    const rec = await storeDownload(
+      'deadline.txt',
+      'text/plain',
+      Buffer.from('x'),
+      ownerA,
+    );
+    now.returns(900999);
+    expect(getDownload(rec.id, ownerA)?.id).to.equal(rec.id);
+    now.returns(901000);
+    expect(getDownload(rec.id, ownerA)).to.be.undefined;
+    expect(consumeDownload(rec.id, ownerA)).to.be.undefined;
+    // A second record exercises consume without a prior expiry lookup.
+    now.returns(1000);
+    const second = await storeDownload(
+      'consume.txt',
+      'text/plain',
+      Buffer.from('y'),
+      ownerA,
+    );
+    now.returns(901000);
+    expect(consumeDownload(second.id, ownerA)).to.be.undefined;
+  });
+
+  it('accepts the exact size ceiling and rejects one byte over without writing', async () => {
+    const data = Buffer.alloc(FILE_TRANSFER_MAX_BYTES, 0x53);
+    const rec = await storeDownload(
+      'limit.bin',
+      'application/octet-stream',
+      data,
+      ownerA,
+    );
+    expect(await readFile(rec.path)).to.deep.equal(data);
+    const before = await readdir(process.env.BROWSERLESS_DOWNLOAD_DIR!);
+    let rejected = false;
+    try {
+      await storeDownload(
+        'over.bin',
+        'application/octet-stream',
+        Buffer.alloc(FILE_TRANSFER_MAX_BYTES + 1),
+        ownerA,
+      );
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).to.be.true;
+    expect(await readdir(process.env.BROWSERLESS_DOWNLOAD_DIR!)).to.deep.equal(
+      before,
+    );
+  });
+
+  it('rejects control characters in filenames before writing', async () => {
+    for (const filename of ['bad\u0000.txt', 'bad\r\n.txt']) {
+      let rejected = false;
+      try {
+        await storeDownload(filename, 'text/plain', Buffer.from('x'), ownerA);
+      } catch {
+        rejected = true;
+      }
+      expect(rejected).to.be.true;
+    }
+    expect(await readdir(process.env.BROWSERLESS_DOWNLOAD_DIR!)).to.deep.equal(
+      [],
+    );
   });
 
   it('generates opaque, unique ids', async () => {
