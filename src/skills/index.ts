@@ -10,7 +10,7 @@ import type {
   SkillSpec,
   Trigger,
 } from '../@types/types.js';
-import { FRAMEWORK_ID } from '../lib/framework-id.js';
+import { selectorHasFrameworkId } from '../lib/framework-id.js';
 
 export type {
   SkillId,
@@ -128,9 +128,9 @@ const evalPredicate = (p: Predicate, ctx: DetectContext): boolean => {
       const sel = ctx.cmd?.params?.selector;
       return typeof sel === 'string' && !sel.startsWith('< ');
     }
-    case 'command.selector-not-match': {
+    case 'command.selector-without-framework-id': {
       const sel = ctx.cmd?.params?.selector;
-      return typeof sel === 'string' && !p.regex.test(sel);
+      return typeof sel === 'string' && !selectorHasFrameworkId(sel);
     }
     case 'command.selector-deep': {
       const sel = ctx.cmd?.params?.selector;
@@ -152,7 +152,7 @@ const SKILL_SPECS: SkillSpec[] = [
       [
         { kind: 'error.code', codes: ['SELECTOR_NOT_FOUND'] },
         { kind: 'command.selector-not-deep' },
-        { kind: 'command.selector-not-match', regex: FRAMEWORK_ID },
+        { kind: 'command.selector-without-framework-id' },
         { kind: 'command.method-not', methods: ['waitForSelector'] },
       ],
     ],

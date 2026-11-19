@@ -3368,7 +3368,7 @@ describe('browserless_agent checkout guidance authentication', () => {
         expect.fail('expected command error');
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).to.include('Take a new snapshot');
+        expect(message).to.include('full: true');
         expect(message).to.not.include('Retry with deep selector');
         expect(message).to.not.include('SKILL: shadow-dom');
       }

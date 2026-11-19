@@ -272,7 +272,7 @@ describe('skills/detectSkills - shadow-dom', () => {
     const state = createSkillState();
     const ctx = {
       error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
-      cmd: { method: 'click', params: { selector: 'button#missing' } },
+      cmd: { method: 'click', params: { selector: 'input#missing:required' } },
     };
     expect(detectSkills(ctx, state)).to.include('shadow-dom');
   });

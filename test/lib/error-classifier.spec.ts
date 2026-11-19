@@ -215,6 +215,8 @@ describe('classifyAgentError', () => {
   for (const [method, selector] of [
     ['click', 'button#_R_3idahlik5_'],
     ['click', '< button#_r_p_'],
+    ['click', 'button#\\:r1\\:'],
+    ['click', 'button#:r1:'],
     ['waitForSelector', 'button#_r_p_'],
   ]) {
     it(`suggests a fresh snapshot after ${method} misses ${selector}`, () => {
@@ -223,9 +225,24 @@ describe('classifyAgentError', () => {
         cmd: cmd(method, { selector }),
       });
       expect(out.category).to.equal('SELECTOR_MISS');
-      expect(out.recovery).to.equal(
-        'This selector appears to use a framework-generated ID that may have changed when the page re-rendered. Take a new snapshot and use the fresh ref.',
-      );
+      expect(out.recovery).to.include('full: true');
+      expect(out.recovery).to.not.include('shadow root');
+    });
+  }
+
+  for (const selector of [
+    'input#checkout:required',
+    ':root',
+    'input:read-only',
+    'button.mui-button',
+    'a[href="#_r_p_"]',
+  ]) {
+    it(`keeps ordinary miss recovery for ${selector}`, () => {
+      const out = classifyAgentError({
+        err: { code: 'SELECTOR_NOT_FOUND', message: 'no element matched' },
+        cmd: cmd('click', { selector }),
+      });
+      expect(out.recovery).to.include('shadow root');
     });
   }
 
