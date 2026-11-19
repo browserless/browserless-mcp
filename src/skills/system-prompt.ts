@@ -100,7 +100,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - NEVER guess, assume, or infer selectors — CSS selectors from your training data are wrong. ONLY use ref= / deep-ref= from latest snapshot
 - Snapshot STALE after: click, goto, select, navigation
 - Snapshot VALID after: type, hover, scroll, evaluate
-- Expect new content? → re-snapshot
+- After revealing new controls (for example, opening a menu), take a fresh snapshot and read its result before interacting with them. Copy the returned refs exactly; do not infer selectors for controls the snapshot has not shown.
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
 - Snapshot lines may include \`desc="..."\`, \`action=METHOD URL\`, \`autocomplete=...\`, and intent markers (\`⚠ destructive\`, \`⚠ sign-out\`, \`sign-in\`, \`reset\`)
 - Before activating or navigating to a control marked \`⚠ destructive\` or \`⚠ sign-out\`, confirm that the action is actually intended; an unlabeled destructive control is a common trap
@@ -238,7 +238,7 @@ Load manually via **browserless_skill** if suspected but not injected:
 - NEVER guess, assume, or infer selectors — CSS selectors from your training data are wrong. ONLY use ref= / deep-ref= from latest snapshot
 - Snapshot STALE after: click, goto, select, navigation
 - Snapshot VALID after: type, hover, scroll
-- Expect new content? → re-snapshot
+- After revealing new controls (for example, opening a menu), take a fresh snapshot and read its result before interacting with them. Copy the returned refs exactly; do not infer selectors for controls the snapshot has not shown.
 - Element roles in snapshot (link, button, textbox, combobox, checkbox, heading) tell you what each does
 - Snapshot lines may include \`desc="..."\`, \`action=METHOD URL\`, \`autocomplete=...\`, and intent markers (\`⚠ destructive\`, \`⚠ sign-out\`, \`sign-in\`, \`reset\`)
 - Before activating or navigating to a control marked \`⚠ destructive\` or \`⚠ sign-out\`, confirm that the action is actually intended; an unlabeled destructive control is a common trap
