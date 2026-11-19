@@ -241,6 +241,7 @@ const SIGNATURE_FIELDS: Array<keyof SnapshotElement> = [
   'tag',
   'frameId',
   'options',
+  'selector',
 ];
 
 const elementSignature = (el: SnapshotElement): string =>

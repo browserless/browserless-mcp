@@ -153,10 +153,10 @@ describe('formatSnapshotDiff', () => {
         el({ ref: 9, role: 'text', name: '5', selector: 'div#radix-«r8»' }),
       ]),
     );
-    expect(out).to.match(/1 changed, 1 unchanged/);
+    expect(out).to.match(/2 changed, 0 unchanged/);
     expect(out).to.include('name: "0"→"1,158"');
-    // Unchanged slot (value 5) must not be listed.
-    expect(out).to.not.include('"5"');
+    // The value is unchanged, but its old selector no longer works.
+    expect(out).to.match(/^~ .*"5" ref=div#radix-«r8»/m);
   });
 
   it('treats a churned framework-id selector as the same element via semantic key', () => {
@@ -183,6 +183,7 @@ describe('formatSnapshotDiff', () => {
       ]),
       prev,
     );
-    expect(out).to.include('No changes since last snapshot.');
+    expect(out).to.include('0 new, 1 changed, 0 removed');
+    expect(out).to.match(/^~ .*ref=div#radix-«r9»/m);
   });
 });

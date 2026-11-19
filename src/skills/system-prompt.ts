@@ -160,7 +160,7 @@ After async triggers (search, submit), use \`wait*\` before snapshot — \`waitF
 
 ## Error Recovery
 Errors tagged \`Category: <NAME>\`:
-- **SELECTOR_MISS** — re-snapshot; retry \`< selector\` if not already deep-ref
+- **SELECTOR_MISS** — follow the error’s recovery guidance and use the fresh snapshot ref when prompted.
 - **SESSION_LOST** — a fresh session was opened automatically; re-goto + snapshot (prior state gone)
 - **UNAUTHORIZED** / **FORBIDDEN** — pick different path
 - **NOT_FOUND** — different URL
@@ -287,7 +287,7 @@ After async triggers (search, submit), use \`wait*\` before snapshot — \`waitF
 
 ## Error Recovery
 Errors tagged \`Category: <NAME>\`:
-- **SELECTOR_MISS** — re-snapshot; retry \`< selector\` if not already deep-ref
+- **SELECTOR_MISS** — follow the error’s recovery guidance and use the fresh snapshot ref when prompted.
 - **SESSION_LOST** — a fresh session was opened automatically; re-goto + snapshot (prior state gone)
 - **UNAUTHORIZED** / **FORBIDDEN** — pick a different path
 - **NOT_FOUND** — different URL
