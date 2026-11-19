@@ -1,5 +1,6 @@
 import type { SnapshotElement, SnapshotResult } from '../@types/types.js';
 import { ProfileNotFoundError, UpgradeError } from './agent-client.js';
+import { FRAMEWORK_ID } from './framework-id.js';
 
 export type {
   SnapshotResult,
@@ -244,10 +245,6 @@ const SIGNATURE_FIELDS: Array<keyof SnapshotElement> = [
 
 const elementSignature = (el: SnapshotElement): string =>
   JSON.stringify(SIGNATURE_FIELDS.map((f) => el[f]));
-
-// Framework-generated ids (Radix/useId/Headless/MUI) churn every render, so a
-// selector or id built from one is not a stable diff key — excluded below.
-const FRAMEWORK_ID = /(radix-|headlessui-|mui-[a-z]|«r|:r[0-9a-z]|_r_)/i;
 
 // Stable cross-snapshot identity: clean id → clean selector → semantic composite
 // (never the positional ref). Degrades gracefully when selectors churn on SPAs.

@@ -277,6 +277,14 @@ describe('skills/detectSkills - shadow-dom', () => {
     expect(detectSkills(ctx, state)).to.include('shadow-dom');
   });
 
+  it('does not fire on a missed selector with a framework-generated id', () => {
+    const ctx = {
+      error: { code: 'SELECTOR_NOT_FOUND', message: 'no such element' },
+      cmd: { method: 'click', params: { selector: 'button#_R_3idahlik5_' } },
+    };
+    expect(detectSkills(ctx, createSkillState())).to.not.include('shadow-dom');
+  });
+
   it('does not fire on SELECTOR_NOT_FOUND when the selector is already deep', () => {
     const state = createSkillState();
     const ctx = {

@@ -209,7 +209,25 @@ describe('classifyAgentError', () => {
     expect(wait.category).to.equal(click.category);
     expect(wait.recovery).to.not.equal(click.recovery);
     expect(wait.recovery).to.match(/wait expired/i);
+    expect(click.recovery).to.include('shadow root');
   });
+
+  for (const [method, selector] of [
+    ['click', 'button#_R_3idahlik5_'],
+    ['click', '< button#_r_p_'],
+    ['waitForSelector', 'button#_r_p_'],
+  ]) {
+    it(`suggests a fresh snapshot after ${method} misses ${selector}`, () => {
+      const out = classifyAgentError({
+        err: { code: 'SELECTOR_NOT_FOUND', message: 'no element matched' },
+        cmd: cmd(method, { selector }),
+      });
+      expect(out.category).to.equal('SELECTOR_MISS');
+      expect(out.recovery).to.equal(
+        'This selector appears to use a framework-generated ID that may have changed when the page re-rendered. Take a new snapshot and use the fresh ref.',
+      );
+    });
+  }
 
   it('prefers explicit status over message regex', () => {
     const out = classifyAgentError({

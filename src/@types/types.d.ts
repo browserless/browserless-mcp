@@ -376,6 +376,7 @@ export type Predicate =
   | { kind: 'command.method-not'; methods: string[] }
   | { kind: 'command.method-prefix'; prefix: string }
   | { kind: 'command.selector-not-deep' }
+  | { kind: 'command.selector-not-match'; regex: RegExp }
   | { kind: 'command.selector-deep' };
 
 /** AND-clause: every predicate must match. */

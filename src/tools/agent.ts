@@ -55,6 +55,7 @@ import {
   classifyNavigationResult,
   toAnalyticsCategory,
 } from '../lib/error-classifier.js';
+import { FRAMEWORK_ID } from '../lib/framework-id.js';
 import { AnalyticsHelper } from '../lib/analytics.js';
 import {
   failureDetails,
@@ -1924,7 +1925,8 @@ export const runAgentCommands = async (
           err.code === 'SELECTOR_NOT_FOUND' &&
           cmd.method !== 'waitForSelector' &&
           typeof cmd.params.selector === 'string' &&
-          !cmd.params.selector.startsWith('< ')
+          !cmd.params.selector.startsWith('< ') &&
+          !FRAMEWORK_ID.test(cmd.params.selector)
         ) {
           suggestion = `Retry with deep selector "< ${cmd.params.selector}" — the element is likely inside a shadow DOM.`;
         } else if (err.suggestion && err.code !== 'SELECTOR_NOT_FOUND') {

@@ -4,6 +4,7 @@ import type {
   ClassifyInput,
   ErrorCategory,
 } from '../@types/types.js';
+import { FRAMEWORK_ID } from './framework-id.js';
 
 // Re-export the classifier types consumers of `@browserless.io/mcp/errors` need.
 export type {
@@ -43,6 +44,9 @@ const RECOVERY: Record<ErrorCategory, string> = {
 // caller explicitly asked to wait.
 const SELECTOR_WAIT_RECOVERY =
   'The wait expired without the element appearing. Try a longer timeout, a different signal (waitForResponse with a known URL), or re-snapshot to confirm the current state.';
+
+const SELECTOR_RERENDER_RECOVERY =
+  'This selector appears to use a framework-generated ID that may have changed when the page re-rendered. Take a new snapshot and use the fresh ref.';
 
 const NAVIGATION_RESULT_METHODS = new Set([
   'goto',
@@ -102,13 +106,16 @@ export const classifyAgentError = (input: ClassifyInput): ClassifiedError => {
   // One bucket for "the element never appeared", whatever asked for it; only the
   // recovery wording follows the caller's intent.
   if (code === 'SELECTOR_NOT_FOUND') {
+    const selector = cmd?.params?.selector;
     return {
       category: 'SELECTOR_MISS',
       code,
       recovery:
-        cmd?.method === 'waitForSelector'
-          ? SELECTOR_WAIT_RECOVERY
-          : RECOVERY.SELECTOR_MISS,
+        typeof selector === 'string' && FRAMEWORK_ID.test(selector)
+          ? SELECTOR_RERENDER_RECOVERY
+          : cmd?.method === 'waitForSelector'
+            ? SELECTOR_WAIT_RECOVERY
+            : RECOVERY.SELECTOR_MISS,
     };
   }
 

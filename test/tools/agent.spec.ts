@@ -3350,6 +3350,33 @@ describe('browserless_agent checkout guidance authentication', () => {
 
   afterEach(() => sinon.restore());
 
+  it('recommends a fresh snapshot without a deep-selector retry for a stale framework id', async () => {
+    const srv = await makeRespondingServer(
+      () =>
+        new AgentErrorFrame({
+          code: 'SELECTOR_NOT_FOUND',
+          message: 'missing element',
+        }),
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          { method: 'click', params: { selector: 'button#_R_3idahlik5_' } },
+          { ...mockContext, sessionId: 'stale-framework-id' },
+        );
+        expect.fail('expected command error');
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).to.include('Take a new snapshot');
+        expect(message).to.not.include('Retry with deep selector');
+        expect(message).to.not.include('SKILL: shadow-dom');
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('does not enable checkout guidance from either snapshot path when Stripe Link is disconnected', async () => {
     stubStripeLinkStatus('not_connected');
 
