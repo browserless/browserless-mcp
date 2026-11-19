@@ -217,6 +217,9 @@ describe('classifyAgentError', () => {
     ['click', '< button#_r_p_'],
     ['click', 'button#\\:r1\\:'],
     ['click', 'button#:r1:'],
+    ['click', 'button[id="_R_3idahlik5_"]'],
+    ['click', "button[id = ':r1:']"],
+    ['click', 'button[id=_r_p_]'],
     ['waitForSelector', 'button#_r_p_'],
   ]) {
     it(`suggests a fresh snapshot after ${method} misses ${selector}`, () => {
@@ -236,6 +239,7 @@ describe('classifyAgentError', () => {
     'input:read-only',
     'button.mui-button',
     'a[href="#_r_p_"]',
+    'button[data-id="_r_p_"]',
   ]) {
     it(`keeps ordinary miss recovery for ${selector}`, () => {
       const out = classifyAgentError({
