@@ -1577,6 +1577,12 @@ export const runAgentCommands = async (
   let lastSession: ActiveSession | undefined;
   let downloadsPending = false;
   const completedDownloads: DownloadEntry[] = [];
+  const onSendSession = (reused: boolean, ageMs: number) => {
+    // send can replace the socket without starting a new runCommands attempt.
+    if (!reused)
+      for (const download of completedDownloads) delete download.pdfDocumentId;
+    onSession(reused, ageMs);
+  };
   const runCommands = async (
     isRetry: boolean,
     retryPersona: PersonaOptions = persona,
@@ -1738,7 +1744,7 @@ export const runAgentCommands = async (
             cmd.method,
             params,
             undefined,
-            onSession,
+            onSendSession,
           );
           if (cmd.method === 'reportOutcome' && !response.error) {
             verdict = {
@@ -1828,7 +1834,7 @@ export const runAgentCommands = async (
           cmd.method,
           outboundParams,
           undefined,
-          onSession,
+          onSendSession,
         );
       } catch (sendErr: unknown) {
         if (protectedTabOperation) {
@@ -2162,7 +2168,7 @@ export const runAgentCommands = async (
           'getDownloads',
           {},
           undefined,
-          onSession,
+          onSendSession,
         );
         if (dl.error) throw new Error('Download poll failed');
         autoDownloads =

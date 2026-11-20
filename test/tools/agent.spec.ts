@@ -2735,6 +2735,70 @@ describe('browserless_agent one-shot sessions', () => {
     });
   }
 
+  for (const reconnectAt of ['command', 'automatic poll', 'unchanged']) {
+    it(`keeps PDF guidance bound to its socket: ${reconnectAt}`, async () => {
+      const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      await once(peer, 'listening');
+      const address = peer.address();
+      if (!address || typeof address === 'string')
+        throw new Error('Missing port');
+      const url = `http://127.0.0.1:${address.port}`;
+      let connections = 0;
+      let polls = 0;
+      peer.on('connection', (ws) => {
+        connections++;
+        ws.on('message', (data) => {
+          const { id, method } = JSON.parse(data.toString());
+          const result =
+            method === 'getDownloads'
+              ? {
+                  downloads:
+                    ++polls === 1
+                      ? [
+                          {
+                            filename: 'old.pdf',
+                            pdfDocumentId: 'old-socket-pdf',
+                          },
+                        ]
+                      : [],
+                }
+              : method === 'stopRecording'
+                ? { value: Buffer.alloc(1024 * 1024).toString('base64') }
+                : { text: 'done' };
+          ws.send(JSON.stringify({ id, result }), () => {
+            // The tool persists the recording locally before its next send.
+            if (method === 'stopRecording' && reconnectAt !== 'unchanged')
+              ws.terminate();
+          });
+        });
+      });
+      try {
+        const result = await getAgentExecute(url)(
+          {
+            commands: [
+              { method: 'getDownloads' },
+              { method: 'stopRecording' },
+              ...(reconnectAt === 'command' ? [{ method: 'text' }] : []),
+            ],
+            keepSessionAlive: true,
+          },
+          mockContext,
+        );
+        expect(connections).to.equal(reconnectAt === 'unchanged' ? 1 : 2);
+        const notice = (result as { content: Content[] }).content.find(
+          (item) => item.type === 'text' && item.text.includes('Downloads:'),
+        );
+        expect(JSON.stringify(notice)).to.include('old.pdf');
+        expect(JSON.stringify(notice).includes('old-socket-pdf')).to.equal(
+          reconnectAt === 'unchanged',
+        );
+      } finally {
+        peer.clients.forEach((ws) => ws.terminate());
+        await new Promise<void>((resolve) => peer.close(() => resolve()));
+      }
+    });
+  }
+
   it('preserves downloaded files but not PDF continuation after fatal retries', async () => {
     let polls = 0;
     const srv = await makeRespondingServer((method) =>
