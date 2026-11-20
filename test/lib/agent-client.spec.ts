@@ -2334,28 +2334,35 @@ describe('agent-client bare-call isolation', () => {
     }
   });
 
+  const openByHandle = (
+    url: string,
+    mcpSessionId: string,
+    handle: string,
+    persona?: PersonaOptions,
+  ) =>
+    getOrCreateSession(
+      mcpSessionId,
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      persona,
+    );
+
   it('retains an iOS tablet persona across a dropped socket and rejects a conflicting kind', async () => {
     const server = await makeAcceptingServer();
-    const handle = 'dropped-ios-handle';
     const reopen = (mcpSessionId: string, persona?: PersonaOptions) =>
-      getOrCreateSession(
-        mcpSessionId,
-        server.url,
-        'tok',
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        false,
-        undefined,
-        handle,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        persona,
-      );
+      openByHandle(server.url, mcpSessionId, 'dropped-ios-handle', persona);
     try {
       const opened = await reopen('mcp-dropped-ios', {
         emulationOs: 'ios',
@@ -2398,25 +2405,7 @@ describe('agent-client bare-call isolation', () => {
       mcpSessionId: string,
       handle: string,
       persona: PersonaOptions,
-    ) =>
-      getOrCreateSession(
-        mcpSessionId,
-        server.url,
-        'tok',
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        false,
-        undefined,
-        handle,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        persona,
-      );
+    ) => openByHandle(server.url, mcpSessionId, handle, persona);
     try {
       for (const emulationOs of ['ios', 'android'] as const) {
         const handle = `default-phone-${emulationOs}`;
