@@ -132,6 +132,42 @@ const mockContext = {
 };
 
 describe('browserless_agent PDF reading', () => {
+  afterEach(() => sinon.restore());
+
+  for (const transport of ['stdio', 'httpStream'] as const) {
+    for (const complianceMode of [false, true]) {
+      it(`keeps PDF discovery within the client description limit (${transport}, compliant=${complianceMode})`, () => {
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const added = sinon.spy(server, 'addTool');
+        registerAgentTools(server, {
+          ...mockConfig,
+          transport,
+          complianceMode,
+        });
+        const description = added
+          .getCalls()
+          .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
+          .description!;
+        // Claude Code clips this tool's description at this boundary.
+        const visible = description.slice(0, 16397);
+        if (complianceMode) {
+          expect(description).not.to.include('readPdf');
+          return;
+        }
+        for (const instruction of [
+          'readPdf',
+          'keepSessionAlive: true',
+          'documentId',
+          'next.page/next.offset',
+          'no_embedded_text',
+          "NEVER read a file's bytes or base64 into this conversation",
+        ]) {
+          expect(visible).to.include(instruction);
+        }
+      });
+    }
+  }
+
   it('validates page and offset on the full surface only', () => {
     for (const params of [
       {},
