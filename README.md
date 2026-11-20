@@ -411,13 +411,16 @@ The `proxy` object is read once at session creation. To change it, call `close` 
 
 Agent sessions can opt into a coherent OS persona with top-level creation options:
 
-| Field               | Notes                                                                                     |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `emulationOs`       | `"windows"`, `"macos"`, `"linux"`, or `"android"`. Enables platform spoofing.             |
-| `emulatedDevice`    | Android device slug; used only with `emulationOs: "android"`.                             |
-| `screen`            | Desktop screen in `WIDTHxHEIGHT` form.                                                    |
-| `deviceScaleFactor` | Desktop device pixel ratio: `1` or `1.25`.                                                |
-| `deviceSlot`        | Non-negative stable desktop-device slot; the server validates the account-specific range. |
+| Field               | Notes                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `emulationOs`       | `"windows"`, `"macos"`, `"linux"`, `"android"`, or `"ios"`. Enables platform spoofing; `android` and `ios` select a mobile persona.                                                                    |
+| `emulatedDevice`    | Mobile device slug (for example `"pixel-8"`, `"iphone-16"`, `"ipad-pro-11"`); used only with `emulationOs: "android"` or `"ios"`. An omitted or unknown slug lets the server pick a device.            |
+| `deviceType`        | `"phone"` (default) or `"tablet"`. `"tablet"` selects an iPad and requires `emulationOs: "ios"`; Android accepts only `"phone"`. A named `emulatedDevice` of the other kind is rejected by the server. |
+| `screen`            | Desktop screen in `WIDTHxHEIGHT` form.                                                                                                                                                                 |
+| `deviceScaleFactor` | Desktop device pixel ratio: `1` or `1.25`.                                                                                                                                                             |
+| `deviceSlot`        | Non-negative stable desktop-device slot; the server validates the account-specific range.                                                                                                              |
+
+For example, `{ "emulationOs": "ios", "deviceType": "tablet" }` opens an iPad persona.
 
 Set persona options on the first call before navigation and reuse the returned
 `sessionId` afterward. Persona is fixed for the life of that browser session;

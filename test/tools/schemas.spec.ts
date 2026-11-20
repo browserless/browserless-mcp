@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { z } from 'zod';
 import {
   AgentCommandSchema,
   AgentToolParamsSchema,
@@ -628,15 +629,135 @@ describe('AgentParamsSchema persona', () => {
       emulationOs: 'android',
       emulatedDevice: 'pixel-8',
     });
+    const ipad = AgentParamsSchema.parse({
+      method: 'goto',
+      params: { url: 'https://example.com' },
+      emulationOs: 'ios',
+      deviceType: 'tablet',
+    });
     expect(desktop.deviceSlot).to.equal(3);
     expect(android.emulatedDevice).to.equal('pixel-8');
+    expect(ipad.emulationOs).to.equal('ios');
+    expect(ipad.deviceType).to.equal('tablet');
     expect(PERSONA_FIELDS).to.have.members([
       'emulationOs',
       'emulatedDevice',
+      'deviceType',
       'screen',
       'deviceScaleFactor',
       'deviceSlot',
     ]);
+  });
+
+  it('advertises ios and the phone/tablet device kind in the tool JSON schema', () => {
+    const json = z.toJSONSchema(AgentToolParamsSchema, { io: 'input' }) as {
+      properties: Record<string, { enum?: string[] }>;
+    };
+    expect(json.properties.emulationOs.enum).to.include('ios');
+    expect(json.properties.deviceType.enum).to.deep.equal(['phone', 'tablet']);
+  });
+
+  it('enforces iOS and device-kind persona relationships on both agent surfaces', () => {
+    const cases: Array<[string, Record<string, unknown>, boolean, string?]> = [
+      ['iOS device', { emulationOs: 'ios', emulatedDevice: 'iphone-16' }, true],
+      ['iOS tablet', { emulationOs: 'ios', deviceType: 'tablet' }, true],
+      [
+        'iOS tablet named iPad',
+        {
+          emulationOs: 'ios',
+          emulatedDevice: 'ipad-pro-11',
+          deviceType: 'tablet',
+        },
+        true,
+      ],
+      ['iOS phone explicit', { emulationOs: 'ios', deviceType: 'phone' }, true],
+      [
+        'Android phone (no-op)',
+        { emulationOs: 'android', deviceType: 'phone' },
+        true,
+      ],
+      [
+        'Android tablet',
+        { emulationOs: 'android', deviceType: 'tablet' },
+        false,
+        'Android accepts only "phone"',
+      ],
+      [
+        'kind without OS',
+        { deviceType: 'phone' },
+        false,
+        'deviceType requires emulationOs',
+      ],
+      [
+        'kind on desktop',
+        { emulationOs: 'windows', deviceType: 'phone' },
+        false,
+      ],
+      [
+        'kind with desktop alias',
+        { os: 'windows', deviceType: 'tablet' },
+        false,
+      ],
+      ['unknown kind', { emulationOs: 'ios', deviceType: 'laptop' }, false],
+      ['wrong case kind', { emulationOs: 'ios', deviceType: 'Tablet' }, false],
+      [
+        'non-string kind',
+        { emulationOs: 'ios', deviceType: ['tablet'] },
+        false,
+      ],
+      [
+        'device on desktop',
+        { emulationOs: 'windows', emulatedDevice: 'pixel-8' },
+        false,
+      ],
+      ['screen on iOS', { emulationOs: 'ios', screen: '1920x1080' }, false],
+      ['slot on iOS', { emulationOs: 'ios', deviceSlot: 2 }, false],
+      ['os alias iOS', { os: 'ios' }, false],
+    ];
+    for (const schema of [AgentParamsSchema, AgentToolParamsSchema]) {
+      for (const [name, extra, accepted, message] of cases) {
+        const result = schema.safeParse({ method: 'snapshot', ...extra });
+        expect(result.success, name).to.equal(accepted);
+        if (message) {
+          expect(
+            result.error?.issues.map((issue) => issue.message).join('\n'),
+            name,
+          ).to.include(message);
+        }
+      }
+    }
+  });
+
+  it('accepts only the OS alongside profile creation for iOS personas', () => {
+    const cases: Array<[string, Record<string, unknown>, boolean]> = [
+      [
+        'profile creation with OS only',
+        { createProfile: { name: 'demo' }, emulationOs: 'ios' },
+        true,
+      ],
+      [
+        'profile creation with kind',
+        {
+          createProfile: { name: 'demo' },
+          emulationOs: 'ios',
+          deviceType: 'tablet',
+        },
+        false,
+      ],
+    ];
+    for (const schema of [AgentParamsSchema, AgentToolParamsSchema]) {
+      for (const [name, extra, accepted] of cases) {
+        expect(
+          schema.safeParse({
+            commands: [
+              { method: 'goto', params: { url: 'https://example.com' } },
+            ],
+            ...extra,
+          }).success,
+          name,
+        ).to.equal(accepted);
+      }
+    }
   });
 
   it('normalizes surrounding whitespace in a desktop screen', () => {

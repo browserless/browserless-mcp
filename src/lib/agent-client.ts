@@ -283,16 +283,22 @@ export const PROXY_FIELDS = Object.keys(
 
 export const PersonaOptionsSchema = z.object({
   emulationOs: z
-    .enum(['windows', 'macos', 'linux', 'android'])
+    .enum(['windows', 'macos', 'linux', 'android', 'ios'])
     .optional()
     .describe(
-      'OS persona for platform spoofing. Set on the first call before navigation.',
+      'OS persona for platform spoofing. "android" and "ios" select a mobile persona (iPhone or iPad for "ios"). Set on the first call before navigation.',
     ),
   emulatedDevice: z
     .string()
     .optional()
     .describe(
-      'Android device slug, used only with emulationOs="android". Unknown slugs select a seeded device.',
+      'Mobile device slug, used only with emulationOs="android" or "ios" (for example "pixel-8", "iphone-16", "ipad-pro-11"). An omitted or unknown slug lets the server pick a device.',
+    ),
+  deviceType: z
+    .enum(['phone', 'tablet'])
+    .optional()
+    .describe(
+      'Mobile device kind: "phone" (default; an iPhone on ios) or "tablet" (an iPad). Use "tablet" only when the task needs an iPad or tablet layout. "tablet" requires emulationOs="ios"; Android accepts only "phone". A named emulatedDevice fixes its own kind and must agree with this value.',
     ),
   screen: z
     .string()
@@ -306,12 +312,12 @@ export const PersonaOptionsSchema = z.object({
     }, 'screen must be WIDTHxHEIGHT with each dimension between 640 and 7680')
     .optional()
     .describe(
-      'Desktop screen as WIDTHxHEIGHT, with each dimension from 640 through 7680. Ignored for Android.',
+      'Desktop screen as WIDTHxHEIGHT, with each dimension from 640 through 7680. Desktop personas only.',
     ),
   deviceScaleFactor: z
     .union([z.literal(1), z.literal(1.25)])
     .optional()
-    .describe('Desktop device pixel ratio. Ignored for Android.'),
+    .describe('Desktop device pixel ratio. Desktop personas only.'),
   deviceSlot: z
     .number()
     .int()
@@ -329,13 +335,26 @@ export const PERSONA_FIELDS = Object.keys(PersonaOptionsSchema.shape) as Array<
 const hasPersona = (persona?: PersonaOptions): boolean =>
   !!persona && PERSONA_FIELDS.some((field) => persona[field] !== undefined);
 
+// The server opens a mobile persona as a phone when deviceType is omitted, so
+// an explicit "phone" later must not count as a change to that session.
+const retainedValue = (
+  existing: PersonaOptions | undefined,
+  field: keyof PersonaOptions,
+) =>
+  field === 'deviceType' &&
+  existing?.deviceType === undefined &&
+  (existing?.emulationOs === 'android' || existing?.emulationOs === 'ios')
+    ? 'phone'
+    : existing?.[field];
+
 const hasPersonaConflict = (
   existing: PersonaOptions | undefined,
   requested: PersonaOptions,
 ): boolean =>
   PERSONA_FIELDS.some(
     (field) =>
-      requested[field] !== undefined && existing?.[field] !== requested[field],
+      requested[field] !== undefined &&
+      retainedValue(existing, field) !== requested[field],
   );
 
 /**
