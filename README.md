@@ -125,6 +125,12 @@ field, including the complete message, target URL, request ID, and session ID.
 IDs have Copy buttons when the host grants clipboard write access. URLs remain
 plain text and never open automatically.
 
+On hosts that support both model-context updates and widget messages, select up
+to 25 rows and choose **Diagnose selected**. Nothing is shared by that action
+until you confirm the preview. The 64 KB payload includes only allowlisted fields;
+URL queries and recognized secret patterns are stripped, and session and API key
+IDs are excluded.
+
 Filters cover the tool's existing time range, severity, endpoint, outcome,
 category, reason, request ID, target URL, event names, API key, page size, and
 ordering. Omitted time bounds use the account plan's server-defined window;
@@ -201,6 +207,12 @@ It works on both surfaces without adding connector tools, making another API
 request, or loading external assets. The connector exposes only the scorecard's
 self-contained UI resource. Clients without MCP Apps keep their existing text
 output; the full surface also retains its JSON report download.
+
+On hosts with both chat capabilities, choose **Explain these failing audits** for
+the current category or **Suggest fixes** for a measured metric. These actions
+preview up to 25 allowlisted records (64 KB maximum) and require confirmation
+before sharing. The target URL's query string and recognized secret patterns
+are stripped. The existing automatic audit summary is unchanged.
 
 ### Inline human handoff
 
@@ -792,11 +804,11 @@ cross-field constraints; deployments must support rich REST instructions.
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `browserless://api-docs`         | Smart scraper API documentation                                                                                                 |
 | `browserless://status`           | Live service health status                                                                                                      |
-| `ui://browserless/view/v12.html` | Bundled replay, screenshot, video, handoff, account usage, active sessions, and request-log explorer widget (full surface only) |
+| `ui://browserless/view/v14.html` | Bundled replay, screenshot, video, handoff, account usage, active sessions, and request-log explorer widget (full surface only) |
 
-The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v11.html`
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v13.html`
 resources remain readable as aliases of the current widget. Newly discovered
-tools advertise v12 so hosts discover the request-log explorer.
+tools advertise v14 so hosts discover the updated request-log explorer.
 
 ## MCP Prompts
 

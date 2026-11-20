@@ -10,14 +10,18 @@ import { PERFORMANCE_URI } from '../lib/performance-summary.js';
 
 // Performance is self-contained and needs no media, frame, or network origins.
 export function registerPerformanceWidget(server: FastMCP): void {
-  // Keep the previous resource readable during host metadata refreshes.
-  for (const uri of [PERFORMANCE_URI, 'ui://browserless/performance/v3.html'])
+  // Keep previous resources readable during host metadata refreshes.
+  for (const uri of [
+    PERFORMANCE_URI,
+    'ui://browserless/performance/v4.html',
+    'ui://browserless/performance/v3.html',
+  ])
     server.addResource({
       uri,
       name:
         uri === PERFORMANCE_URI
           ? 'Browserless Lighthouse scorecard'
-          : 'Browserless Lighthouse scorecard (v3 compatibility)',
+          : `Browserless Lighthouse scorecard (${uri.match(/v\d+/)?.[0]} compatibility)`,
       mimeType: RESOURCE_MIME_TYPE,
       async load() {
         return {
@@ -55,7 +59,7 @@ export function registerViewWidget(
     VIEW_URI,
     LIVE_URL_URI,
     ...Array.from(
-      { length: 12 },
+      { length: 13 },
       (_, index) => `ui://browserless/view/v${index + 1}.html`,
     ),
   ])

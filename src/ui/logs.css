@@ -111,6 +111,21 @@
   gap: 8px;
   margin-top: 12px;
 }
+.logs-view [data-role='chat-bar'] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.logs-view [data-role='chat-limit'] {
+  color: var(--muted);
+}
+.logs-view tbody input[type='checkbox'] {
+  width: auto;
+  justify-self: start;
+  accent-color: var(--accent);
+}
 .logs-table-scroll {
   overflow-x: auto;
 }
