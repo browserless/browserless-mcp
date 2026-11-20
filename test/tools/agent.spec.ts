@@ -6300,6 +6300,37 @@ describe('browserless_agent media description', () => {
   }
 });
 
+describe('browserless_agent handoff description', () => {
+  afterEach(() => sinon.restore());
+
+  for (const [transport, complianceMode, fullHttp] of [
+    ['httpStream', false, true],
+    ['stdio', false, false],
+    ['httpStream', true, false],
+  ] as const) {
+    it(`scopes the external handoff advice: ${transport}, compliance ${complianceMode}`, () => {
+      const server = new FastMCP({
+        name: 'description-test',
+        version: '1.0.0',
+      });
+      const added = sinon.spy(server, 'addTool');
+      registerAgentTools(server, { ...mockConfig, transport, complianceMode });
+      const description = added
+        .getCalls()
+        .find((call) => call.args[0].name === 'browserless_agent')!.args[0]
+        .description;
+      expect(
+        description?.includes(
+          'or you cannot tell, do not call handoff (it returns an error there)',
+        ),
+      ).to.equal(fullHttp);
+      expect(description).not.to.include(
+        'while waiting. On their return, check handoff_status',
+      );
+    });
+  }
+});
+
 describe('browserless_agent session handle on errors', () => {
   afterEach(() => sinon.restore());
 

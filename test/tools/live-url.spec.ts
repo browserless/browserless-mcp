@@ -1,9 +1,11 @@
 import { expect } from 'chai';
+import assert from 'node:assert/strict';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { LiveURLParamsSchema } from '../../src/tools/live-url.js';
 import { registerLiveURLTool } from '../../src/tools/live-url.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -62,14 +64,80 @@ describe('browserless_live_url', () => {
   });
   afterEach(() => sinon.restore());
 
-  function tool(maxRetries = 0) {
+  function tool(
+    maxRetries = 0,
+    overrides: Partial<McpConfig> = {},
+    analytics?: AnalyticsHelper,
+  ) {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const spy = sinon.spy(server, 'addTool');
-    registerLiveURLTool(server, { ...mockConfig, maxRetries });
+    registerLiveURLTool(
+      server,
+      { ...mockConfig, maxRetries, ...overrides },
+      analytics,
+    );
     return spy.firstCall.args[0];
   }
   const params = { browserId: 'browser/123', liveURLId: 'live?123' };
   const path = 'https://api.example.com/browser/browser%2F123/live';
+
+  for (const [transport, complianceMode, fullHttp] of [
+    ['httpStream', false, true],
+    ['stdio', false, false],
+    ['httpStream', true, false],
+  ] as const) {
+    it(`scopes the external handoff advice: ${transport}, compliance ${complianceMode}`, () => {
+      const { description } = tool(0, { transport, complianceMode });
+      expect(
+        description?.includes(
+          'do not call handoff: run the browserless_agent liveURL command',
+        ),
+      ).to.equal(fullHttp);
+      expect(description).not.to.include(
+        'For MCP Apps, use action handoff with the existing agent sessionId',
+      );
+    });
+  }
+
+  for (const [input, error, action] of [
+    [
+      { action: 'handoff', sessionId: 's:x' },
+      /Inline handoff requires/,
+      'handoff',
+    ],
+    [{ action: 'create' }, /browserId is required/, 'create'],
+    [{ action: 'bogus' }, /Invalid option/, undefined],
+  ] as const) {
+    it(`records only a recognized action when ${input.action} fails`, async () => {
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      await assert.rejects(
+        tool(0, {}, analytics).execute(input, mockContext),
+        error,
+      );
+      sinon.assert.calledOnce(fire);
+      expect(fire.firstCall.args[1]).to.equal('browserless_live_url');
+      const props = fire.firstCall.args[2];
+      expect(props).to.have.property('success', false);
+      if (action) expect(props).to.have.property('action', action);
+      else expect(props).not.to.have.property('action');
+    });
+  }
+
+  it('still records the action on success', async () => {
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    fetchStub.resolves(jsonResponse(state));
+    await tool(0, {}, analytics).execute(
+      { action: 'status', ...params },
+      mockContext,
+    );
+    sinon.assert.calledOnce(fire);
+    expect(fire.firstCall.args[2]).to.include({
+      success: true,
+      action: 'status',
+    });
+  });
 
   it('forwards all create options, preserving false, and returns IDs', async () => {
     const response = { liveURL: 'https://example.com/live', liveURLId: 'id' };

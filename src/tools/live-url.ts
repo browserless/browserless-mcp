@@ -137,7 +137,7 @@ export function registerLiveURLTool(
       'Status returns status, reason, interactable, viewerCount, and expiresAt (epoch ms). ' +
       'Ended links remain inspectable until their browser closes; closing an ended link returns not found. ' +
       (!isCompliant(config) && config.transport === 'httpStream'
-        ? 'For MCP Apps, use action handoff with the existing agent sessionId and plain-text instructions. Keep the browser open first. This pauses automation and returns a viewRef: display it with browserless_show. Wait for the person, then use handoff_status with that viewRef; continue with a fresh snapshot in the same session only when reason is userDone. Never open a replacement browser.'
+        ? 'Action handoff is the inline human handoff and works only when your client renders MCP Apps widgets (inline viewers in the conversation); in any other client it returns an error. If your client does not render MCP Apps widgets, or you cannot tell, do not call handoff: run the browserless_agent liveURL command with interactable: true and instructions as the last command of its call, keep that session open, give the person the returned link, and wait for them. In MCP Apps clients, call handoff with the existing agent sessionId and plain-text instructions. Keep the browser open first. This pauses automation and returns a viewRef: display it with browserless_show. Wait for the person, then use handoff_status with that viewRef; continue with a fresh snapshot in the same session only when reason is userDone. Never open a replacement browser.'
         : ''),
     parameters: LiveURLParamsSchema,
     ...(inline
@@ -256,6 +256,12 @@ export function registerLiveURLTool(
       return { closed: true };
     },
     analyticsProps: (params) => ({ action: params.action }),
+    analyticsErrorProps: (params) => {
+      const action = LiveURLParamsSchema.shape.action.safeParse(
+        (params as { action?: unknown } | undefined)?.action,
+      );
+      return action.success ? { action: action.data } : {};
+    },
     format: (result, params, { uiEnabled }) => {
       if ('content' in result) return result;
       const content = [{ type: 'text' as const, text: JSON.stringify(result) }];
