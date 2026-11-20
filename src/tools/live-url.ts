@@ -79,7 +79,7 @@ export const LiveURLParamsSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'For pages: also return a view-only liveURL per tab. A tab that already has a link returns it unchanged, with interactable.',
+      'For pages: return a liveURL per tab. New links are view-only; existing links keep their permissions and may be interactive. Check interactable before sharing.',
     ),
   interactable: z.boolean().optional(),
   timeout: z
