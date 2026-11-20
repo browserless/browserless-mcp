@@ -539,6 +539,7 @@ describe('compliance mode — compliant tool surface', () => {
       for (const extra of [
         { emulationOs: 'windows' },
         { emulatedDevice: 'pixel-8' },
+        { deviceType: 'tablet' },
         { screen: '1920x1080' },
         { deviceScaleFactor: 1 },
         { deviceSlot: 0 },
@@ -829,6 +830,7 @@ describe('compliance mode — compliant tool surface', () => {
         { proxy: { proxy: 'datacenter' } },
         { emulationOs: 'windows' },
         { emulatedDevice: 'pixel-8' },
+        { deviceType: 'tablet' },
         { screen: '1920x1080' },
         { deviceScaleFactor: 1 },
         { deviceSlot: 0 },

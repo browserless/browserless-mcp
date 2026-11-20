@@ -4034,6 +4034,85 @@ describe('browserless_agent persona creation guard', () => {
       );
     }
   });
+
+  it('forwards an iOS tablet persona and reports the iOS OS to analytics', async () => {
+    const server = await makeRespondingServer(() => ({ elements: [] }));
+    try {
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      const execute = getAgentExecute(server.url, 'stdio', analytics);
+      await execute(
+        {
+          method: 'snapshot',
+          emulationOs: 'ios',
+          deviceType: 'tablet',
+          keepSessionAlive: true,
+        },
+        { ...mockContext, sessionId: 'persona-ios-tablet' },
+      );
+
+      const url = new URL(server.upgradeUrls()[0]!, server.url);
+      expect(url.searchParams.get('emulationOs')).to.equal('ios');
+      expect(url.searchParams.get('deviceType')).to.equal('tablet');
+      expect(fire.firstCall.args[2]).to.include({
+        emulation_os: 'ios',
+        persona_requested: true,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects createProfile with a device kind before connecting', async () => {
+    const execute = getAgentExecute('http://127.0.0.1:1');
+    try {
+      await execute(
+        {
+          createProfile: { name: 'demo' },
+          emulationOs: 'ios',
+          deviceType: 'tablet',
+          commands: [
+            { method: 'goto', params: { url: 'https://example.com' } },
+          ],
+        },
+        { ...mockContext, sessionId: 'persona-create-kind-guard' },
+      );
+      expect.fail('expected UserError');
+    } catch (err) {
+      expect((err as Error).message).to.match(
+        /persona.*cannot be combined with profile creation/i,
+      );
+    }
+  });
+
+  it('surfaces a server device-kind contradiction without retrying', async () => {
+    const srv = await makeRejectingServer(
+      400,
+      'deviceType contradicts emulatedDevice.',
+    );
+    try {
+      const execute = getAgentExecute(srv.url);
+      try {
+        await execute(
+          {
+            method: 'snapshot',
+            emulationOs: 'ios',
+            emulatedDevice: 'ipad-pro-11',
+            deviceType: 'phone',
+          },
+          { ...mockContext, sessionId: 'persona-ios-contradiction' },
+        );
+        expect.fail('expected UserError');
+      } catch (err) {
+        const message = (err as Error).message;
+        expect(message).to.include('Bad request (400)');
+        expect(message).to.include('deviceType contradicts emulatedDevice.');
+      }
+      expect(srv.hits()).to.equal(1);
+    } finally {
+      await srv.close();
+    }
+  });
 });
 
 describe('browserless_agent recording creation guard', () => {

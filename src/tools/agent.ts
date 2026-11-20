@@ -1271,6 +1271,7 @@ export const runAgentCommands = async (
   const persona = {
     emulationOs: params.emulationOs ?? os,
     emulatedDevice: params.emulatedDevice,
+    deviceType: params.deviceType,
     screen: params.screen,
     deviceScaleFactor: params.deviceScaleFactor,
     deviceSlot: params.deviceSlot,

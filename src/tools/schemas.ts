@@ -1008,6 +1008,7 @@ const addPersonaIssues = (
     os?: string;
     emulationOs?: string;
     emulatedDevice?: unknown;
+    deviceType?: unknown;
     deviceSlot?: unknown;
     screen?: unknown;
     deviceScaleFactor?: unknown;
@@ -1024,11 +1025,27 @@ const addPersonaIssues = (
   const hasDesktopOs = ['windows', 'macos', 'linux'].includes(
     v.emulationOs ?? v.os ?? '',
   );
-  if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
+  const hasMobileOs = v.emulationOs === 'android' || v.emulationOs === 'ios';
+  if (v.emulatedDevice !== undefined && !hasMobileOs) {
     ctx.addIssue({
       code: 'custom',
       path: ['emulatedDevice'],
-      message: 'emulatedDevice requires emulationOs="android".',
+      message: 'emulatedDevice requires emulationOs="android" or "ios".',
+    });
+  }
+  if (v.deviceType !== undefined && !hasMobileOs) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['deviceType'],
+      message: 'deviceType requires emulationOs="android" or "ios".',
+    });
+  }
+  if (v.deviceType === 'tablet' && v.emulationOs === 'android') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['deviceType'],
+      message:
+        'deviceType="tablet" requires emulationOs="ios"; Android accepts only "phone".',
     });
   }
   if (v.deviceSlot !== undefined && !hasDesktopOs) {
@@ -1105,6 +1122,7 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
           os?: string;
           emulationOs?: string;
           emulatedDevice?: unknown;
+          deviceType?: unknown;
           deviceSlot?: unknown;
           screen?: unknown;
           deviceScaleFactor?: unknown;

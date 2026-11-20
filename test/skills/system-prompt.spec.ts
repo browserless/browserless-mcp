@@ -244,6 +244,7 @@ describe('full Agent persona and proxy guidance', () => {
     for (const field of [
       'emulationOs',
       'emulatedDevice',
+      'deviceType',
       'screen',
       'deviceScaleFactor',
       'deviceSlot',
@@ -253,11 +254,15 @@ describe('full Agent persona and proxy guidance', () => {
     for (const personaOnlyField of [
       'emulationOs',
       'emulatedDevice',
+      'deviceType',
       'deviceScaleFactor',
       'deviceSlot',
     ]) {
       expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include(personaOnlyField);
     }
+    expect(AGENT_SYSTEM_PROMPT).to.match(/"ios"/);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/iPad/);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/"tablet"/);
     expect(AGENT_SYSTEM_PROMPT).to.match(/very first call|first call/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/Cloudflare|hard block/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/datacenter/i);
