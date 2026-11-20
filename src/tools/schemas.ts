@@ -507,6 +507,8 @@ const LiveURLCommandSchema = z.object({
         .boolean()
         .optional()
         .describe('Allow interaction via the live URL'),
+      showBrowserInterface: z.boolean().optional(),
+      showTimer: z.boolean().optional(),
       quality: z
         .number()
         .int()

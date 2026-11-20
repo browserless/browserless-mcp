@@ -188,6 +188,7 @@ Never retry same failed action without re-snapshot.
 - **clearSecrets** {} — lowers capture protection; use only after the fill completes and secret-bearing content is gone from all tabs, including hidden fields, never just after clicking submit. Then request a fresh snapshot. \`waitForNavigation\`/\`waitForResponse\`/\`waitForSelector\` are allowed while armed but do not unlock snapshots
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
 - **liveURL** { targetId?, mode?, timeout?, instructions? } — streams the active tab; pass targetId from getTabs to stream another without switching. Defaults to 300000ms (five minutes); server caps the requested lifetime at your plan's maximum session time and remaining browser time. For a human handoff, pass specific instructions explaining what to do and when to click Done. Interactive links supply generic instructions when omitted; an empty string disables the card and Done button. Set \`keepSessionAlive: true\` on the handoff call, reuse the returned \`sessionId\`, and close the browser when the overall task finishes. Creating a link does not extend the browser deadline; keeping the browser open remains billed.
+  - LiveURL mode: tab stays on one tab (default with targetId); follow follows new tabs (default without targetId).
 - See schema for: screenshot, solve, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 `;
@@ -309,6 +310,7 @@ Never retry the same failed action without re-snapshot.
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background
 - **close** — own call, NOT batched; only when task complete (premature close discards page state)
 - **liveURL** { targetId?, mode?, timeout?, instructions? } — streams the active tab; pass targetId from getTabs to stream another without switching. Defaults to 300000ms (five minutes); server caps the requested lifetime at your plan's maximum session time and remaining browser time. For a human handoff, pass specific instructions explaining what to do and when to click Done. Interactive links supply generic instructions when omitted; an empty string disables the card and Done button. Set \`keepSessionAlive: true\` on the handoff call, reuse the returned \`sessionId\`, and close the browser when the overall task finishes. Creating a link does not extend the browser deadline; keeping the browser open remains billed.
+  - LiveURL mode: tab stays on one tab (default with targetId); follow follows new tabs (default without targetId).
 - See schema for: screenshot, back, forward, reload, click, type, select, checkbox, hover, scroll, text, html, waitForNavigation, waitForTimeout, waitForRequest, liveURL, getTabs, switchTab, closeTab
 
 Provide \`commands\` as a sequential batch; only the final result is returned.`;

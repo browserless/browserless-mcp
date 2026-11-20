@@ -4245,6 +4245,7 @@ describe('browserless_agent live URL handoff', () => {
             { instructions: '   ' },
             { instructions },
             { targetId: 'T2', mode: 'tab', instructions },
+            { showBrowserInterface: false, showTimer: false },
             { mode: 'follow', timeout: 120_000 },
             { timeout: 120_000, instructions: 'Sign in, then click Done.' },
             { timeout: 600_000, instructions },
