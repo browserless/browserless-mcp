@@ -306,6 +306,7 @@ type DownloadEntry = {
   error?: string;
   maxBytes?: number;
   sourceUrl?: string;
+  pdfDocumentId?: string;
   inProgress?: boolean;
   receivedBytes?: number;
   totalBytes?: number;
@@ -504,6 +505,8 @@ type FormatOpts = {
   sessionId?: string;
   mcpBaseUrl?: string;
   token?: string;
+  sessionOpen?: boolean;
+  compliant?: boolean;
   artifactDelivery?: ArtifactDelivery;
 };
 
@@ -560,6 +563,9 @@ export const formatDownloads = async (
   opts: FormatOpts,
 ): Promise<Content[]> => {
   const lines: string[] = [];
+  const retainedPdfId = [...downloads]
+    .reverse()
+    .find((d) => d.pdfDocumentId)?.pdfDocumentId;
   for (const d of downloads) {
     if (d.inProgress) {
       lines.push(`- ${describeInProgressDownload(d)}`);
@@ -569,6 +575,17 @@ export const formatDownloads = async (
     lines.push(
       `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d, opts.artifactDelivery === 'mcp-resource')}`,
     );
+    if (
+      !opts.compliant &&
+      d.pdfDocumentId &&
+      d.pdfDocumentId === retainedPdfId
+    ) {
+      lines.push(
+        opts.sessionOpen
+          ? `  Embedded PDF text: readPdf ${JSON.stringify({ documentId: d.pdfDocumentId })}. Keep this session open; the ID expires on close or when another PDF is captured.`
+          : '  PDF reading requires `keepSessionAlive: true` on the initial call; this browser session is closed and its PDF ID has expired.',
+      );
+    }
   }
   const header =
     opts.transport === 'stdio' || opts.artifactDelivery === 'mcp-resource'
@@ -1185,13 +1202,14 @@ export const runAgentCommands = async (
   // import accepts it; re-validate a provided batch against the full
   // per-command contract here (the method/key guards above own their
   // specific messages). Legacy single-command calls stay loose except for
-  // outcome reports and credential writes.
+  // outcome reports, credential writes and PDF reads.
   if (
     params.commands?.length ||
     params.method === 'reportOutcome' ||
     params.method === 'reportSkillOutcome' ||
     params.method === 'reportProfileAuthentication' ||
-    params.method === 'saveSecret'
+    params.method === 'saveSecret' ||
+    params.method === 'readPdf'
   ) {
     const list = params.commands?.length ? params.commands : commands;
     const parsedCommands: Array<{
@@ -1560,6 +1578,12 @@ export const runAgentCommands = async (
   let lastSession: ActiveSession | undefined;
   let downloadsPending = false;
   const completedDownloads: DownloadEntry[] = [];
+  const onSendSession = (reused: boolean, ageMs: number) => {
+    // send can replace the socket without starting a new runCommands attempt.
+    if (!reused)
+      for (const download of completedDownloads) delete download.pdfDocumentId;
+    onSession(reused, ageMs);
+  };
   const runCommands = async (
     isRetry: boolean,
     retryPersona: PersonaOptions = persona,
@@ -1626,6 +1650,8 @@ export const runAgentCommands = async (
       );
       return runCommands(true, retryPersona);
     }
+    // A retry may preserve downloaded files, but not references into its old browser.
+    for (const download of completedDownloads) delete download.pdfDocumentId;
     lastSession = agentSession;
     agentSessionHandle = agentSession.handle;
     const repetition = detectRepetition(agentSession.repeatState, commands);
@@ -1719,7 +1745,7 @@ export const runAgentCommands = async (
             cmd.method,
             params,
             undefined,
-            onSession,
+            onSendSession,
           );
           if (cmd.method === 'reportOutcome' && !response.error) {
             verdict = {
@@ -1809,7 +1835,7 @@ export const runAgentCommands = async (
           cmd.method,
           outboundParams,
           undefined,
-          onSession,
+          onSendSession,
         );
       } catch (sendErr: unknown) {
         if (protectedTabOperation) {
@@ -2039,6 +2065,19 @@ export const runAgentCommands = async (
           ).filter((download) => !download.inProgress),
         );
       }
+      if (
+        cmd.method === 'readPdf' ||
+        MEDIA_URL_CHANGING_METHODS.has(cmd.method)
+      ) {
+        const documentId =
+          cmd.method === 'readPdf'
+            ? (resp.result as { documentId?: string } | undefined)?.documentId
+            : undefined;
+        for (const download of completedDownloads) {
+          if (download.pdfDocumentId !== documentId)
+            delete download.pdfDocumentId;
+        }
+      }
       const observedUrl = (resp.result as { url?: unknown } | undefined)?.url;
       const activeSnapshot =
         cmd.method === SNAPSHOT_METHOD &&
@@ -2130,7 +2169,7 @@ export const runAgentCommands = async (
           'getDownloads',
           {},
           undefined,
-          onSession,
+          onSendSession,
         );
         if (dl.error) throw new Error('Download poll failed');
         autoDownloads =
@@ -2236,6 +2275,11 @@ export const runAgentCommands = async (
       extraText ? `${base}\n\n${extraText}` : base;
 
     const skillsText = extraText;
+    const sessionOpen =
+      !closedDuringBatch &&
+      Boolean(
+        keepAlive || downloadsPending || createProfile || attachSessionId,
+      );
     let baseContent: Content[];
 
     if (lastSnapshot) {
@@ -2312,6 +2356,8 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        sessionOpen,
+        compliant,
         artifactDelivery,
       });
     } else if (last.method === 'stopRecording') {
@@ -2375,6 +2421,8 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        sessionOpen,
+        compliant,
         artifactDelivery,
       });
       baseContent = [...baseContent, ...notice];
@@ -2480,6 +2528,11 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          sessionOpen:
+            options.closeAfter !== 'always' &&
+            !!lastSession &&
+            lastSession.ws.readyState === lastSession.ws.OPEN,
+          compliant,
           artifactDelivery,
         });
         err.message += `\n\n${files

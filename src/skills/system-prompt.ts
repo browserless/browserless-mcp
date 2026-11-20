@@ -15,6 +15,13 @@ When a tool response contains REPETITION WARNING, re-read your plan and compare 
 
 export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in an agent session.
 
+## Embedded PDF text
+For PDF reading or summarization, use **readPdf** rather than DOM text/html or evaluate fetching and parsing raw file bytes. Open the PDF with goto, then call readPdf { url?, documentId?, page?, offset? }. Set \`keepSessionAlive: true\` on the first call and reuse the returned sessionId for continuation. Omit url to use the current page, or use the pdfDocumentId surfaced for a captured download. It reads only browser-observed bytes, never refetches a URL. page (physical, 1-based, default 1) and offset (default 0) set where reading starts. Results include documentId, totalPages, pages[] (each with page, status, text, offset, complete; at most 12000 characters and 20 pages in total) and next. Continue with documentId and next.page/next.offset until next is null, not a new download. Closing the session invalidates the ID. Only the most recently captured PDF is retained (up to 25 MiB or the file-transfer cap, whichever is smaller).
+Inline PDFs require a known, uncompressed response size to enforce the byte cap before buffering; otherwise the command reports a capture limitation. A captured download can still be read within the cap.
+**no_embedded_text** means that page has no extractable text, not that it has no content. Do not invent text or claim the document is empty; explain that scanned/image-only content needs visual reading/OCR, which this command does not provide. It does not fill PDF forms.
+
+**NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** Use captured download delivery instructions for files, not raw file bytes.
+
 ## Core Loop (ReAct: Reason → Act → Observe)
 0. **Plan + check for a site recipe** — restate the goal, decide the target host, then \`browserless_skill { site: "<host>" }\` (see above). Load and follow any matching recipe before writing your own plan. Never jump straight to \`goto\`.
 1. **goto** — waits "domcontentloaded"
@@ -130,7 +137,6 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 
 ## Files (upload / download)
 **To download a file, DRIVE THE BROWSER first.** Login/cookie-gated or generated downloads often have no directly fetchable URL. Click/goto in the agent and collect the captured artifact, then follow its delivery instructions.
-**NEVER read a file's bytes or base64 into this conversation, and NEVER split/reassemble/inline base64 by hand.** That is the wrong tool and will stall.
 - **Upload a local file (stdio)**: \`uploadFile { selector, files: [{ path }] }\` — the server reads + encodes it only inside the download directory or a directory explicitly allowed by the local operator through \`BROWSERLESS_UPLOAD_DIRS\`. Symlink targets must also be inside an allowed directory. Ask the operator about rejected paths; do not bypass the restriction by reading or moving the file yourself.
 - **Upload a local file (HTTP)**: the server can't read your disk. Use a supported client staging path and its returned handle. Legacy clients permitted to use local authentication can follow the authenticated /upload instructions supplied by the server. Native clients must report unsupported staging rather than read local credentials.
 - **Re-upload something from \`getDownloads\`**: pass its \`handle\` (works in both modes).
