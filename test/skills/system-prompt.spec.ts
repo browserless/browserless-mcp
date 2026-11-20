@@ -186,6 +186,15 @@ describe('agent system prompt contextual snapshot guidance', () => {
     ['full', AGENT_SYSTEM_PROMPT],
     ['compliant', COMPLIANT_AGENT_SYSTEM_PROMPT],
   ] as const) {
+    it(`requires the ${name} agent to observe newly revealed controls before batching actions on them`, () => {
+      const batching = prompt.split('## Batching')[1].split('\n## ')[0];
+      expect(batching).to.match(/end the batch with `snapshot`/i);
+      expect(batching).to.match(
+        /read the snapshot result.*exact ref.*next call/i,
+      );
+      expect(batching).to.include('batch type + click in one call');
+    });
+
     it(`teaches the ${name} agent one-shot and safe multi-step lifetimes`, () => {
       expect(prompt).to.include('one-shot by default');
       expect(prompt).to.match(/snapshot[^\n]+keepSessionAlive: true/);

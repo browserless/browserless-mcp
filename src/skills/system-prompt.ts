@@ -13,6 +13,8 @@ export const SELF_CHECK_DIRECTIVE = `
 ## Repetition self-check
 When a tool response contains REPETITION WARNING, re-read your plan and compare your completed steps with the intended progress. Do not repeat the same batch blindly: choose a materially different approach within the task's constraints, or stop and report what is blocked and what you tried. Repetition is a signal to check progress, not proof of failure; continue a repeated action only when you can identify concrete progress or a task-required reason.`;
 
+const SNAPSHOT_BATCH_BOUNDARY = `Batch selector-based actions only when you already have their refs from a snapshot. If an action reveals a control you need but haven't observed (such as a menu item), end the batch with \`snapshot\` after that action. Read the snapshot result and use the exact ref in the next call.`;
+
 export const AGENT_SYSTEM_PROMPT = `READ CAREFULLY: Execute browser commands in an agent session.
 
 ## Core Loop (ReAct: Reason → Act → Observe)
@@ -138,12 +140,12 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 - base64 \`content\` is a LAST RESORT — tiny inline data only.
 - Full recipe: \`file-transfers\` skill.
 
-## Batching — Maximize Per Call
-Plan ALL actions from snapshot before next snapshot.
+## Batching
+${SNAPSHOT_BATCH_BOUNDARY}
 
 **Process:**
 1. Classify actions: **safe** (type, hover, scroll, evaluate, select, checkbox) vs. **page-changing** (click, goto)
-2. Batch: safe FIRST → page-changing LAST
+2. Put safe actions before page-changing actions, then wait or snapshot if needed.
 3. For forms: if submit button is in snapshot, batch type + click in one call
 4. Don't batch across navigations
 
@@ -265,12 +267,12 @@ Only click when href is \`javascript:\` / \`#\` / missing.
 2. **text** { selector } — from specific element
 3. **html** { selector } — raw HTML
 
-## Batching — Maximize Per Call
-Plan ALL actions from snapshot before next snapshot.
+## Batching
+${SNAPSHOT_BATCH_BOUNDARY}
 
 **Process:**
 1. Classify actions: **safe** (type, hover, scroll, select, checkbox) vs. **page-changing** (click, goto)
-2. Batch: safe FIRST → page-changing LAST
+2. Put safe actions before page-changing actions, then wait or snapshot if needed.
 3. For forms: if submit button is in snapshot, batch type + click in one call
 4. Don't batch across navigations
 
