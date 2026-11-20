@@ -47,6 +47,70 @@ const previewCases = {
     await wait(() => $('.perf-scores') && contexts.length === 1);
     check(!$('.perf-preview') && !$('.perf-progress'), 'loader survived result');
     check(JSON.stringify(contexts).includes('auditRef'), 'model context missing audit reference');
+    check(!$('[data-role="explain-audits"], [data-role="suggest-metric"]'), 'unsupported host rendered chat controls');
+  `,
+  'pending audit shares only the selected audits or metric after confirmation': `
+    frame.remove();
+    await open({ serverTools: {}, updateModelContext: { text: {} }, message: { text: {} } });
+    const messages = [];
+    bridge.onmessage = async params => { messages.push(params); return {}; };
+    const finished = structuredClone(report);
+    finished.url = 'https://user:pass@example.test/a?token=query-secret#fragment';
+    const audits = Array.from({ length: 26 }, (_, i) => ({
+      id: 'selected-' + i, title: i ? 'Audit ' + i : '<img src="example"> Authorization: Bearer abcdefgh12345678',
+      description: 'An audit description', displayValue: null, savings: null,
+    }));
+    finished.categories = [
+      { id: 'performance', title: 'Performance', score: 45, failedCount: 26, audits },
+      { id: 'seo', title: 'SEO', score: 80, failedCount: 1, audits: [{ ...audits[0], id: 'seo-only' }] },
+      { id: 'accessibility', title: 'Accessibility', score: 100, failedCount: 0, audits: [] },
+    ];
+    finished.metrics = [
+      { id: 'lcp', title: 'LCP Authorization: Bearer zyxwvuts12345678', value: '3.2 s', score: 43 },
+      { id: 'cls', title: 'CLS', value: '0.1', score: 98 },
+      { id: 'tbt', title: 'TBT', value: null, score: null },
+    ];
+    await pending();
+    await wait(() => auditCalls === 1);
+    resolveAudit({ content: [], structuredContent: finished });
+    await wait(() => $('.perf-scores') && contexts.length === 1);
+    const auditRef = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    check(contexts[0].content[0].text === JSON.stringify({ auditRef, ...finished, url: 'example.test/a' }), 'automatic context changed');
+    const explain = '[data-role="explain-audits"]';
+    const preview = '[data-role="chat-preview"]';
+    const send = '[data-role="chat-send"]';
+    check($(explain)?.getBoundingClientRect().height > 0 && !$('.perf-findings').open, 'failing audits action is missing or hidden when findings are collapsed');
+    check(frame.contentDocument.querySelectorAll('[data-role="suggest-metric"]').length === 2, 'expected actions for measured metrics only');
+    $(explain).click();
+    $('[data-category="accessibility"]').click();
+    check(!$(explain) && !$(preview), 'changing to a category without findings kept the previous action or preview');
+    $('[data-category="performance"]').click();
+    $(explain).click();
+    check(frame.contentDocument.querySelectorAll(preview + ' li').length === 25, 'expected 25 audit preview records');
+    check(text('[data-role="chat-note"]').includes('First 25 of 26 failing audits.'), 'expected a notice for omitted audits');
+    check($(preview).querySelectorAll('img, script, a').length === 0 && !text(preview).includes('abcdefgh12345678'), 'unsafe audit preview');
+    $('[data-role="chat-cancel"]').click();
+    check(!$(preview) && contexts.length === 1 && messages.length === 0, 'opening and cancelling the preview must not send anything');
+    $(explain).click();
+    $(send).click();
+    await wait(() => text('[data-role="chat-status"]') === 'Sent to chat.');
+    const selection = index => JSON.parse(contexts[index].content[0].text.split('\\n')[1]);
+    check(contexts.length === 2 && messages.length === 1, 'expected one audit handoff and message');
+    const auditSelection = selection(1);
+    check(JSON.stringify(auditSelection.records.map(record => record.id)) === JSON.stringify(audits.slice(0, 25).map(audit => audit.id)), 'expected only the first 25 selected audit IDs');
+    check(auditSelection.details.auditRef === auditRef && auditSelection.details.fullReportTool === 'browserless_performance_result', 'missing reference to retrieve the completed report');
+    check(auditSelection.details.url === 'https://example.test/a' && !contexts[1].content[0].text.includes('abcdefgh12345678'), 'audit handoff leaked sensitive data');
+    check(messages[0].role === 'user' && messages[0].content[0].text === 'Explain the failing audits I selected in my Browserless performance report and suggest fixes.', 'unexpected audit message');
+    $('[data-role="suggest-metric"][aria-label="Suggest fixes for CLS"]').click();
+    $(send).click();
+    await wait(() => text('[data-role="chat-status"]') === 'Sent to chat.');
+    check(contexts.length === 3 && messages.length === 2, 'expected one metric handoff and message');
+    check(JSON.stringify(selection(2).records) === JSON.stringify([{ id: 'cls', title: 'CLS', value: '0.1', score: 98 }]), 'expected only the chosen metric');
+    check(messages[1].role === 'user' && messages[1].content[0].text === 'Suggest fixes for the metric I selected in my Browserless performance report.', 'unexpected metric message');
+    $('[data-role="suggest-metric"][aria-label^="Suggest fixes for LCP"]').click();
+    $(send).click();
+    await wait(() => text('[data-role="chat-status"]') === 'Sent to chat.');
+    check(!contexts[3].content[0].text.includes('zyxwvuts12345678'), 'metric record or analysis request leaked a title secret');
   `,
   'pending audit execution error removes loading state': `
     await pending();
@@ -112,6 +176,19 @@ const previewCases = {
     await result();
     await wait(() => $('.perf-scores'));
     check(!$('.perf-preview') && !$('.perf-progress') && text('#performance h1') === 'Performance report', 'result-only rendering');
+  `,
+  'report DOM is unchanged on hosts that advertise just one chat capability': `
+    await result();
+    await wait(() => $('.perf-scores'));
+    const unsupportedDom = $('#performance').innerHTML;
+    check(!$('[data-role="explain-audits"], [data-role="suggest-metric"], [data-role="audit-actions"], [data-role="chat-host"]'), 'unsupported host rendered chat controls');
+    for (const caps of [{ message: { text: {} } }, { updateModelContext: { text: {} } }]) {
+      frame.remove();
+      await open({ serverTools: {}, ...caps });
+      await result();
+      await wait(() => $('.perf-scores'));
+      check($('#performance').innerHTML === unsupportedDom, 'one chat capability changed report DOM');
+    }
   `,
   'cancellation after partial': `
     await partial({ url: 'https://example.com/' });
@@ -191,11 +268,11 @@ describe('performance widget input preview', () => {
               setTimeout(poll, 10);
             }; poll();
           });
-          async function open() {
+          async function open(caps = { serverTools: {} }) {
             frame = document.createElement('iframe');
             frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
             document.body.append(frame);
-            bridge = new AppBridge(null, { name: 'Browser check', version: '1.0.0' }, { serverTools: {} });
+            bridge = new AppBridge(null, { name: 'Browser check', version: '1.0.0' }, caps);
             for (const handler of ['oncalltool', 'onopenlink', 'ondownloadfile', 'onmessage'])
               bridge[handler] = async () => { calls.push(handler); return {}; };
             bridge.oncalltool = async (params, extra) => {
@@ -217,7 +294,7 @@ describe('performance widget input preview', () => {
           }
           const partial = args => bridge.sendToolInputPartial({ arguments: args });
           const complete = args => bridge.sendToolInput({ arguments: args });
-          const result = () => bridge.sendToolResult({ content: [], structuredContent: ${JSON.stringify(report)} });
+          const result = () => bridge.sendToolResult({ content: [], structuredContent: report });
           const pending = () => bridge.sendToolResult({ content: [], structuredContent: {
             kind: 'performance-pending', auditRef: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', requestTimeoutMs: 20000,
             input: { url: 'https://example.com', device: 'mobile', categories: ['performance'] },

@@ -3,6 +3,8 @@ import {
   PerformancePendingSchema,
   previewPerformanceInput,
 } from '../lib/performance-summary.js';
+import { CHAT_HANDOFF_MAX_RECORDS, scrubUrl } from '../lib/chat-handoff.js';
+import { chatSupported, mountChatAction } from './chat-action.mjs';
 import './performance.css';
 
 export function mountPerformancePreview(root) {
@@ -114,6 +116,11 @@ function mountPerformanceAudit(root, rawPayload, app, onResult) {
           .catch(() => {
             /* Completed results remain readable through browserless_performance_result. */
           });
+        onResult({
+          ...result,
+          _meta: { ...result._meta, auditRef: pending.auditRef },
+        });
+        return;
       }
       onResult(result);
     } catch (error) {
@@ -145,13 +152,28 @@ function mountPerformanceAudit(root, rawPayload, app, onResult) {
   };
 }
 
-export function mountPerformance(root, rawPayload, app, onResult) {
+export function mountPerformance(root, rawPayload, app, onResult, auditRef) {
   if (rawPayload?.kind === 'performance-pending')
     return mountPerformanceAudit(root, rawPayload, app, onResult);
   const report = PerformanceViewSchema.parse(rawPayload);
   const controller = new AbortController();
-  root.innerHTML = `<header class="perf-heading"><span class="perf-brand" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 19a10 10 0 1 1 16 0M12 12l5-5M4 12h2m12 0h2M12 2v2"/><circle cx="12" cy="12" r="1.5"/></svg></span><div><h1>Performance report</h1><p data-role="website"></p></div><span class="perf-device" data-role="device"></span></header><div class="perf-scores" role="group" aria-label="Select audit category"></div><section class="perf-lab" aria-label="Lighthouse lab metrics"><div class="perf-section-heading"><h2>Lab metrics</h2><span data-role="lab-device"></span></div><dl class="perf-metrics"></dl><p class="perf-lab-note">Single lab run. INP is not measured; TBT is a responsiveness proxy.</p></section><details class="perf-findings" aria-label="Failing audits"><summary class="perf-findings-heading"><span data-role="findings-title">Failing audits</span><span data-role="findings-count"></span></summary><div class="perf-findings-body"></div></details><footer><span data-role="version"></span><span>Browserless</span></footer>`;
+  const chatEnabled = chatSupported(app);
+  root.innerHTML = `<header class="perf-heading"><span class="perf-brand" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 19a10 10 0 1 1 16 0M12 12l5-5M4 12h2m12 0h2M12 2v2"/><circle cx="12" cy="12" r="1.5"/></svg></span><div><h1>Performance report</h1><p data-role="website"></p></div><span class="perf-device" data-role="device"></span></header><div class="perf-scores" role="group" aria-label="Select audit category"></div><section class="perf-lab" aria-label="Lighthouse lab metrics"><div class="perf-section-heading"><h2>Lab metrics</h2><span data-role="lab-device"></span></div><dl class="perf-metrics"></dl><p class="perf-lab-note">Single lab run. INP is not measured; TBT is a responsiveness proxy.</p></section>${chatEnabled ? '<div data-role="audit-actions"></div>' : ''}<details class="perf-findings" aria-label="Failing audits"><summary class="perf-findings-heading"><span data-role="findings-title">Failing audits</span><span data-role="findings-count"></span></summary><div class="perf-findings-body"></div></details>${chatEnabled ? '<div data-role="chat-host"></div>' : ''}<footer><span data-role="version"></span><span>Browserless</span></footer>`;
   const $ = (selector) => root.querySelector(selector);
+  const chat =
+    chatEnabled && mountChatAction($('[data-role="chat-host"]'), app);
+  const auditActions = $('[data-role="audit-actions"]');
+  const handoff = chat && {
+    tool: 'browserless_performance',
+    view: 'performance',
+    details: {
+      url: scrubUrl(report.url),
+      ...(report.device ? { device: report.device } : {}),
+      ...(typeof auditRef === 'string' && /^[0-9a-f-]{36}$/i.test(auditRef)
+        ? { auditRef, fullReportTool: 'browserless_performance_result' }
+        : {}),
+    },
+  };
   let website = report.url;
   try {
     const url = new URL(report.url);
@@ -191,10 +213,82 @@ export function mountPerformance(root, rawPayload, app, onResult) {
             : rating(metric.score),
       ),
     );
+    if (chat && metric.value !== null) {
+      const button = node('button', 'perf-chat-action', 'Suggest fixes');
+      button.type = 'button';
+      button.dataset.role = 'suggest-metric';
+      button.setAttribute('aria-label', `Suggest fixes for ${metric.title}`);
+      button.addEventListener(
+        'click',
+        () =>
+          chat.open({
+            handoff: {
+              ...handoff,
+              request: `Suggest fixes to improve ${metric.title}.`,
+              fields: [
+                { key: 'id', kind: 'id' },
+                { key: 'title', kind: 'text' },
+                { key: 'value', kind: 'text' },
+                { key: 'score', kind: 'number' },
+              ],
+              records: [metric],
+            },
+            message:
+              'Suggest fixes for the metric I selected in my Browserless performance report.',
+            previewLine: (record) =>
+              `${record.title ?? ''}: ${record.value ?? ''}`,
+          }),
+        { signal: controller.signal },
+      );
+      row.append(button);
+    }
     $('.perf-metrics').append(row);
+  }
+  let selectedCategory;
+  const explain =
+    chat && node('button', 'perf-chat-action', 'Explain these failing audits');
+  if (explain) {
+    explain.type = 'button';
+    explain.dataset.role = 'explain-audits';
+    explain.addEventListener(
+      'click',
+      () => {
+        const { title, audits } = selectedCategory;
+        chat.open({
+          handoff: {
+            ...handoff,
+            request: `Explain the failing ${title} audits and suggest concrete fixes.`,
+            details: { ...handoff.details, category: title },
+            fields: [
+              { key: 'id', kind: 'id' },
+              { key: 'title', kind: 'text' },
+              { key: 'description', kind: 'text' },
+              { key: 'displayValue', kind: 'text' },
+              { key: 'savings', kind: 'text' },
+            ],
+            records: audits.slice(0, CHAT_HANDOFF_MAX_RECORDS),
+          },
+          message:
+            'Explain the failing audits I selected in my Browserless performance report and suggest fixes.',
+          previewLine: (record) => record.title ?? '',
+          note:
+            audits.length > CHAT_HANDOFF_MAX_RECORDS
+              ? `First ${CHAT_HANDOFF_MAX_RECORDS} of ${audits.length} failing audits.`
+              : undefined,
+        });
+      },
+      { signal: controller.signal },
+    );
   }
   const buttons = new Map();
   function select(category) {
+    if (chat) {
+      chat.close();
+      selectedCategory = category;
+      auditActions.replaceChildren(
+        ...(category.audits.length ? [explain] : []),
+      );
+    }
     for (const [id, button] of buttons)
       button.setAttribute('aria-pressed', String(id === category.id));
     $('.perf-findings').open = false;
@@ -284,6 +378,7 @@ export function mountPerformance(root, rawPayload, app, onResult) {
   return {
     dispose() {
       controller.abort();
+      if (chat) chat.dispose();
       root.replaceChildren();
     },
   };

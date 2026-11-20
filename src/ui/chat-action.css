@@ -1,0 +1,28 @@
+.chat-preview {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+.chat-preview [hidden] {
+  display: none !important;
+}
+.chat-preview h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+.chat-preview ul {
+  max-height: 12rem;
+  overflow: auto;
+  padding-inline-start: 1.5rem;
+}
+.chat-preview [data-role='chat-status']:empty {
+  display: none;
+}
+.chat-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
