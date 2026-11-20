@@ -193,6 +193,12 @@ describe('request-log explorer browser', () => {
         assert(ticks(v)[1].checked && ticks(v)[4].checked, 'Refresh lost selected rows');
         v.contextReply(undefined); v.messageReply(() => ({ isError: true }));
         open(); send(); await status('did not send the message');
+        for (const code of [ErrorCode.RequestTimeout, ErrorCode.ConnectionClosed]) {
+          const sent = v.messages.length;
+          v.messageReply(() => { throw new McpError(code, 'No response'); });
+          open(); send(); await status('Check chat before sending again');
+          assert(v.messages.length === sent + 1, 'Retried a message after losing the response');
+        }
         await click(v, 'refresh');
         assert(!button.disabled && role(v, 'error').hidden && v.calls.length === 2, 'Message rejection broke Refresh');
         open(); await click(v, 'more');

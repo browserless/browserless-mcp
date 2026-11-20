@@ -73,13 +73,14 @@ export function mountChatAction(container, app) {
             cancel.textContent = 'Close';
           } catch (error) {
             if (signal.aborted) return;
-            if (shared) {
-              status.textContent =
-                'The host did not send the message. Your selection was shared; ask about it in chat.';
-            } else if (
+            const unconfirmed =
               error?.code === ErrorCode.RequestTimeout ||
-              error?.code === ErrorCode.ConnectionClosed
-            ) {
+              error?.code === ErrorCode.ConnectionClosed;
+            if (shared) {
+              status.textContent = unconfirmed
+                ? 'Your selection was shared, but the message may or may not have been sent. Check chat before sending again.'
+                : 'The host did not send the message. Your selection was shared; ask about it in chat.';
+            } else if (unconfirmed) {
               status.textContent =
                 'The host did not confirm the update. Your selection may already have been shared. No follow-up message was sent.';
             } else {
