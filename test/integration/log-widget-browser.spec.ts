@@ -39,6 +39,7 @@ describe('request-log explorer browser', () => {
         resolveDir: process.cwd(),
         contents: `
       import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
+      import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
       const fixture = ${JSON.stringify(fixture)};
       const scenario = ${JSON.stringify(scenario)};
       const assert = (ok, message) => { if (!ok) throw new Error(message); };
@@ -183,6 +184,11 @@ describe('request-log explorer browser', () => {
         v.contextReply(() => { throw new Error('Context declined'); });
         open(); send(); await status('declined');
         assert(v.messages.length === 3, 'Sent a message after context rejection');
+        for (const code of [ErrorCode.RequestTimeout, ErrorCode.ConnectionClosed]) {
+          v.contextReply(() => { throw new McpError(code, 'No response'); });
+          open(); send(); await status('may already have been shared');
+          assert(v.messages.length === 3, 'Sent a message after an uncertain context update');
+        }
         await click(v, 'refresh');
         assert(ticks(v)[1].checked && ticks(v)[4].checked, 'Refresh lost selected rows');
         v.contextReply(undefined); v.messageReply(() => ({ isError: true }));
@@ -191,7 +197,18 @@ describe('request-log explorer browser', () => {
         assert(!button.disabled && role(v, 'error').hidden && v.calls.length === 2, 'Message rejection broke Refresh');
         open(); await click(v, 'more');
         assert(ticks(v).length === 6 && ticks(v)[1].checked && ticks(v)[4].checked && !role(v, 'chat-preview'), 'Paging lost selection or left a stale preview');
-        ticks(v)[5].click(); await click(v, 'refresh');
+        const stale = new Promise(resolve => { entered = resolve; });
+        v.contextReply(() => new Promise(resolve => { finish = resolve; entered(); }));
+        const sent = v.messages.length;
+        open(); send(); await stale;
+        ticks(v)[5].click();
+        finish();
+        while (!role(v, 'chat-preview')) {
+          open();
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        assert(v.messages.length === sent, 'Sent a message for an invalidated preview');
+        await click(v, 'refresh');
         assert(ticks(v).length === 5 && button.textContent === 'Diagnose selected (2)', 'Refresh did not prune a missing row');
         open(); v.mode('unavailable'); await click(v, 'refresh');
         assert(!role(v, 'chat-preview') && ticks(v).length === 0 && button.disabled, 'Revocation left sharing enabled');
@@ -204,7 +221,7 @@ describe('request-log explorer browser', () => {
         boxes[0].click();
         assert(!boxes[25].disabled && !role(many, 'chat-limit').textContent, 'Removing selection did not release the limit');
         await many.bridge.teardownResource({}); many.frame.remove();
-        for (const partial of [{ serverTools: {} }, { serverTools: {}, message: { text: {} } }, { serverTools: {}, updateModelContext: { text: {} } }]) {
+        for (const partial of [{ serverTools: {} }, { serverTools: {}, message: { text: {} } }, { serverTools: {}, updateModelContext: { text: {} } }, { ...caps, message: { image: {} } }, { ...caps, updateModelContext: { image: {} } }]) {
           const unsupported = await mount(initial, true, partial);
           assertUnsupported(unsupported);
           await unsupported.bridge.teardownResource({}); unsupported.frame.remove();

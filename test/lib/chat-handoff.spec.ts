@@ -32,7 +32,10 @@ describe('widget chat handoff', () => {
           status: 12,
           id: 'req-1.a:b_2',
         },
-        { url: 'not a url?token=SECRET123' },
+        {
+          message: 'Authorization: Bearer abcd+efgh/ijkl~mnop== (expired)',
+          url: 'not a url?token=SECRET123',
+        },
       ],
     });
     const [header, json] = built.text.split('\n');
@@ -44,7 +47,7 @@ describe('widget chat handoff', () => {
         status: 12,
         id: 'req-1.a:b_2',
       },
-      { url: 'not a url' },
+      { message: 'Authorization: [REDACTED] (expired)', url: 'not a url' },
     ];
     assert.deepEqual(built.records, records);
     assert.deepEqual(JSON.parse(json), {

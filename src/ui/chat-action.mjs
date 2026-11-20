@@ -1,9 +1,10 @@
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { buildChatHandoff } from '../lib/chat-handoff.js';
 import './chat-action.css';
 
 export function chatSupported(app) {
   const caps = app.getHostCapabilities();
-  return Boolean(caps?.updateModelContext && caps?.message);
+  return Boolean(caps?.updateModelContext?.text && caps?.message?.text);
 }
 
 export function mountChatAction(container, app) {
@@ -59,7 +60,7 @@ export function mountChatAction(container, app) {
             await app.updateModelContext({
               content: [{ type: 'text', text: built.text }],
             });
-            if (disposed) return;
+            if (signal.aborted) return;
             shared = true;
             const result = await app.sendMessage({
               role: 'user',
@@ -70,11 +71,21 @@ export function mountChatAction(container, app) {
             status.textContent = 'Sent to chat.';
             send.hidden = true;
             cancel.textContent = 'Close';
-          } catch {
+          } catch (error) {
             if (signal.aborted) return;
-            status.textContent = shared
-              ? 'The host did not send the message. Your selection was shared; ask about it in chat.'
-              : 'The host declined to share this selection. Nothing was sent.';
+            if (shared) {
+              status.textContent =
+                'The host did not send the message. Your selection was shared; ask about it in chat.';
+            } else if (
+              error?.code === ErrorCode.RequestTimeout ||
+              error?.code === ErrorCode.ConnectionClosed
+            ) {
+              status.textContent =
+                'The host did not confirm the update. Your selection may already have been shared. No follow-up message was sent.';
+            } else {
+              status.textContent =
+                'The host declined to share this selection. Nothing was sent.';
+            }
           } finally {
             pending = false;
             if (!signal.aborted) send.disabled = cancel.disabled = false;
