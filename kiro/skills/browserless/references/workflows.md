@@ -59,12 +59,15 @@ status instructions and report partial results as partial.
 
 ## Start and retain a browser session
 
-First call to `browserless_agent`:
+First call to `browserless_agent`: navigate with `goto`, then request a `snapshot` in the same batch.
 
 ```json
 {
   "keepSessionAlive": true,
-  "commands": [{ "method": "goto", "params": { "url": "https://example.com" } }]
+  "commands": [
+    { "method": "goto", "params": { "url": "https://example.com" } },
+    { "method": "snapshot" }
+  ]
 }
 ```
 

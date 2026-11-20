@@ -51,7 +51,7 @@ Critical confirmations ("Delete?"). Don't auto-dismiss. Find explicit button (`C
 
 ## After closing
 
-- Refs behind modal still valid (overlay, not reflow)
+- Re-snapshot after closing; refs behind the modal may have changed
 - Focus/scroll may have shifted — re-snapshot before type/scroll actions
 
 ## Avoid
