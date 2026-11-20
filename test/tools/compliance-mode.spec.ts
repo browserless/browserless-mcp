@@ -267,11 +267,12 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full stdio mode registers exactly the 21 tools (regression guard)', () => {
+  it('full stdio mode registers exactly the 22 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
       'browserless_agent',
+      'browserless_agent_runs',
       'browserless_crawl',
       'browserless_export',
       'browserless_function',
@@ -317,10 +318,10 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('full HTTP adds stage_file and the handoff reader for exactly 23 tools', () => {
+  it('full HTTP adds stage_file and the handoff reader for exactly 24 tools', () => {
     const stdio = captureTools(false).names;
     const http = captureTools(false, 'httpStream').names;
-    expect(http).to.have.length(23);
+    expect(http).to.have.length(24);
     expect(http).to.deep.equal(
       [...stdio, 'browserless_stage_file', 'browserless_handoff_state'].sort(),
     );

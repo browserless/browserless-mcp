@@ -18,6 +18,7 @@ import { registerSessionsTool } from './sessions.js';
 import { registerShowTools } from './show.js';
 import { registerViewWidget } from '../resources/view-widget.js';
 import { registerLogsTool } from './logs.js';
+import { registerAgentRunsTool } from './agent-runs.js';
 import { registerStripeLinkConnectTool } from './link-connect.js';
 import { registerStripeLinkCheckoutTool } from './link-checkout.js';
 import { isCompliant } from './compliance.js';
@@ -94,6 +95,10 @@ export function registerSurface(
     {
       surface: 'full',
       register: () => registerLogsTool(server, config, analytics),
+    },
+    {
+      surface: 'full',
+      register: () => registerAgentRunsTool(server, config, analytics),
     },
     // The connector exposes tools only, with no status resource.
     { surface: 'full', register: () => registerStatusResource(server, config) },

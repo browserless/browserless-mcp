@@ -70,7 +70,8 @@ Replay playback is not a save-only operation: without an MCP Apps view, players 
 | `browserless_account`      | Read the account behind the current token: plan, unit balance, billing period, and API key names. Never returns API token values.                                                                                                                                                                                                                                                                                                                           |
 | `browserless_usage`        | Read request and unit consumption: successes, errors, timeouts, queueing, peak concurrency, captchas, proxy bytes and units. Optionally scoped to specific API keys.                                                                                                                                                                                                                                                                                        |
 | `browserless_sessions`     | Inspect active/persistent sessions, recordings, and integrations. `action: "replay"` prepares a recording and offline player. On the full surface, MCP Apps clients also receive a `viewRef` for `browserless_show`.                                                                                                                                                                                                                                        |
-| `browserless_show`         | Display an owned, previously prepared session replay, screenshot gallery, or recorded video inline. Full surface only; never repeats the capture, recording download, or browser operation.                                                                                                                                                                                                                                                                 |
+| `browserless_agent_runs`   | List recent hosted agent runs or read one by its `run_…` ID. MCP Apps clients can open a timeline with `browserless_show`. Full surface only; read-only.                                                                                                                                                                                                                                                                                                    |
+| `browserless_show`         | Display a previously prepared Browserless view, including a session replay, media gallery, or hosted agent run timeline. Full surface only; never repeats browser operations.                                                                                                                                                                                                                                                                               |
 | `browserless_logs`         | Read Browserless's own record of recent requests: what was attempted, whether it failed, why it stopped, how long it took and what it cost. The tool for diagnosing a run that failed on the Browserless side. Available window is plan-dependent.                                                                                                                                                                                                          |
 
 ### Inline session replay
@@ -159,6 +160,19 @@ keep their original deadline. Errors preserve the last successful result;
 expiry, cancellation, and loss of access stop further reads. Host locale and
 timezone control displayed timestamps. The optional model-diagnosis handoff is
 not included.
+
+### Inline agent run timeline
+
+Use `browserless_agent_runs` with `action: "list"` to find recent hosted runs,
+then use `action: "get"` with a `run_…` ID. Pass its returned `viewRef` to
+`browserless_show` to inspect ordered actions, notes, and the result. Clients
+without MCP Apps receive a text timeline instead.
+
+A view lasts up to 15 minutes and ends earlier if the run expires. Only active
+runs can be refreshed. Paused runs show why they are waiting, without takeover
+links or instructions. The HTTP transport can display a finished run's final
+screenshot when one was captured. These reads never start, continue, cancel,
+or repeat a run. Available on the full surface only.
 
 ### Inline account usage and active sessions
 
@@ -800,15 +814,15 @@ cross-field constraints; deployments must support rich REST instructions.
 
 ## MCP Resources
 
-| Resource URI                     | Description                                                                                                                     |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `browserless://api-docs`         | Smart scraper API documentation                                                                                                 |
-| `browserless://status`           | Live service health status                                                                                                      |
-| `ui://browserless/view/v14.html` | Bundled replay, screenshot, video, handoff, account usage, active sessions, and request-log explorer widget (full surface only) |
+| Resource URI                     | Description                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `browserless://api-docs`         | Smart scraper API documentation                                                                                           |
+| `browserless://status`           | Live service health status                                                                                                |
+| `ui://browserless/view/v15.html` | Bundled replay, media, handoff, account usage, active sessions, request logs, and hosted run timeline (full surface only) |
 
-The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v13.html`
+The previous `ui://browserless/view/v1.html` through `ui://browserless/view/v14.html`
 resources remain readable as aliases of the current widget. Newly discovered
-tools advertise v14 so hosts discover the updated request-log explorer.
+tools advertise v15 so hosts discover the hosted run timeline.
 
 ## MCP Prompts
 

@@ -180,12 +180,13 @@ describe('MCP Server Integration', () => {
         if (compliant) {
           expect(names).to.deep.equal(connectorNames);
         } else {
-          expect(names).to.have.length(23);
+          expect(names).to.have.length(24);
           expect(names).not.to.include('browserless_read_page');
           expect(names).to.include.members([
             ...connectorNames.filter(
               (name) => name !== 'browserless_read_page',
             ),
+            'browserless_agent_runs',
             'browserless_stage_file',
             'browserless_show',
             'browserless_view_data',

@@ -845,6 +845,12 @@ export interface ApiClient {
   crawl(params: CrawlRequest): Promise<CrawlStartResponse>;
   getCrawl(crawlId: string, skip?: number): Promise<CrawlStatusResponse>;
   cancelCrawl(crawlId: string): Promise<CrawlCancelResponse>;
+  getAgentRun(runId: string): Promise<unknown>;
+  listAgentRuns(params: {
+    limit?: number;
+    cursor?: string;
+    status?: string;
+  }): Promise<unknown>;
   listProfiles(params?: ListProfilesRequest): Promise<ProfileSummary[]>;
   stripeLinkConnection(
     action: StripeLinkAction,
