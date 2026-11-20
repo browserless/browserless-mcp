@@ -484,6 +484,49 @@ describe('direct agent human handoff over MCP', () => {
         assert.ok(text(rejected).includes('verified inline handoff'));
         assert.ok(!(await snapshot()).isError);
       }
+
+      liveURLOverride = undefined;
+      const carol = await connect('carol', false);
+      const carolOpened = await carol.callTool({
+        name: 'browserless_agent',
+        arguments: {
+          method: 'goto',
+          params: { url: 'https://example.com/' },
+          keepSessionAlive: true,
+        },
+      });
+      assert.ok(!carolOpened.isError, text(carolOpened));
+      const carolHandle = text(carolOpened).match(/s:[a-f0-9-]+/)?.[0];
+      assert.ok(carolHandle);
+      const beforeFallback = minted;
+      const refused = await carol.callTool({
+        name: 'browserless_live_url',
+        arguments: { action: 'handoff', sessionId: carolHandle },
+      });
+      assert.equal(refused.isError, true);
+      assert.deepEqual(refused.content, [
+        {
+          type: 'text',
+          text: 'Inline handoff requires the full HTTP surface and MCP Apps support. Use the agent liveURL command for an external viewer.',
+        },
+      ]);
+      assert.equal(minted, beforeFallback);
+      const fallback = await carol.callTool({
+        name: 'browserless_agent',
+        arguments: {
+          sessionId: carolHandle,
+          method: 'liveURL',
+          params: { interactable: true },
+          keepSessionAlive: true,
+        },
+      });
+      assert.ok(!fallback.isError, text(fallback));
+      assert.ok(
+        text(fallback).includes(
+          `${base}${viewerPath}?i=live-${beforeFallback + 1}`,
+        ),
+      );
+      assert.equal(minted, beforeFallback + 1);
     } finally {
       clearHandoffs();
       await Promise.allSettled(clients.map((client) => client.close()));
