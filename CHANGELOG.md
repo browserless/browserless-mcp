@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.50.0](https://github.com/browserless/browserless-mcp/compare/v1.49.2...v1.50.0) (2026-11-18)
+
+
+### Features
+
+* add authenticated MCP artifact saving ([#577](https://github.com/browserless/browserless-mcp/issues/577)) ([d143b35](https://github.com/browserless/browserless-mcp/commit/d143b35236771c66982799c25d0a2e43fc81e995))
+
+
+### Bug Fixes
+
+* correct browserless_function return-value guidance ([#576](https://github.com/browserless/browserless-mcp/issues/576)) ([1bf89b2](https://github.com/browserless/browserless-mcp/commit/1bf89b2e60345178b3bf6b5f608d457256e84428))
+
+## [1.49.2](https://github.com/browserless/browserless-mcp/compare/v1.49.1...v1.49.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* include patch prerequisites in Docker build ([#572](https://github.com/browserless/browserless-mcp/issues/572)) ([c843420](https://github.com/browserless/browserless-mcp/commit/c843420847389df7cd8aaaeb86be98b5931af9ba))
+
+## [1.49.1](https://github.com/browserless/browserless-mcp/compare/v1.49.0...v1.49.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* include replay verifier scripts in runtime image ([#569](https://github.com/browserless/browserless-mcp/issues/569)) ([7b9a18c](https://github.com/browserless/browserless-mcp/commit/7b9a18c4603286122abf06d3ffaf17803accf339))
+* mitigate picomatch repeated extglobs in development tooling ([#570](https://github.com/browserless/browserless-mcp/issues/570)) ([64eeb24](https://github.com/browserless/browserless-mcp/commit/64eeb24c60f680f3193bd6c8a9d97bca43d1b341))
+
+## [1.49.0](https://github.com/browserless/browserless-mcp/compare/v1.48.0...v1.49.0) (2026-11-17)
+
+
+### Features
+
+* retire legacy SSE transport ([#544](https://github.com/browserless/browserless-mcp/issues/544)) ([6b72795](https://github.com/browserless/browserless-mcp/commit/6b7279504876e76ccdf81565b7e476a0503d5b6b))
+
+
+### Bug Fixes
+
+* isolate resumed browser session scope ([#547](https://github.com/browserless/browserless-mcp/issues/547)) ([c77e8c4](https://github.com/browserless/browserless-mcp/commit/c77e8c403bef172ad6107c3059601f6c161dc539))
+* refuse unknown API keys when an MCP session opens ([#551](https://github.com/browserless/browserless-mcp/issues/551)) ([75fe91b](https://github.com/browserless/browserless-mcp/commit/75fe91b98df50d2cf8861db54757d0ad8a5778b5))
+* scope retained replay to its session ([#545](https://github.com/browserless/browserless-mcp/issues/545)) ([045bf73](https://github.com/browserless/browserless-mcp/commit/045bf732daaac8d645bb0b3767de5bff57812866))
+
+## [1.48.0](https://github.com/browserless/browserless-mcp/compare/v1.47.1...v1.48.0) (2026-11-12)
+
+
+### Features
+
+* record session opens and summarize analytics delivery failures ([#549](https://github.com/browserless/browserless-mcp/issues/549)) ([1d01801](https://github.com/browserless/browserless-mcp/commit/1d018017050a408ea59a5352ca58549bab42b826))
+
+
+### Bug Fixes
+
+* avoid opening browsers for late skill reports ([#541](https://github.com/browserless/browserless-mcp/issues/541)) ([c1169ee](https://github.com/browserless/browserless-mcp/commit/c1169ee6877daa6bd17eb8affa894b4c1e904b5d))
+* contain transport request failures ([#539](https://github.com/browserless/browserless-mcp/issues/539)) ([ef2c5f3](https://github.com/browserless/browserless-mcp/commit/ef2c5f3c638cbfbf21340bbe534452e30352d91b))
+* escape session diagnostic strings ([#525](https://github.com/browserless/browserless-mcp/issues/525)) ([b2c9b46](https://github.com/browserless/browserless-mcp/commit/b2c9b46a08d38579829ac11793baf1a5bffd994b))
+* require https for hosted Browserless API URL overrides ([#543](https://github.com/browserless/browserless-mcp/issues/543)) ([8fad97d](https://github.com/browserless/browserless-mcp/commit/8fad97d44535c12390b0be2f70ca52fafc2acc6d))
+* require the opening credential on legacy SSE message posts ([#503](https://github.com/browserless/browserless-mcp/issues/503)) ([030ef7a](https://github.com/browserless/browserless-mcp/commit/030ef7a8d3aef559c6fd6be15ca8cd14718994df))
+* validate parsed OAuth redirect policies ([#546](https://github.com/browserless/browserless-mcp/issues/546)) ([aa161c8](https://github.com/browserless/browserless-mcp/commit/aa161c8d79a521b03766d0aff13d293a61f54e11))
+
 ## [1.47.1](https://github.com/browserless/browserless-mcp/compare/v1.47.0...v1.47.1) (2026-11-10)
 
 

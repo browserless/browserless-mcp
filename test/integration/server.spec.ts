@@ -23,8 +23,8 @@ import { z } from 'zod';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import { defineTool } from '../../src/lib/define-tool.js';
 import { resolveBrowserlessRequestAuth } from '../../src/lib/http-auth.js';
+import { isApiKeyCheck, stubApiKeyCheck } from '../helpers/api-key-check.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerSmartScraperTool } from '../../src/tools/smartscraper.js';
 import { registerApiDocsResource } from '../../src/resources/api-docs.js';
@@ -60,6 +60,7 @@ describe('MCP Server Integration', () => {
   let server: FastMCP;
 
   it('runs the download recipe with a local owner token and fails safely otherwise', async () => {
+    stubApiKeyCheck();
     const port = await freePort();
     const dir = await mkdtemp(join(tmpdir(), 'mcp-curl-'));
     const owner = downloadOwner('owner-token');
@@ -125,6 +126,7 @@ describe('MCP Server Integration', () => {
           TRANSPORT: 'httpStream',
           PORT: String(port),
           MCP_COMPLIANCE_MODE: String(compliant),
+          BROWSERLESS_API_URL: 'http://127.0.0.1:9',
           OAUTH_ENABLED: 'false',
           REDIS_URL: '',
           AMPLITUDE_API_KEY: '',
@@ -305,6 +307,98 @@ describe('MCP Server Integration', () => {
     });
   }
 
+  for (const oauth of [false, true]) {
+    for (const compliant of [false, true]) {
+      it(`returns 404 for retired endpoints with OAuth=${oauth}, compliance=${compliant}`, async () => {
+        const port = await freePort();
+        const base = `http://127.0.0.1:${port}`;
+        const key = 'a'.repeat(24) + '+&=%/#';
+        const child = spawn(process.execPath, ['build/src/index.js'], {
+          env: {
+            ...process.env,
+            TRANSPORT: 'httpStream',
+            PORT: String(port),
+            BROWSERLESS_API_SERVER: 'http://127.0.0.1:9',
+            BROWSERLESS_API_URL: 'http://127.0.0.1:9',
+            BROWSERLESS_MAX_RETRIES: '0',
+            OAUTH_ENABLED: String(oauth),
+            MCP_COMPLIANCE_MODE: String(compliant),
+            MCP_BASE_URL: base,
+            SUPABASE_URL: 'http://127.0.0.1:9',
+            SUPABASE_OAUTH_CLIENT_ID: 'test',
+            SUPABASE_OAUTH_CLIENT_SECRET: 'test',
+            REDIS_URL: '',
+            AMPLITUDE_API_KEY: '',
+            ANALYTICS_ENABLED: 'false',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let output = '';
+        child.stdout.on('data', (chunk) => {
+          output += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+          output += chunk;
+        });
+        const exited = once(child, 'exit');
+        try {
+          let ready = false;
+          for (let i = 0; i < 100; i++) {
+            try {
+              ready = (await fetch(`${base}/health`)).ok;
+            } catch {
+              /* starting */
+            }
+            if (ready || child.exitCode !== null) break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          expect(ready).to.equal(true);
+          for (const auth of ['none', 'header', 'query']) {
+            for (const [method, path] of [
+              ['GET', '/sse'],
+              ['POST', '/messages'],
+              ['POST', '/messages?sessionId=retired'],
+            ]) {
+              const url = new URL(path, base);
+              if (auth === 'query') url.searchParams.set('token', key);
+              const response = await fetch(url, {
+                method,
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(auth === 'header'
+                    ? { Authorization: `Bearer ${key}` }
+                    : {}),
+                },
+                ...(method === 'POST'
+                  ? {
+                      body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: 'tools/list',
+                      }),
+                    }
+                  : {}),
+                signal: AbortSignal.timeout(3000),
+              });
+              await response.body?.cancel();
+              expect(
+                response.status,
+                `${method} ${path}, auth=${auth}`,
+              ).to.equal(404);
+              expect(response.headers.has('www-authenticate')).to.equal(false);
+            }
+          }
+        } finally {
+          child.kill('SIGTERM');
+          await exited;
+        }
+        expect(output).not.to.include(key);
+        expect(output).not.to.include(encodeURIComponent(key));
+        expect(output).not.to.include('HTTP Stream session established');
+      });
+    }
+  }
+
   it('preserves OAuth refresh and registration bodies and limits only registration POSTs per address', async () => {
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
@@ -422,51 +516,328 @@ describe('MCP Server Integration', () => {
     }
   });
 
-  it('preserves legacy SSE initialization and tool POST bodies', async () => {
+  it('lists tools after initializing a real FastMCP session through the patched transport', async () => {
     const port = await freePort();
-    server = new FastMCP({ name: 'legacy-sse-test', version: '1.0.0' });
+    server = new FastMCP({ name: 'initialization-test', version: '1.0.0' });
     server.addTool({
       name: 'echo',
       description: 'Returns the submitted value',
       parameters: z.object({ value: z.string() }),
       execute: async ({ value }) => value,
     });
-    const client = new Client({ name: 'legacy-sse-client', version: '1.0.0' });
+    const client = new Client({
+      name: 'initialization-client',
+      version: '1.0.0',
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+    );
     try {
       await server.start({
         transportType: 'httpStream',
         httpStream: { port, host: '127.0.0.1' },
       });
-      await client.connect(
-        new SSEClientTransport(new URL(`http://127.0.0.1:${port}/sse`), {
-          fetch: (url, init) =>
-            fetch(url, {
-              ...init,
-              signal:
-                init?.method === 'POST'
-                  ? AbortSignal.any([
-                      ...(init?.signal ? [init.signal] : []),
-                      AbortSignal.timeout(3000),
-                    ])
-                  : init?.signal,
-            }),
-        }),
-        { timeout: 3000 },
-      );
-      expect(client.getServerVersion()?.name).to.equal('legacy-sse-test');
+      await client.connect(transport);
+      expect(transport.sessionId).to.be.a('string').and.not.equal('');
       expect(
-        await client.callTool({
-          name: 'echo',
-          arguments: { value: 'legacy POST body + & = ✓' },
-        }),
-      ).to.deep.equal({
-        content: [{ type: 'text', text: 'legacy POST body + & = ✓' }],
-      });
+        (await client.listTools()).tools.map((tool) => tool.name),
+      ).to.include('echo');
+      expect(
+        await client.callTool({ name: 'echo', arguments: { value: 'ready' } }),
+      ).to.have.deep.property('content', [{ type: 'text', text: 'ready' }]);
     } finally {
-      await client.close();
+      await client.close().catch(() => {});
       await server.stop();
     }
   });
+
+  for (const scenario of [
+    'registry',
+    'rejection',
+    'partial response',
+    'partial fixed-length response',
+    'preset headers',
+    'preset status message',
+    'pipelined requests',
+    'invalid response metadata',
+    'legacy SSE close',
+    'streamable close',
+    'streamable connect rejection',
+    'stateless connect rejection',
+    'HTTPS rejection',
+  ]) {
+    it(`contains transport request failures: ${scenario}`, async () => {
+      const port = await freePort();
+      // A child with strict rejection handling must survive the request;
+      // an in-process test runner could mask an unhandled listener rejection.
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          '--unhandled-rejections=strict',
+          '--input-type=module',
+          '-e',
+          `
+          import assert from 'node:assert/strict';
+          import { createRequire } from 'node:module';
+          import { createConnection } from 'node:net';
+          import { request } from 'node:https';
+          import { execFileSync } from 'node:child_process';
+          import { mkdtempSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { join } from 'node:path';
+          import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+          const require = createRequire(import.meta.url);
+          const { startHTTPServer } = await import(
+            createRequire(require.resolve('fastmcp')).resolve('mcp-proxy')
+          );
+          const base = 'http://127.0.0.1:${port}';
+          const scenario = ${JSON.stringify(scenario)};
+          const tlsDirectory = scenario === 'HTTPS rejection' ? mkdtempSync(join(tmpdir(), 'mcp-https-')) : null;
+          if (tlsDirectory) execFileSync('openssl', [
+            'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+            '-keyout', join(tlsDirectory, 'key.pem'), '-out', join(tlsDirectory, 'cert.pem'),
+          ], { stdio: 'ignore' });
+          let closeCalls = 0;
+          const server = await startHTTPServer({
+            host: '127.0.0.1', port: ${port},
+            ...(tlsDirectory ? { sslKey: join(tlsDirectory, 'key.pem'), sslCert: join(tlsDirectory, 'cert.pem') } : {}),
+            stateless: scenario === 'stateless connect rejection',
+            enableJsonResponse: scenario.endsWith('connect rejection'),
+            createServer: async () => {
+              if (scenario.endsWith('close')) return new Server({ name: 'cleanup-test', version: '1.0.0' }, { capabilities: {} });
+              if (scenario.endsWith('connect rejection')) {
+                const session = new Server({ name: 'connect-test', version: '1.0.0' }, { capabilities: {} });
+                const connect = session.connect.bind(session);
+                session.connect = async transport => {
+                  await connect(transport);
+                  throw new Error('local connect failure');
+                };
+                return session;
+              }
+              throw new Error('unexpected session');
+            },
+            onClose: async () => {
+              closeCalls++;
+              throw new Error('local close failure');
+            },
+            onUnhandledRequest: async (req, res) => {
+              if (req.url !== '/fail') return;
+              if (scenario === 'partial fixed-length response') res.setHeader('Content-Length', '100');
+              if (scenario.startsWith('partial')) res.write('partial');
+              if (scenario === 'preset headers') {
+                res.setHeader('Content-Length', '100');
+                res.setHeader('Content-Encoding', 'gzip');
+                res.setHeader('Trailer', 'X-Checksum');
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Access-Control-Allow-Origin', 'https://client.example');
+                res.setHeader('Set-Cookie', 'failed-handler=1');
+                res.setHeader('Cache-Control', 'public, max-age=3600');
+                res.setHeader('Content-Disposition', 'attachment; filename="failed.txt"');
+                res.setHeader('X-Failed-Handler', 'private metadata');
+              }
+              if (scenario === 'preset status message') res.statusMessage = 'Cached Success';
+              if (scenario === 'invalid response metadata') res.statusMessage = '\\n';
+              throw new Error('local request failure');
+            },
+          });
+          try {
+            if (scenario === 'HTTPS rejection') {
+              for (const path of ['/fail', '/ping']) {
+                const response = await new Promise((resolve, reject) => {
+                  const req = request({ host: '127.0.0.1', port: ${port}, path, rejectUnauthorized: false, agent: false }, res => {
+                    let body = '';
+                    res.setEncoding('utf8');
+                    res.on('data', chunk => { body += chunk; });
+                    res.on('error', reject);
+                    res.on('end', () => resolve({ status: res.statusCode, body }));
+                  });
+                  req.setTimeout(2000, () => req.destroy(new Error('HTTPS timeout')));
+                  req.on('error', reject);
+                  req.end();
+                });
+                assert.deepEqual(response, path === '/fail' ? { status: 500, body: 'Internal Server Error' } : { status: 200, body: 'pong' });
+              }
+            } else if (scenario.endsWith('connect rejection')) {
+              const response = await fetch(base + '/mcp', {
+                method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1,
+                  method: scenario === 'stateless connect rejection' ? 'tools/list' : 'initialize',
+                  params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'connect-test', version: '1.0.0' } },
+                }), signal: AbortSignal.timeout(2000),
+              });
+              assert.equal(response.status, 200);
+              const body = await response.json();
+              if (scenario === 'stateless connect rejection') assert.equal(body.error.code, -32601);
+              else assert.equal(body.result.protocolVersion, '2025-03-26');
+            } else if (scenario.endsWith('close')) {
+              if (scenario === 'legacy SSE close') {
+                const response = await fetch(base + '/sse', { signal: AbortSignal.timeout(2000) });
+                assert.equal(response.status, 200);
+                await response.body.cancel();
+              } else {
+                const response = await fetch(base + '/mcp', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+                  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+                    protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'cleanup-test', version: '1.0.0' },
+                  } }),
+                  signal: AbortSignal.timeout(2000),
+                });
+                assert.equal(response.status, 200);
+                const sessionId = response.headers.get('mcp-session-id');
+                assert.ok(sessionId);
+                await response.text();
+                const deleted = await fetch(base + '/mcp', {
+                  method: 'DELETE', headers: { 'mcp-session-id': sessionId }, signal: AbortSignal.timeout(2000),
+                });
+                assert.equal(deleted.status, 200);
+                await deleted.text();
+              }
+              for (let i = 0; i < 100 && !closeCalls; i++) await new Promise(resolve => setTimeout(resolve, 10));
+              assert.equal(closeCalls, 1);
+              // Let any rejected async close listener reach Node's fatal policy.
+              await new Promise(resolve => setImmediate(resolve));
+            } else if (scenario === 'registry') {
+              for (const id of ['constructor', '__proto__', 'toString', 'unknown-session']) {
+                const response = await fetch(base + '/messages?sessionId=' + id, {
+                  method: 'POST', body: '{}', signal: AbortSignal.timeout(2000),
+                });
+                assert.equal(response.status, 400);
+                assert.equal(await response.text(), 'No active transport');
+                for (const method of ['POST', 'GET', 'DELETE']) {
+                  const stream = await fetch(base + '/mcp', {
+                    method,
+                    headers: {
+                      'mcp-session-id': id,
+                      'content-type': 'application/json',
+                      accept: 'application/json, text/event-stream',
+                    },
+                    ...(method === 'POST' ? { body: '{}' } : {}),
+                    signal: AbortSignal.timeout(2000),
+                  });
+                  assert.equal(stream.status, method === 'POST' ? 404 : 400);
+                  await stream.text();
+                }
+              }
+            } else if (scenario === 'pipelined requests') {
+              const response = await new Promise((resolve, reject) => {
+                const socket = createConnection(${port}, '127.0.0.1', () => {
+                  socket.write('GET /fail HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n');
+                });
+                let body = '';
+                socket.setEncoding('utf8');
+                socket.setTimeout(2000, () => socket.destroy(new Error('pipeline timeout')));
+                socket.on('data', (chunk) => { body += chunk; });
+                socket.on('error', reject);
+                socket.on('end', () => resolve(body));
+              });
+              const headerEnd = response.indexOf('\\r\\n\\r\\n');
+              const headers = response.slice(0, headerEnd).toLowerCase().split('\\r\\n');
+              assert.ok(headers[0].startsWith('http/1.1 500 '));
+              const length = Number(headers.find((header) => header.startsWith('content-length:'))?.split(':')[1]);
+              assert.equal(length, Buffer.byteLength('Internal Server Error'));
+              const bodyEnd = headerEnd + 4 + length;
+              assert.equal(response.slice(headerEnd + 4, bodyEnd), 'Internal Server Error');
+              assert.ok(response.slice(bodyEnd).startsWith('HTTP/1.1 200 '));
+              assert.ok(response.slice(bodyEnd).includes('pong'));
+            } else if (scenario.startsWith('partial')) {
+              await assert.rejects(async () => {
+                const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
+                await response.text();
+              }, error => {
+                assert.notEqual(error.name, 'TimeoutError');
+                return true;
+              });
+            } else {
+              const response = await fetch(base + '/fail', { signal: AbortSignal.timeout(2000) });
+              assert.equal(response.status, 500);
+              assert.equal(response.statusText, 'Internal Server Error');
+              assert.equal(await response.text(), 'Internal Server Error');
+              if (scenario === 'preset headers') {
+                for (const name of ['content-encoding', 'trailer', 'set-cookie', 'cache-control', 'content-disposition', 'access-control-allow-origin', 'x-failed-handler']) {
+                  assert.equal(response.headers.get(name), null, name);
+                }
+                assert.equal(response.headers.get('content-type'), 'text/plain; charset=utf-8');
+              }
+            }
+            if (!tlsDirectory) {
+              const ping = await fetch(base + '/ping', { signal: AbortSignal.timeout(2000) });
+              assert.equal(ping.status, 200);
+              assert.equal(await ping.text(), 'pong');
+            }
+            console.log('survived');
+          } finally {
+            await server.close();
+            if (tlsDirectory) rmSync(tlsDirectory, { recursive: true, force: true });
+          }
+          `,
+        ],
+        { timeout: 10000 },
+      );
+      expect(stdout).to.include('survived');
+    });
+  }
+
+  for (const stateless of [false, true]) {
+    it(`retires legacy endpoints before authentication with stateless=${stateless}`, async () => {
+      const port = await freePort();
+      const authenticate = sinon.stub().resolves({ token: 'test-token' });
+      server = new FastMCP({
+        name: 'transport-test',
+        version: '1.0.0',
+        authenticate,
+      });
+      server.addTool({
+        name: 'echo',
+        description: 'Returns the submitted value',
+        parameters: z.object({ value: z.string() }),
+        execute: async ({ value }) => value,
+      });
+      const client = new Client({ name: 'transport-client', version: '1.0.0' });
+      try {
+        await server.start({
+          transportType: 'httpStream',
+          httpStream: { port, host: '127.0.0.1', stateless },
+        });
+        const base = `http://127.0.0.1:${port}`;
+        for (const key of [undefined, 'test-token']) {
+          for (const [method, path] of [
+            ['GET', '/sse'],
+            ['GET', '/sse?token=test-token'],
+            ['POST', '/messages'],
+            ['POST', '/messages?sessionId=retired&token=test-token'],
+          ]) {
+            const response = await fetch(base + path, {
+              method,
+              headers: {
+                Accept: 'application/json, text/event-stream',
+                ...(key ? { Authorization: `Bearer ${key}` } : {}),
+              },
+              signal: AbortSignal.timeout(3000),
+            });
+            await response.body?.cancel();
+            expect(response.status, `${method} ${path}`).to.equal(404);
+          }
+        }
+        expect(authenticate.callCount).to.equal(0);
+        expect(server.sessions).to.have.length(0);
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL(`${base}/mcp`)),
+        );
+        expect(
+          await client.callTool({
+            name: 'echo',
+            arguments: { value: 'POST body + & = ✓' },
+          }),
+        ).to.deep.equal({
+          content: [{ type: 'text', text: 'POST body + & = ✓' }],
+        });
+      } finally {
+        await client.close();
+        await server.stop();
+      }
+    });
+  }
 
   afterEach(async () => {
     sinon.restore();
@@ -636,6 +1007,7 @@ describe('MCP Server Integration', () => {
   });
 
   it('emits attribution for a real streamable-HTTP session', async () => {
+    stubApiKeyCheck();
     const port = await freePort();
     const authenticatedServer = new FastMCP<BrowserlessSession>({
       name: 'attribution-test',
@@ -823,6 +1195,7 @@ describe('MCP Server Integration', () => {
   });
 
   it('retains an allowed httpStream override in the authenticated session', async () => {
+    const check = stubApiKeyCheck();
     const port = await freePort();
     server = new FastMCP<BrowserlessSession>({
       name: 'browserless-mcp',
@@ -862,6 +1235,12 @@ describe('MCP Server Integration', () => {
           text: 'https://production-lon.browserless.io',
         },
       ]);
+      expect(
+        check
+          .getCalls()
+          .filter((call) => isApiKeyCheck(call.args[0]))
+          .map((call) => call.args[0]),
+      ).to.deep.equal(['https://production-lon.browserless.io/active']);
     } finally {
       await client.close().catch(() => {});
       await server.stop();

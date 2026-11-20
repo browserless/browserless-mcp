@@ -66,6 +66,12 @@ export const SmartScraperParamsSchema = z
       .optional()
       .describe('Request timeout in milliseconds'),
     profile: profileField('before scraping'),
+    toDisk: z
+      .boolean()
+      .optional()
+      .describe(
+        'Save screenshot/PDF attachments outside model context; requested text extraction remains text. Native MCP sessions default to saving binary attachments. false explicitly requests inline analysis. Legacy/stdio omission preserves existing output.',
+      ),
     onlyMainContent: z
       .boolean()
       .optional()
@@ -197,7 +203,10 @@ export function registerSmartScraperTool(
       `live session first, or omit the profile parameter to scrape ` +
       `anonymously.`,
     cache,
-    run: async ({ client, params }) => client.smartScrape(params),
+    run: async ({ client, params }) => {
+      const { toDisk: _toDisk, ...request } = params;
+      return client.smartScrape(request);
+    },
     analyticsProps: (params, result) => ({
       url: params.url,
       formats: (params.formats ?? ['markdown']).join(','),
@@ -212,7 +221,11 @@ export function registerSmartScraperTool(
         params.includeTags?.length || params.excludeTags?.length
       ),
     }),
-    format: async (response, params, { token, sessionId }) => {
+    format: async (
+      response,
+      params,
+      { token, sessionId, artifactDelivery },
+    ) => {
       if (!response.ok) {
         throw new UserError(
           `Scraping failed: ${response.message ?? 'Unknown error'} ` +
@@ -304,22 +317,41 @@ export function registerSmartScraperTool(
           '---',
         ].join('\n'),
       });
-      if (response.screenshot) {
+      const saveAttachments =
+        params.toDisk === true ||
+        (params.toDisk === undefined && artifactDelivery === 'mcp-resource');
+      if (response.screenshot && !saveAttachments) {
         blocks.push({
           type: 'image' as const,
           data: response.screenshot,
           mimeType: 'image/png',
         });
       }
-      if (response.pdf) {
+      if (
+        (response.pdf && params.toDisk !== false) ||
+        (response.screenshot && saveAttachments)
+      ) {
         blocks.push(
           ...(await formatDownloads(
             [
-              {
-                filename: 'document.pdf',
-                mimeType: 'application/pdf',
-                data: response.pdf,
-              },
+              ...(response.pdf && params.toDisk !== false
+                ? [
+                    {
+                      filename: 'document.pdf',
+                      mimeType: 'application/pdf',
+                      data: response.pdf,
+                    },
+                  ]
+                : []),
+              ...(response.screenshot && saveAttachments
+                ? [
+                    {
+                      filename: 'screenshot.png',
+                      mimeType: 'image/png',
+                      data: response.screenshot,
+                    },
+                  ]
+                : []),
             ],
             '',
             '',
@@ -328,9 +360,20 @@ export function registerSmartScraperTool(
               mcpBaseUrl: config.mcpBaseUrl,
               token,
               sessionId,
+              artifactDelivery,
             },
           )),
         );
+      }
+      if (response.pdf && params.toDisk === false) {
+        blocks.push({
+          type: 'resource',
+          resource: {
+            uri: 'browserless://smartscraper/document.pdf',
+            mimeType: 'application/pdf',
+            blob: response.pdf,
+          },
+        });
       }
       if (response.links && response.links.length > 0) {
         blocks.push({

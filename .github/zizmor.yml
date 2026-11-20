@@ -1,0 +1,5 @@
+rules:
+  dependabot-cooldown:
+    config:
+      # Approved minimum; test.yml also checks past zizmor 1.32.0's early return.
+      days: 3

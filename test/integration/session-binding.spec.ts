@@ -10,7 +10,10 @@ import {
   authInputFromRequest,
   resolveBrowserlessAuth,
 } from '../../src/lib/http-auth.js';
-import { admitSessionRequest } from '../../src/lib/session-binding.js';
+import {
+  admitSessionRequest,
+  requestSessionId,
+} from '../../src/lib/session-binding.js';
 import { clearResolverCache } from '../../src/lib/account-resolver.js';
 import { BoundedEventStore } from '../../src/lib/bounded-event-store.js';
 
@@ -107,12 +110,7 @@ async function fixture() {
     version: '1.0.0',
     authenticate: async (req) => {
       const auth = await resolveBrowserlessAuth(authInputFromRequest(req), cfg);
-      const header = req.headers['mcp-session-id'];
-      admitSessionRequest(
-        Array.isArray(header) ? header[0] : header,
-        auth,
-        server.sessions,
-      );
+      admitSessionRequest(requestSessionId(req), auth, server.sessions);
       return auth;
     },
   });
@@ -294,10 +292,15 @@ describe('session request identity', () => {
         expect(denied.status).to.equal(key === undefined ? 401 : 404);
         expect(await denied.text()).not.to.include('"result"');
       }
-      const other = f.track(await f.get(b, foreignKeys[0], cursor));
-      const sameOwnerOtherSession = f.track(
-        await f.get(otherOwnerSession, refreshedKey, cursor),
-      );
+      for (const [session, key, replayCursor] of [
+        [b, foreignKeys[0], cursor],
+        [otherOwnerSession, refreshedKey, cursor],
+        [a, refreshedKey, 'unknown-cursor'],
+      ]) {
+        const denied = await f.get(session, key, replayCursor);
+        expect(denied.status).to.equal(400);
+        expect(await denied.text()).not.to.include('"result"');
+      }
       const owner = f.track(await f.get(a, refreshedKey, cursor));
       await waitFor(() =>
         owner.frames.some((frame) => frame.data.includes('"id":42')),
@@ -308,8 +311,6 @@ describe('session request identity', () => {
         ).result,
       ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });
       await delay(100);
-      expect(other.frames).to.deep.equal([]);
-      expect(sameOwnerOtherSession.frames).to.deep.equal([]);
       expect(f.calls()).to.equal(1);
     });
   }
@@ -394,44 +395,6 @@ describe('session request identity', () => {
     } finally {
       await client.close();
     }
-  });
-
-  it('keeps legacy SSE message delivery unchanged', async () => {
-    const stream = f.track(
-      await fetch(f.url.replace('/mcp', `/sse?token=${A}`)),
-    );
-    await waitFor(() =>
-      stream.frames.some((frame) => frame.event === 'endpoint'),
-    );
-    const endpoint = new URL(
-      stream.frames.find((frame) => frame.event === 'endpoint')!.data,
-      f.url,
-    );
-    for (const [id, method, params] of [
-      [
-        1,
-        'initialize',
-        {
-          protocolVersion: '2025-11-25',
-          capabilities: {},
-          clientInfo: { name: 'sse', version: '1' },
-        },
-      ],
-      [2, 'tools/list', {}],
-    ] as const) {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-      });
-      expect(response.status).to.equal(202);
-      await waitFor(() =>
-        stream.frames.some((frame) => frame.data.includes(`"id":${id}`)),
-      );
-    }
-    expect(
-      stream.frames.find((frame) => frame.data.includes('"id":2'))!.data,
-    ).to.include('probe');
   });
 
   it('answers malformed session and credential inputs without disrupting the session', async () => {

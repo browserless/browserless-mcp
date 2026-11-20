@@ -16,6 +16,7 @@
 # built server cannot serve its tools on the consumer's resolved transport.
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 workdir=$(mktemp -d)
 install_log=$(mktemp)
 server_pid=""
@@ -100,6 +101,20 @@ if ! curl -fsS -o /dev/null "http://127.0.0.1:${port}/health"; then
   echo "::error::consumer server did not become healthy"; cat "$workdir/server.log"; exit 1
 fi
 
+# The consumer's resolved proxy must also honor legacy transport retirement.
+for path in sse messages 'messages?sessionId=retired'; do
+  method=POST
+  [ "$path" != sse ] || method=GET
+  for auth in '' 'Authorization: Bearer ci-smoke'; do
+    status=$(curl -sS --max-time 3 -o /dev/null -w '%{http_code}' -X "$method" \
+      -H "$auth" "http://127.0.0.1:${port}/${path}")
+    if [ "$status" != 404 ]; then
+      echo "::error::consumer ${method} /${path} returned ${status}, expected 404"
+      exit 1
+    fi
+  done
+done
+
 # Initialize + tools/list over the real transport (exercises mcp-proxy/SDK).
 sid=$(curl -fsS -D - -o /dev/null -X POST "http://127.0.0.1:${port}/mcp" \
   -H 'Authorization: Bearer ci-smoke' -H 'Content-Type: application/json' \
@@ -127,3 +142,5 @@ if [ "${tools:-0}" -lt 1 ]; then
 fi
 
 echo "✓ Consumer install runs: mcp-proxy@${proxy_ver}, server healthy, tools/list → ${tools} tools"
+
+node "$script_dir/verify-consumer-replay.mjs" "http://127.0.0.1:${port}/mcp" "$sid"

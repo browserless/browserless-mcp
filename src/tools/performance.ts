@@ -105,7 +105,7 @@ export function registerPerformanceTool(
         'Use these metrics to answer page-speed questions without writing timing scripts. ' +
         'INP is not measured by this navigation audit; TBT is a responsiveness proxy. ' +
         'Saves the full JSON report outside the conversation. ' +
-        'Use the local path (stdio) or download URL (HTTP) to inspect only the audits you need. ' +
+        'Follow its delivery instructions to save locally and inspect only the audits you need. ' +
         'Note: audits can take 30s–120s depending on the site.',
     parameters: compliant
       ? (CompliantPerformanceParamsSchema as z.ZodType<PerformanceParams>)
@@ -158,7 +158,11 @@ export function registerPerformanceTool(
       );
       return response;
     },
-    format: async (response, params, { token, sessionId, uiEnabled }) => {
+    format: async (
+      response,
+      params,
+      { token, sessionId, uiEnabled, artifactDelivery },
+    ) => {
       const blocks: Content[] = [];
       const data = response.data ?? {};
       const categories = (data.categories ?? {}) as Record<
@@ -238,9 +242,10 @@ export function registerPerformanceTool(
               transport: config.transport,
               mcpBaseUrl: config.mcpBaseUrl,
               token,
+              artifactDelivery,
             }) +
             '\nFiles expire after 15 minutes or when the MCP session ends; save a copy if needed. ' +
-            'For HTTP, download to disk first using the save command above. ' +
+            'Follow the delivery instructions above to download to disk first. ' +
             'Inspect only the fields needed for your task with jq, for example:\n' +
             'jq \'.audits["first-contentful-paint"] | {score, displayValue, numericValue}\' <saved-report-path>\n' +
             'Do not read or paste the entire JSON report into the conversation.',

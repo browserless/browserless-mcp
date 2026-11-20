@@ -20,6 +20,39 @@ Get an API token from [browserless.io](https://browserless.io) (free tier availa
 
 No local install — see [Configuration](#configuration) for per-client snippets.
 
+### Migrating from legacy SSE
+
+Remote connections use Streamable HTTP at `/mcp`. The legacy `GET /sse` and
+`POST /messages` endpoints return 404, including in self-hosted
+`TRANSPORT=httpStream` installs. Update your client's server URL to `/mcp` and
+use `Authorization: Bearer <token>` for authentication. For clients that store
+server bindings or credentials remotely, update those resources as well.
+Streamable HTTP still uses SSE for streaming responses; `/mcp` streaming and
+stdio connections remain supported.
+
+### Authenticated artifact saving
+
+On the full hosted surface, initialize a connection with the non-secret header `x-browserless-artifact-delivery: mcp-resource` to request metadata-only saved-file results. Omission preserves legacy HTTP guidance. Later requests may omit the header and inherit the session preference; reconnect to change it. This is a routing preference, not authorization or client capability negotiation. Local stdio is unchanged. Release the corresponding plugin opt-in only after deploying a compatible server and passing an authenticated hosted smoke test.
+
+Save-mode results identify a `browserless-download://<id>/<encoded-filename>` resource and its filename, MIME type, decoded byte count and expiry. Explicit `resources/read` returns a binary `blob`, including for saved JSON; it never returns saved content as `text`. The short `browserless-download://<id>` upload handle remains distinct. Both MCP reads and existing `GET /download/:id` require authentication and token-derived ownership; knowing a URI does not authorize access. The first authorized consumption wins across both routes. Files expire after 15 minutes or earlier session cleanup. A failed delivery after consumption cannot be retried or automatically regenerated.
+
+| Client profile                                                | Saving without binary payload in model requests                                                                                                                                                                                  |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code 2.1.327 Linux CLI, explicit `ReadMcpResourceTool` | Deterministic-model probes verified disk serialization for PDF, ZIP, PNG, saved JSON, empty files, Unicode/percent filenames, 1 MiB and 10 MiB payloads. This does not verify real-model fallback behavior.                      |
+| Claude Code 2.1.327 macOS CLI                                 | Operator-reported real-model revalidation: three headless denied-copy runs stopped with no Read call, base64 or token in transcripts; two approved controls saved a byte-exact 1 MiB file and a valid PNG, with zero Read calls. |
+| Claude Code CLI 2.1.327 or newer on Linux/macOS               | Plugin prerequisite, not blanket certification: requires an explicit reader known to return only saved-file metadata, plus copy approval. Unknown or inline handling is unsupported.                                             |
+| Claude Desktop or other MCP clients                           | Not verified. The resource protocol alone does not guarantee context-free saving. Refuse this path until the client's handling has been tested.                                                                                  |
+
+Copying `blobSavedTo` from Claude Code's sensitive `~/.claude` directory requires permission approval. Check existence and byte count through filesystem metadata only. If approval is denied or unavailable, stop and report the failure; never use `Read`, `cat`, an image viewer or other content inspection of the source or destination as a save fallback. These instructions are not a client-enforced security boundary.
+
+Real-model follow-up with the revised skill text explicitly loaded, Claude Code 2.1.327 Linux CLI and Sonnet 4.6: three denied-copy runs stopped without content inspection, and three explicitly approved controls copied the exact 98,530-byte PNG. No image payload appeared in 21 captured model requests. The old instructions also stopped safely on Linux, so Linux did not reproduce the reported macOS failure; the subsequent operator-reported macOS revalidation is summarized above. The Linux evaluation tests loaded instructions, not automatic skill discovery or a deployed endpoint.
+
+The native route enforces a conservative **10 MiB decoded** maximum before consumption. Claude Code rejects SSE events larger than 16 MB; the 50 MiB store ceiling is not a native-client transfer guarantee. Artifacts above 10 MiB may still be stored up to the 50 MiB ceiling until the 15-minute expiry or earlier session cleanup, but their native descriptors deliberately expose no URI or handle: saving and reuse are unsupported from those results. A previously known identifier remains subject to owner authentication and the HTTP 50 MiB limit; the native result is not an HTTP recovery path. Native results do not suggest local credential reads, shell-authentication fallbacks or inline payloads. New local-file uploads are unsupported in native HTTP mode while native staging is disabled; an existing unconsumed handle can still be reused. Client-side saved files, transcripts and diagnostics have their own retention; absence from model requests is not absence from the user's disk.
+
+In native sessions, export/function binary results and smart-scraper attachments default to saving. `toDisk: true` also saves function/export JSON or text; smart-scraper requested text remains text. `toDisk: false` explicitly requests inline analysis and can expose the payload to the model. Legacy/stdio omission retains existing output. Agent screenshots retain their explicit `params.toDisk: true` selection. The restricted connector does not expose binary artifact resources or the new save parameters.
+
+Replay playback is not a save-only operation: without an MCP Apps view, players at or below the existing inline limit still return HTML containing recording data in the tool result, including in native sessions. That content can enter model requests. Only saved replay files use metadata-only native descriptors; the delivery header does not make inline playback context-free.
+
 ## Tools
 
 | Tool                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -29,7 +62,7 @@ No local install — see [Configuration](#configuration) for per-client snippets
 | `browserless_map`          | Discover and map all URLs on a website. Scans via sitemaps and link extraction. Returns URLs with optional titles and descriptions. Useful for site audits and content discovery.                                                                                                                                                                                                                                                                           |
 | `browserless_crawl`        | Crawl a website and scrape every discovered page. Supports depth control, path filtering, sitemap strategies, and configurable scrape options. Returns scraped content and metadata for each page.                                                                                                                                                                                                                                                          |
 | `browserless_performance`  | Run Lighthouse audits on any URL. Returns category scores inline and saves the full JSON report outside the conversation: a local path (stdio) or authenticated single-use download URL (HTTP). Download to disk and inspect only needed fields with `jq`; files expire after 15 minutes or when the MCP session ends. Optionally filter by category, emulate a mobile or desktop device, supply a custom Lighthouse config, or supply performance budgets. |
-| `browserless_function`     | Execute custom Puppeteer JavaScript on the Browserless cloud. The function receives a `page` object and optional `context`; return `{ data, type }` to control the payload and Content-Type.                                                                                                                                                                                                                                                                |
+| `browserless_function`     | Execute custom Puppeteer JavaScript on the Browserless cloud. The function receives a `page` object and optional `context`; return bytes (e.g. `await page.screenshot()`) directly for an image or file, a string for text, or any other value for JSON text.                                                                                                                                                                                               |
 | `browserless_export`       | Export a webpage via the Browserless `/export` API. Fetches the URL and returns its native content (HTML, PDF, image, etc.) with automatic content-type detection.                                                                                                                                                                                                                                                                                          |
 | `browserless_agent`        | Drive a persistent browser session via a ReAct loop: snapshot the page, plan, batch interactions (click, type, scroll, evaluate, etc.), and re-snapshot. Uses ref-based selectors derived from snapshots, supports multi-tab workflows, screenshots, captcha solving, live URLs, and file upload/download (captured downloads auto-surface as handles; bytes never enter context).                                                                          |
 | `browserless_skill`        | Load an on-demand recipe for a non-trivial page mechanic (shadow DOM, cookie consent, modals, captchas, dynamic content, snapshot misses, screenshots, tabs). Companion to `browserless_agent`.                                                                                                                                                                                                                                                             |
@@ -392,7 +425,7 @@ close it before selecting a different persona.
 
 ## Configuration
 
-The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter.
+The server is hosted at `https://mcp.browserless.io/mcp`. Authenticate via headers (preferred) or a `?token=` query parameter. An API key the Browserless API reports as invalid is refused with HTTP 401 when the session opens; if the API cannot be reached in time, the session opens and tool calls report the key error instead.
 
 Installing via an AI agent? See [install.md](install.md) for agent-readable setup instructions.
 
@@ -439,7 +472,7 @@ https://mcp.browserless.io/mcp?token=your-token-here&browserlessUrl=https://prod
 
 When both headers and query parameters are present, headers take precedence.
 
-API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
+API URL overrides are limited to `browserless.io`, its subdomains, the configured `BROWSERLESS_API_URL` origin (same scheme, hostname, and port), and hosts listed in `MCP_ALLOWED_API_URL_HOSTS`. Overrides for `browserless.io` and its subdomains must use `https://`, because the API token travels with each request; the configured origin is exempt. Paths are allowed, but credentials, query strings, and fragments (including bare `?` or `#`) are not. Without an override, the operator-configured URL is used unchanged.
 
 ### Claude Desktop
 
@@ -620,6 +653,26 @@ Retrieval error rate is error completions / all completions. Hit rate is hit
 completions / valid completions. Do not add the separate server `Skill Lookup`
 events to either denominator. Tests use local/mock sinks; a configured exporter
 or console message is not proof of remote receipt.
+
+### Session and analytics-delivery diagnostics
+
+On the full `httpStream` surface, each ready session emits an INFO `browserless.mcp.session.open`
+OTLP record with `transport`, `auth_method`, `key_fp` (a 16-hex token fingerprint),
+`source`, `client_family`, `user_agent_family`, and `usage_mode`. Known account IDs are included.
+Client names/versions use 128-code-point escaped previews in both logs and queue events.
+Source and UA families use known labels or `unknown`; no raw token or UA in log/event properties.
+The compliant surface and stdio do not emit session-open records.
+
+`MCP Session Started` uses only the existing authenticated analytics queue,
+never the SDK transport: full-surface SSE sessions only, when analytics is
+enabled. The queue consumer resolves identity using its authentication field.
+
+`browserless.mcp.amplitude.delivery_failed` WARN records aggregate `event_type`,
+integer `status`, sanitized `reason`, `count`, and `window_s=60`. Each window
+holds at most 12 distinct keys plus one overflow record. Reasons drop text
+after the first colon, redact key-like runs and email-like words, and escape a bounded preview.
+One stderr summary per window replaces per-failure SDK lines; real status counts survive overflow.
+Shutdown awaits final/in-flight exports with the exporter's one-second deadline.
 
 ### Failure diagnostics
 

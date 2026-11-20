@@ -6,13 +6,12 @@ import {
   ProxyOptionsSchema,
 } from '../lib/agent-client.js';
 
-// NUL is the session-key separator (KEY_SEP) in agent-client.ts. Computed via
-// fromCharCode so the literal control character never appears in source.
+// NUL remains the legacy exported/diagnostic key separator in agent-client.ts.
+// Keep control characters out of these public string fields.
 const NUL = String.fromCharCode(0);
 
-// A trimmed, non-empty string that also rejects NUL. Every field feeding the
-// session-cache key (see getSessionKey) needs this, or a NUL lets a caller forge
-// extra key segments (NUL is KEY_SEP).
+// Preserve the existing trimmed, non-empty, NUL-free input contract. Internal
+// session lookup uses a structured tuple, not the legacy exported key string.
 const nulSafeString = (label: string) =>
   z
     .string()
@@ -589,7 +588,7 @@ const ScreenshotCommandSchema = z.object({
         .describe(
           'Save the screenshot to disk instead of returning it inline. ' +
             'You will NOT see the image; the response gives a reusable handle ' +
-            '(local path in stdio, single-use GET URL over HTTP) exactly like a ' +
+            '(local path in stdio, authenticated HTTP or MCP resource in hosted mode) exactly like a ' +
             'download — reuse it with uploadFile or hand it to the user. Use when ' +
             'you only need the file later, not to look at now (see file-transfers).',
         ),

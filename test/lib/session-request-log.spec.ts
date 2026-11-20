@@ -125,6 +125,27 @@ describe('session request observation', () => {
         { reason: 'invalid_credentials', cursor: 'none' },
       ],
       [{ request }, { reason: 'unknown_cursor', cursor: 'request' }],
+      ...[undefined, ''].map(
+        (sessionId): [Partial<ObservedRequest>, object] => [
+          {
+            request,
+            store: { cursorContext: () => ({ sessionId, ageMs: 42 }) },
+          },
+          { reason: 'cursor_context_mismatch', cursor: 'request' },
+        ],
+      ),
+      [
+        {
+          request,
+          store: {
+            cursorContext: () => ({
+              sessionId: 'session-presenter',
+              ageMs: 42,
+            }),
+          },
+        },
+        { reason: 'ok', cursor: 'request' },
+      ],
       [
         {
           request,

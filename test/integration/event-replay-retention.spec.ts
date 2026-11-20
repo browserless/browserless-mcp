@@ -3,7 +3,9 @@ import type { IncomingMessage } from 'node:http';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FastMCP } from 'fastmcp';
+import { WebStreamableHTTPServerTransport } from 'fastmcp/edge';
 import { z } from 'zod';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -168,6 +170,102 @@ async function fixture(
 }
 
 describe('event store retention', () => {
+  for (const [label, Transport] of [
+    ['SDK', WebStandardStreamableHTTPServerTransport],
+    ['edge', WebStreamableHTTPServerTransport],
+  ] as const) {
+    it(`terminates refused and unknown cursors while preserving owner replay (${label})`, async () => {
+      const store = new BoundedEventStore();
+      const transport = new Transport({
+        eventStore: store,
+        sessionIdGenerator: () => 'owner',
+      });
+      transport.onmessage = (message) => {
+        if ('id' in message)
+          void transport.send({ jsonrpc: '2.0', id: message.id!, result: {} });
+      };
+      const headers = {
+        Accept: 'application/json, text/event-stream',
+        'Content-Type': 'application/json',
+        'mcp-protocol-version': '2025-11-25',
+      };
+      await transport.start();
+      try {
+        const initialized = await transport.handleRequest(
+          new Request('http://localhost/mcp', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'initialize',
+              params: {
+                protocolVersion: '2025-11-25',
+                capabilities: {},
+                clientInfo: { name: 'test', version: '1' },
+              },
+            }),
+          }),
+        );
+        expect(initialized.status).to.equal(200);
+        expect(await initialized.text()).to.include('"id":1');
+        const other = await store.storeEvent(
+          'other-request',
+          { jsonrpc: '2.0', method: 'marker' },
+          'other',
+        );
+        const unowned = await store.storeEvent('unowned-request', {
+          jsonrpc: '2.0',
+          method: 'marker',
+        });
+        const owner = await store.storeEvent(
+          'owner-request',
+          { jsonrpc: '2.0', method: 'marker' },
+          'owner',
+        );
+        await store.storeEvent(
+          'owner-request',
+          { jsonrpc: '2.0', id: 42, result: { text: 'owned' } },
+          'owner',
+        );
+        const resume = (cursor: string) =>
+          transport.handleRequest(
+            new Request('http://localhost/mcp', {
+              headers: {
+                ...headers,
+                'mcp-session-id': 'owner',
+                'last-event-id': cursor,
+              },
+            }),
+          );
+        for (const cursor of [other, unowned, 'unknown-cursor']) {
+          const response = await resume(cursor);
+          try {
+            expect(response.status).to.equal(400);
+            expect(await response.json()).to.have.nested.property(
+              'error.code',
+              -32000,
+            );
+          } finally {
+            if (!response.bodyUsed) await response.body?.cancel();
+          }
+        }
+        const response = await resume(owner);
+        expect(response.status).to.equal(200);
+        const frames = readFrames(response);
+        await waitFor(() =>
+          frames.frames.some((frame) => frame.data.id === 42),
+        );
+        expect(
+          frames.frames.find((frame) => frame.data.id === 42)?.data.result,
+        ).to.deep.equal({ text: 'owned' });
+        await frames.close();
+      } finally {
+        await transport.close();
+      }
+    });
+  }
+
   it('keeps event ids on standalone-stream frames', async () => {
     const f = await fixture();
     try {
@@ -671,13 +769,19 @@ describe('event store retention', () => {
         await original.close();
         // Resume only after the result is retained, not merely after a delay.
         if (settled === 'offline') await waitFor(() => store.size > retained);
-        const alternate = await f.get(second, cursor);
+        const alternate = await fetch(f.url, {
+          headers: { ...f.headers(second), 'Last-Event-ID': cursor },
+        });
+        expect(alternate.status).to.equal(400);
+        expect(await alternate.json()).to.have.nested.property(
+          'error.code',
+          -32000,
+        );
         const resumed = await f.get(first, cursor);
         await waitFor(() =>
           resumed.frames.some((frame) => frame.data.id === 42),
         );
         await delay(200);
-        expect(alternate.frames).to.deep.equal([]);
         expect(
           resumed.frames.find((frame) => frame.data.id === 42)!.data.result,
         ).to.deep.equal({ content: [{ type: 'text', text: 'ok' }] });

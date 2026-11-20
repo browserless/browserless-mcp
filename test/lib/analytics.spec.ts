@@ -18,6 +18,43 @@ describe('AnalyticsHelper', () => {
     sinon.restore();
   });
 
+  it('queues session starts with authentication without SDK delivery', async () => {
+    sqsSendStub.resolves({ Failed: [] });
+    const helper = new AnalyticsHelper(
+      true,
+      'https://sqs.example.com/queue',
+      'us-east-1',
+    );
+    helper.fireSessionStarted(TOKEN, {
+      transport: 'sse',
+      key_fp: 'abcd',
+      token: 'must-not-override',
+    });
+    await new Promise(setImmediate);
+    expect(sqsSendStub.callCount).to.equal(1);
+    expect(sqsSendStub.firstCall.args[0]).to.be.instanceOf(
+      SendMessageBatchCommand,
+    );
+    const event = JSON.parse(
+      sqsSendStub.firstCall.args[0].input.Entries[0].MessageBody,
+    );
+    expect(event.event_type).to.equal('MCP Session Started');
+    expect(event.event_properties).to.deep.equal({
+      transport: 'sse',
+      key_fp: 'abcd',
+      token: TOKEN,
+    });
+    sqsSendStub.resetHistory();
+    new AnalyticsHelper(false).fireSessionStarted(TOKEN, {});
+    helper.fireSessionStarted('short', {});
+    await new Promise(setImmediate);
+    expect(sqsSendStub.callCount).to.equal(0);
+    sqsSendStub.rejects(new Error('unavailable'));
+    helper.fireSessionStarted(TOKEN, {});
+    await new Promise(setImmediate);
+    expect(sqsSendStub.callCount).to.equal(3);
+  });
+
   it('does not initialize when disabled', () => {
     const helper = new AnalyticsHelper(
       false,

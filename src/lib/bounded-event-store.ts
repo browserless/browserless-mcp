@@ -139,7 +139,7 @@ export class BoundedEventStore implements EventStore {
     }
 
     const context = this.events.get(lastEventId)!.sessionId;
-    if (context !== undefined && context !== sessionId) return '';
+    if (!sessionId || context !== sessionId) return '';
 
     const streamId = this.getStreamIdFromEventId(lastEventId);
     if (!streamId) {
@@ -151,8 +151,7 @@ export class BoundedEventStore implements EventStore {
     const snapshot = [...this.events.entries()];
     for (const [eventId, event] of snapshot) {
       if (event.streamId !== streamId) continue;
-      if (event.sessionId !== undefined && event.sessionId !== sessionId)
-        continue;
+      if (event.sessionId !== sessionId) continue;
       if (!foundLastEvent) {
         if (eventId === lastEventId) foundLastEvent = true;
         continue;

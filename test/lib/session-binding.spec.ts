@@ -4,6 +4,7 @@ import {
   admitSessionRequest,
   assertSessionPrincipal,
   authOutcome,
+  requestSessionId,
   sessionNotFoundResponse,
   sessionPrincipal,
   type SessionLike,
@@ -44,6 +45,47 @@ async function notFound(run: () => void) {
 
 describe('session binding', () => {
   afterEach(() => resetSessionReaperForTests());
+
+  it('inherits native mode when omitted and rejects a mode switch after principal validation', async () => {
+    const native: BrowserlessSession = {
+      ...key,
+      artifactDelivery: 'mcp-resource',
+    };
+    const sessions = [
+      { sessionId: 'native', auth: native },
+      { sessionId: 'legacy', auth: key },
+    ];
+    const omitted = { ...key };
+    expect(() =>
+      admitSessionRequest('native', omitted, sessions),
+    ).not.to.throw();
+    expect(omitted).to.include({ artifactDelivery: 'mcp-resource' });
+    expect(() =>
+      admitSessionRequest('native', native, sessions),
+    ).not.to.throw();
+    let error: unknown;
+    try {
+      admitSessionRequest('legacy', native, sessions);
+    } catch (cause) {
+      error = cause;
+    }
+    expect(error).to.be.instanceOf(Response);
+    expect((error as Response).status).to.equal(400);
+    expect(await (error as Response).text()).to.match(/reconnect/i);
+    await notFound(() =>
+      admitSessionRequest('legacy', { ...native, token: 'foreign' }, sessions),
+    );
+  });
+
+  it('uses only the session header for identity binding', () => {
+    expect(requestSessionId({})).to.equal(undefined);
+    expect(requestSessionId({ headers: { 'mcp-session-id': 'h' } })).to.equal(
+      'h',
+    );
+    expect(
+      requestSessionId({ headers: { 'mcp-session-id': ['h1', 'h2'] } }),
+    ).to.equal('h1');
+  });
 
   it('observes refusal reasons without changing admission or responses', async () => {
     const admit = admitSessionRequest;
