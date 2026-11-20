@@ -1181,6 +1181,217 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  it('treats recovery_required as terminal', async () => {
+    const instruction =
+      'Payment was submitted but its outcome could not be confirmed. Do not submit, resume, or start another checkout in this browser session. Ask the user to check their Link payment history or the merchant receipt.';
+    const browser = await makeRespondingServer(() => ({
+      status: 'recovery_required',
+      instruction,
+    }));
+    try {
+      const session = await getOrCreateSession(
+        'link-recovery-terminal',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+      session.stripeLinkContinuation = {
+        checkoutId,
+        allowedNextAction: 'report',
+        validUntil: VALID_UNTIL_MS,
+      };
+      session.skillState.fired.set('agentic-checkout', 1);
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      const result = await checkout(
+        {
+          action: 'report',
+          outcome: 'success',
+          browser_session_handle: session.handle,
+          checkout_id: checkoutId,
+        },
+        mockContext,
+      );
+      expect(JSON.parse(textOf(result))).to.deep.equal({
+        status: 'recovery_required',
+        instruction,
+      });
+      expect(session.stripeLinkContinuation).to.equal(undefined);
+      expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('forwards the recovery block reason on create', async () => {
+    const message =
+      'A Stripe Link payment in this browser session has an unknown outcome. Do not start another checkout; ask the user to check their Link payment history or the merchant receipt.';
+    const browser = await makeRespondingServer(
+      () => new AgentErrorFrame({ message }),
+    );
+    try {
+      const session = await getOrCreateSession(
+        'link-recovery-block',
+        browser.url,
+        mockConfig.browserlessToken!,
+      );
+      const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+        ...mockConfig,
+        browserlessApiUrl: browser.url,
+      });
+      let error: unknown;
+      try {
+        await checkout(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+            amount_minor: 1000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+          },
+          mockContext,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect((error as Error).message).to.equal(message);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  for (const action of ['resume', 'cancel', 'report'] as const) {
+    it(`clears a continuation the backend already retired on ${action}`, async () => {
+      let creates = 0;
+      const browser = await makeRespondingServer((_method, rawParams) => {
+        if ((rawParams as { action: string }).action === 'create') {
+          creates++;
+          return { status: 'blocked' };
+        }
+        return new AgentErrorFrame({
+          message:
+            'Stripe Link checkout is unavailable in this browser session',
+        });
+      });
+      try {
+        const session = await getOrCreateSession(
+          `link-retired-${action}`,
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
+        session.stripeLinkContinuation = {
+          checkoutId,
+          allowedNextAction: action === 'report' ? 'report' : 'resume',
+          validUntil: VALID_UNTIL_MS,
+        };
+        session.skillState.fired.set('agentic-checkout', 1);
+        const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+          ...mockConfig,
+          browserlessApiUrl: browser.url,
+        });
+        let error: unknown;
+        try {
+          await checkout(
+            {
+              action,
+              browser_session_handle: session.handle,
+              checkout_id: checkoutId,
+              ...(action === 'report' ? { outcome: 'success' } : {}),
+            },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+        expect((error as Error).message).to.equal(
+          'This Stripe Link checkout has ended and can no longer be resumed, cancelled, or reported. Do not submit payment again; check Link payment history before starting another checkout.',
+        );
+        expect(session.stripeLinkContinuation).to.equal(undefined);
+        expect(session.skillState.fired.has('agentic-checkout')).to.be.false;
+        await checkout(
+          {
+            action: 'create',
+            browser_session_handle: session.handle,
+            merchant: { name: 'Shop', url: 'https://shop.example/checkout' },
+            amount_minor: 1000,
+            currency: 'usd',
+            cart: [{ name: 'Item', quantity: 1, unit_amount_minor: 1000 }],
+          },
+          mockContext,
+        );
+        expect(creates).to.equal(1);
+        expect(() =>
+          closeSession(
+            `link-retired-${action}`,
+            mockConfig.browserlessToken!,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            session.handle,
+          ),
+        ).not.to.throw();
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  for (const [response, expected] of [
+    [
+      new AgentErrorFrame({ message: 'Stripe Link CLI invocation failed' }),
+      'Stripe Link checkout could not continue safely in this browser session.',
+    ],
+    [
+      { status: 'processing' },
+      'Browserless returned an invalid checkout status',
+    ],
+  ] as const) {
+    it(`keeps custody and rejects ${expected}`, async () => {
+      const browser = await makeRespondingServer(() => response);
+      try {
+        const session = await getOrCreateSession(
+          'link-retained-custody',
+          browser.url,
+          mockConfig.browserlessToken!,
+        );
+        const continuation = {
+          checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+          allowedNextAction: 'resume' as const,
+          validUntil: VALID_UNTIL_MS,
+        };
+        session.stripeLinkContinuation = continuation;
+        session.skillState.fired.set('agentic-checkout', 1);
+        const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+          ...mockConfig,
+          browserlessApiUrl: browser.url,
+        });
+        let error: unknown;
+        try {
+          await checkout(
+            {
+              action: 'resume',
+              browser_session_handle: session.handle,
+              checkout_id: continuation.checkoutId,
+            },
+            mockContext,
+          );
+        } catch (caught) {
+          error = caught;
+        }
+        expect((error as Error).message).to.equal(expected);
+        expect(session.stripeLinkContinuation).to.equal(continuation);
+        expect(session.skillState.fired.has('agentic-checkout')).to.be.true;
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
   it('clears a blocked resume so a fresh checkout can start', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     const freshCheckoutId = 'lkco_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef';
