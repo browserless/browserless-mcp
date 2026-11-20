@@ -84,5 +84,5 @@ For shadow DOM:
 
 1. Retry same selector with `< ` prefix (MCP suggests automatically)
 2. Still failing → re-snapshot (element moved/re-rendered or page navigated)
-3. Element in iframe → construct `< *url-pattern* css` selector by hand from iframe URL in DevTools or snapshot
+3. Element in iframe → use its `deep-ref=` if the element is in the snapshot. If the element is missing but its frame is listed, use that frame's URL to build `< *url-pattern* css` with a known selector.
 4. `< ` deep selector **also** missed → the snapshot can't surface this element. Switch to vision: `screenshot` the viewport, read the target's pixel, and `click` by `{ x, y }`. See the `vision-fallback` skill.

@@ -59,11 +59,10 @@ const sessionIdField = z
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +
-      'conversation. Echo it back on EVERY subsequent call — it binds this ' +
-      'conversation to its live browser and its page state (current URL, ' +
-      'cookies, filled forms, open tabs). Omit it only on the first call; ' +
-      'omitting it later abandons the current browser and starts a blank one, ' +
-      'losing everything the session had done. Only ever pass a value the ' +
+      'conversation. For a kept-alive browser, echo it back on EVERY subsequent call ' +
+      'to keep its page state (current URL, cookies, filled forms, open tabs); ' +
+      'omitting it starts a blank browser. Use a one-shot reply’s id only for reporting the outcome. ' +
+      'Only ever pass a value the ' +
       'server returned — never invent one.',
   );
 
@@ -949,7 +948,8 @@ const COMMANDS_DESCRIPTION =
   'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
   'are ignored and commands are executed sequentially. Only the final result is returned. ' +
   'Use this to batch actions that share the same page state (e.g. filling a form: ' +
-  'type email + type password + click submit). Do NOT batch across navigations.';
+  'type email + type password + click submit). After an optional initial goto, include at most one ' +
+  'page-changing action, after other actions and before any final wait or read.';
 
 // A command as advertised to MCP clients. The authoritative per-command contract
 // (typed params keyed by method) is AgentCommandSchema, but that discriminated

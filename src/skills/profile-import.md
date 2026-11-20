@@ -102,7 +102,7 @@ containers without access to that browser must use the creation recipe in
    }
    ```
 
-   Before any login actions, send `reportProfileAuthentication` as the only
+   Before any login actions, send `reportProfileAuthentication` as the first
    command of the next batch, with the returned `sessionId`:
 
    ```json
