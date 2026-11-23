@@ -66,9 +66,12 @@ database and are shared by the Gateway's operator-managed sessions (see
 [Sharing a Gateway](#sharing-a-gateway)).
 
 To sign in from a terminal, add a matching server entry, which lets the CLI see
-it, then log in. This sets up the Gateway's shared sign-in; with per-requester
-sign-in (see [Sharing a Gateway](#sharing-a-gateway)), each person signs in
-from their own chat instead. The Gateway must be stopped while `login` runs:
+it, then log in. These commands set up the Gateway's shared sign-in. If you use
+per-requester sign-in (see [Sharing a Gateway](#sharing-a-gateway)), don't run
+them: this `mcp set` entry switches `browserless` back to shared sign-in, so
+everyone who messages the agent would use the account that logs in. With
+per-requester sign-in, each person signs in from their own chat instead. The
+Gateway must be stopped while `login` runs:
 
 ```bash
 openclaw mcp set browserless '{"url":"https://mcp.browserless.io/mcp","transport":"streamable-http","auth":"oauth","requestTimeoutMs":360000}'
@@ -104,7 +107,9 @@ out of committed config.
    ```
 
    If the Gateway was already running, restart it so it reads the new
-   variable:
+   variable. A `BROWSERLESS_TOKEN` already set in the Gateway's service or
+   shell environment takes precedence over `~/.openclaw/.env`, and a restart
+   doesn't change it, so update or remove that value first:
 
    ```bash
    openclaw gateway restart
@@ -120,18 +125,24 @@ out of committed config.
    whenever the variable is set, because it checks the expanded value. Your
    config still holds only `${BROWSERLESS_TOKEN}`.
 
-To go back to OAuth, replace the entry with the OAuth one from the terminal
-sign-in above. `openclaw mcp unset browserless` also returns to the plugin's
-OAuth definition, but it removes the whole entry, including any tool filter.
+To go back to shared OAuth, replace the entry with the OAuth one from the
+terminal sign-in above. `openclaw mcp unset browserless` also returns to the
+plugin's shared OAuth definition, but it removes the whole entry, including any
+tool filter. To use per-requester sign-in instead, set the entry from
+[Sharing a Gateway](#sharing-a-gateway); each person then signs in again from
+their own chat.
 
 ### Server entries
 
 `openclaw mcp set` replaces the whole `browserless` entry. Each time you run
 it, keep `"requestTimeoutMs":360000` and any headers you added (such as a
 [regional endpoint](#regional-endpoints)) in the JSON, and re-apply any tool
-filter from [Sharing a Gateway](#sharing-a-gateway) afterwards. Each
+filter from [Sharing a Gateway](#sharing-a-gateway) afterwards. Before you
+replace the entry, note the tools it currently excludes
+(`openclaw mcp show browserless --json`, under `toolFilter.exclude`). Each
 `mcp tools --exclude` replaces the previous list, so name every tool you want
-hidden. Crawls can run for
+hidden, including those; a tool you leave out becomes available to the agent
+again. Crawls can run for
 up to five minutes and Lighthouse audits for up to two, so a shorter request
 timeout cuts them off.
 
@@ -167,6 +178,13 @@ openclaw mcp set browserless '{"url":"https://mcp.browserless.io/mcp","transport
 
 See OpenClaw's [MCP transports](https://docs.openclaw.ai/cli/mcp/transports)
 docs for how per-requester sign-in works.
+
+Per-requester sign-in separates Browserless accounts, but not conversations. By
+default, direct messages share one session, so one person could see another's
+Browserless results. If several people message the agent directly, set
+`session.dmScope` to `"per-channel-peer"` as described in OpenClaw's
+[session docs](https://docs.openclaw.ai/concepts/session). For people who
+shouldn't trust each other, use separate Gateways and credentials.
 
 ## What's included
 
