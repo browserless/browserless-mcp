@@ -150,6 +150,11 @@ export const AgentRunPayloadSchema = identity.extend({
   humanRequest: handoff,
   turns: z.array(boundedTurn).max(AGENT_RUN_MAX_TURNS),
   turnsTruncated: z.boolean(),
+  omittedFinalResult: z
+    .string()
+    .max(AGENT_RUN_RESULT_PREVIEW_CHARS + 1)
+    .nullable()
+    .optional(),
   screenshot: z.discriminatedUnion('state', [
     z.object({ state: z.literal('available'), viewRef: z.string().max(128) }),
     z.object({ state: z.literal('unavailable'), reason: z.string() }),
@@ -159,15 +164,21 @@ export const AgentRunPayloadSchema = identity.extend({
 export type AgentRunSummary = z.infer<typeof AgentRunSummarySchema>;
 export type AgentRunPayload = z.infer<typeof AgentRunPayloadSchema>;
 
+function resultText(data: unknown) {
+  const answer =
+    data && typeof data === 'object' && 'answer' in data ? data.answer : null;
+  return {
+    answer: typeof answer === 'string' ? answer : null,
+    result: data === null ? null : JSON.stringify(data, null, 2),
+  };
+}
+
 export function buildAgentRun(source: unknown, fetchedAt: string) {
   const parsed = AgentRunSourceSchema.safeParse(source);
   if (!parsed.success) throw new Error('Unexpected agent run response.');
   const run = parsed.data;
   const turns = run.turns.slice(0, AGENT_RUN_MAX_TURNS).map((turn) => {
-    const data = turn.data;
-    const answer =
-      data && typeof data === 'object' && 'answer' in data ? data.answer : null;
-    const result = data === null ? null : JSON.stringify(data, null, 2);
+    const { answer, result } = resultText(turn.data);
     return {
       turnId: turn.turnId,
       status: turn.status,
@@ -216,6 +227,11 @@ export function buildAgentRun(source: unknown, fetchedAt: string) {
     error: run.error?.slice(0, AGENT_RUN_ERROR_MAX_CHARS) ?? null,
     humanRequest: run.humanRequest,
   };
+  if (payload.turnsTruncated) {
+    const { answer, result } = resultText(run.turns.at(-1)!.data);
+    payload.omittedFinalResult =
+      (answer ?? result)?.slice(0, AGENT_RUN_RESULT_PREVIEW_CHARS + 1) ?? null;
+  }
   return {
     summary,
     payload,
@@ -271,7 +287,9 @@ export function formatAgentRunText(
       );
   }
   const last = payload.turns.at(-1);
-  const answer = last?.answer ?? last?.result ?? null;
+  const answer = payload.turnsTruncated
+    ? (payload.omittedFinalResult ?? null)
+    : (last?.answer ?? last?.result ?? null);
   if (answer === null) lines.push('Result: unavailable.');
   else
     lines.push(
@@ -280,6 +298,7 @@ export function formatAgentRunText(
         : 'Result:',
       answer.slice(0, AGENT_RUN_RESULT_PREVIEW_CHARS),
     );
+  if (payload.turnsTruncated) lines.push('Additional turns were truncated.');
   if (timeline)
     payload.turns.forEach((turn, index) => {
       lines.push(

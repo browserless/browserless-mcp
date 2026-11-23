@@ -85,6 +85,31 @@ describe('agent run snapshot', () => {
     );
   });
 
+  it('reports the true final result even when the transcript is capped', () => {
+    const turn = fixture.turns[1];
+    const run = buildAgentRun(
+      {
+        ...fixture,
+        turns: [
+          ...Array.from({ length: 20 }, () => ({
+            ...turn,
+            data: { answer: 'earlier answer' },
+          })),
+          { ...turn, data: { answer: 'actual final answer' } },
+        ],
+      },
+      now,
+    );
+    const text = formatAgentRunText(run.payload, run.summary, {
+      timeline: true,
+    });
+    assert.equal(run.payload.turns.length, 20);
+    assert.match(
+      text,
+      /Result:\nactual final answer\nAdditional turns were truncated\./,
+    );
+  });
+
   it('states why a run is paused without passing handoff or page captures through', () => {
     const { payload, summary } = buildAgentRun(
       { ...fixture, status: 'needs_human' },
