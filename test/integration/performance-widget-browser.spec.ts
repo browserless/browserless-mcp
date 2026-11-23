@@ -49,9 +49,10 @@ const previewCases = {
     check(JSON.stringify(contexts).includes('auditRef'), 'model context missing audit reference');
     check(!$('[data-role="explain-audits"], [data-role="suggest-metric"]'), 'unsupported host rendered chat controls');
   `,
-  'pending audit shares only the selected audits or metric after confirmation': `
+  'pending audit shares only selected audits or metrics without URL.parse': `
     frame.remove();
     await open({ serverTools: {}, updateModelContext: { text: {} }, message: { text: {} } });
+    frame.contentWindow.URL.parse = undefined;
     const messages = [];
     bridge.onmessage = async params => { messages.push(params); return {}; };
     const finished = structuredClone(report);

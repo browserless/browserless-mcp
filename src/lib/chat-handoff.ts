@@ -27,7 +27,12 @@ export function scrubText(value: string): string {
 }
 
 export function scrubUrl(value: string): string {
-  const url = URL.parse(value);
+  let url: URL | undefined;
+  try {
+    url = new URL(value);
+  } catch {
+    // Malformed or relative input uses the same fallback as opaque URLs.
+  }
   return scrubText(
     url && url.origin !== 'null'
       ? url.origin + url.pathname
