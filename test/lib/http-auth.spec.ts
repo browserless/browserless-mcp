@@ -23,6 +23,52 @@ const config = {
 describe('resolveBrowserlessAuth', () => {
   afterEach(() => sinon.restore());
 
+  it('accepts only explicit native artifact delivery and keeps absence legacy', async () => {
+    for (const [header, expected] of [
+      [undefined, undefined],
+      ['mcp-resource', 'mcp-resource'],
+    ] as const) {
+      const auth = await resolveBrowserlessAuth(
+        authInputFromRequest({
+          headers: {
+            authorization: 'Bearer synthetic',
+            ...(header === undefined
+              ? {}
+              : { 'x-browserless-artifact-delivery': header }),
+          },
+          url: '/mcp',
+        }),
+        config,
+      );
+      expect(auth.artifactDelivery).to.equal(expected);
+    }
+    for (const header of [
+      '',
+      'http',
+      'unknown',
+      'mcp-resource,mcp-resource',
+      ['mcp-resource', 'mcp-resource'],
+    ]) {
+      let error: unknown;
+      try {
+        await resolveBrowserlessAuth(
+          authInputFromRequest({
+            headers: {
+              authorization: 'Bearer synthetic',
+              'x-browserless-artifact-delivery': header,
+            },
+            url: '/mcp',
+          }),
+          config,
+        );
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).to.be.instanceOf(Response);
+      expect((error as Response).status).to.equal(400);
+    }
+  });
+
   it('rejects unsafe attach IDs from headers and decoded query parameters without resolving credentials', async () => {
     const fetch = sinon
       .stub(globalThis, 'fetch')
@@ -365,13 +411,13 @@ describe('authInputFromRequest', () => {
       sourceHeader: 'cli_agent',
       sourceQuery: 'script_builder',
       userAgentHeader: ['ua/1', 'ua/2'],
+      artifactDeliveryHeader: undefined,
       requestPath: url,
     });
   });
 
-  it('maps absent headers and URL to ten absent inputs', () => {
+  it('maps absent headers and URL to absent inputs', () => {
     const input = authInputFromRequest({ headers: {}, url: undefined });
-    expect(Object.keys(input)).to.have.length(10);
     expect(Object.values(input).every((value) => value === undefined)).to.be
       .true;
   });

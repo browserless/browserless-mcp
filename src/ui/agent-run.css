@@ -1,0 +1,192 @@
+.agent-run {
+  padding: 16px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  --run-danger: light-dark(#a21a36, #ff9bac);
+  --run-warning: light-dark(#815005, #ffc572);
+  --run-success: light-dark(#176446, #89ddae);
+}
+
+.agent-run [hidden] {
+  display: none !important;
+}
+
+.run-heading,
+.run-id,
+.run-controls,
+.run-dates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-heading {
+  justify-content: space-between;
+}
+
+.run-id,
+.run-dates dt,
+.run-seq,
+.run-duration,
+.agent-run > footer {
+  color: var(--muted);
+}
+
+.run-dates {
+  align-items: start;
+  gap: 8px 20px;
+  margin: 12px 0;
+}
+
+.run-dates dd {
+  margin: 2px 0 0;
+}
+
+.agent-run button:not(.agent-media button) {
+  padding: 5px 9px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: inherit;
+}
+
+.run-chip {
+  width: fit-content;
+  border-radius: 14px;
+  padding: 3px 8px;
+  background: var(--raised);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.run-chip:is(.failed, .stopped, .error),
+.run-banner.error {
+  color: var(--run-danger);
+}
+
+.run-chip:is(.needs_human, .timed_out, .capped, .incomplete) {
+  color: var(--run-warning);
+}
+
+.run-chip:is(.succeeded, .ok) {
+  color: var(--run-success);
+}
+
+.run-banner {
+  padding: 9px 12px;
+  border-inline-start: 3px solid currentColor;
+  background: var(--raised);
+}
+
+.run-feedback:empty {
+  margin: 0;
+}
+
+.run-turn {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.run-turn :is(h2, h3) {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.run-task,
+.run-answer {
+  white-space: pre-wrap;
+}
+
+.run-task {
+  margin: 0 0 12px;
+}
+
+.run-actions {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+}
+
+.run-action {
+  margin-bottom: 4px;
+  border-inline-start: 3px solid transparent;
+}
+
+.run-action.error {
+  border-color: var(--run-danger);
+}
+
+.run-action.incomplete {
+  border-color: var(--run-warning);
+}
+
+.run-action > button {
+  display: grid;
+  grid-template-columns: minmax(2ch, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px 8px;
+  width: 100%;
+  text-align: start;
+}
+
+.run-action > button::after {
+  grid-area: 1 / 1;
+  content: '›';
+  justify-self: start;
+}
+
+.run-action > button[aria-expanded='true']::after {
+  content: '⌄';
+}
+
+.run-seq {
+  grid-area: 1 / 1;
+  padding-inline-start: 12px;
+}
+
+.run-action-detail {
+  padding: 8px 12px;
+}
+
+.run-action-detail p {
+  margin: 4px 0 0;
+}
+
+.run-command {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.run-turn details {
+  border-top: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.run-turn summary {
+  cursor: pointer;
+}
+
+.run-turn pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-run > footer {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+@media (max-width: 360px) {
+  .run-action > button {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .run-action .run-duration {
+    grid-column: 2 / -1;
+  }
+}

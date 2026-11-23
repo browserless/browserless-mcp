@@ -4,6 +4,7 @@ import sinon from 'sinon';
 import { randomBytes } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
+import { buildAgentRun } from '../../src/lib/agent-run-view.js';
 import {
   ViewStore,
   VIEW_TTL_MS,
@@ -31,6 +32,44 @@ describe('owned replay view snapshots', () => {
     store = new ViewStore({ now: () => now });
   });
   afterEach(() => store.clear());
+
+  it('keeps hosted run payloads owner-bound and refuses oversized or expired views', () => {
+    const run = JSON.parse(
+      readFileSync('test/fixtures/agent-run.json', 'utf8'),
+    );
+    const expires = new Date(now + 60_000).toISOString();
+    const { summary, payload } = buildAgentRun(
+      { ...run, expires_at: expires },
+      new Date(now).toISOString(),
+    );
+    const snapshot = { ...payload, screenshot: { state: 'none' } };
+    const view = store.prepareAgentRun('alice', summary, snapshot)!;
+    assert.equal(view.kind, 'agent-run');
+    assert.equal(view.expiresAt, expires);
+    assert.deepEqual(
+      store.show(view.viewRef, 'alice')._meta?.payload,
+      snapshot,
+    );
+    assert.throws(() => store.show(view.viewRef, 'bob'), {
+      message: VIEW_UNAVAILABLE,
+    });
+    const hugeTurn = {
+      ...snapshot.turns[0],
+      notes: Array(200).fill('界'.repeat(2000)),
+    };
+    assert.equal(
+      store.prepareAgentRun('alice', summary, {
+        ...snapshot,
+        turns: [hugeTurn],
+      }),
+      undefined,
+    );
+    now += 60_000;
+    assert.throws(() => store.show(view.viewRef, 'alice'), {
+      message: VIEW_UNAVAILABLE,
+    });
+    assert.equal(store.prepareAgentRun('alice', summary, snapshot), undefined);
+  });
 
   it('snapshots immutable events, exposes only a compact summary, and strips URL credentials/query', () => {
     const artifact = structuredClone(fixture);

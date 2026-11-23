@@ -10,6 +10,7 @@ import { ShowOutputSchema, VIEW_URI } from '../lib/view-schemas.js';
 import { findHandoff, readHandoff } from '../lib/handoff.js';
 import { HandoffStateSchema } from '../lib/view-schemas.js';
 import { mediaOrigin } from '../lib/agent-media.js';
+import { AgentRunSummarySchema } from '../lib/agent-run-view.js';
 
 const ViewParams = z.object({ viewRef: z.string().max(128) });
 
@@ -22,6 +23,16 @@ async function authorize(
   const view = replayViews.require(ctx.params.viewRef, ctx.viewOwner);
   // Captured media is an owned snapshot, independent of the live browser/replay API.
   if (view.prepared.kind === 'agent-media') return;
+  if (view.prepared.kind === 'agent-run') {
+    try {
+      await ctx.client.getAgentRun(
+        AgentRunSummarySchema.parse(view.prepared.data).runId,
+      );
+    } catch {
+      throw new UserError(VIEW_UNAVAILABLE);
+    }
+    return;
+  }
   if (view.prepared.kind === 'request-logs') {
     try {
       const result = await accountQuery<{
@@ -78,7 +89,7 @@ export function registerShowTools(
   defineTool(server, config, analytics, {
     name: 'browserless_show',
     description:
-      'Display a prepared Browserless replay, screenshot gallery, video, human handoff, account usage, active sessions, or request-log explorer inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
+      'Display a prepared Browserless replay, screenshot gallery, video, human handoff, account usage, active sessions, request-log explorer, or hosted agent run timeline inline. Pass the exact viewRef returned by its producer tool. Never repeats browser actions, downloads, or creates another handoff.',
     collectPrompt: false,
     parameters: ViewParams,
     outputSchema: ShowOutputSchema,

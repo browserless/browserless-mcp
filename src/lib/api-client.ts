@@ -6,6 +6,7 @@ import {
 } from './utils.js';
 import type {
   ApiClient,
+  BrowserPages,
   CrawlCancelResponse,
   CrawlRequest,
   CrawlStartResponse,
@@ -452,7 +453,36 @@ export function createApiClient(
   };
   const _cache = cache ?? new ResponseCache(config.cacheTtlMs);
 
+  const readAgentRun = (
+    path: string,
+    query?: ApiFetchOptions<unknown>['query'],
+  ) =>
+    apiFetch<unknown>(config, {
+      path,
+      query,
+      method: 'GET',
+      timeout: config.requestTimeout,
+      maxRetries: 0,
+      handleResponse: async (res) => {
+        if (!res.ok) {
+          const messages: Record<number, string> = {
+            404: 'Run not found',
+            403: 'Agent runs need an account-scoped API key.',
+            429: 'Agent run reads are busy. Try again shortly.',
+            503: 'Agent runs are temporarily unavailable.',
+          };
+          throw new Error(messages[res.status] ?? `API error ${res.status}`);
+        }
+        return res.json().catch(() => {
+          throw new Error('Unexpected agent run response.');
+        });
+      },
+    });
+
   return {
+    getAgentRun: (runId) =>
+      readAgentRun(`/agent/run/${encodeURIComponent(runId)}`),
+    listAgentRuns: (query) => readAgentRun('/agent/run', query),
     async smartScrape(params: SmartScrapeRequest): Promise<SmartScrapeResult> {
       const formats = params.formats ?? ['markdown'];
       const tokenHash = hashToken(config.browserlessToken);
@@ -564,6 +594,16 @@ export function createApiClient(
         method: 'GET',
         query: { limit: params?.limit, offset: params?.offset },
         timeout: config.requestTimeout,
+      });
+    },
+
+    async listPages(browserId, mint): Promise<BrowserPages> {
+      return apiFetch(config, {
+        path: `/browser/${encodeURIComponent(browserId)}/pages`,
+        method: 'GET',
+        query: { mint },
+        timeout: config.requestTimeout,
+        ...(mint ? { maxRetries: 0 } : {}),
       });
     },
 

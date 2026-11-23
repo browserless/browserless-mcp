@@ -44,7 +44,7 @@ describe('tool annotations', () => {
 
       registerSurface(server, { ...mockConfig, complianceMode });
 
-      expect(addToolSpy.callCount).to.equal(complianceMode ? 7 : 23);
+      expect(addToolSpy.callCount).to.equal(complianceMode ? 7 : 24);
 
       addToolSpy.getCalls().forEach((call) => {
         const tool = call.args[0];

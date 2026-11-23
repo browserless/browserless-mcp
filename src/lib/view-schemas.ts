@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { LogSummarySchema } from './log-view-schemas.js';
+import { AgentRunSummarySchema } from './agent-run-view.js';
 
 import {
   UsageSnapshotSchema,
   ActiveSessionsSnapshotSchema,
 } from './account-view-schemas.js';
 
-export const VIEW_URI = 'ui://browserless/view/v13.html';
+export const VIEW_URI = 'ui://browserless/view/v15.html';
 // Cloud viewers include an encrypted worker-routing prefix.
 export const LIVE_VIEWER_PATH = /^\/(?:e\/[a-f0-9]+\/)?live(?:\/|$)/;
 export const VIEW_UNAVAILABLE =
@@ -66,10 +67,12 @@ export const ShowOutputSchema = z
       'usage',
       'active-sessions',
       'request-logs',
+      'agent-run',
     ]),
     summary: z.string(),
     expiresAt: z.string().datetime(),
     data: z.union([
+      AgentRunSummarySchema,
       ReplaySummarySchema,
       HandoffSummarySchema,
       MediaSummarySchema,
@@ -90,7 +93,9 @@ export const ShowOutputSchema = z
               ? LogSummarySchema
               : value.kind === 'usage'
                 ? UsageSnapshotSchema
-                : ActiveSessionsSnapshotSchema;
+                : value.kind === 'agent-run'
+                  ? AgentRunSummarySchema
+                  : ActiveSessionsSnapshotSchema;
     if (!schema.safeParse(value.data).success)
       ctx.addIssue({
         code: 'custom',

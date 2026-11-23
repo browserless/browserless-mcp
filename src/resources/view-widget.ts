@@ -10,14 +10,18 @@ import { PERFORMANCE_URI } from '../lib/performance-summary.js';
 
 // Performance is self-contained and needs no media, frame, or network origins.
 export function registerPerformanceWidget(server: FastMCP): void {
-  // Keep the previous resource readable during host metadata refreshes.
-  for (const uri of [PERFORMANCE_URI, 'ui://browserless/performance/v3.html'])
+  // Keep previous resources readable during host metadata refreshes.
+  for (const uri of [
+    PERFORMANCE_URI,
+    'ui://browserless/performance/v4.html',
+    'ui://browserless/performance/v3.html',
+  ])
     server.addResource({
       uri,
       name:
         uri === PERFORMANCE_URI
           ? 'Browserless Lighthouse scorecard'
-          : 'Browserless Lighthouse scorecard (v3 compatibility)',
+          : `Browserless Lighthouse scorecard (${uri.match(/v\d+/)?.[0]} compatibility)`,
       mimeType: RESOURCE_MIME_TYPE,
       async load() {
         return {
@@ -55,7 +59,7 @@ export function registerViewWidget(
     VIEW_URI,
     LIVE_URL_URI,
     ...Array.from(
-      { length: 12 },
+      { length: 14 },
       (_, index) => `ui://browserless/view/v${index + 1}.html`,
     ),
   ])
@@ -96,7 +100,7 @@ export function registerViewWidget(
             'openai/widgetDescription':
               uri === LIVE_URL_URI
                 ? 'Live viewer for an existing browser. Direct creation does not pause automation or keep the browser alive. Status, close, and handoff preparation do not open viewers here.'
-                : 'Browserless replay, captured media, human handoff, account usage meter, active sessions table, and request-log explorer. Let the widget present its data; do not repeat its charts or tables in chat unless asked for analysis or specific values.',
+                : 'Browserless replay, captured media, human handoff, account usage meter, active sessions table, request-log explorer, and hosted agent run timeline. Let the widget present its data; do not repeat its charts or tables in chat unless asked for analysis or specific values.',
           },
         };
       },

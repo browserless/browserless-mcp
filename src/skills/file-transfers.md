@@ -2,7 +2,7 @@
 
 Transferring files to/from the browser. Two methods: `uploadFile` (attach files to an `<input type="file">`) and `getDownloads` (retrieve files Chrome downloaded).
 
-**Do not `curl`/`wget`/`fetch` a file yourself to download it.** That only works for a public, static, directly-addressable URL — the easy case. The general case (files behind login/cookies, generated server-side on demand, or served by a click via `Content-Disposition` headers) has **no URL you can fetch**, and a direct fetch silently returns the wrong bytes, an HTML page, or a 403. **Drive the browser** (click/goto), and the file is captured for you. A direct fetch is only correct when this flow _hands you_ a URL (the single-use `/download/<id>` URL, or an over-cap `sourceUrl`).
+**Drive the browser first** (click/goto), then follow the captured artifact's delivery instructions. Login/cookie-gated or generated downloads often have no directly fetchable URL.
 
 **Key idea — never move bytes through this conversation.** Large files as base64 blow up the context. So downloads come back as a _handle_ (a path or a `browserless-download://` URI), and uploads take that handle (or a local path) instead of base64. The MCP server reads/writes the actual bytes on disk; you only pass small references. Only fall back to base64 `content` when you genuinely have raw bytes and no handle.
 
@@ -20,19 +20,17 @@ Just trigger the download in the agent — navigate to the file URL, or click a 
 
 - Captured downloads **auto-surface**: every agent response carries the current download ledger — **never the bytes**. You don't need to call anything to see it.
 - A short, size-scaled grace wait lets quick downloads land on the **same** call. A slower one shows up as **in-progress with a byte count** ("downloading 2.0MB / 10MB") — just keep using the browser; it'll appear completed on a later response. As long as you keep touching the browser, the download state stays fresh.
-- Files **larger than the cap** aren't transferred: you get a `FileTooLarge` note with the **source URL** — fetch it directly (e.g. `curl`) if you have network access.
+- Files **larger than the cap** aren't transferred. Native mode reports the limit without a source-URL fallback. Legacy mode may supply a source URL; use it only when permitted by your client's credential policy.
 - You decide whether to save each file. (`getDownloads` still exists for an explicit poll, but it's rarely needed.)
 - A **screenshot** can be captured straight to disk with `screenshot { toDisk: true }` instead of returned inline — it then behaves exactly like a download here (same handle/path/URL, same reuse). See the **screenshots** skill.
 
 **Local (stdio) mode:** the file is already on the local disk (`BROWSERLESS_DOWNLOAD_DIR`, default a temp dir). The response lists the saved **path** — hand it straight back to `uploadFile { path }` while it remains in that directory. Local upload paths (including symlink targets) must stay inside the download directory or an additional directory explicitly allowed by the local operator through `BROWSERLESS_UPLOAD_DIRS` (colon-separated on macOS/Linux, semicolon-separated on Windows). Nothing more to fetch. Do not bypass a rejected path by reading its bytes into the conversation or moving the file yourself.
 
-**Remote (HTTP) mode:** the server can't write to your disk, so each file comes with a **single-use** GET URL. Fetch it with `curl` to save locally — works **once**:
+**Remote native delivery (`delivery: mcp-resource`):** use the returned `resourceUri` only through a client/tool/runtime verified to save blobs to disk without including payloads in model requests. Basic MCP resource support is insufficient. If that path is absent or unverified, report unsupported saving without reading the resource. Check the saved file's existence and byte count through filesystem metadata only, then copy to the user's destination with the required permission approval. Claude Code's `blobSavedTo` source is under its sensitive `~/.claude` directory. If approval is denied or unavailable, or copying fails, stop and report the limitation. Never use `Read`, `cat`, an image viewer or other content inspection of that file or its copy to complete a save, even after a blocked copy. Do not access local credentials, ask for a token in chat, or fall back to shell authentication, inline bytes or a source URL.
 
-```bash
-curl -fsS "<MCP_BASE_URL>/download/<id>" -H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}" -o "report.csv"
-```
+**Remote legacy delivery:** the artifact includes authenticated HTTP save instructions. Follow them only where the client permits local authentication. The URL itself never authorizes access.
 
-The command with the file's id and URL is in the `getDownloads` response. Set `BROWSERLESS_TOKEN` locally to the same Browserless API token used for this MCP session; a different token cannot fetch the file. Never print the token or put it in the conversation. The command fails if the variable is unset or empty, and HTTP errors fail without saving the error response as a file. Alternatively, reuse the handle as `uploadFile { files: [{ handle: "browserless-download://<id>" }] }` to re-upload it elsewhere without ever fetching the bytes. A file is dropped after one GET, after 15 minutes, or when the session ends — whichever comes first.
+Both hosted routes authenticate the owner and share single-use consumption. The handle can be reused with `uploadFile` before consumption. Retrieval, the 15-minute deadline or session cleanup invalidates it, whichever comes first. A failure after consumption does not authorize re-running browser actions or generating the artifact again automatically.
 
 ## Uploading
 
@@ -59,14 +57,7 @@ Each file is resolved in this order — pick the first you have:
 
 ### Uploading a NEW local file in HTTP mode
 
-The server can't read your filesystem, so stage the file once over HTTP (bytes go via `curl`, never through the conversation), then use the returned handle:
-
-```bash
-curl -fsS -F file=@"/path/to/file.png" "<MCP_BASE_URL>/upload" -H "Authorization: Bearer ${BROWSERLESS_TOKEN:?Set BROWSERLESS_TOKEN locally to the MCP session token}"
-# → { "ok": true, "handle": "browserless-download://0123456789abcdef0123456789abcdef", "filename": "file.png", ... }
-```
-
-Set `BROWSERLESS_TOKEN` locally to the same Browserless API token used for this MCP session so the returned handle belongs to the session's token. Never print its value or put it in the conversation. The HTTP-mode `uploadFile` error for a local `path` supplies a staging command that references this environment variable; it does not fill in the token.
+The server can't read your filesystem. Use a supported client staging path and pass its returned handle. If native staging is unavailable, report the limitation instead of reading local credentials. Legacy clients with permission for local authentication can follow the server's authenticated `/upload` instructions. Never move file bytes through the conversation to bypass unsupported staging.
 
 ```json
 {

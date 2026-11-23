@@ -590,6 +590,53 @@ describe('account-data tools', () => {
         });
       }
 
+      it('uses native descriptors for both saved replay files without credential instructions', async () => {
+        const largeArtifact = {
+          ...artifact,
+          padding: 'private-replay'.repeat(MAX_INLINE_BYTES_REMOTE / 8),
+        };
+        fetchStub.onFirstCall().resolves(gql(replayResponse(SIGNED_URL)));
+        fetchStub
+          .onSecondCall()
+          .resolves(new Response(JSON.stringify(largeArtifact)));
+        const server = new FastMCP({ name: 'test', version: '0.1.0' });
+        const spy = sinon.spy(server, 'addTool');
+        registerSessionsTool(server, {
+          ...mockConfig,
+          transport: 'httpStream',
+        });
+        const sessionId = 'native-saved-replay';
+        try {
+          const result = await spy.firstCall.args[0].execute(
+            { action: 'replay', sessionId: 'sr_1' },
+            {
+              ...mockContext,
+              sessionId,
+              session: {
+                token: 'caller-token',
+                artifactDelivery: 'mcp-resource',
+              },
+            } as never,
+          );
+          const text = textOf(result);
+          expect(
+            text.match(/resourceUri: browserless-download:\/\/[^\s]+/g),
+          ).to.have.length(2);
+          expect(text).to.include('mimeType: text/html');
+          expect(text).to.include('mimeType: application/json');
+          for (const forbidden of [
+            'curl',
+            'BROWSERLESS_TOKEN',
+            'caller-token',
+            'private-replay',
+            '/tmp/',
+          ])
+            expect(text).not.to.include(forbidden);
+        } finally {
+          clearSession(sessionId);
+        }
+      });
+
       it('keeps a hosted player at exactly 4 MiB inline', async () => {
         const base = {
           ...artifact,

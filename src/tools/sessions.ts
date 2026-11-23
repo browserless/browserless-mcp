@@ -535,7 +535,7 @@ export function registerSessionsTool(
     format: async (
       result,
       params,
-      { token, sessionId, uiEnabled, viewOwner },
+      { token, sessionId, uiEnabled, viewOwner, artifactDelivery },
     ) => {
       if (params.action === 'active' && uiEnabled && !isCompliant(config)) {
         const view = replayViews.prepareSnapshot(
@@ -595,7 +595,9 @@ export function registerSessionsTool(
               ? [
                   describeReadyDownload(
                     record,
-                    replay.view ? { ...config } : { ...config, token },
+                    replay.view
+                      ? { ...config, artifactDelivery }
+                      : { ...config, token, artifactDelivery },
                   ),
                 ]
               : [],

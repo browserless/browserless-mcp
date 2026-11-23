@@ -28,7 +28,7 @@ import {
   HumanHandoffActiveError,
   UpgradeError,
 } from '../../src/lib/agent-client.js';
-import type { ProxyOptions } from '../../src/@types/types.js';
+import type { PersonaOptions, ProxyOptions } from '../../src/@types/types.js';
 import {
   makeAcceptingServer,
   makeRejectingServer,
@@ -1103,6 +1103,7 @@ describe('agent-client buildAgentWsUrl', () => {
     const persona = {
       emulationOs: 'windows' as const,
       emulatedDevice: 'pixel-8',
+      deviceType: 'tablet' as const,
       screen: '1920x1080',
       deviceScaleFactor: 1.25 as const,
       deviceSlot: 3,
@@ -1127,6 +1128,7 @@ describe('agent-client buildAgentWsUrl', () => {
     expect(Object.fromEntries(full.searchParams)).to.include({
       emulationOs: 'windows',
       emulatedDevice: 'pixel-8',
+      deviceType: 'tablet',
       screen: '1920x1080',
       deviceScaleFactor: '1.25',
       deviceSlot: '3',
@@ -1152,6 +1154,55 @@ describe('agent-client buildAgentWsUrl', () => {
     for (const field of Object.keys(persona)) {
       expect(compliant.searchParams.has(field), field).to.equal(false);
     }
+  });
+
+  const personaUrl = (persona: PersonaOptions, sessionId?: string) =>
+    new URL(
+      buildAgentWsUrl(
+        'http://localhost:3000',
+        'tok',
+        undefined,
+        undefined,
+        sessionId,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        persona,
+      ),
+    );
+
+  it('serializes an iOS tablet persona with the token appended once', () => {
+    const url = personaUrl({ emulationOs: 'ios', deviceType: 'tablet' });
+    expect(Object.fromEntries(url.searchParams)).to.include({
+      emulationOs: 'ios',
+      deviceType: 'tablet',
+      token: 'tok',
+    });
+    expect(url.searchParams.getAll('token')).to.deep.equal(['tok']);
+  });
+
+  it('serializes an Android phone device kind unchanged', () => {
+    const url = personaUrl({ emulationOs: 'android', deviceType: 'phone' });
+    expect(url.searchParams.get('emulationOs')).to.equal('android');
+    expect(url.searchParams.get('deviceType')).to.equal('phone');
+  });
+
+  it('percent-encodes a device slug so it cannot add or override parameters', () => {
+    const slug = 'iphone-16&token=evil#x';
+    const url = personaUrl({ emulationOs: 'ios', emulatedDevice: slug });
+    expect(url.searchParams.getAll('token')).to.deep.equal(['tok']);
+    expect(url.searchParams.get('emulatedDevice')).to.equal(slug);
+    expect(url.href).to.include('%26');
+    expect(url.href).to.include('%23');
+  });
+
+  it('rejects a device kind while attaching an existing browser', () => {
+    expect(() => personaUrl({ deviceType: 'tablet' }, 'sess-123')).to.throw(
+      /cannot redefine an attached browser/i,
+    );
   });
 
   it('rejects conflicting OS aliases before serializing the URL', () => {
@@ -2278,6 +2329,104 @@ describe('agent-client bare-call isolation', () => {
       const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
       expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('windows');
       expect(reconnectUrl.searchParams.get('screen')).to.equal('1920x1080');
+    } finally {
+      await server.close();
+    }
+  });
+
+  const openByHandle = (
+    url: string,
+    mcpSessionId: string,
+    handle: string,
+    persona?: PersonaOptions,
+  ) =>
+    getOrCreateSession(
+      mcpSessionId,
+      url,
+      'tok',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      handle,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      persona,
+    );
+
+  it('retains an iOS tablet persona across a dropped socket and rejects a conflicting kind', async () => {
+    const server = await makeAcceptingServer();
+    const reopen = (mcpSessionId: string, persona?: PersonaOptions) =>
+      openByHandle(server.url, mcpSessionId, 'dropped-ios-handle', persona);
+    try {
+      const opened = await reopen('mcp-dropped-ios', {
+        emulationOs: 'ios',
+        deviceType: 'tablet',
+      });
+      const closed = new Promise<void>((resolve) =>
+        opened.ws.once('close', () => resolve()),
+      );
+      opened.ws.terminate();
+      await closed;
+
+      const resumed = await reopen('mcp-dropped-ios-2');
+      expect(resumed.ws).to.not.equal(opened.ws);
+      expect(resumed.persona).to.deep.equal({
+        emulationOs: 'ios',
+        deviceType: 'tablet',
+      });
+      const reconnectUrl = new URL(server.upgradeUrls()[1]!, server.url);
+      expect(reconnectUrl.searchParams.get('emulationOs')).to.equal('ios');
+      expect(reconnectUrl.searchParams.get('deviceType')).to.equal('tablet');
+
+      let thrown: unknown;
+      try {
+        await reopen('mcp-dropped-ios-2', {
+          emulationOs: 'ios',
+          deviceType: 'phone',
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('treats an explicit phone kind as the default for a mobile session', async () => {
+    const server = await makeAcceptingServer();
+    const call = (
+      mcpSessionId: string,
+      handle: string,
+      persona: PersonaOptions,
+    ) => openByHandle(server.url, mcpSessionId, handle, persona);
+    try {
+      for (const emulationOs of ['ios', 'android'] as const) {
+        const handle = `default-phone-${emulationOs}`;
+        const opened = await call(`mcp-${handle}`, handle, { emulationOs });
+        const resumed = await call(`mcp-${handle}-2`, handle, {
+          emulationOs,
+          deviceType: 'phone',
+        });
+        expect(resumed.ws, emulationOs).to.equal(opened.ws);
+      }
+
+      let thrown: unknown;
+      try {
+        await call('mcp-default-phone-ios-3', 'default-phone-ios', {
+          emulationOs: 'ios',
+          deviceType: 'tablet',
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).to.be.instanceOf(PersonaConflictError);
     } finally {
       await server.close();
     }

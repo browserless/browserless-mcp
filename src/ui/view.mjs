@@ -8,6 +8,7 @@ import { mountLiveURL } from './live-url.mjs';
 import { mountAgentMedia } from './agent-media.mjs';
 import { mountPerformance, mountPerformancePreview } from './performance.mjs';
 import { mountLogs } from './logs.mjs';
+import { mountAgentRun, showAgentRunFailure } from './agent-run.mjs';
 import { mountAccountView } from './account-view.mjs';
 import {
   ReplayPayloadSchema,
@@ -44,6 +45,10 @@ const performanceRoot = byId('performance');
 let logs;
 const logsRoot = byId('request-logs');
 const isLogsView = () => lastResult?.structuredContent?.kind === 'request-logs';
+let agentRun;
+const agentRunRoot = byId('agent-run');
+const isAgentRunView = () =>
+  lastResult?.structuredContent?.kind === 'agent-run';
 let accountView;
 const accountRoot = byId('account-view');
 const isAccountView = () =>
@@ -80,6 +85,7 @@ function updateHost(context) {
   handoff?.updateHost(context);
   media?.updateHost(context);
   logs?.updateHost(context);
+  agentRun?.updateHost(context);
   accountView?.updateHost(context);
   card.classList.toggle('expanded', hostContext.displayMode === 'fullscreen');
   byId('fullscreen').hidden =
@@ -147,6 +153,9 @@ function dispose() {
   logs?.dispose();
   logs = undefined;
   logsRoot.hidden = true;
+  agentRun?.dispose();
+  agentRun = undefined;
+  agentRunRoot.hidden = true;
 }
 function fail(error) {
   loading.abort();
@@ -178,6 +187,13 @@ function fail(error) {
         '<header><h1>Request logs unavailable</h1></header><p role="alert"></p>';
       logsRoot.querySelector('[role="alert"]').textContent = error.message;
     }
+    return;
+  }
+  if (isAgentRunView()) {
+    card.hidden = true;
+    agentRunRoot.hidden = false;
+    if (agentRun) agentRun.fail(error);
+    else showAgentRunFailure(agentRunRoot, error);
     return;
   }
   if (isPerformanceView()) {
@@ -409,6 +425,7 @@ async function render(result) {
           lastResult = reply;
           void render(reply);
         },
+        result._meta?.auditRef,
       );
       card.hidden = true;
       performanceRoot.hidden = false;
@@ -419,6 +436,18 @@ async function render(result) {
       logs = mountLogs(logsRoot, result._meta?.payload, view, app, hostContext);
       card.hidden = true;
       logsRoot.hidden = false;
+      return;
+    }
+    if (view.kind === 'agent-run') {
+      agentRun = mountAgentRun(
+        agentRunRoot,
+        result._meta?.payload,
+        view,
+        app,
+        hostContext,
+      );
+      card.hidden = true;
+      agentRunRoot.hidden = false;
       return;
     }
     const expires = Date.parse(view.expiresAt);
@@ -552,13 +581,15 @@ app.ontoolcancelled = (params) => {
     new Error(
       isLogsView()
         ? params?.reason || 'Request log loading was cancelled.'
-        : isAccountView()
-          ? params?.reason || 'Account view was cancelled.'
-          : isPerformanceView()
-            ? params?.reason || 'Performance audit was cancelled.'
-            : isLiveURLView()
-              ? params?.reason || 'Live viewer was cancelled.'
-              : 'Replay loading was cancelled.',
+        : isAgentRunView()
+          ? params?.reason || 'Agent run view was cancelled.'
+          : isAccountView()
+            ? params?.reason || 'Account view was cancelled.'
+            : isPerformanceView()
+              ? params?.reason || 'Performance audit was cancelled.'
+              : isLiveURLView()
+                ? params?.reason || 'Live viewer was cancelled.'
+                : 'Replay loading was cancelled.',
     ),
   );
 };

@@ -59,11 +59,10 @@ const sessionIdField = z
   .optional()
   .describe(
     'The `sessionId` returned by your previous browserless_agent call in this ' +
-      'conversation. Echo it back on EVERY subsequent call — it binds this ' +
-      'conversation to its live browser and its page state (current URL, ' +
-      'cookies, filled forms, open tabs). Omit it only on the first call; ' +
-      'omitting it later abandons the current browser and starts a blank one, ' +
-      'losing everything the session had done. Only ever pass a value the ' +
+      'conversation. For a kept-alive browser, echo it back on EVERY subsequent call ' +
+      'to keep its page state (current URL, cookies, filled forms, open tabs); ' +
+      'omitting it starts a blank browser. Use a one-shot reply’s id only for reporting the outcome. ' +
+      'Only ever pass a value the ' +
       'server returned — never invent one.',
   );
 
@@ -572,7 +571,7 @@ const ScreenshotCommandSchema = z.object({
         .describe(
           'Save the screenshot to disk instead of returning it inline. ' +
             'You will NOT see the image; the response gives a reusable handle ' +
-            '(local path in stdio, single-use GET URL over HTTP) exactly like a ' +
+            '(local path in stdio, authenticated HTTP or MCP resource in hosted mode) exactly like a ' +
             'download — reuse it with uploadFile or hand it to the user. Use when ' +
             'you only need the file later, not to look at now (see file-transfers).',
         ),
@@ -949,7 +948,8 @@ const COMMANDS_DESCRIPTION =
   'Optional: batch multiple commands in one call. When provided, "method" and "params" ' +
   'are ignored and commands are executed sequentially. Only the final result is returned. ' +
   'Use this to batch actions that share the same page state (e.g. filling a form: ' +
-  'type email + type password + click submit). Do NOT batch across navigations.';
+  'type email + type password + click submit). After an optional initial goto, include at most one ' +
+  'page-changing action, after other actions and before any final wait or read.';
 
 // A command as advertised to MCP clients. The authoritative per-command contract
 // (typed params keyed by method) is AgentCommandSchema, but that discriminated
@@ -1008,6 +1008,7 @@ const addPersonaIssues = (
     os?: string;
     emulationOs?: string;
     emulatedDevice?: unknown;
+    deviceType?: unknown;
     deviceSlot?: unknown;
     screen?: unknown;
     deviceScaleFactor?: unknown;
@@ -1024,11 +1025,27 @@ const addPersonaIssues = (
   const hasDesktopOs = ['windows', 'macos', 'linux'].includes(
     v.emulationOs ?? v.os ?? '',
   );
-  if (v.emulatedDevice !== undefined && v.emulationOs !== 'android') {
+  const hasMobileOs = v.emulationOs === 'android' || v.emulationOs === 'ios';
+  if (v.emulatedDevice !== undefined && !hasMobileOs) {
     ctx.addIssue({
       code: 'custom',
       path: ['emulatedDevice'],
-      message: 'emulatedDevice requires emulationOs="android".',
+      message: 'emulatedDevice requires emulationOs="android" or "ios".',
+    });
+  }
+  if (v.deviceType !== undefined && !hasMobileOs) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['deviceType'],
+      message: 'deviceType requires emulationOs="android" or "ios".',
+    });
+  }
+  if (v.deviceType === 'tablet' && v.emulationOs === 'android') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['deviceType'],
+      message:
+        'deviceType="tablet" requires emulationOs="ios"; Android accepts only "phone".',
     });
   }
   if (v.deviceSlot !== undefined && !hasDesktopOs) {
@@ -1105,6 +1122,7 @@ const withAgentInvariants = <T extends z.ZodObject<z.ZodRawShape>>(schema: T) =>
           os?: string;
           emulationOs?: string;
           emulatedDevice?: unknown;
+          deviceType?: unknown;
           deviceSlot?: unknown;
           screen?: unknown;
           deviceScaleFactor?: unknown;

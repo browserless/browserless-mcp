@@ -7,7 +7,6 @@ import { z } from 'zod';
 import { clearSession } from '../../src/lib/download-store.js';
 import { registerSurface } from '../../src/tools/register.js';
 import { registerStatusResource } from '../../src/resources/status.js';
-import { PERFORMANCE_URI } from '../../src/lib/performance-summary.js';
 import {
   announceToolListOnConnect,
   COMPLIANT_EXPORT_DESCRIPTION,
@@ -268,11 +267,12 @@ describe('compliance mode — compliant tool surface', () => {
     ]);
   });
 
-  it('full stdio mode registers exactly the 21 tools (regression guard)', () => {
+  it('full stdio mode registers exactly the 22 tools (regression guard)', () => {
     const { names } = captureTools(false);
     expect(names).to.deep.equal([
       'browserless_account',
       'browserless_agent',
+      'browserless_agent_runs',
       'browserless_crawl',
       'browserless_export',
       'browserless_function',
@@ -318,10 +318,10 @@ describe('compliance mode — compliant tool surface', () => {
     expect(full.has('browserless_link_checkout')).to.be.true;
   });
 
-  it('full HTTP adds stage_file and the handoff reader for exactly 23 tools', () => {
+  it('full HTTP adds stage_file and the handoff reader for exactly 24 tools', () => {
     const stdio = captureTools(false).names;
     const http = captureTools(false, 'httpStream').names;
-    expect(http).to.have.length(23);
+    expect(http).to.have.length(24);
     expect(http).to.deep.equal(
       [...stdio, 'browserless_stage_file', 'browserless_handoff_state'].sort(),
     );
@@ -375,9 +375,11 @@ describe('compliance mode — compliant tool surface', () => {
     it('compliant mode exposes only the self-contained performance UI resource', () => {
       const { promptNames, resourceUris } = captureTools(true);
       expect(promptNames).to.deep.equal([]);
-      expect(resourceUris).to.deep.equal(
-        [PERFORMANCE_URI, 'ui://browserless/performance/v3.html'].sort(),
-      );
+      expect(resourceUris).to.deep.equal([
+        'ui://browserless/performance/v3.html',
+        'ui://browserless/performance/v4.html',
+        'ui://browserless/performance/v5.html',
+      ]);
     });
 
     it('full mode serves the prompts + api-docs resource', () => {
@@ -539,6 +541,7 @@ describe('compliance mode — compliant tool surface', () => {
       for (const extra of [
         { emulationOs: 'windows' },
         { emulatedDevice: 'pixel-8' },
+        { deviceType: 'tablet' },
         { screen: '1920x1080' },
         { deviceScaleFactor: 1 },
         { deviceSlot: 0 },
@@ -829,6 +832,7 @@ describe('compliance mode — compliant tool surface', () => {
         { proxy: { proxy: 'datacenter' } },
         { emulationOs: 'windows' },
         { emulatedDevice: 'pixel-8' },
+        { deviceType: 'tablet' },
         { screen: '1920x1080' },
         { deviceScaleFactor: 1 },
         { deviceSlot: 0 },

@@ -1,0 +1,70 @@
+{
+  "id": "run_example",
+  "status": "succeeded",
+  "created_at": "2026-11-20T12:00:00.000Z",
+  "completed_at": "2026-11-20T12:00:04.000Z",
+  "expires_at": "2099-02-01T00:00:00.000Z",
+  "error": null,
+  "humanRequest": {
+    "reason": "login_wall",
+    "instructions": "FORBIDDEN-INSTRUCTIONS",
+    "liveURL": "https://live.example/FORBIDDEN-LIVE",
+    "expiresAt": "2099-01-01T00:00:00.000Z"
+  },
+  "html": "FORBIDDEN-HTML",
+  "markdown": "FORBIDDEN-MARKDOWN",
+  "links": ["https://forbidden-links.example/"],
+  "screenshot": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAACklEQVQI12NoAAAAggCB3UNq9AAAAABJRU5ErkJggg==",
+  "turns": [
+    {
+      "turnId": "turn_1",
+      "query": "Open Example Domain and read its heading",
+      "status": "succeeded",
+      "units": 1,
+      "actions": [
+        {
+          "seq": 3,
+          "startedAt": "2026-11-20T12:00:03.000Z",
+          "durationMs": null,
+          "tool": "browserless_observe",
+          "commands": [],
+          "status": "incomplete"
+        },
+        {
+          "seq": 1,
+          "startedAt": "2026-11-20T12:00:01.000Z",
+          "durationMs": 280,
+          "tool": "browserless_navigate",
+          "commands": [{ "method": "goto", "url": "https://example.test/" }],
+          "status": "ok"
+        },
+        {
+          "seq": 2,
+          "startedAt": "2026-11-20T12:00:02.000Z",
+          "durationMs": 95,
+          "tool": "browserless_interact",
+          "commands": [
+            { "method": "click", "selector": "#missing" },
+            { "method": "type", "selector": "#search", "textLength": 7 }
+          ],
+          "status": "error",
+          "errorCode": "SELECTOR_MISS"
+        }
+      ],
+      "steps": [
+        "Found the heading.",
+        "The transcript contains <em>plain text</em>."
+      ],
+      "data": { "answer": "Example Domain" }
+    },
+    {
+      "turnId": "turn_2",
+      "query": null,
+      "status": "succeeded",
+      "units": 0,
+      "actions": [],
+      "steps": [],
+      "data": null
+    }
+  ]
+}
