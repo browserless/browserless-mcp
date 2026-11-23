@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { PerformanceParams } from '../@types/types.js';
 
-export const PERFORMANCE_URI = 'ui://browserless/performance/v4.html';
+export const PERFORMANCE_URI = 'ui://browserless/performance/v5.html';
 export const LighthouseCategorySchema = z.enum([
   'accessibility',
   'best-practices',
