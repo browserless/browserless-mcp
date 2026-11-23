@@ -31,7 +31,12 @@ export function mountChatAction(container, app) {
       $('chat-message').textContent = message;
       cancel.addEventListener('click', close, { signal });
       const reveal = (button) => {
-        container.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        // Reveal the whole preview when it fits; otherwise keep its action in view.
+        const target =
+          container.getBoundingClientRect().height > window.innerHeight
+            ? button
+            : container;
+        target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         button.focus({ preventScroll: true });
       };
       let built;

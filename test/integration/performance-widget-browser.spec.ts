@@ -83,10 +83,14 @@ const previewCases = {
     const send = '[data-role="chat-send"]';
     check($(explain)?.getBoundingClientRect().height > 0 && !$('.perf-findings').open, 'failing audits action is missing or hidden when findings are collapsed');
     check(frame.contentDocument.querySelectorAll('[data-role="suggest-metric"]').length === 2, 'expected actions for measured metrics only');
-    frame.style.height = '500px';
-    await wait(() => frame.contentWindow.innerHeight === 500);
+    frame.style.height = '140px';
+    await wait(() => frame.contentWindow.innerHeight === 140);
     $(explain).click();
     check(frame.contentDocument.activeElement === $(send), 'confirmation did not receive focus');
+    await wait(() => {
+      const { top, bottom } = $(send).getBoundingClientRect();
+      return top >= 0 && bottom <= frame.contentWindow.innerHeight;
+    });
     $('[data-category="accessibility"]').click();
     check(!$(explain) && !$(preview), 'changing to a category without findings kept the previous action or preview');
     $('[data-category="performance"]').click();
@@ -352,6 +356,7 @@ describe('performance widget input preview', () => {
             '--headless',
             '--no-sandbox',
             '--disable-gpu',
+            '--disable-smooth-scrolling',
             '--no-first-run',
             '--no-default-browser-check',
             '--user-data-dir=' + directory,
