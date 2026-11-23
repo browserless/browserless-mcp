@@ -4,6 +4,7 @@ export type McpTransport = 'stdio' | 'streamable-http' | 'sse';
 export type ClientFamily =
   | 'anthropic'
   | 'openai'
+  | 'devin'
   | 'ide'
   | 'no_code_platform'
   | 'sdk_default'
@@ -64,10 +65,18 @@ export function sanitizeUserAgent(raw: string | string[] | undefined): {
 export function classifyClientFamily(
   source: string,
   clientName: string | undefined,
+  userAgent?: string,
 ): ClientFamily {
   const name = typeof clientName === 'string' ? clientName.toLowerCase() : '';
   if (INTERACTIVE_SOURCES.includes(source) || source === 'agent_run')
     return 'browserless';
+  // Devin sends the Rust SDK's default clientInfo.name ("rmcp"), so only its
+  // user agent (Devin-MCP-Client/x.y.z) identifies it.
+  if (
+    typeof userAgent === 'string' &&
+    userAgent.trim().toLowerCase().startsWith('devin-mcp-client/')
+  )
+    return 'devin';
   if (name.startsWith('anthropic/') || ANTHROPIC_CLIENTS.includes(name))
     return 'anthropic';
   if (name.startsWith('openai-mcp') || name === 'codex-mcp-client')

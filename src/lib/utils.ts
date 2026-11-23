@@ -76,7 +76,11 @@ export function resolveMcpSource(
   const transport =
     session?.transport ??
     (configTransport === 'stdio' ? 'stdio' : 'streamable-http');
-  const client_family = classifyClientFamily(source, clientInfo?.name);
+  const client_family = classifyClientFamily(
+    source,
+    clientInfo?.name,
+    session?.userAgent,
+  );
   return {
     source,
     client_name: clientInfo?.name,
