@@ -30,11 +30,16 @@ export function mountChatAction(container, app) {
       const cancel = $('chat-cancel');
       $('chat-message').textContent = message;
       cancel.addEventListener('click', close, { signal });
+      const reveal = (button) => {
+        container.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        button.focus({ preventScroll: true });
+      };
       let built;
       try {
         built = buildChatHandoff(handoff);
       } catch (error) {
         status.textContent = error.message;
+        reveal(cancel);
         return;
       }
       const count = built.records.length;
@@ -49,6 +54,7 @@ export function mountChatAction(container, app) {
       }
       list.hidden = false;
       send.hidden = false;
+      reveal(send);
       send.addEventListener(
         'click',
         async () => {

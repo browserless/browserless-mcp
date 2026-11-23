@@ -51,7 +51,8 @@ const previewCases = {
   `,
   'pending audit shares only selected audits or metrics without URL.parse': `
     frame.remove();
-    await open({ serverTools: {}, updateModelContext: { text: {} }, message: { text: {} } });
+    // The synthetic click cannot grant user activation in a sandboxed frame.
+    await open({ serverTools: {}, updateModelContext: { text: {} }, message: { text: {} } }, false);
     frame.contentWindow.URL.parse = undefined;
     const messages = [];
     bridge.onmessage = async params => { messages.push(params); return {}; };
@@ -82,7 +83,10 @@ const previewCases = {
     const send = '[data-role="chat-send"]';
     check($(explain)?.getBoundingClientRect().height > 0 && !$('.perf-findings').open, 'failing audits action is missing or hidden when findings are collapsed');
     check(frame.contentDocument.querySelectorAll('[data-role="suggest-metric"]').length === 2, 'expected actions for measured metrics only');
+    frame.style.height = '500px';
+    await wait(() => frame.contentWindow.innerHeight === 500);
     $(explain).click();
+    check(frame.contentDocument.activeElement === $(send), 'confirmation did not receive focus');
     $('[data-category="accessibility"]').click();
     check(!$(explain) && !$(preview), 'changing to a category without findings kept the previous action or preview');
     $('[data-category="performance"]').click();
@@ -269,9 +273,9 @@ describe('performance widget input preview', () => {
               setTimeout(poll, 10);
             }; poll();
           });
-          async function open(caps = { serverTools: {} }) {
+          async function open(caps = { serverTools: {} }, sandbox = true) {
             frame = document.createElement('iframe');
-            frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+            if (sandbox) frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
             document.body.append(frame);
             bridge = new AppBridge(null, { name: 'Browser check', version: '1.0.0' }, caps);
             for (const handler of ['oncalltool', 'onopenlink', 'ondownloadfile', 'onmessage'])
