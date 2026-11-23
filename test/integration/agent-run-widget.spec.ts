@@ -207,6 +207,30 @@ describe('hosted run timeline over MCP HTTP', () => {
       );
       assert.equal(requests.length, 3);
 
+      const expiry = new Date(Date.now() + 60000).toISOString();
+      snapshot = {
+        ...fixture,
+        expires_at: expiry,
+        turns: Array.from({ length: 5 }, () => ({
+          ...fixture.turns[0],
+          data: { answer: 'x'.repeat(150000) },
+        })),
+      };
+      const oversized = await get();
+      assert.equal(oversized.structuredContent, undefined);
+      const [message] = oversized.content as { type: string; text: string }[];
+      const mediaRef =
+        /Final screenshot: call browserless_show with \{"viewRef":"([^"]+)"\}/.exec(
+          message.text,
+        )?.[1];
+      assert.ok(mediaRef);
+      const oversizedMedia = ShowOutputSchema.parse(
+        (await show(mediaRef)).structuredContent,
+      );
+      assert.equal(oversizedMedia.kind, 'agent-media');
+      assert.equal(oversizedMedia.expiresAt, expiry);
+      snapshot = fixture;
+
       const fallback = await get(legacy);
       assert.equal(fallback.structuredContent, undefined);
       assert.match(

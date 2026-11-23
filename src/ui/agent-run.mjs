@@ -1,4 +1,5 @@
 import {
+  AGENT_RUN_RESULT_PREVIEW_CHARS,
   AgentRunPayloadSchema,
   AGENT_RUN_ACTION_LABELS,
   AGENT_RUN_STATUS_LABELS,
@@ -271,8 +272,29 @@ export function mountAgentRun(root, rawPayload, initialView, app, initialHost) {
     if (view.data.failedActionCount > 0 && firstFailure)
       tools.append(button('Jump to first failure', firstFailure));
     tools.hidden = !tools.childElementCount;
-    if (payload.turnsTruncated)
+    if (payload.turnsTruncated) {
       contents.append(node('p', 'Additional turns were truncated.'));
+      const result = disclosure(
+        'omitted-final-result',
+        'Run final result',
+        openSections,
+      );
+      const preview = payload.omittedFinalResult?.slice(
+        0,
+        AGENT_RUN_RESULT_PREVIEW_CHARS,
+      );
+      result.append(
+        preview === undefined
+          ? node('p', 'Result unavailable.')
+          : node('pre', preview),
+      );
+      if (
+        (payload.omittedFinalResult?.length ?? 0) >
+        AGENT_RUN_RESULT_PREVIEW_CHARS
+      )
+        result.append(node('p', 'Result preview truncated.'));
+      contents.append(result);
+    }
 
     const screenshot = payload.screenshot;
     if (screenshot.state === 'available') {

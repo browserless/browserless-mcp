@@ -128,6 +128,7 @@ export class ViewStore {
   async prepareMedia(
     owner: string,
     inputs: MediaInput[],
+    deadline = Infinity,
   ): Promise<PreparedView | undefined> {
     const total = inputs.length;
     inputs = inputs.slice(0, 12);
@@ -138,8 +139,10 @@ export class ViewStore {
       )
     )
       return;
-    const ref = `view_${randomUUID()}`,
-      expires = this.now() + VIEW_TTL_MS;
+    const now = this.now();
+    const expires = Math.min(now + VIEW_TTL_MS, deadline);
+    if (!(expires > now)) return;
+    const ref = `view_${randomUUID()}`;
     const directory = join(previewRoot, `${process.pid}-${ref}`);
     const media: StoredMedia[] = inputs.map((item) => {
       const id = randomUUID();
@@ -187,7 +190,7 @@ export class ViewStore {
     const needed =
       json.length + media.reduce((total, item) => total + item.bytes, 0);
     if (!this.room(needed, owner)) return;
-    const timer = setTimeout(() => this.drop(ref), VIEW_TTL_MS);
+    const timer = setTimeout(() => this.drop(ref), expires - now);
     timer.unref?.();
     const view: StoredView = {
       prepared,

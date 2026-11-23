@@ -171,14 +171,18 @@ describe('hosted agent run timeline browser', () => {
         await bridge.sendToolCancelled({ reason: 'User cancelled run view' });
         await until(doc, () => root.textContent.includes('User cancelled run view'));
         assert(rows().length === 0, 'Cancelled view kept its snapshot');
+        const capped = result('succeeded');
+        capped._meta.payload.turnsTruncated = true;
+        capped._meta.payload.omittedFinalResult = 'Actual final result after omitted turns';
+        await mount(capped);
+        const cappedFinal = details('Run final result');
+        assert(cappedFinal && cappedFinal.querySelector('pre').textContent === capped._meta.payload.omittedFinalResult, 'Capped timeline hid the actual final result');
         await bridge.teardownResource({});
         assert(root.hidden, 'Teardown did not hide the timeline');
         if (${Boolean(screenshotPath)}) {
-          const preview = result('succeeded');
-          preview._meta.payload.screenshot = { state: 'none' };
-          await mount(preview);
-          rows()[1].click();
-          details('Final result').open = true;
+          capped._meta.payload.screenshot = { state: 'none' };
+          await mount(capped);
+          details('Run final result').open = true;
         }
         assert(violations.length === 0, 'Unexpected CSP violations: ' + violations.join(', '));
         document.querySelector('pre').textContent = 'PASS: hosted agent run timeline';

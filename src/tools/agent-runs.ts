@@ -54,18 +54,24 @@ async function prepareScreenshot(
   const width = body.readUInt32BE(16),
     height = body.readUInt32BE(20);
   if (!width || !height) return { state: 'unavailable', reason: 'invalid' };
-  const media = await replayViews.prepareMedia(owner, [
-    {
-      type: 'image',
-      mimeType: 'image/png',
-      body,
-      label: 'Final screenshot',
-      rationale: '',
-      commandIndex: 1,
-      width,
-      height,
-    },
-  ]);
+  const media = await replayViews.prepareMedia(
+    owner,
+    [
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        body,
+        label: 'Final screenshot',
+        rationale: '',
+        commandIndex: 1,
+        width,
+        height,
+      },
+    ],
+    summary.runExpiresAt === null
+      ? undefined
+      : Date.parse(summary.runExpiresAt),
+  );
   return media
     ? { state: 'available', viewRef: media.viewRef }
     : { state: 'unavailable', reason: 'storage' };
@@ -143,24 +149,24 @@ export function registerAgentRunsTool(
       if (result.action === 'list')
         return [{ type: 'text', text: formatAgentRunList(result.list) }];
       const { payload, summary, screenshotBase64 } = result.run;
+      let screenshotHint = '';
       if (uiEnabled && !isCompliant(config)) {
         const screenshot = await prepareScreenshot(
           config,
           viewOwner,
           result.run,
         );
+        if (screenshot.state === 'available')
+          screenshotHint = `\nFinal screenshot: call browserless_show with ${JSON.stringify({ viewRef: screenshot.viewRef })}.`;
         const view = replayViews.prepareAgentRun(viewOwner, summary, {
           ...payload,
           screenshot,
         });
         if (view) {
           const lines = [
-            formatAgentRunText(payload, summary, { timeline: false }),
+            formatAgentRunText(payload, summary, { timeline: false }) +
+              screenshotHint,
           ];
-          if (screenshot.state === 'available')
-            lines.push(
-              `Final screenshot: call browserless_show with ${JSON.stringify({ viewRef: screenshot.viewRef })}.`,
-            );
           lines.push(
             `Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to inspect the timeline inline.`,
           );
@@ -176,9 +182,11 @@ export function registerAgentRunsTool(
         {
           type: 'text',
           text:
-            screenshotBase64 !== null
-              ? `${text}\nFinal screenshot: captured. Open this run in an MCP Apps client to view it.`
-              : text,
+            text +
+            (screenshotHint ||
+              (!uiEnabled && screenshotBase64 !== null
+                ? '\nFinal screenshot: captured. Open this run in an MCP Apps client to view it.'
+                : '')),
         },
       ];
     },
