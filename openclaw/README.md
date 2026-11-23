@@ -80,6 +80,10 @@ openclaw mcp login browserless
 openclaw gateway start
 ```
 
+`gateway stop` and `gateway start` control the managed Gateway service. If you
+run the Gateway in the foreground or under your own supervisor, stop it there,
+run `mcp login`, then start it the same way.
+
 `login` prints an authorization URL and captures the redirect on a loopback
 address. If your browser runs on another machine and can't reach that address,
 finish with the `--code` command it prints.
@@ -94,7 +98,7 @@ out of committed config.
    service, use `~/.openclaw/.env`:
 
    ```bash
-   echo "BROWSERLESS_TOKEN=your-token" >> ~/.openclaw/.env
+   printf '\nBROWSERLESS_TOKEN=%s\n' 'your-token' >> ~/.openclaw/.env
    chmod 600 ~/.openclaw/.env
    ```
 
@@ -114,6 +118,9 @@ out of committed config.
    ```bash
    openclaw gateway restart
    ```
+
+   `gateway restart` applies to the managed service. A foreground or
+   externally supervised Gateway needs restarting the way you started it.
 
 3. Check the connection:
 
@@ -253,7 +260,10 @@ clawhub package publish ./openclaw --owner browserless
 excluded from git by `.gitignore` and from the published package by
 `.clawhubignore`, which also keeps `clawhub-skills/` out of the package.
 
-Publish each task skill under the same owner, with the source linked:
+ClawHub releases every published skill under MIT-0, whatever license the
+source repository uses. Don't publish the task skills until that license has
+been approved for them. Then publish each one under the same owner, with the
+source linked:
 
 ```bash
 clawhub skill publish ./openclaw/clawhub-skills/browserless-web-scraper \
@@ -281,4 +291,6 @@ Keep in mind:
 
 ## License
 
-SSPL-1.0. See the repository's [LICENSE](../LICENSE).
+The plugin is SSPL-1.0. See the repository's [LICENSE](../LICENSE). Task
+skills published separately on ClawHub are released there under MIT-0 (see
+[Publishing](#publishing-maintainers)).
