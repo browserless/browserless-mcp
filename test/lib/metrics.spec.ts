@@ -225,7 +225,10 @@ describe('metrics (OTLP telemetry)', () => {
     // They belong on the authenticate hook (the one supported hook that observes
     // every POST /mcp), tracking in-flight + recording per request.
     const authStart = source.indexOf('const hybridAuthenticate');
-    const authSlice = source.slice(authStart, authStart + 2000);
+    const authSlice = source.slice(
+      authStart,
+      source.indexOf(': undefined;', authStart),
+    );
     expect(authStart, 'hybridAuthenticate not found').to.be.greaterThan(-1);
     expect(authSlice).to.include('mcpInFlightAdd(1)');
     expect(authSlice).to.include('recordMcpRequest(');

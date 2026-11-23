@@ -1,5 +1,8 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import {
   createApiClient,
   ProfileNotFoundError,
@@ -44,6 +47,55 @@ const mockSuccessResponse = {
   rawText: null,
   metadata: null,
 };
+
+describe('REST API base URL normalization', () => {
+  it('joins REST paths with one slash, preserves prefixes and leaves the input unchanged', async () => {
+    const paths: string[] = [];
+    const server = createServer((req, res) => {
+      req.resume();
+      const path = new URL(req.url!, 'http://localhost').pathname;
+      paths.push(path);
+      if (!/^\/(gateway\/)?(smart-scrape|function|active)$/.test(path)) {
+        res.writeHead(404).end('Unexpected path');
+      } else if (path.endsWith('/function')) {
+        res.setHeader('Content-Type', 'text/plain');
+        res.end('function result');
+      } else {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(mockSuccessResponse));
+      }
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const { port } = server.address() as AddressInfo;
+      for (const prefix of ['', '/gateway']) {
+        for (const suffix of ['', '/', '///']) {
+          const browserlessApiUrl = `http://127.0.0.1:${port}${prefix}${suffix}`;
+          const config = Object.freeze({ ...mockConfig, browserlessApiUrl });
+          const client = createApiClient(config);
+          expect(
+            (await client.smartScrape({ url: 'https://example.com' })).markdown,
+          ).to.equal('# Hello');
+          expect(
+            (await client.runFunction({ code: 'return 1;' })).data,
+          ).to.equal('function result');
+          expect((await client.getStatus()).ok).to.equal(true);
+          expect(paths.splice(0)).to.deep.equal([
+            `${prefix}/smart-scrape`,
+            `${prefix}/function`,
+            `${prefix}/active`,
+          ]);
+          expect(config.browserlessApiUrl).to.equal(browserlessApiUrl);
+        }
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
 
 describe('createApiClient', () => {
   let fetchStub: sinon.SinonStub;

@@ -31,9 +31,9 @@ const RECOVERY: Record<ErrorCategory, string> = {
   TIMEOUT:
     'The page or wait condition did not resolve in time. Try a longer waitFor, a different signal (waitForResponse with a known URL), or re-snapshot to confirm current state.',
   INVALID_PARAMS:
-    'The parameters were rejected. The schema is authoritative — fix the params; do not blind-retry.',
+    'The parameters were rejected. Check the method’s parameter guidance and correct the inputs before retrying.',
   UNKNOWN_METHOD:
-    'That method does not exist. Pick one from the command list in the tool schema and re-issue; do not retry the same name.',
+    'That method does not exist. Pick a supported method from the tool instructions or a loaded skill; do not retry the same name.',
   SCRIPT_ERROR:
     'Your script threw. The page is still alive — re-snapshot to confirm its state, then fix the script.',
   UNKNOWN: 'Re-snapshot and re-plan from the current page state.',

@@ -24,6 +24,7 @@ import {
 } from './failure-details.js';
 import type {
   ApiClient,
+  ArtifactDelivery,
   BrowserlessSession,
   McpConfig,
 } from '../@types/types.js';
@@ -92,10 +93,13 @@ export interface ToolRunContext<P> {
   }) => Promise<void>;
   /** MCP session id (httpStream transport) or undefined for stdio — used by agent tool. */
   sessionId: string | undefined;
+  artifactDelivery: ArtifactDelivery;
   /** Initialized MCP Apps capability, never inferred from a client name. */
   uiEnabled: boolean;
   /** Server-derived caller/account/API scope, independent of the transport. */
   viewOwner: string;
+  /** Cancellation of the current MCP tool request. */
+  signal?: AbortSignal;
   /**
    * Pre-created browser session id to attach to (from the `x-browserless-session-id`
    * header). When set, the agent tool attaches to it instead of opening its own.
@@ -141,7 +145,7 @@ export interface ToolDefinition<P, R> {
     params: P,
     context: Pick<
       ToolRunContext<P>,
-      'token' | 'sessionId' | 'uiEnabled' | 'viewOwner'
+      'token' | 'sessionId' | 'uiEnabled' | 'viewOwner' | 'artifactDelivery'
     >,
   ) => Content[] | ContentResult | Promise<Content[] | ContentResult>;
   /**
@@ -221,7 +225,7 @@ export function defineTool<P, R>(
     ...(def._meta ? { _meta: def._meta } : {}),
     execute: async (
       args,
-      { reportProgress, session, sessionId, log, client: mcpClient },
+      { reportProgress, session, sessionId, log, client: mcpClient, signal },
     ) => {
       // Inbound activity refreshes the idle clock so the reaper never closes a
       // live session between tool calls (see session-reaper.ts).
@@ -237,6 +241,10 @@ export function defineTool<P, R>(
       // for the unconstrained generic. Tools see the typed session via this helper
       // and never cast token/apiUrl themselves.
       const s = session as BrowserlessSession | undefined;
+      const artifactDelivery =
+        config.transport === 'httpStream'
+          ? (s?.artifactDelivery ?? 'http')
+          : 'http';
       const capabilities = server.sessions
         .find((candidate) => candidate.sessionId === sessionId)
         ?.server.getClientCapabilities();
@@ -384,8 +392,10 @@ export function defineTool<P, R>(
             apiUrl,
             reportProgress,
             sessionId,
+            artifactDelivery,
             uiEnabled,
             viewOwner,
+            signal,
             attachSessionId: s?.attachSessionId,
             userId: s?.userId,
             userRole: s?.userRole,
@@ -400,6 +410,7 @@ export function defineTool<P, R>(
         const formatted = await def.format(result, params, {
           token,
           sessionId,
+          artifactDelivery,
           uiEnabled,
           viewOwner,
         });

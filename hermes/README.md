@@ -71,6 +71,12 @@ For each Hermes browser task the plugin starts one Browserless browser and a sma
 daemon and its CDP supervisor) to that local address, and they all share a single connection to Browserless.
 Your token is sent only to Browserless; Hermes' own clients never see it.
 
+The local listener accepts CDP commands up to 16 MiB per WebSocket message (UTF-8 bytes for text,
+including all fragments), with compression disabled. Larger commands close only the sending client's
+connection with code 1009. This leaves room for multi-megabyte scripts and uploads; split larger inputs
+into smaller commands. Browser-to-client responses, such as screenshots and PDFs, are not capped by this
+inbound limit.
+
 The plugin keeps the browser alive across brief network drops (it reconnects to the same browser and page),
 starts a fresh browser when your plan's session limit is reached, and closes the browser when the task ends,
 on Ctrl+C, or when Hermes exits.

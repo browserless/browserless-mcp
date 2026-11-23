@@ -10,6 +10,7 @@ import { registerAgentTools } from '../../src/tools/agent.js';
 import { registerShowTools } from '../../src/tools/show.js';
 import { registerViewWidget } from '../../src/resources/view-widget.js';
 import { registerMediaPreviewRoute } from '../../src/resources/media-preview.js';
+import { registerDownloadResource } from '../../src/resources/download-resource.js';
 import { replayViews } from '../../src/lib/view-store.js';
 import { ShowOutputSchema } from '../../src/lib/view-schemas.js';
 import { clearSession } from '../../src/lib/download-store.js';
@@ -92,14 +93,19 @@ describe('real agent tool media integration over MCP', () => {
         authMethod: 'oauth',
         accountId: 'shared',
         userId: request.headers.authorization?.slice(7) ?? 'alice',
+        artifactDelivery:
+          request.headers['x-browserless-artifact-delivery'] === 'mcp-resource'
+            ? ('mcp-resource' as const)
+            : ('http' as const),
       }),
     });
     registerAgentTools(server, config);
     registerShowTools(server, config);
     registerViewWidget(server, config);
     registerMediaPreviewRoute(server);
+    registerDownloadResource(server, config);
     const clients: Client[] = [];
-    async function connect(user: string, ui = true) {
+    async function connect(user: string, ui = true, native = false) {
       const client = new Client(
         { name: 'Media test', version: '1.0.0' },
         {
@@ -117,7 +123,14 @@ describe('real agent tool media integration over MCP', () => {
       clients.push(client);
       await client.connect(
         new StreamableHTTPClientTransport(new URL(base + '/mcp'), {
-          requestInit: { headers: { Authorization: 'Bearer ' + user } },
+          requestInit: {
+            headers: {
+              Authorization: 'Bearer ' + user,
+              ...(native
+                ? { 'x-browserless-artifact-delivery': 'mcp-resource' }
+                : {}),
+            },
+          },
         }),
       );
       return client;
@@ -220,6 +233,49 @@ describe('real agent tool media integration over MCP', () => {
         (largeView.structuredContent as any).summary,
         /first 12 of 13/,
       );
+      const secondPng = Buffer.concat([
+        Buffer.from(png, 'base64'),
+        Buffer.from('second-capture'),
+      ]).toString('base64');
+      const native = await connect('alice', true, true);
+      const savedScreenshot = {
+        method: 'screenshot',
+        params: { toDisk: true },
+      };
+      for (const { batch, expected } of [
+        { batch: [savedScreenshot, { method: 'snapshot' }], expected: [png] },
+        {
+          batch: [savedScreenshot, savedScreenshot],
+          expected: [png, secondPng],
+        },
+        { batch: [savedScreenshot], expected: [png] },
+      ]) {
+        captures = [...expected];
+        const saved = await native.callTool({
+          name: 'browserless_agent',
+          arguments: { commands: batch },
+        });
+        assert.ok(!saved.isError, JSON.stringify(saved.content));
+        const text = JSON.stringify(saved.content);
+        assert.match(text, /view_[0-9a-f-]+/);
+        assert.ok(!text.includes(png));
+        const uris = [
+          ...text.matchAll(
+            /resourceUri: (browserless-download:\/\/[0-9a-f]{32}\/screenshot.png)/g,
+          ),
+        ].map((match) => match[1]);
+        assert.equal(uris.length, expected.length);
+        assert.equal(new Set(uris).size, uris.length);
+        for (const [index, uri] of uris.entries()) {
+          const resource = await native.readResource({ uri });
+          const item = resource.contents[0];
+          assert.ok('blob' in item);
+          assert.deepEqual(
+            Buffer.from(item.blob, 'base64'),
+            Buffer.from(expected[index], 'base64'),
+          );
+        }
+      }
       const bob = await connect('bob');
       assert.equal(
         (
@@ -231,10 +287,6 @@ describe('real agent tool media integration over MCP', () => {
         true,
       );
       const noUi = await connect('alice', false);
-      const secondPng = Buffer.concat([
-        Buffer.from(png, 'base64'),
-        Buffer.from('second-capture'),
-      ]).toString('base64');
       captures = [png, secondPng];
       const fallback = await noUi.callTool({
         name: 'browserless_agent',

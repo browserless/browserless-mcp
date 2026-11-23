@@ -7,7 +7,10 @@ import {
   mergeLogEntries,
   logEntryKey,
 } from '../lib/log-view-schemas.js';
+import { CHAT_HANDOFF_MAX_RECORDS, scrubUrl } from '../lib/chat-handoff.js';
 import { ShowOutputSchema } from '../lib/view-schemas.js';
+import { chatSupported, mountChatAction } from './chat-action.mjs';
+import { formatTimestamp, formatNumber } from './host.mjs';
 import './logs.css';
 
 const node = (tag, text, className = '') => {
@@ -46,6 +49,22 @@ const labels = {
   requestId: 'Request ID',
   sessionId: 'Session ID',
 };
+const chatFields = [
+  ['timestamp', 'text'],
+  ['level', 'text'],
+  ['eventName', 'text'],
+  ['endpoint', 'text'],
+  ['outcome', 'text'],
+  ['status', 'number'],
+  ['category', 'text'],
+  ['reason', 'text'],
+  ['durationMs', 'number'],
+  ['totalUnits', 'number'],
+  ['region', 'text'],
+  ['requestId', 'id'],
+  ['message', 'text'],
+  ['url', 'url'],
+].map(([key, kind]) => ({ key, kind }));
 
 function parsePage(raw, data) {
   if (new TextEncoder().encode(JSON.stringify(raw)).length > LOG_PAGE_MAX_BYTES)
@@ -70,10 +89,27 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
     expiryTimer,
     lastAction;
   const expanded = new Set();
+  const chatEnabled = chatSupported(app);
+  const selected = new Set();
   const controller = new AbortController();
-  root.innerHTML = `<header><span class="logs-icon" aria-hidden="true">≡</span><div><h1>Request logs</h1><p data-role="range"></p></div><button data-role="refresh">Refresh</button></header><details class="logs-filters"><summary>Filters</summary><dl data-role="active-filters"></dl><form><fieldset><div class="logs-filter-grid" data-role="fields"></div><label>Timestamp order<select name="order"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label><label>Entries per page<input name="limit" type="number" min="1" max="100" value="50"></label><fieldset class="logs-levels"><legend>Severity</legend></fieldset></fieldset><div class="logs-filter-actions"><button type="button" data-role="apply">Apply filters</button><button type="button" data-role="clear">Clear filters</button></div></form></details><p data-role="status" role="status" aria-live="polite"></p><p data-role="error" role="alert" hidden></p><button data-role="retry" hidden>Retry</button><div class="logs-table-scroll" tabindex="0" role="region" aria-label="Request log entries"><table><thead><tr><th scope="col">Timestamp</th><th scope="col">Severity</th><th scope="col">Endpoint / event</th><th scope="col">Outcome / status</th><th scope="col">Category / reason</th><th scope="col">Duration</th><th scope="col">Units</th><th scope="col">Region</th></tr></thead><tbody></tbody></table></div><p data-role="empty" hidden>No request log entries matched. Widen the time range or remove a filter. The available window depends on your account plan.</p><button data-role="more">Load more</button><footer><span data-role="updated"></span><span>Browserless</span></footer>`;
+  const chatBar = chatEnabled
+    ? '<div data-role="chat-bar"><button type="button" data-role="chat">Diagnose selected</button><span data-role="chat-limit" role="status"></span></div><div data-role="chat-host"></div>'
+    : '';
+  const selectHeader = chatEnabled ? '<th scope="col">Select</th>' : '';
+  root.innerHTML = `<header><span class="logs-icon" aria-hidden="true">≡</span><div><h1>Request logs</h1><p data-role="range"></p></div><button data-role="refresh">Refresh</button></header><details class="logs-filters"><summary>Filters</summary><dl data-role="active-filters"></dl><form><fieldset><div class="logs-filter-grid" data-role="fields"></div><label>Timestamp order<select name="order"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label><label>Entries per page<input name="limit" type="number" min="1" max="100" value="50"></label><fieldset class="logs-levels"><legend>Severity</legend></fieldset></fieldset><div class="logs-filter-actions"><button type="button" data-role="apply">Apply filters</button><button type="button" data-role="clear">Clear filters</button></div></form></details><p data-role="status" role="status" aria-live="polite"></p><p data-role="error" role="alert" hidden></p><button data-role="retry" hidden>Retry</button>${chatBar}<div class="logs-table-scroll" tabindex="0" role="region" aria-label="Request log entries"><table><thead><tr>${selectHeader}<th scope="col">Timestamp</th><th scope="col">Severity</th><th scope="col">Endpoint / event</th><th scope="col">Outcome / status</th><th scope="col">Category / reason</th><th scope="col">Duration</th><th scope="col">Units</th><th scope="col">Region</th></tr></thead><tbody></tbody></table></div><p data-role="empty" hidden>No request log entries matched. Widen the time range or remove a filter. The available window depends on your account plan.</p><button data-role="more">Load more</button><footer><span data-role="updated"></span><span>Browserless</span></footer>`;
   const $ = (role) => root.querySelector(`[data-role="${role}"]`);
   const form = root.querySelector('form');
+  const chat = chatEnabled ? mountChatAction($('chat-host'), app) : null;
+  const chatButton = $('chat');
+  const headers = root.querySelectorAll('th');
+  for (const [selector, role] of [
+    ['table', 'table'],
+    ['thead,tbody', 'rowgroup'],
+    ['tr', 'row'],
+    ['th', 'columnheader'],
+  ])
+    for (const element of root.querySelectorAll(selector))
+      element.setAttribute('role', role);
   for (const [key, title] of fields) {
     const label = node('label', title);
     const input = node(key === 'eventNames' ? 'textarea' : 'input');
@@ -125,23 +161,11 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
     return LogsParamsSchema.omit({ cursor: true }).parse(filters);
   }
   function timestamp(value) {
-    if (value === null) return 'Unavailable';
-    const time = new Date(value);
-    if (!Number.isFinite(time.getTime())) return value;
-    try {
-      return new Intl.DateTimeFormat(host.locale, {
-        dateStyle: 'short',
-        timeStyle: 'medium',
-        ...(host.timeZone ? { timeZone: host.timeZone } : {}),
-      }).format(time);
-    } catch {
-      return time.toLocaleString();
-    }
+    return (
+      formatTimestamp(value, host) ?? (value === null ? 'Unavailable' : value)
+    );
   }
-  const number = (value, suffix = '') =>
-    value === null
-      ? 'Unavailable'
-      : `${new Intl.NumberFormat(host.locale, { maximumFractionDigits: 20 }).format(value)}${suffix}`;
+  const number = (value, suffix = '') => formatNumber(value, host, suffix);
   function chip(value) {
     const tone = /^(error|fatal|failed)$/i.test(value ?? '')
       ? 'bad'
@@ -174,15 +198,76 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
     });
     return button;
   }
+  function updateSelection() {
+    if (!chatButton) return;
+    chatButton.textContent = `Diagnose selected (${selected.size})`;
+    chatButton.disabled = selected.size === 0 || pending || stopped;
+    const atLimit = selected.size >= CHAT_HANDOFF_MAX_RECORDS;
+    for (const checkbox of root.querySelectorAll(
+      'tbody input[type="checkbox"]',
+    ))
+      checkbox.disabled = atLimit && !checkbox.checked;
+    $('chat-limit').textContent = atLimit
+      ? `Selection limit reached (${CHAT_HANDOFF_MAX_RECORDS}).`
+      : '';
+  }
+  chatButton?.addEventListener(
+    'click',
+    () => {
+      if (chatButton.disabled) return;
+      const filters = page.filters;
+      const details = {};
+      for (const key of [
+        'startTime',
+        'endTime',
+        'endpoint',
+        'outcome',
+        'category',
+        'reason',
+        'order',
+      ])
+        if (filters[key] !== undefined) details[key] = filters[key];
+      if (filters.levels) details.levels = filters.levels.join(', ');
+      if (filters.eventNames)
+        details.eventNames = filters.eventNames.join(', ');
+      if (filters.url) details.url = scrubUrl(filters.url);
+      const records = entries.filter((entry) =>
+        selected.has(logEntryKey(entry)),
+      );
+      chat.open({
+        handoff: {
+          tool: 'browserless_logs',
+          view: 'request-logs',
+          request:
+            'Diagnose the selected request-log entries: identify the likely cause of each failure and suggest fixes.',
+          details,
+          fields: chatFields,
+          records,
+        },
+        message:
+          records.length === 1
+            ? 'Diagnose the request-log entry I selected in the Browserless log explorer.'
+            : `Diagnose the ${records.length} request-log entries I selected in the Browserless log explorer.`,
+        previewLine: (r) =>
+          [r.timestamp, r.level, r.endpoint ?? r.eventName, r.outcome]
+            .filter(Boolean)
+            .join(' · '),
+      });
+    },
+    { signal: controller.signal },
+  );
   function renderRows() {
     const body = root.querySelector('tbody');
     body.replaceChildren();
     const current = new Set(entries.map(logEntryKey));
     for (const key of expanded) if (!current.has(key)) expanded.delete(key);
+    for (const key of selected) if (!current.has(key)) selected.delete(key);
     for (const entry of entries) {
       const key = logEntryKey(entry);
       const row = node('tr');
       const details = node('tr', undefined, 'logs-detail');
+      row.setAttribute('role', 'row');
+      details.setAttribute('role', 'row');
       details.hidden = !expanded.has(key);
       const toggle = node(
         'button',
@@ -202,6 +287,32 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
         if (details.hidden) expanded.delete(key);
         else expanded.add(key);
       });
+      if (chatEnabled) {
+        const selectCell = node('td');
+        const checkbox = node('input');
+        checkbox.type = 'checkbox';
+        checkbox.setAttribute(
+          'aria-label',
+          `Select log entry at ${timestamp(entry.timestamp)}`,
+        );
+        checkbox.checked = selected.has(key);
+        checkbox.addEventListener(
+          'change',
+          () => {
+            if (checkbox.checked) {
+              if (selected.size < CHAT_HANDOFF_MAX_RECORDS) selected.add(key);
+              else checkbox.checked = selected.has(key);
+            } else {
+              selected.delete(key);
+            }
+            chat.close();
+            updateSelection();
+          },
+          { signal: controller.signal },
+        );
+        selectCell.append(checkbox);
+        row.append(selectCell);
+      }
       const timeCell = node('td');
       timeCell.append(toggle);
       row.append(timeCell);
@@ -227,8 +338,13 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
         node('td', number(entry.totalUnits)),
         node('td', entry.region ?? 'Unavailable'),
       );
+      [...row.children].forEach((cell, index) => {
+        cell.setAttribute('role', 'cell');
+        cell.dataset.label = headers[index].textContent;
+      });
       const cell = node('td');
-      cell.colSpan = 8;
+      cell.setAttribute('role', 'cell');
+      cell.colSpan = headers.length;
       const values = node('dl');
       for (const [key, title] of Object.entries(labels)) {
         const group = node('div');
@@ -248,6 +364,7 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
       details.append(cell);
       body.append(row, details);
     }
+    updateSelection();
     $('empty').hidden = entries.length > 0 || stopped;
     root.querySelector('.logs-table-scroll').hidden = !entries.length;
   }
@@ -281,6 +398,7 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
       'form button, header button, [data-role="more"], [data-role="retry"]',
     ))
       button.disabled = value || stopped;
+    updateSelection();
     if (value) $('status').textContent = 'Loading request logs…';
   }
   async function load(mode, filters) {
@@ -291,6 +409,7 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
     }
     lastAction = { mode, filters };
     const cursor = mode === 'more' ? page.nextCursor : null;
+    chat?.close();
     busy(true);
     try {
       const response = await app.callServerTool({
@@ -399,6 +518,8 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
     entries = [];
     page = { ...page, entries: [], nextCursor: null };
     expanded.clear();
+    selected.clear();
+    chat?.close();
     render();
     busy(false);
     $('status').textContent = /cancel/i.test(error.message ?? '')
@@ -433,6 +554,7 @@ export function mountLogs(root, rawPayload, initialView, app, initialHost) {
       stopped = true;
       clearTimeout(expiryTimer);
       controller.abort();
+      chat?.dispose();
       root.replaceChildren();
     },
   };

@@ -17,6 +17,13 @@ export const findLiveSession = (
     ? sessions.find((s) => s.sessionId === sessionId && s.auth !== undefined)
     : undefined;
 
+export const requestSessionId = (request: {
+  headers?: Record<string, string | string[] | undefined>;
+}): string | undefined => {
+  const header = request.headers?.['mcp-session-id'];
+  return Array.isArray(header) ? header[0] : header;
+};
+
 export const sessionPrincipal = (auth: BrowserlessSession): string =>
   auth.authMethod === 'oauth' && auth.accountId && auth.userId
     ? `user:${auth.accountId}:${auth.userId}`
@@ -64,6 +71,25 @@ export const admitSessionRequest = (
   onRefused?: (refusal: SessionRefusal, owner?: BrowserlessSession) => void,
 ): void => {
   assertSessionPrincipal(sessionId, auth, sessions, onRefused);
+  const stored = findLiveSession(sessionId, sessions)?.auth as
+    BrowserlessSession | undefined;
+  if (
+    auth.artifactDelivery !== undefined &&
+    stored &&
+    auth.artifactDelivery !== stored.artifactDelivery
+  ) {
+    throw Response.json(
+      {
+        error: 'invalid_request',
+        error_description:
+          'Artifact delivery mode is fixed for this session; reconnect to change it.',
+      },
+      { status: 400 },
+    );
+  }
+  // The transport replaces session auth on every request. Preserve only this
+  // preference; keep the freshly authenticated token and principal unchanged.
+  if (stored?.artifactDelivery) auth.artifactDelivery = stored.artifactDelivery;
   touchSession(sessionId);
 };
 

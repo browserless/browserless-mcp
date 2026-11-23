@@ -6,6 +6,7 @@ import {
 } from './utils.js';
 import type {
   ApiClient,
+  BrowserPages,
   CrawlCancelResponse,
   CrawlRequest,
   CrawlStartResponse,
@@ -110,6 +111,7 @@ interface ApiFetchOptions<T> {
    * retry errors whose message starts with "Server error 4" (i.e. 4xx).
    */
   shouldRetry?: (error: Error) => boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -222,13 +224,19 @@ function apiFetch<T>(
 
   return retryWithBackoff(
     async () => {
+      opts.signal?.throwIfAborted();
       const controller = new AbortController();
       const timeoutId = setTimeout(
         () => controller.abort(),
         opts.timeout + 5000,
       );
       try {
-        const res = await fetch(url, { ...init, signal: controller.signal });
+        const res = await fetch(url, {
+          ...init,
+          signal: opts.signal
+            ? AbortSignal.any([controller.signal, opts.signal])
+            : controller.signal,
+        });
         try {
           await throwIfProfileMissing(res, opts.profile);
           return await handle(res);
@@ -245,7 +253,9 @@ function apiFetch<T>(
     {
       maxRetries: opts.maxRetries ?? config.maxRetries,
       baseDelayMs: 1000,
-      shouldRetry: opts.shouldRetry ?? defaultShouldRetry,
+      shouldRetry: (error) =>
+        !opts.signal?.aborted &&
+        (opts.shouldRetry ?? defaultShouldRetry)(error),
     },
   );
 }
@@ -437,6 +447,10 @@ export function createApiClient(
   config: ResolvedConfig,
   cache?: ResponseCache,
 ): ApiClient {
+  config = {
+    ...config,
+    browserlessApiUrl: config.browserlessApiUrl.replace(/\/+$/, ''),
+  };
   const _cache = cache ?? new ResponseCache(config.cacheTtlMs);
 
   return {
@@ -554,6 +568,16 @@ export function createApiClient(
       });
     },
 
+    async listPages(browserId, mint): Promise<BrowserPages> {
+      return apiFetch(config, {
+        path: `/browser/${encodeURIComponent(browserId)}/pages`,
+        method: 'GET',
+        query: { mint },
+        timeout: config.requestTimeout,
+        ...(mint ? { maxRetries: 0 } : {}),
+      });
+    },
+
     async getBrowserIdForTarget(targetId): Promise<string | undefined> {
       const sessions: unknown = await apiFetch(config, {
         path: '/sessions',
@@ -668,6 +692,7 @@ export function createApiClient(
 
     async performance(
       params: PerformanceRequest,
+      signal?: AbortSignal,
     ): Promise<PerformanceResponse> {
       const timeout = params.timeout ?? config.requestTimeout;
       const body: Record<string, unknown> = { url: params.url };
@@ -689,6 +714,7 @@ export function createApiClient(
         body,
         timeout,
         profile: params.profile,
+        signal,
       });
     },
 

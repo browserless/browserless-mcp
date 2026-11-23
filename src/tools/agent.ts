@@ -1,9 +1,14 @@
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { getConfig } from '../config.js';
+import {
+  diagnosticString,
+  escapeDiagnosticString,
+} from '../lib/diagnostic-string.js';
 import { mediaOrigin, prepareAgentMedia } from '../lib/agent-media.js';
 import {
   assertAllowedUploadPath,
@@ -11,10 +16,12 @@ import {
 } from '../lib/upload-path-guard.js';
 import {
   downloadOwner,
+  downloadResourceUri,
   downloadUri,
   getDownload,
   storeDownload,
   FILE_TRANSFER_MAX_BYTES,
+  NATIVE_ARTIFACT_MAX_BYTES,
   type StoredDownload,
 } from '../lib/download-store.js';
 import {
@@ -34,6 +41,7 @@ import {
 } from '../lib/agent-client.js';
 import type {
   AgentParams,
+  ArtifactDelivery,
   ErrorCategory,
   McpConfig,
   PersonaOptions,
@@ -330,6 +338,45 @@ const describeInProgressDownload = (d: DownloadEntry): string => {
   return `${d.filename ?? 'file'} — downloading (${got}${total}); touch the browser again to collect it`;
 };
 
+const MAX_UPLOAD_MB = FILE_TRANSFER_MAX_BYTES / (1024 * 1024);
+
+const uploadTooLarge = (name: string, bytes: number): UserError =>
+  new UserError(
+    `Upload file "${name}" is ${bytes} bytes, over the ${MAX_UPLOAD_MB}MB limit.`,
+  );
+
+// Read a regular file without ever buffering more than the transfer limit:
+// check its size through the open descriptor, then cap the read itself so a
+// file that grows after the check still can't exceed the limit.
+const readUploadFile = async (path: string, name: string): Promise<Buffer> => {
+  // Nonblocking open lets us reject FIFOs without waiting for a writer.
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile()) throw new Error('Upload must be a regular file.');
+    if (stat.size > FILE_TRANSFER_MAX_BYTES) {
+      throw uploadTooLarge(name, stat.size);
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    // Inclusive end: at most one overflow byte, even if the file grows.
+    const stream = file.createReadStream({
+      autoClose: false,
+      start: 0,
+      end: FILE_TRANSFER_MAX_BYTES,
+    });
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > FILE_TRANSFER_MAX_BYTES) throw uploadTooLarge(name, size);
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, size);
+  } finally {
+    // A close failure must not mask the read result or the size error.
+    await file.close().catch(() => {});
+  }
+};
+
 // Resolve each uploadFile entry to base64 `content` (from `content`, a prior
 // `handle`, or a local `path` in stdio) so the model never emits base64 itself.
 export const normalizeUploadCommand = async (
@@ -337,6 +384,7 @@ export const normalizeUploadCommand = async (
   transport: McpConfig['transport'],
   mcpBaseUrl: string | undefined,
   token: string,
+  artifactDelivery?: ArtifactDelivery,
 ): Promise<void> => {
   if (cmd.method !== 'uploadFile') return;
   const files = cmd.params.files;
@@ -357,12 +405,29 @@ export const normalizeUploadCommand = async (
             `getDownloads, or supply base64 "content".`,
         );
       }
-      buf = await readFile(record.path);
       defaultName = record.filename;
+      try {
+        buf = await readUploadFile(record.path, defaultName);
+      } catch (e: unknown) {
+        if (e instanceof UserError) throw e;
+        throw new UserError(
+          `Upload handle "${f.handle}" could not be read; it may have ` +
+            'expired. Stage the file again and pass the new handle.',
+        );
+      }
       if (f.mimeType === undefined) f.mimeType = record.mimeType;
       delete f.handle;
     } else if (typeof f.path === 'string' && f.path) {
       if (transport !== 'stdio') {
+        if (artifactDelivery === 'mcp-resource') {
+          throw new UserError(
+            'Local file uploads are unsupported in this native HTTP profile: ' +
+              'the server cannot read your filesystem and native staging is disabled. ' +
+              'An existing unconsumed download handle can be reused with uploadFile. ' +
+              'Otherwise report the limitation; do not read local credentials, ' +
+              'substitute a shell upload, or inline file bytes.',
+          );
+        }
         const base = mcpBaseUrl ?? '<MCP_BASE_URL>';
         throw new UserError(
           'uploadFile "path" is not available in HTTP mode (the server can\'t ' +
@@ -385,36 +450,33 @@ export const normalizeUploadCommand = async (
             'the HTTP /upload staging flow and pass the returned handle.',
         );
       }
-      buf = await readFile(path).catch((e: unknown) => {
+      defaultName = basename(path);
+      try {
+        buf = await readUploadFile(path, defaultName);
+      } catch (e: unknown) {
+        if (e instanceof UserError) throw e;
         throw new UserError(
           `Failed to read upload file "${path}": ` +
             (e instanceof Error ? e.message : String(e)),
         );
-      });
-      defaultName = basename(path);
+      }
       delete f.path;
     } else {
       continue;
     }
 
-    if (buf.byteLength > FILE_TRANSFER_MAX_BYTES) {
-      throw new UserError(
-        `Upload file "${defaultName}" is ${buf.byteLength} bytes, over the ` +
-          `50MB limit.`,
-      );
-    }
     f.content = buf.toString('base64');
     if (!f.name) f.name = defaultName;
   }
 };
 
-const describeFailedDownload = (d: DownloadEntry): string => {
+const describeFailedDownload = (d: DownloadEntry, native = false): string => {
   let s =
     `${d.filename ?? 'unknown'}: ${d.error ?? 'no data'}` +
     (d.maxBytes ? ` (max ${d.maxBytes} bytes)` : '');
   // Over-cap files can't go through the transfer flow — point at the source so
   // the caller can fetch it directly (e.g. curl) if it has network access.
-  if (d.error === 'FileTooLarge' && d.sourceUrl) {
+  if (!native && d.error === 'FileTooLarge' && d.sourceUrl) {
     s += ` — too large to transfer; fetch directly: ${d.sourceUrl}`;
   }
   return s;
@@ -427,7 +489,7 @@ const persistDownload = async (
   token: string | undefined,
   sessionId?: string,
 ): Promise<Awaited<ReturnType<typeof storeDownload>> | null> => {
-  if (d.error || !d.data || !d.filename) return null;
+  if (d.error || d.data === undefined || !d.filename) return null;
   return storeDownload(
     d.filename,
     d.mimeType ?? 'application/octet-stream',
@@ -442,6 +504,7 @@ type FormatOpts = {
   sessionId?: string;
   mcpBaseUrl?: string;
   token?: string;
+  artifactDelivery?: ArtifactDelivery;
 };
 
 // stdio: file is already on the local disk → return its path (reuse as
@@ -456,6 +519,21 @@ export const describeReadyDownload = (
       `${record.path} (${record.mimeType}, ${record.size} bytes) — ` +
       `reuse as uploadFile { path: "${record.path}" }`
     );
+  }
+  if (opts.artifactDelivery === 'mcp-resource') {
+    if (record.size > NATIVE_ARTIFACT_MAX_BYTES) {
+      return `${record.filename} (${record.mimeType}, ${record.size} bytes): exceeds the ${NATIVE_ARTIFACT_MAX_BYTES}-byte native transfer limit. Saving is unsupported in this profile. Do not read the resource, fetch local credentials, inline its bytes, or regenerate automatically.`;
+    }
+    return [
+      `delivery: mcp-resource`,
+      `    handle: ${downloadUri(record.id)}`,
+      `    resourceUri: ${downloadResourceUri(record)}`,
+      `    filename: ${record.filename}`,
+      `    mimeType: ${record.mimeType}`,
+      `    size: ${record.size}`,
+      `    expiresAt: ${new Date(record.expiresAt).toISOString()}`,
+      '    Save only through a verified client resource-to-disk tool, then use its saved-file path; check existence and byte count before reporting success. If unavailable or unverified, report unsupported saving. Do not read local credentials or fall back to shell authentication or inline bytes. Single use across MCP and HTTP; session cleanup may invalidate it earlier. If delivery fails after consumption, do not regenerate automatically.',
+    ].join('\n');
   }
   const baseUrl = URL.parse(opts.mcpBaseUrl ?? '');
   const base =
@@ -489,11 +567,11 @@ export const formatDownloads = async (
     }
     const record = await persistDownload(d, opts.token, opts.sessionId);
     lines.push(
-      `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d)}`,
+      `- ${record ? describeReadyDownload(record, opts) : describeFailedDownload(d, opts.artifactDelivery === 'mcp-resource')}`,
     );
   }
   const header =
-    opts.transport === 'stdio'
+    opts.transport === 'stdio' || opts.artifactDelivery === 'mcp-resource'
       ? 'Downloads:'
       : 'Downloads (save the ones you need — each GET works once):';
   const text = downloads.length
@@ -667,8 +745,11 @@ export const closeReminder = (compliant: boolean): string =>
   (compliant
     ? ''
     : '`reportSkillOutcome` (only if you loaded a site recipe; its footer has the exact call), then ') +
-  `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then send ` +
-  `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
+  `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then ` +
+  (compliant
+    ? 'send `{ "method": "close" }` as its own call'
+    : '`{ "method": "close" }` as the last command') +
+  ` — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
 
 const oneShotClosedNotice = (handle: string, reported: boolean): string =>
@@ -684,6 +765,9 @@ export const SAVED_LOGIN_REMINDER =
   '`{ "method": "reportProfileAuthentication", "params": { "checkpointId": "<host>:first-page", ' +
   '"outcome": "<authenticated | login_required | challenge | unknown>", "newLoginActivity": false } }` ' +
   'as the first command of your next batch, then continue the task (end a batch with `snapshot` first if you have not taken one).';
+
+export const SKILL_OUTCOME_NOT_RECORDED =
+  "Skill outcome not recorded: the browser session had already closed, and a skill outcome is only accepted from the browser that visited the site. No browser was opened. Don't resend it now; next time, send reportSkillOutcome in a batch while the browser is still open (before close).";
 
 const hostOf = (url: unknown): string | undefined => {
   try {
@@ -780,7 +864,10 @@ export const nextProfileAuthState = (
 const isReportOnly = (commands: Array<{ method: string }>): boolean =>
   commands.every((c) =>
     ['reportOutcome', 'reportSkillOutcome', 'close'].includes(c.method),
-  ) && commands.some((c) => c.method === 'reportOutcome');
+  ) &&
+  commands.some((c) =>
+    ['reportOutcome', 'reportSkillOutcome'].includes(c.method),
+  );
 
 // Both transports: the minted handle is the only way back, so stdio needs it too —
 // its old process-wide key was what collided concurrent tasks.
@@ -913,7 +1000,7 @@ export function registerAgentTools(
         return [
           {
             type: 'text' as const,
-            text: `No site recipe found for "${params.site}". Proceed with the standard agent loop.`,
+            text: `No site recipe found for "${params.site}". Plan the steps yourself: goto, then snapshot.`,
           },
         ];
       }
@@ -932,7 +1019,7 @@ export function registerAgentTools(
       SELF_CHECK_DIRECTIVE +
       sessionContinuityNote(config.transport) +
       (!compliant && config.transport === 'httpStream'
-        ? ' When blocked by a step requiring human input, stop browser actions and keep the existing session open. Call browserless_live_url with action handoff, that sessionId, and specific plain-text instructions; display its viewRef with browserless_show. Ask the person to complete the step, click Done in the viewer, then reply here. Do not continue automation or create another browser while waiting. On their return, check handoff_status with the viewRef and resume with a fresh snapshot in the same session only after reason userDone. For userFailed, expiry, disconnection, or unavailable status, explain the outcome and ask how to proceed; do not assume success.'
+        ? ' When blocked by a step requiring human input, stop browser actions and keep the existing session open. If your client renders MCP Apps widgets (inline viewers in the conversation), call browserless_live_url with action handoff, that sessionId, and specific plain-text instructions; display its viewRef with browserless_show; ask the person to complete the step, click Done in the viewer, then reply here; on their return, check handoff_status with the viewRef and resume with a fresh snapshot in the same session only after reason userDone. If your client does not render MCP Apps widgets, or you cannot tell, do not call handoff (it returns an error there): run the liveURL command with interactable: true and specific instructions as the last command of its call with keepSessionAlive: true, give the person the returned link, ask them to complete the step, click Done, then reply here, and resume with a fresh snapshot in the same session after they confirm. Either way, do not continue automation or create another browser while waiting. For userFailed, expiry, disconnection, or unavailable status, explain the outcome and ask how to proceed; do not assume success.'
         : '') +
       (!compliant && mediaOrigin(config)
         ? ' Media-producing calls may return an exact viewRef in text. When the user wants to see captured screenshots or a completed video, call browserless_show with that reference. It displays the existing capture and never repeats browser actions.'
@@ -955,6 +1042,7 @@ export function registerAgentTools(
     },
     run: async (ctx) => {
       const run = await runAgentCommands(ctx, config, AGENT_RUN_OPTIONS);
+      let mediaHint: Content | undefined;
       if (ctx.uiEnabled && !compliant && mediaOrigin(config)) {
         try {
           const view = await prepareAgentMedia(
@@ -964,13 +1052,10 @@ export function registerAgentTools(
             ctx.params.rationale,
           );
           if (view) {
-            return [
-              ...run.content,
-              {
-                type: 'text' as const,
-                text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}). Related screenshots can be captured in one command batch for one gallery.`,
-              },
-            ];
+            mediaHint = {
+              type: 'text',
+              text: `View captured media with browserless_show(${JSON.stringify({ viewRef: view.viewRef })}). Related screenshots can be captured in one command batch for one gallery.`,
+            };
           }
         } catch {
           ctx.log.warn(
@@ -979,7 +1064,8 @@ export function registerAgentTools(
         }
       }
       // The ordinary formatter already includes the last reportable result.
-      // Preserve earlier captures too when no gallery can carry their bytes.
+      // Explicit saves need descriptors even when a gallery carries previews.
+      // Earlier inline images are needed only when no gallery is available.
       const reportable = run.results.filter(
         (command) => command.method !== 'close',
       );
@@ -989,6 +1075,7 @@ export function registerAgentTools(
         sessionId: ctx.sessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token: ctx.token,
+        artifactDelivery: ctx.artifactDelivery,
       };
       for (const command of reportable.slice(0, -1)) {
         const capture =
@@ -1001,13 +1088,15 @@ export function registerAgentTools(
                   '',
                   opts,
                 )
-              : formatScreenshotContent(command.result, command, '', '')
+              : mediaHint
+                ? null
+                : formatScreenshotContent(command.result, command, '', '')
             : command.method === 'stopRecording'
               ? formatRecordingToDisk(command.result, '', '', opts)
               : null;
         if (capture) earlier.push(...capture);
       }
-      return [...earlier, ...run.content];
+      return [...earlier, ...run.content, ...(mediaHint ? [mediaHint] : [])];
     },
     format: (content) => content,
   });
@@ -1024,6 +1113,7 @@ export const runAgentCommands = async (
     token,
     apiUrl,
     sessionId: mcpSessionId,
+    artifactDelivery,
     attachSessionId,
     userId,
     uiEnabled,
@@ -1184,6 +1274,7 @@ export const runAgentCommands = async (
   const persona = {
     emulationOs: params.emulationOs ?? os,
     emulatedDevice: params.emulatedDevice,
+    deviceType: params.deviceType,
     screen: params.screen,
     deviceScaleFactor: params.deviceScaleFactor,
     deviceSlot: params.deviceSlot,
@@ -1227,7 +1318,7 @@ export const runAgentCommands = async (
     params.sessionId !== `attach:${attachSessionId}`
   ) {
     log.warn(
-      `[agent] attach handle mismatch ignored: echoed=${params.sessionId.slice(0, 24)}… canonical=attach:${attachSessionId}`,
+      `[agent] attach handle mismatch ignored: echoed=${diagnosticString(params.sessionId)} canonical=${diagnosticString(`attach:${attachSessionId}`)}`,
     );
   }
   const keepAlive = params.keepSessionAlive ?? Boolean(echoedSessionId);
@@ -1235,7 +1326,7 @@ export const runAgentCommands = async (
   // browser per conversation and one per call — log it, don't infer it.
   if (config.transport === 'httpStream') {
     console.error(
-      `[agent] handle ${echoedSessionId ? `echoed=${echoedSessionId}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
+      `[agent] handle ${echoedSessionId ? `echoed=${diagnosticString(echoedSessionId)}` : `absent (mcp=${mcpSessionId ?? 'none'})`}`,
     );
   }
 
@@ -1246,7 +1337,6 @@ export const runAgentCommands = async (
   let repeatCount = 0;
   let repeatWarning = '';
   let agentSessionHandle: string | null = echoedSessionId ?? null;
-  let lateVerdictRecorded = false;
   let verdict:
     | {
         self_reported_success: boolean;
@@ -1355,36 +1445,30 @@ export const runAgentCommands = async (
         getActiveSessionByHandle(echoedSessionId, apiUrl, token, userId);
         live = true;
       } catch {
-        // A missing or disconnected session must not be reopened for a verdict.
+        // A missing or disconnected session must not be reopened for reports.
       }
     }
     if (!live) {
       const report = commands
         .filter((c) => c.method === 'reportOutcome')
-        .at(-1)!;
-      verdict = {
-        self_reported_success: report.params.success as boolean,
-        ...(report.params.reason
-          ? { outcome_reason: report.params.reason as string }
-          : {}),
-        verdict_delivery: 'late',
-      };
-      const remaining = commands.filter((c) => c.method !== 'reportOutcome');
-      sendAnalytics(true);
-      lateVerdictRecorded = true;
-      if (remaining.every((c) => c.method === 'close')) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: 'Outcome recorded. No browser was opened.',
-            },
-          ],
-          results: [],
+        .at(-1);
+      if (report) {
+        verdict = {
+          self_reported_success: report.params.success as boolean,
+          ...(report.params.reason
+            ? { outcome_reason: report.params.reason as string }
+            : {}),
+          verdict_delivery: 'late',
         };
       }
-      verdict = undefined;
-      commands = remaining;
+      sendAnalytics(true);
+      const text = commands.some((c) => c.method === 'reportSkillOutcome')
+        ? (report ? 'Outcome recorded. ' : '') + SKILL_OUTCOME_NOT_RECORDED
+        : 'Outcome recorded. No browser was opened.';
+      return {
+        content: [{ type: 'text' as const, text }],
+        results: [],
+      };
     }
   }
 
@@ -1755,7 +1839,7 @@ export const runAgentCommands = async (
           sendErr instanceof Error ? sendErr.message : String(sendErr);
         if (!isRetry && !saveSecretSent) {
           log.warn(
-            `agent: ${cmd.method} failed (first attempt, retrying once): ${errMessage}`,
+            `agent: ${cmd.method} failed (first attempt, retrying once): ${escapeDiagnosticString(errMessage)}`,
           );
           return runCommands(true, agentSession.persona ?? retryPersona);
         }
@@ -1993,10 +2077,7 @@ export const runAgentCommands = async (
           text: closedDuringBatch
             ? 'Browser session closed.'
             : !keepAlive && !createProfile && !attachSessionId
-              ? oneShotClosedNotice(
-                  agentSession.handle,
-                  lateVerdictRecorded || verdict !== undefined,
-                )
+              ? oneShotClosedNotice(agentSession.handle, verdict !== undefined)
               : 'Done.',
         },
       ];
@@ -2150,10 +2231,7 @@ export const runAgentCommands = async (
         ? ''
         : keepAlive || downloadsPending || createProfile || attachSessionId
           ? sessionLine(agentSession, compliant)
-          : oneShotClosedNotice(
-              agentSession.handle,
-              lateVerdictRecorded || verdict !== undefined,
-            ),
+          : oneShotClosedNotice(agentSession.handle, verdict !== undefined),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -2237,6 +2315,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        artifactDelivery,
       });
     } else if (last.method === 'stopRecording') {
       // Video is never inlined → always a single-use download handle.
@@ -2245,6 +2324,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        artifactDelivery,
       });
     } else if (
       last.method === 'screenshot' &&
@@ -2261,12 +2341,15 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          artifactDelivery,
         },
       );
       baseContent = saved ?? [
         {
           type: 'text' as const,
-          text: appendExtra(batchPrefix + JSON.stringify(lastResult, null, 2)),
+          text: appendExtra(
+            batchPrefix + 'Screenshot could not be saved; no inline fallback.',
+          ),
         },
       ];
     } else {
@@ -2295,6 +2378,7 @@ export const runAgentCommands = async (
         sessionId: mcpSessionId,
         mcpBaseUrl: config.mcpBaseUrl,
         token,
+        artifactDelivery,
       });
       baseContent = [...baseContent, ...notice];
     }
@@ -2312,6 +2396,7 @@ export const runAgentCommands = async (
           config.transport,
           config.mcpBaseUrl,
           token,
+          artifactDelivery,
         );
       } catch (err) {
         if (err instanceof UserError) {
@@ -2398,6 +2483,7 @@ export const runAgentCommands = async (
           sessionId: mcpSessionId,
           mcpBaseUrl: config.mcpBaseUrl,
           token,
+          artifactDelivery,
         });
         err.message += `\n\n${files
           .filter((content) => content.type === 'text')

@@ -11,17 +11,62 @@ const config = {
 };
 
 describe('API URL guard', () => {
-  it('accepts Browserless regional, root, path-bearing, and HTTP URLs', () => {
+  it('accepts Browserless regional, root, and path-bearing HTTPS URLs', () => {
     for (const candidate of [
       'https://production-lon.browserless.io',
       'https://production-ams.browserless.io',
       'https://production-sfo.browserless.io/e/TOK',
       'https://browserless.io',
-      'http://production-sfo.browserless.io',
       config.browserlessApiUrl,
     ]) {
       expect(() => assertAllowedApiUrl(candidate, config)).not.to.throw();
     }
+  });
+
+  it('rejects plain-HTTP Browserless URLs, which would send the token unencrypted', () => {
+    for (const candidate of [
+      'http://production-sfo.browserless.io',
+      'http://production-lon.browserless.io/',
+      'http://chrome.browserless.io',
+      'http://browserless.io',
+      'HTTP://PRODUCTION-SFO.BROWSERLESS.IO',
+    ]) {
+      expect(() => assertAllowedApiUrl(candidate, config), candidate).to.throw(
+        InvalidApiUrlError,
+        'Browserless API URL overrides must use https://',
+      );
+    }
+  });
+
+  it('rejects whitespace and control characters the URL parser would strip', () => {
+    for (const candidate of [
+      ' https://production-sfo.browserless.io',
+      'https://production-sfo.browserless.io ',
+      '\thttps://production-sfo.browserless.io',
+      'https://production-sfo.browserless.io\n',
+      'https://production-\tsfo.browserless.io',
+      'https://production-sfo.browserless.io/a b',
+      '\u0001https://production-sfo.browserless.io',
+      'https://production-sfo.browserless.io\u007f',
+    ]) {
+      expect(
+        () => assertAllowedApiUrl(candidate, config),
+        JSON.stringify(candidate),
+      ).to.throw(InvalidApiUrlError);
+    }
+  });
+
+  it('still accepts a plain-HTTP Browserless host when it is the configured origin', () => {
+    const custom = {
+      ...config,
+      browserlessApiUrl: 'http://staging.browserless.io',
+    };
+    expect(() =>
+      assertAllowedApiUrl('http://staging.browserless.io/', custom),
+    ).not.to.throw();
+    expect(() =>
+      assertAllowedApiUrl('http://production-sfo.browserless.io', custom),
+    ).to.throw(InvalidApiUrlError);
   });
 
   it('rejects unsafe and malformed URLs', () => {
@@ -103,6 +148,9 @@ describe('API URL guard', () => {
     ]);
     expect(() =>
       assertAllowedApiUrl('https://extra.example.com', custom),
+    ).not.to.throw();
+    expect(() =>
+      assertAllowedApiUrl('http://extra.example.com', custom),
     ).not.to.throw();
     expect(() =>
       assertAllowedApiUrl('https://unlisted.example.com', custom),

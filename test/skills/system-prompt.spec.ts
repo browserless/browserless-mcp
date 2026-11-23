@@ -30,9 +30,8 @@ describe('registration and credential guidance', () => {
   });
 
   it('advertises credential methods and the complete mailbox reference', () => {
-    const methods = AGENT_SYSTEM_PROMPT.split(
-      '## Methods (non-obvious)',
-    )[1].split('\n## ')[0];
+    const methods =
+      AGENT_SYSTEM_PROMPT.split('## Commands')[1].split('\n## ')[0];
     for (const text of [
       '**loadSecret** { ref, selector? }',
       '**saveSecret** { title, username, password, website?, vault? }',
@@ -46,9 +45,7 @@ describe('registration and credential guidance', () => {
   it('advertises save-first registration in both full skill lists', () => {
     expect(SKILL_TOOL_DESCRIPTION).to.include('**autonomous-registration**');
     expect(SKILL_TOOL_DESCRIPTION).to.include('save-first-then-loadSecret');
-    const skills = AGENT_SYSTEM_PROMPT.split(
-      '## Skills (auto-injected)',
-    )[1].split('\n## ')[0];
+    const skills = AGENT_SYSTEM_PROMPT.split('## Skills')[1].split('\n## ')[0];
     expect(skills).to.include('autonomous-registration');
     expect(skills).to.include('save-first-then-loadSecret');
   });
@@ -109,7 +106,9 @@ describe('outcome reporting guidance', () => {
   ]) {
     it(`asks the ${name} agent to report before close with bounded failure reasons`, () => {
       const ending = prompt
-        .split('## Ending the session (REQUIRED)')[1]
+        .split(
+          name === 'full' ? '## Reporting' : '## Ending the session (REQUIRED)',
+        )[1]
         .split('\n## ')[0];
       for (const text of [
         'reportOutcome',
@@ -128,9 +127,8 @@ describe('outcome reporting guidance', () => {
     });
   }
   it('orders recipe reporting before task reporting and close', () => {
-    const ending = AGENT_SYSTEM_PROMPT.split(
-      '## Ending the session (REQUIRED)',
-    )[1].split('\n## ')[0];
+    const ending =
+      AGENT_SYSTEM_PROMPT.split('## Reporting')[1].split('\n## ')[0];
     expect(ending).to.include('reportSkillOutcome');
     expect(ending.indexOf('reportSkillOutcome')).to.be.lessThan(
       ending.indexOf("**Report the outcome after you've seen the results.**"),
@@ -150,9 +148,11 @@ describe('outcome reporting guidance', () => {
       '**Report the outcome (only if',
     );
     expect(COMPLIANT_AGENT_SYSTEM_PROMPT).not.to.include('reportSkillOutcome');
-    expect(AGENT_SYSTEM_PROMPT).to.include('Near the end of the run, send');
-    expect(AGENT_SYSTEM_PROMPT).to.include(
-      'Send it before `reportOutcome` and any `close`',
+    expect(ending.indexOf('reportSkillOutcome')).to.be.lessThan(
+      ending.indexOf('reportOutcome'),
+    );
+    expect(ending.indexOf('reportOutcome')).to.be.lessThan(
+      ending.indexOf('`close`'),
     );
     expect(AGENT_SYSTEM_PROMPT).not.to.include(
       'As your final command in the run',
@@ -244,6 +244,7 @@ describe('full Agent persona and proxy guidance', () => {
     for (const field of [
       'emulationOs',
       'emulatedDevice',
+      'deviceType',
       'screen',
       'deviceScaleFactor',
       'deviceSlot',
@@ -253,11 +254,15 @@ describe('full Agent persona and proxy guidance', () => {
     for (const personaOnlyField of [
       'emulationOs',
       'emulatedDevice',
+      'deviceType',
       'deviceScaleFactor',
       'deviceSlot',
     ]) {
       expect(COMPLIANT_AGENT_SYSTEM_PROMPT).to.not.include(personaOnlyField);
     }
+    expect(AGENT_SYSTEM_PROMPT).to.match(/"ios"/);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/iPad/);
+    expect(AGENT_SYSTEM_PROMPT).to.match(/"tablet"/);
     expect(AGENT_SYSTEM_PROMPT).to.match(/very first call|first call/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/Cloudflare|hard block/i);
     expect(AGENT_SYSTEM_PROMPT).to.match(/datacenter/i);
@@ -268,9 +273,7 @@ describe('full Agent persona and proxy guidance', () => {
 
 describe('auth skill summaries', () => {
   it('summarize both auth skills as reporting the outcome, not a JSON shape', () => {
-    const skills = AGENT_SYSTEM_PROMPT.split(
-      '## Skills (auto-injected)',
-    )[1].split('\n## ')[0];
+    const skills = AGENT_SYSTEM_PROMPT.split('## Skills')[1].split('\n## ')[0];
     for (const text of [skills, SKILL_TOOL_DESCRIPTION]) {
       expect(text).not.to.include('final JSON');
       expect(text.split('how to report the outcome').length - 1).to.equal(2);

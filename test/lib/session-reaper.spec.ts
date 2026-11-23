@@ -267,7 +267,7 @@ describe('session-reaper', () => {
     expect(source).to.include('forgetSession(event.session.sessionId)');
     expect(source).to.include('event.session.close()');
     // Every authenticated inbound request refreshes the session's idle clock.
-    expect(source).to.include("request.headers?.['mcp-session-id']");
+    expect(source).to.include('requestSessionId(request)');
   });
 
   it('reports in-flight tool executions via inFlightExecCount (telemetry)', () => {
