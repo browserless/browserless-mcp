@@ -13,7 +13,7 @@ export const SELF_CHECK_DIRECTIVE = `
 ## Repetition self-check
 When a tool response contains REPETITION WARNING, re-read your plan and compare your completed steps with the intended progress. Do not repeat the same batch blindly: choose a materially different approach within the task's constraints, or stop and report what is blocked and what you tried. Repetition is a signal to check progress, not proof of failure; continue a repeated action only when you can identify concrete progress or a task-required reason.`;
 
-export const AGENT_SYSTEM_PROMPT = `Execute browser commands in an agent session.
+export const AGENT_SYSTEM_PROMPT = `Execute browser commands in an agent session. For a plain page read that does not need interaction or session state, prefer a dedicated read tool such as \`browserless_smartscraper\` when available.
 
 ## Loop
 0. Restate the goal and identify the host; see **Site recipes** below.
@@ -27,14 +27,14 @@ export const AGENT_SYSTEM_PROMPT = `Execute browser commands in an agent session
 ## Rules
 1. Ground selectors in the latest snapshot's \`ref=\` / \`deep-ref=\`, returned \`text\`/\`html\` from an earlier call, or a loaded skill or site recipe. Use refs as shown: \`[3] button "Sign In" ref=button#submit\` → \`"button#submit"\`. Generic structural reads (\`document.title\`, \`body\`, bare tags like \`h1\`) need no grounding. **Never write site-specific classes, ids or attributes from memory**, including in \`click\`, \`type\`, \`text\`, \`html\`, \`waitForSelector\` and \`evaluate\` code.
 2. A batch **returns only its last command's result** (outcome reports and \`close\` don't count). A mid-batch read is not shown to you and cannot ground a later command in that batch.
-3. For a simple read, batch \`goto\` and a selector-free whole-page \`text\` or \`html\` read, or end on \`snapshot\`. If you need a targeted \`evaluate\` afterward, set \`keepSessionAlive: true\` on the first call and send it in a second call.
+3. When a read needs an agent session, batch \`goto\` and a selector-free whole-page \`text\` or \`html\` read, or end on \`snapshot\`. If you need a targeted \`evaluate\` afterward, set \`keepSessionAlive: true\` on the first call and send it in a second call.
 4. **Until you snapshot a page you cannot click, type, select, hover or check** — snapshot first.
 5. Order a batch: optional \`goto\` first, then known actions (\`type\`, \`hover\`, \`scroll\`, \`select\`, \`checkbox\`, read-only \`evaluate\`), then **at most one page-changing command** (e.g. \`click\` or a second \`goto\`), followed only by \`wait*\` and one final read for page work. Example: with both controls visible in the snapshot, batch \`type\` in the form and \`click\` submit.
 6. A snapshot is stale after \`click\`, \`goto\`, \`select\`, any navigation or page-changing \`evaluate\`. It stays valid after \`type\`, \`hover\`, \`scroll\` and read-only \`evaluate\` unless the page changed. **A click that reveals new controls (a menu, a dialog) needs a fresh snapshot before you use them** — do not batch the follow-up click. Never retry a failed action without a fresh snapshot.
 
 ## Session lifetime and close
 Sessions are **one-shot by default**: the browser closes after the batch and download drain. Decide on your FIRST call:
-- **One batch finishes the whole task** (e.g. \`goto\` + \`text\` to read something): leave it one-shot; it closes automatically.
+- **One batch finishes the whole task** (e.g. \`goto\` + \`text\` with mobile emulation): leave it one-shot; it closes automatically.
 - If you end on a \`snapshot\` to plan later actions, set \`keepSessionAlive: true\`.
 - **Loaded a site recipe? Set** \`keepSessionAlive: true\` **on your first browser call**, so you can see the result before reporting.
 - **Unsure? Set \`keepSessionAlive: true\`.** Kept browsers hold a concurrency slot until closed or reaped when idle.
