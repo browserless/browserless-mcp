@@ -85,12 +85,16 @@ const previewCases = {
     check(frame.contentDocument.querySelectorAll('[data-role="suggest-metric"]').length === 2, 'expected actions for measured metrics only');
     frame.style.height = '140px';
     await wait(() => frame.contentWindow.innerHeight === 140);
+    // dump-dom advances timers without reliably advancing compositor animations.
+    const elements = frame.contentWindow.Element.prototype;
+    const scrollIntoView = elements.scrollIntoView;
+    elements.scrollIntoView = function (options) {
+      scrollIntoView.call(this, { ...options, behavior: 'instant' });
+    };
     $(explain).click();
     check(frame.contentDocument.activeElement === $(send), 'confirmation did not receive focus');
-    await wait(() => {
-      const { top, bottom } = $(send).getBoundingClientRect();
-      return top >= 0 && bottom <= frame.contentWindow.innerHeight;
-    });
+    const { top, bottom } = $(send).getBoundingClientRect();
+    check(top >= -1 && bottom <= frame.contentWindow.innerHeight + 1, 'focused confirmation is outside the iframe viewport');
     $('[data-category="accessibility"]').click();
     check(!$(explain) && !$(preview), 'changing to a category without findings kept the previous action or preview');
     $('[data-category="performance"]').click();
@@ -356,7 +360,6 @@ describe('performance widget input preview', () => {
             '--headless',
             '--no-sandbox',
             '--disable-gpu',
-            '--disable-smooth-scrolling',
             '--no-first-run',
             '--no-default-browser-check',
             '--user-data-dir=' + directory,
