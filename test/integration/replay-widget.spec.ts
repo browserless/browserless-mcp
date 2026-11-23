@@ -135,7 +135,7 @@ describe('production replay tools over real MCP HTTP', () => {
       expect(
         tools.find((tool) => tool.name === 'browserless_view_data')!._meta,
       ).to.deep.include({ ui: { visibility: ['app'] } });
-      expect(VIEW_URI).to.equal('ui://browserless/view/v14.html');
+      expect(VIEW_URI).to.equal('ui://browserless/view/v15.html');
       expect(
         tools.find((tool) => tool.name === 'browserless_show')!._meta,
       ).to.deep.include({
@@ -145,7 +145,7 @@ describe('production replay tools over real MCP HTTP', () => {
       const resource = (await alice.readResource({ uri: VIEW_URI }))
         .contents[0];
       expect(resource.mimeType).to.equal('text/html;profile=mcp-app');
-      for (let version = 1; version <= 13; version++) {
+      for (let version = 1; version <= 14; version++) {
         const legacy = (
           await alice.readResource({
             uri: `ui://browserless/view/v${version}.html`,
@@ -157,6 +157,9 @@ describe('production replay tools over real MCP HTTP', () => {
         );
       }
       expect(resource._meta).to.have.property('ui');
+      expect(resource._meta?.['openai/widgetDescription']).to.include(
+        'hosted agent run timeline',
+      );
       expect('text' in resource && resource.text).to.include('Replay timeline');
       const prepared = await alice.callTool({
         name: 'browserless_sessions',
