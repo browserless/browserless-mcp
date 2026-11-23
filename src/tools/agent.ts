@@ -745,8 +745,11 @@ export const closeReminder = (compliant: boolean): string =>
   (compliant
     ? ''
     : '`reportSkillOutcome` (only if you loaded a site recipe; its footer has the exact call), then ') +
-  `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then send ` +
-  `\`{ "method": "close" }\` as its own call — or, if the user may want to keep ` +
+  `\`{ "method": "reportOutcome", "params": { "success": <bool> } }\`, then ` +
+  (compliant
+    ? 'send `{ "method": "close" }` as its own call'
+    : '`{ "method": "close" }` as the last command') +
+  ` — or, if the user may want to keep ` +
   `browsing, ask them before leaving it open.`;
 
 const oneShotClosedNotice = (handle: string, reported: boolean): string =>
@@ -997,7 +1000,7 @@ export function registerAgentTools(
         return [
           {
             type: 'text' as const,
-            text: `No site recipe found for "${params.site}". Proceed with the standard agent loop.`,
+            text: `No site recipe found for "${params.site}". Plan the steps yourself: goto, then snapshot.`,
           },
         ];
       }

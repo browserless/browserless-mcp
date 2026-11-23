@@ -35,7 +35,7 @@ local browser or another provider as Browserless.
 ## Preserve browser state
 
 1. For a workflow spanning multiple calls, start `browserless_agent` with
-   `keepSessionAlive: true` and a `goto` command. Inspect the returned snapshot
+   `keepSessionAlive: true` and a `goto` followed by `snapshot`. Inspect the returned snapshot
    and use its element references, not guessed selectors. One-shot calls can
    omit `keepSessionAlive` so the browser closes automatically.
 2. Copy the returned `sessionId` into **every subsequent call** for that
