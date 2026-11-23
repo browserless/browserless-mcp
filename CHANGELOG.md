@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.51.0](https://github.com/browserless/browserless-mcp/compare/v1.50.0...v1.51.0) (2026-11-23)
+
+
+### Features
+
+* accept ios persona and deviceType in browserless_agent ([#581](https://github.com/browserless/browserless-mcp/issues/581)) ([60683ad](https://github.com/browserless/browserless-mcp/commit/60683ad497913fd819fbfc2e40ef2e4217f2a741))
+* add tab listing and targeted live links ([#417](https://github.com/browserless/browserless-mcp/issues/417)) ([367e635](https://github.com/browserless/browserless-mcp/commit/367e6357dc9a5c85d1162926880295dd72673418))
+* add widget-to-chat follow-up actions ([#584](https://github.com/browserless/browserless-mcp/issues/584)) ([38e6f5b](https://github.com/browserless/browserless-mcp/commit/38e6f5b06bafceb623019753f1c1f869230c9a4b))
+* show hosted agent run timelines ([#585](https://github.com/browserless/browserless-mcp/issues/585)) ([60ee720](https://github.com/browserless/browserless-mcp/commit/60ee720b7a625a37d21a725eae6a2c1ed97c6fab))
+
+
+### Bug Fixes
+
+* advise inline handoff only for MCP Apps clients ([#582](https://github.com/browserless/browserless-mcp/issues/582)) ([58cb118](https://github.com/browserless/browserless-mcp/commit/58cb118a2d0e748dce6f016d0330d2c65fde9556))
+* make browser agent instructions consistent ([#583](https://github.com/browserless/browserless-mcp/issues/583)) ([3ce6344](https://github.com/browserless/browserless-mcp/commit/3ce6344ff4982d2e6b73cb4b297b4fa956ba70a4))
+
 ## [1.50.0](https://github.com/browserless/browserless-mcp/compare/v1.49.2...v1.50.0) (2026-11-18)
 
 
