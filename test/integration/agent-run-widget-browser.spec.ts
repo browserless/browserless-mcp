@@ -177,6 +177,15 @@ describe('hosted agent run timeline browser', () => {
         await mount(capped);
         const cappedFinal = details('Run final result');
         assert(cappedFinal && cappedFinal.querySelector('pre').textContent === capped._meta.payload.omittedFinalResult, 'Capped timeline hid the actual final result');
+        // A host may send multiple show results to the same widget instance.
+        for (const runId of ['run_first', 'run_second', 'run_third']) {
+          const shown = result('succeeded');
+          shown._meta.payload.runId = shown.structuredContent.data.runId = runId;
+          shown.structuredContent.viewRef = 'view-' + runId;
+          await mount(shown);
+          const ids = [...root.querySelectorAll('.run-id code')].map(id => id.textContent);
+          assert(ids.join(',') === runId, 'Reused instance did not replace the previous timeline');
+        }
         await bridge.teardownResource({});
         assert(root.hidden, 'Teardown did not hide the timeline');
         if (${Boolean(screenshotPath)}) {

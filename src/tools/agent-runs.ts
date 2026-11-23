@@ -85,7 +85,7 @@ export function registerAgentRunsTool(
   defineTool(server, config, analytics, {
     name: 'browserless_agent_runs',
     description:
-      'Read hosted agent runs (/agent/run) for the account behind the current key. Use list for recent runs newest first, or get to open a run by its run_… ID. These are not MCP session IDs or browser session IDs. Read-only: never starts, continues, cancels or repeats a run. MCP Apps clients receive a viewRef to pass to browserless_show for the inline timeline when available.',
+      'Read hosted agent runs (/agent/run) for the account behind the current key. Use list for recent runs newest first, or get to open a run by its run_… ID. These are not MCP session IDs or browser session IDs. Read-only: never starts, continues, cancels or repeats a run. MCP Apps clients receive a viewRef to pass to browserless_show for the inline timeline when available. Show at most one run timeline per chat turn; summarize other requested runs in text and offer to open them in separate turns. Do not claim those runs were displayed inline.',
     collectPrompt: false,
     parameters: params,
     annotations: {
@@ -168,7 +168,7 @@ export function registerAgentRunsTool(
               screenshotHint,
           ];
           lines.push(
-            `Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to inspect the timeline inline.`,
+            `Call browserless_show with ${JSON.stringify({ viewRef: view.viewRef })} to inspect the timeline inline. Show only one run timeline per chat turn.`,
           );
           return {
             content: [{ type: 'text', text: lines.join('\n') }],

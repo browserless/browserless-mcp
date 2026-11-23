@@ -168,6 +168,11 @@ then use `action: "get"` with a `run_…` ID. Pass its returned `viewRef` to
 `browserless_show` to inspect ordered actions, notes, and the result. Clients
 without MCP Apps receive a text timeline instead.
 
+Show one run per chat turn. A widget instance displays one timeline, and a
+host can reuse it for later results in the same turn. If asked for several
+runs, summarize the others in text and offer to open each in a separate turn.
+Do not report those runs as displayed inline.
+
 A view lasts up to 15 minutes and ends earlier if the run expires. Only active
 runs can be refreshed. Paused runs show why they are waiting, without takeover
 links or instructions. The HTTP transport can display a finished run's final

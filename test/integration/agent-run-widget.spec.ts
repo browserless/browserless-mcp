@@ -130,6 +130,7 @@ describe('hosted run timeline over MCP HTTP', () => {
         'never starts, continues, cancels or repeats a run',
         'not MCP session IDs or browser session IDs',
         'browserless_show',
+        'Show at most one run timeline per chat turn',
       ])
         assert.ok(reader.description?.includes(phrase));
       assert.match(
