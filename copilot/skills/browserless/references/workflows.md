@@ -59,15 +59,22 @@ status instructions and report partial results as partial.
 
 ## Start and retain a browser session
 
-First call to `browserless_agent`:
+First call to `browserless_agent`: navigate with `goto`, then request a
+`snapshot` in the same batch.
 
 ```json
 {
-  "commands": [{ "method": "goto", "params": { "url": "https://example.com" } }]
+  "keepSessionAlive": true,
+  "commands": [
+    { "method": "goto", "params": { "url": "https://example.com" } },
+    { "method": "snapshot" }
+  ]
 }
 ```
 
-Read the resulting snapshot and retain the returned session ID. For a requested
+The first call must opt in to persistence; retaining a session ID alone does
+not keep a one-shot browser open. Read the resulting snapshot and retain the
+returned session ID. For a requested
 screenshot, the next call uses that exact ID:
 
 ```json
