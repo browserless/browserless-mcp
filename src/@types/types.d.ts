@@ -39,9 +39,13 @@ import type { AuthMethod, McpTransport } from '../lib/attribution.js';
 /*  Session & auth                                                     */
 /* ------------------------------------------------------------------ */
 
+export type ArtifactDelivery = 'http' | 'mcp-resource';
+
 export interface BrowserlessSession extends Record<string, unknown> {
   token: string;
   apiUrl: string;
+  /** Explicit connection preference, not a capability or authorization grant. */
+  artifactDelivery?: 'mcp-resource';
   /**
    * A pre-created browser session id to ATTACH to (via /chromium/agent?sessionId),
    * threaded by the caller through the `x-browserless-session-id` header. Used by
@@ -755,6 +759,8 @@ export interface StripeLinkCheckoutResponse {
 }
 
 export interface LiveURLOptions {
+  targetId?: string;
+  mode?: 'follow' | 'tab';
   interactable?: boolean;
   timeout?: number;
   quality?: number;
@@ -788,6 +794,21 @@ export interface LiveURLCreated {
   targetId?: string;
 }
 
+export interface BrowserPage {
+  targetId: string;
+  url: string;
+  title: string;
+  active: boolean;
+  browserContextId: string;
+  liveURL?: string;
+  liveURLId?: string;
+  interactable?: boolean;
+}
+
+export interface BrowserPages {
+  pages: BrowserPage[];
+}
+
 export interface LiveURLState {
   status: 'open' | 'expired' | 'closed';
   reason:
@@ -803,6 +824,7 @@ export interface LiveURLState {
 }
 
 export interface ApiClient {
+  listPages(browserId: string, mint?: boolean): Promise<BrowserPages>;
   getBrowserIdForTarget(targetId: string): Promise<string | undefined>;
   createLiveURL(
     browserId: string,

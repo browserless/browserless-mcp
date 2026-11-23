@@ -1,8 +1,11 @@
 import { expect } from 'chai';
+import assert from 'node:assert/strict';
 import sinon from 'sinon';
 import { FastMCP } from 'fastmcp';
+import { z } from 'zod';
 import { LiveURLParamsSchema } from '../../src/tools/live-url.js';
 import { registerLiveURLTool } from '../../src/tools/live-url.js';
+import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
 
 const mockConfig: McpConfig = {
@@ -61,14 +64,80 @@ describe('browserless_live_url', () => {
   });
   afterEach(() => sinon.restore());
 
-  function tool(maxRetries = 0) {
+  function tool(
+    maxRetries = 0,
+    overrides: Partial<McpConfig> = {},
+    analytics?: AnalyticsHelper,
+  ) {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     const spy = sinon.spy(server, 'addTool');
-    registerLiveURLTool(server, { ...mockConfig, maxRetries });
+    registerLiveURLTool(
+      server,
+      { ...mockConfig, maxRetries, ...overrides },
+      analytics,
+    );
     return spy.firstCall.args[0];
   }
   const params = { browserId: 'browser/123', liveURLId: 'live?123' };
   const path = 'https://api.example.com/browser/browser%2F123/live';
+
+  for (const [transport, complianceMode, fullHttp] of [
+    ['httpStream', false, true],
+    ['stdio', false, false],
+    ['httpStream', true, false],
+  ] as const) {
+    it(`scopes the external handoff advice: ${transport}, compliance ${complianceMode}`, () => {
+      const { description } = tool(0, { transport, complianceMode });
+      expect(
+        description?.includes(
+          'do not call handoff: run the browserless_agent liveURL command',
+        ),
+      ).to.equal(fullHttp);
+      expect(description).not.to.include(
+        'For MCP Apps, use action handoff with the existing agent sessionId',
+      );
+    });
+  }
+
+  for (const [input, error, action] of [
+    [
+      { action: 'handoff', sessionId: 's:x' },
+      /Inline handoff requires/,
+      'handoff',
+    ],
+    [{ action: 'create' }, /browserId is required/, 'create'],
+    [{ action: 'bogus' }, /Invalid option/, undefined],
+  ] as const) {
+    it(`records only a recognized action when ${input.action} fails`, async () => {
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      await assert.rejects(
+        tool(0, {}, analytics).execute(input, mockContext),
+        error,
+      );
+      sinon.assert.calledOnce(fire);
+      expect(fire.firstCall.args[1]).to.equal('browserless_live_url');
+      const props = fire.firstCall.args[2];
+      expect(props).to.have.property('success', false);
+      if (action) expect(props).to.have.property('action', action);
+      else expect(props).not.to.have.property('action');
+    });
+  }
+
+  it('still records the action on success', async () => {
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    fetchStub.resolves(jsonResponse(state));
+    await tool(0, {}, analytics).execute(
+      { action: 'status', ...params },
+      mockContext,
+    );
+    sinon.assert.calledOnce(fire);
+    expect(fire.firstCall.args[2]).to.include({
+      success: true,
+      action: 'status',
+    });
+  });
 
   it('forwards all create options, preserving false, and returns IDs', async () => {
     const response = { liveURL: 'https://example.com/live', liveURLId: 'id' };
@@ -81,6 +150,8 @@ describe('browserless_live_url', () => {
       resizable: false,
       showBrowserInterface: false,
       instructions: 'Verify.',
+      targetId: 'tab-123',
+      mode: 'tab' as const,
       instructionsTitle: 'Verification',
       steps: ['Enter code'],
       currentStep: 1,
@@ -90,7 +161,7 @@ describe('browserless_live_url', () => {
       instructionsFormat: 'markdown' as const,
     };
     const result = await tool().execute(
-      { action: 'create', ...params, ...options },
+      { action: 'create', ...params, ...options, mint: true },
       mockContext,
     );
     const [url, init] = fetchStub.firstCall.args;
@@ -180,6 +251,108 @@ describe('browserless_live_url', () => {
       mockContext,
     );
     expect(JSON.parse(fetchStub.firstCall.args[1].body)).to.deep.equal({});
+  });
+
+  it('lists pages without a liveURLId or mint query in one GET', async () => {
+    const response = {
+      pages: [
+        {
+          targetId: 'tab',
+          url: 'about:blank',
+          title: '',
+          active: true,
+          browserContextId: 'context',
+        },
+      ],
+    };
+    fetchStub.resolves(jsonResponse(response));
+    const result = await tool().execute(
+      { action: 'pages', browserId: params.browserId },
+      mockContext,
+    );
+    expect(fetchStub.calledOnce).to.be.true;
+    expect(fetchStub.firstCall.args[0]).to.equal(
+      'https://api.example.com/browser/browser%2F123/pages?token=test-token',
+    );
+    expect(fetchStub.firstCall.args[1].method).to.equal('GET');
+    expect(fetchStub.firstCall.args[1].body).to.equal(undefined);
+    expect(JSON.parse((result as any).content[0].text)).to.deep.equal(response);
+  });
+
+  it('never retries bulk minting on 503', async () => {
+    fetchStub.resolves(new Response('Unavailable', { status: 503 }));
+    try {
+      await tool(2).execute(
+        { action: 'pages', browserId: params.browserId, mint: true },
+        mockContext,
+      );
+      expect.fail('Expected error');
+    } catch (error) {
+      expect((error as Error).message).to.include('503');
+    }
+    expect(fetchStub.calledOnce).to.be.true;
+    expect(fetchStub.firstCall.args[0]).to.equal(
+      'https://api.example.com/browser/browser%2F123/pages?token=test-token&mint=true',
+    );
+  });
+
+  it('retries plain page listing on 503', async () => {
+    // Keep native microtasks for Response.text() on Node 26; only advance retry timers.
+    const clock = sinon.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'Date'],
+    });
+    fetchStub
+      .onFirstCall()
+      .resolves(new Response('Unavailable', { status: 503 }));
+    fetchStub.onSecondCall().resolves(jsonResponse({ pages: [] }));
+    const pending = tool(1).execute(
+      { action: 'pages', browserId: params.browserId },
+      mockContext,
+    );
+    await clock.tickAsync(1000);
+    const result = await pending;
+    expect(fetchStub.calledTwice).to.be.true;
+    expect(JSON.parse((result as any).content[0].text)).to.deep.equal({
+      pages: [],
+    });
+  });
+
+  it('rejects full mode and blank target IDs before fetching', async () => {
+    for (const options of [{ mode: 'full' }, { targetId: '   ' }]) {
+      try {
+        await tool().execute(
+          { action: 'create', browserId: 'b', ...options } as any,
+          mockContext,
+        );
+        expect.fail('Expected error');
+      } catch (error) {
+        expect((error as Error).message).to.match(/mode|targetId/);
+      }
+    }
+    expect(fetchStub.called).to.be.false;
+    expect(
+      LiveURLParamsSchema.parse({
+        action: 'create',
+        browserId: 'b',
+        targetId: ' tab ',
+        mode: 'follow',
+      }),
+    ).to.include({ targetId: 'tab', mode: 'follow' });
+  });
+
+  it('keeps tab options as top-level primitive JSON schema properties', () => {
+    const schema = z.toJSONSchema(LiveURLParamsSchema) as {
+      properties: Record<string, { type: string; enum?: string[] }>;
+    };
+    for (const name of ['action', 'targetId', 'mode', 'mint']) {
+      const property = schema.properties[name];
+      expect(JSON.stringify(property)).not.to.match(
+        /"(?:anyOf|oneOf|allOf|\$ref)"/,
+      );
+      expect(property.type).to.equal(name === 'mint' ? 'boolean' : 'string');
+    }
+    expect(schema.properties!.mode.enum).to.deep.equal(['follow', 'tab']);
+    expect(schema.properties!.action.enum).to.include('pages');
   });
 
   it('defaults instructions only for interactive creates and preserves opt-outs', async () => {
@@ -273,6 +446,10 @@ describe('browserless_live_url', () => {
 
   it('rejects missing IDs and incompatible PNG quality before fetching', async () => {
     for (const input of [
+      { action: 'pages' },
+      { action: 'create' },
+      { action: 'status' },
+      { action: 'close' },
       { action: 'status', browserId: 'b' },
       { action: 'close', browserId: 'b' },
       { action: 'create', browserId: 'b', type: 'png', quality: 70 },
@@ -281,7 +458,7 @@ describe('browserless_live_url', () => {
         await tool().execute(input as any, mockContext);
         expect.fail('Expected error');
       } catch (error) {
-        expect((error as Error).message).to.match(/liveURLId|PNG/);
+        expect((error as Error).message).to.match(/browserId|liveURLId|PNG/);
       }
     }
     expect(fetchStub.called).to.be.false;

@@ -240,6 +240,22 @@
   font-size: 11px;
   color: var(--muted);
 }
+.perf-chat-action {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--raised);
+  font-size: 12px;
+}
+.perf-chat-action:hover {
+  border-color: var(--accent);
+}
+.perf-metric .perf-chat-action {
+  margin-top: 6px;
+}
+.performance-report [data-role='audit-actions']:not(:empty) {
+  margin-top: 12px;
+}
 .perf-audit {
   border-bottom: 1px solid var(--border);
 }

@@ -409,6 +409,7 @@ async function render(result) {
           lastResult = reply;
           void render(reply);
         },
+        result._meta?.auditRef,
       );
       card.hidden = true;
       performanceRoot.hidden = false;
