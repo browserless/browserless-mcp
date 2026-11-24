@@ -95,12 +95,23 @@ For headless or automated setups, use a Browserless API token from your
 out of committed config.
 
 1. Put the token in the Gateway's environment. For a Gateway running as a
-   service, use `~/.openclaw/.env`:
+   service, use the `.env` file in its state directory: `~/.openclaw/.env` by
+   default, or `$OPENCLAW_STATE_DIR/.env` if the Gateway runs with
+   `OPENCLAW_STATE_DIR` set. Run this in bash or zsh with the same
+   `OPENCLAW_STATE_DIR` as the Gateway. It prompts for the token, so the value
+   stays out of the command line and shell history, and it restricts the file
+   before writing to it:
 
    ```bash
-   printf '\nBROWSERLESS_TOKEN=%s\n' 'your-token' >> ~/.openclaw/.env
-   chmod 600 ~/.openclaw/.env
+   ENV_FILE="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/.env"
+   printf 'Browserless token: '; read -rs BROWSERLESS_TOKEN; echo
+   (umask 077 && touch "$ENV_FILE") && chmod 600 "$ENV_FILE" &&
+     printf '\nBROWSERLESS_TOKEN=%s\n' "$BROWSERLESS_TOKEN" >> "$ENV_FILE"
+   unset BROWSERLESS_TOKEN
    ```
+
+   If `touch` or `chmod` fails, nothing is written. You can also open the file
+   in an editor and add the `BROWSERLESS_TOKEN=` line yourself.
 
 2. Override the plugin's server definition so it sends the token instead of
    using OAuth. OpenClaw expands `${BROWSERLESS_TOKEN}` when it connects; the
@@ -112,7 +123,7 @@ out of committed config.
 
    If the Gateway was already running, restart it so it reads the new
    variable. A `BROWSERLESS_TOKEN` already set in the Gateway's service or
-   shell environment takes precedence over `~/.openclaw/.env`, and a restart
+   shell environment takes precedence over the `.env` file, and a restart
    doesn't change it, so update or remove that value first:
 
    ```bash
@@ -132,10 +143,20 @@ out of committed config.
    whenever the variable is set, because it checks the expanded value. Your
    config still holds only `${BROWSERLESS_TOKEN}`.
 
-To go back to shared OAuth, replace the entry with the OAuth one from the
-terminal sign-in above. `openclaw mcp unset browserless` also returns to the
-plugin's shared OAuth definition, but it removes the whole entry, including any
-tool filter. To use per-requester sign-in instead, set the entry from
+To go back to shared OAuth, replace the entry in one `mcp set` that also
+carries your tool filter, so the saved entry is never left unfiltered. Copy the
+names under `toolFilter.exclude` from `openclaw mcp show browserless --json`
+into the `exclude` list (drop the `toolFilter` field if you have none):
+
+```bash
+openclaw mcp set browserless '{"url":"https://mcp.browserless.io/mcp","transport":"streamable-http","auth":"oauth","requestTimeoutMs":360000,"toolFilter":{"exclude":["<every name from the show output>"]}}'
+```
+
+Then sign in with `gateway stop`, `mcp login` and `gateway start` from the
+terminal sign-in above, skipping its `mcp set` line, which has no tool filter.
+`openclaw mcp unset browserless` also returns to the plugin's shared OAuth
+definition, but it removes the whole entry, including any tool filter. To use
+per-requester sign-in instead, set the entry from
 [Sharing a Gateway](#sharing-a-gateway); each person then signs in again from
 their own chat.
 
@@ -218,6 +239,10 @@ the agent to ask for the plugin when the tools are missing.
 | `browserless-web-scraper`        | Reading pages, web research, finding pages on a site, crawling a section     |
 | `browserless-browser-automation` | Logins, forms, multi-step flows, captchas, downloads, handing off to a human |
 | `browserless-site-audit`         | Lighthouse audits, accessibility and SEO checks, PDFs, screenshots, archives |
+
+Once the skills are published to ClawHub, install one by name. Until then the
+command fails because there is no listing; copy the skill's folder from
+`clawhub-skills/` into your agent's skills directory instead.
 
 ```bash
 openclaw skills install @browserless/browserless-web-scraper
