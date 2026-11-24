@@ -31,7 +31,7 @@ jobs:
     steps:
       # App token (not GITHUB_TOKEN) so the tag/Release it creates can trigger
       # the downstream npm-publish and docker-build workflows.
-      - uses: actions/create-github-app-token@v3.3.0
+      - uses: actions/create-github-app-token@v3.4.0
         id: app-token
         with:
           app-id: ${{ vars.BROWSERLESS_ACTIONS_APP_ID }}
