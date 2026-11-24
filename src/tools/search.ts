@@ -54,8 +54,9 @@ export const SearchParamsSchema = z.object({
     .positive()
     .max(100)
     .optional()
-    .default(10)
-    .describe('Maximum number of results to return (default: 10, max: 100)'),
+    .describe(
+      "Maximum number of results to return. Omit to use the default: 10, or your plan's maximum when that is lower. A value above your plan's maximum is rejected.",
+    ),
   lang: z
     .string()
     .optional()
@@ -104,7 +105,13 @@ const CompliantSearchParamsSchema = SearchParamsSchema.pick({
   sources: true,
   categories: true,
   timeout: true,
-}).strict();
+})
+  .extend({
+    limit: SearchParamsSchema.shape.limit.describe(
+      "Maximum number of results to return. Omit to use the default: 10, or your account's maximum when that is lower. A value above your account's maximum is rejected.",
+    ),
+  })
+  .strict();
 
 export function registerSearchTool(
   server: FastMCP,
@@ -176,7 +183,7 @@ export function registerSearchTool(
           );
       return {
         query: params.query,
-        limit: params.limit ?? 10,
+        limit: params.limit,
         sources: (params.sources ?? ['web']).join(','),
         success: result.success,
         total_results: result.totalResults,

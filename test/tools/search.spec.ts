@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { FastMCP, UserError } from 'fastmcp';
 import type { Content } from 'fastmcp';
+import { z } from 'zod';
 import { registerSearchTool } from '../../src/tools/search.js';
 import { AnalyticsHelper } from '../../src/lib/analytics.js';
 import type { McpConfig } from '../../src/@types/types.js';
@@ -64,6 +65,90 @@ describe('browserless_search tool', () => {
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
     expect(() => registerSearchTool(server, mockConfig)).to.not.throw();
   });
+
+  for (const complianceMode of [false, true]) {
+    it(`omits an unrequested search limit in ${complianceMode ? 'compliant' : 'full'} mode`, async () => {
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const spy = sinon.spy(server, 'addTool');
+      registerSearchTool(server, { ...mockConfig, complianceMode });
+      const tool = spy.firstCall.args[0];
+      const params = (
+        tool.parameters as z.ZodType<Record<string, unknown>>
+      ).parse({
+        query: 'test query',
+      });
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({
+            success: true,
+            totalResults: 0,
+            data: {},
+          }),
+        ),
+      );
+
+      await tool.execute(params, mockContext);
+
+      const body = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(body.query).to.equal('test query');
+      expect(body).not.to.have.own.property('limit');
+      expect(params).not.to.have.own.property('limit');
+    });
+  }
+
+  it('publishes an optional plan-capped limit with unchanged input bounds', () => {
+    const server = new FastMCP({ name: 'test', version: '0.1.0' });
+    const spy = sinon.spy(server, 'addTool');
+    registerSearchTool(server, mockConfig);
+    const schema = spy.firstCall.args[0].parameters as z.ZodType;
+
+    for (const [limit, accepted] of [
+      [1, true],
+      [100, true],
+      [0, false],
+      [101, false],
+      [1.5, false],
+    ]) {
+      expect(
+        schema.safeParse({ query: 'test', limit }).success,
+        `limit ${limit}`,
+      ).to.equal(accepted);
+    }
+    const limit = z.toJSONSchema(schema).properties?.limit;
+    expect(limit).not.to.have.property('default');
+    expect(limit).to.have.property(
+      'description',
+      "Maximum number of results to return. Omit to use the default: 10, or your plan's maximum when that is lower. A value above your plan's maximum is rejected.",
+    );
+  });
+
+  for (const limit of [undefined, 5]) {
+    it(`reports ${limit === undefined ? 'no implicit limit' : 'the explicit limit'} in search analytics`, async () => {
+      fetchStub.resolves(
+        new Response(
+          JSON.stringify({
+            success: true,
+            totalResults: 0,
+            data: {},
+          }),
+        ),
+      );
+      const server = new FastMCP({ name: 'test', version: '0.1.0' });
+      const spy = sinon.spy(server, 'addTool');
+      const analytics = new AnalyticsHelper(false);
+      const fire = sinon.stub(analytics, 'fireToolRequest');
+      registerSearchTool(server, mockConfig, analytics);
+      const tool = spy.firstCall.args[0];
+      const schema = tool.parameters as z.ZodType<Record<string, unknown>>;
+      const params = schema.parse(
+        limit === undefined ? { query: 'test' } : { query: 'test', limit },
+      );
+
+      await tool.execute(params, mockContext);
+
+      expect(fire.firstCall.args[2].limit).to.equal(limit);
+    });
+  }
 
   it('reports generic search failure as unclassified without changing its coarse category', async () => {
     fetchStub.resolves(
@@ -256,15 +341,17 @@ describe('browserless_search tool', () => {
     );
 
     const server = new FastMCP({ name: 'test', version: '0.1.0' });
-    const execute = getToolExecute(server);
-
-    await execute(
-      {
+    const spy = sinon.spy(server, 'addTool');
+    registerSearchTool(server, mockConfig);
+    const tool = spy.firstCall.args[0];
+    const schema = tool.parameters as z.ZodType<Record<string, unknown>>;
+    await tool.execute(
+      schema.parse({
         query: 'test query',
-        limit: 5,
+        limit: 3,
         lang: 'en',
         sources: ['web', 'news'],
-      },
+      }),
       mockContext,
     );
 
@@ -274,7 +361,7 @@ describe('browserless_search tool', () => {
     expect(url).to.include('token=test-token');
     const body = JSON.parse(options.body);
     expect(body.query).to.equal('test query');
-    expect(body.limit).to.equal(5);
+    expect(body.limit).to.equal(3);
     expect(body.lang).to.equal('en');
     expect(body.sources).to.deep.equal(['web', 'news']);
   });
