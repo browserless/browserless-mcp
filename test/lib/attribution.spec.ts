@@ -115,6 +115,31 @@ describe('attribution', () => {
     it('keeps absent clients in other', () => {
       expect(classifyClientFamily('mcp_client', undefined)).to.equal('other');
     });
+    for (const ua of [
+      'Devin-MCP-Client/0.1.0',
+      '  devin-mcp-client/1.2.3 ',
+      'Devin-CLI/3000.12.59 (windsurf)',
+    ]) {
+      it(`classifies Devin by user agent ${JSON.stringify(ua)}`, () => {
+        expect(classifyClientFamily('mcp_client', 'rmcp', ua)).to.equal(
+          'devin',
+        );
+      });
+    }
+    it('keeps rmcp without a Devin user agent in other', () => {
+      expect(classifyClientFamily('mcp_client', 'rmcp')).to.equal('other');
+      expect(
+        classifyClientFamily('mcp_client', 'rmcp', 'Devin-Other/1.0'),
+      ).to.equal('other');
+      expect(
+        classifyClientFamily('mcp_client', 'rmcp', 'Devin-CLIENT/1.0'),
+      ).to.equal('other');
+    });
+    it('prioritizes first-party sources over the Devin user agent', () => {
+      expect(
+        classifyClientFamily('agent_run', 'rmcp', 'Devin-MCP-Client/0.1.0'),
+      ).to.equal('browserless');
+    });
   });
 
   describe('deriveUsageMode', () => {

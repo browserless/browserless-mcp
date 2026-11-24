@@ -4,6 +4,7 @@ export type McpTransport = 'stdio' | 'streamable-http' | 'sse';
 export type ClientFamily =
   | 'anthropic'
   | 'openai'
+  | 'devin'
   | 'ide'
   | 'no_code_platform'
   | 'sdk_default'
@@ -35,6 +36,7 @@ const NO_CODE_CLIENTS = [
   'zapier',
   'make',
 ];
+const DEVIN_USER_AGENT_PREFIXES = ['devin-mcp-client/', 'devin-cli/'];
 const SDK_CLIENTS = [
   'mcp',
   'mcp-client',
@@ -64,10 +66,18 @@ export function sanitizeUserAgent(raw: string | string[] | undefined): {
 export function classifyClientFamily(
   source: string,
   clientName: string | undefined,
+  userAgent?: string,
 ): ClientFamily {
   const name = typeof clientName === 'string' ? clientName.toLowerCase() : '';
   if (INTERACTIVE_SOURCES.includes(source) || source === 'agent_run')
     return 'browserless';
+  // Devin's clientInfo.name is generic (cloud sends the Rust SDK default
+  // "rmcp"), so its user agent identifies it: Devin-MCP-Client/x.y.z from
+  // Devin cloud, Devin-CLI/x.y.z (windsurf) from the Devin CLI.
+  const ua =
+    typeof userAgent === 'string' ? userAgent.trim().toLowerCase() : '';
+  if (DEVIN_USER_AGENT_PREFIXES.some((prefix) => ua.startsWith(prefix)))
+    return 'devin';
   if (name.startsWith('anthropic/') || ANTHROPIC_CLIENTS.includes(name))
     return 'anthropic';
   if (name.startsWith('openai-mcp') || name === 'codex-mcp-client')

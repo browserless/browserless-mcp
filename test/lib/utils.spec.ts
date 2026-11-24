@@ -108,6 +108,25 @@ describe('resolveMcpSource', () => {
     });
   });
 
+  it('attributes Devin sessions by user agent despite the rmcp client name', () => {
+    expect(
+      resolveMcpSource(
+        {
+          authMethod: 'oauth',
+          transport: 'streamable-http',
+          userAgent: 'Devin-MCP-Client/0.1.0',
+        },
+        { name: 'rmcp', version: '0.8.0' },
+        'httpStream',
+      ),
+    ).to.include({
+      client_name: 'rmcp',
+      user_agent_family: 'devin-mcp-client',
+      client_family: 'devin',
+      usage_mode: 'interactive',
+    });
+  });
+
   it('falls back to HTTP transport without inventing OAuth provenance', () => {
     expect(
       resolveMcpSource({}, { name: 'Anthropic/ClaudeAI' }, 'httpStream'),
