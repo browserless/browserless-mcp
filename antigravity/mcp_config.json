@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "browserless": {
+      "serverUrl": "https://mcp.browserless.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BROWSERLESS_API_TOKEN}"
+      },
+      "variables": [
+        {
+          "name": "BROWSERLESS_API_TOKEN",
+          "title": "Browserless API token",
+          "description": "Enter your Browserless API token from your account dashboard. Browser operations use your account quota.",
+          "link": "https://account.browserless.io/"
+        }
+      ]
+    }
+  }
+}
