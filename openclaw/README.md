@@ -224,12 +224,14 @@ shouldn't trust each other, use separate Gateways and credentials.
 
 ## What's included
 
-| Path                          | Purpose                                                                                         |
-| ----------------------------- | ----------------------------------------------------------------------------------------------- |
-| `.mcp.json`                   | Registers the hosted Browserless MCP server (Streamable HTTP, OAuth, 6-minute request timeout). |
-| `skills/browserless/SKILL.md` | Tool-selection, browser-driving, and credential-safety guidance.                                |
-| `.claude-plugin/plugin.json`  | Bundle manifest. OpenClaw loads this package as a Claude-format bundle.                         |
-| `package.json`                | Package name and version for ClawHub.                                                           |
+| Path                          | Purpose                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `.mcp.json`                   | Registers the hosted Browserless MCP server (Streamable HTTP, OAuth, 6-minute request timeout).      |
+| `skills/browserless/SKILL.md` | Tool-selection, browser-driving, and credential-safety guidance.                                     |
+| `.claude-plugin/plugin.json`  | Bundle manifest. OpenClaw loads this package as a Claude-format bundle.                              |
+| `package.json`                | Package name and version for ClawHub.                                                                |
+| `openclaw.plugin.json`        | Plugin id and the ClawHub category (`web`). Nothing else; see [Publishing](#publishing-maintainers). |
+| `assets/icon.png`             | Listing icon on ClawHub (512×512).                                                                   |
 
 Tools appear in OpenClaw with the server prefix, for example
 `browserless__browserless_smartscraper`. To expose only some of them, see
@@ -286,7 +288,8 @@ the repository root:
 ```bash
 clawhub package validate ./openclaw
 clawhub package publish ./openclaw --owner browserless --dry-run
-clawhub package publish ./openclaw --owner browserless
+clawhub package publish ./openclaw --owner browserless \
+  --topics "Browser Automation,Web Scraping,Web Search,Data Extraction,MCP"
 ```
 
 `clawhub package validate` writes reports to `openclaw/reports/`. They are
@@ -298,31 +301,38 @@ source repository uses, and the task skills are approved for MIT-0. Publish
 each one under the same owner, with the source linked:
 
 ```bash
-clawhub skill publish ./openclaw/clawhub-skills/browserless-web-scraper \
-  --owner browserless --source-repo browserless/browserless-mcp \
-  --source-commit "$(git rev-parse HEAD)" \
-  --source-path openclaw/clawhub-skills/browserless-web-scraper
+publish_skill() {
+  clawhub skill publish "./openclaw/clawhub-skills/$1" \
+    --owner browserless --source-repo browserless/browserless-mcp \
+    --source-commit "$(git rev-parse HEAD)" \
+    --source-path "openclaw/clawhub-skills/$1" --topics "$2"
+}
+publish_skill browserless-web-scraper "Web Scraping,Web Search,Data Extraction,Research"
+publish_skill browserless-browser-automation "Browser Automation,Logins,Forms,CAPTCHA"
+publish_skill browserless-site-audit "Lighthouse,Performance,SEO,Accessibility,Screenshots"
 ```
 
-Repeat for `browserless-browser-automation` and `browserless-site-audit`. Add
-`--dry-run` first to preview. Skills get the next patch version unless you pass
-`--version`.
+Add `--dry-run` to the function to preview first. Skills get the next patch
+version unless you pass `--version`.
 
 Keep in mind:
 
 - Publish only from a pushed commit that contains your `openclaw/` changes.
   ClawHub records the source commit from the local checkout, so publishing
   uncommitted files links the listing to a commit that doesn't have them.
-- Keep exactly one bundle marker: `.claude-plugin/plugin.json`. Do not add
-  `openclaw.plugin.json` or an `openclaw.extensions` field to `package.json`: native
-  plugin detection takes precedence over bundle detection, so the MCP config and
-  skill would no longer load as bundle capabilities. ClawHub accepts the bundle
-  marker directly; it does not require a native manifest envelope. See the
-  [OpenClaw detection rules](https://docs.openclaw.ai/plugins/bundles#detection-precedence)
-  and [ClawHub publishing requirements](https://github.com/openclaw/clawhub/blob/main/docs/cli.md).
+- `.claude-plugin/plugin.json` is what makes OpenClaw load this package as a
+  bundle. `openclaw.plugin.json` is only there for the ClawHub category, the
+  same pattern other bundle plugins on ClawHub use: keep it to `id`, `name`,
+  `categories` and an empty `configSchema`. Never add an `openclaw.extensions`
+  field to `package.json`. That makes OpenClaw load the package as a native
+  plugin, and `.mcp.json` and the skill silently stop loading. Checked on
+  OpenClaw 2026.11.5 and 2026.11.10: with both manifests, `openclaw plugins
+inspect browserless` reports `Format: bundle` and
+  `Bundle capabilities: skills, mcpServers`. See the
+  [OpenClaw detection rules](https://docs.openclaw.ai/plugins/bundles#detection-precedence).
 
 ## License
 
-The plugin is SSPL-1.0. See the repository's [LICENSE](../LICENSE). Task
-skills published separately on ClawHub are released there under MIT-0 (see
-[Publishing](#publishing-maintainers)).
+The plugin is SSPL-1.0. See the repository's [LICENSE](../LICENSE). The task
+skills in `clawhub-skills/` are MIT-0, as published on ClawHub. See
+[clawhub-skills/LICENSE](clawhub-skills/LICENSE).
