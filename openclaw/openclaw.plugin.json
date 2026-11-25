@@ -1,0 +1,10 @@
+{
+  "id": "browserless",
+  "name": "Browserless",
+  "categories": ["web"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
