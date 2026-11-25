@@ -116,7 +116,10 @@ out of committed config.
 
    If you press Enter without a token, or `touch` or `chmod` fails, nothing is
    written, so an existing token in the file stays in effect. You can also open the file
-   in an editor and add the `BROWSERLESS_TOKEN=` line yourself.
+   in an editor and add the `BROWSERLESS_TOKEN=` line yourself. Continue to
+   step 2 only once the file has a `BROWSERLESS_TOKEN=` line; otherwise step 2
+   replaces OAuth with a token the Gateway doesn't have, and the Browserless
+   tools stop working until you add one.
 
 2. Override the plugin's server definition so it sends the token instead of
    using OAuth. OpenClaw expands `${BROWSERLESS_TOKEN}` when it connects; the
@@ -291,9 +294,8 @@ excluded from git by `.gitignore` and from the published package by
 `.clawhubignore`, which also keeps `clawhub-skills/` out of the package.
 
 ClawHub releases every published skill under MIT-0, whatever license the
-source repository uses. Don't publish the task skills until that license has
-been approved for them. Then publish each one under the same owner, with the
-source linked:
+source repository uses, and the task skills are approved for MIT-0. Publish
+each one under the same owner, with the source linked:
 
 ```bash
 clawhub skill publish ./openclaw/clawhub-skills/browserless-web-scraper \
