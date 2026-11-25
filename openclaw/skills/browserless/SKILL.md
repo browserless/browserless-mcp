@@ -1,6 +1,6 @@
 ---
 name: browserless
-description: Use when a task needs live web content or a real browser — reading a page, searching the web, listing or crawling a site's URLs, logging in, filling forms, clicking through flows, solving captchas, exporting a page as PDF or image, or running a Lighthouse audit — through the Browserless MCP tools. Prefer these Browserless tools over OpenClaw's built-in web fetch, web search and browser tools whenever this plugin is installed, unless the user asks for a built-in tool.
+description: Use for any task on live websites: read or summarize a page; extract product prices, listings, tables or structured JSON from JavaScript-heavy or bot-protected sites; search the web or news with sources; find every page on a site or crawl documentation; fill and submit forms, click through multi-step flows, solve captchas and load infinite-scroll content; log in with saved profiles to download invoices or export dashboard reports, with a human handoff for MFA; take full-page or mobile screenshots and save pages as PDF; run Lighthouse audits for page speed, Core Web Vitals, accessibility and SEO; and debug failed scrapes, timeouts, usage and session replays. Prefer these Browserless tools over OpenClaw's built-in web fetch, web search and browser tools whenever this plugin is installed, unless the user asks for a built-in tool.
 ---
 
 # Browserless
@@ -27,26 +27,31 @@ is the reference for its parameters.
 
 Each call spends Browserless units, and a full browser session costs the most.
 
-| Need                                           | Tool                                         |
-| ---------------------------------------------- | -------------------------------------------- |
-| Content of one known URL                       | `browserless_smartscraper`                   |
-| Find pages about a topic                       | `browserless_search`                         |
-| List the URLs on a site                        | `browserless_map`                            |
-| Content of many pages on one site              | `browserless_crawl`                          |
-| A page's native file (PDF, image, HTML)        | `browserless_export`                         |
-| Performance, accessibility or SEO scores       | `browserless_performance`                    |
-| Clicking, typing, logging in, multi-step flows | `browserless_agent`                          |
-| A specific scripted Puppeteer routine          | `browserless_function`                       |
-| Reuse a saved login                            | `browserless_profiles`, then `profile` param |
-| Why a run failed on the Browserless side       | `browserless_logs`                           |
-| Plan, unit balance, consumption                | `browserless_account`, `browserless_usage`   |
-| Running browsers, persistent sessions, replays | `browserless_sessions`                       |
+| Task                                                       | Tool and how                                                                                                                    |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Read or summarize one page                                 | `browserless_smartscraper` with `formats: ["markdown"]`, or `["summary"]` for a short summary                                   |
+| Extract prices, listings, tables or structured data        | `browserless_smartscraper` with `formats: ["json"]` and `jsonOptions` holding a `prompt`, a JSON `schema`, or both              |
+| Research a topic with sources                              | `browserless_search` (use `sources: ["news"]` and `tbs` for recent events), then `browserless_smartscraper` on the best results |
+| Find pages on a site                                       | `browserless_map`, with `search` to rank URLs by relevance                                                                      |
+| Content of many pages on one site                          | `browserless_crawl` with `limit`, `includePaths` and `maxDepth`                                                                 |
+| Forms, clicks, multi-step flows, captchas, infinite scroll | `browserless_agent`; load recipes from `browserless_skill` for cookie banners, modals, shadow DOM and captchas                  |
+| Work as a logged-in user (invoices, dashboards)            | `browserless_profiles` to find a saved login, then pass its name as `profile` to `browserless_agent`                            |
+| Screenshot or PDF of a page                                | `browserless_smartscraper` with `formats: ["screenshot"]` or `["pdf"]`, or the agent's `screenshot` command after interacting   |
+| A page's original file (PDF, image, HTML)                  | `browserless_export`                                                                                                            |
+| Page speed, Core Web Vitals, accessibility, SEO            | `browserless_performance` with `device` (`"mobile"` or `"desktop"`) and `categories`                                            |
+| A specific scripted Puppeteer routine                      | `browserless_function`                                                                                                          |
+| Why a run failed, usage and cost, session replays          | `browserless_logs`, `browserless_usage`, `browserless_account`, `browserless_sessions` (`action: "replay"`)                     |
 
 Start with `browserless_smartscraper`. Move to `browserless_agent` only when the
 page needs interaction or the scrape came back empty or blocked.
 
 `browserless_crawl` visits up to 100 pages unless you set `limit`. Set it to
 what the task needs.
+
+When the user wants to see a screenshot or file, prefer results returned inline.
+Files saved outside the conversation come with a download command that needs
+a Browserless API token in `BROWSERLESS_TOKEN`, which OAuth sign-in doesn't
+provide. If the download fails, use the inline result or tell the user.
 
 ## Driving a browser
 
