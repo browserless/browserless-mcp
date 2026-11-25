@@ -311,14 +311,16 @@ publish_skill() {
   clawhub skill publish "./openclaw/clawhub-skills/$1" \
     --owner browserless --source-repo browserless/browserless-mcp \
     --source-commit "$(git rev-parse HEAD)" \
-    --source-path "openclaw/clawhub-skills/$1" --topics "$2"
+    --source-path "openclaw/clawhub-skills/$1" --categories "$2" --topics "$3"
 }
-publish_skill browserless-web-scraper "Web Scraping,Web Search,Data Extraction,Research"
-publish_skill browserless-browser-automation "Browser Automation,Logins,Forms,CAPTCHA"
-publish_skill browserless-site-audit "Lighthouse,Performance,SEO,Accessibility,Screenshots"
+publish_skill browserless-web-scraper research "Web Scraping,Web Search,Data Extraction,Research"
+publish_skill browserless-browser-automation automation,research "Browser Automation,Logins,Forms,CAPTCHA"
+publish_skill browserless-site-audit research,development "Lighthouse,Performance,SEO,Accessibility,Screenshots"
 ```
 
-Add `--dry-run` to the function to preview first. Skills get the next patch
+Categories must be slugs from ClawHub's list; a skill published without one
+lands in `other`, and `--dry-run` does not check them. Add `--dry-run` to the
+function to preview first. Skills get the next patch
 version unless you pass `--version`.
 
 Keep in mind:

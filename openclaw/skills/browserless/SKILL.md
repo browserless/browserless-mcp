@@ -37,6 +37,7 @@ Each call spends Browserless units, and a full browser session costs the most.
 | Forms, clicks, multi-step flows, captchas, infinite scroll | `browserless_agent`; load recipes from `browserless_skill` for cookie banners, modals, shadow DOM and captchas                  |
 | Work as a logged-in user (invoices, dashboards)            | `browserless_profiles` to find a saved login, then pass its name as `profile` to `browserless_agent`                            |
 | Screenshot or PDF of a page                                | `browserless_smartscraper` with `formats: ["screenshot"]` or `["pdf"]`, or the agent's `screenshot` command after interacting   |
+| Mobile screenshot (phone view)                             | `browserless_agent` with `emulationOs: "ios"` or `"android"`, then its `screenshot` command                                     |
 | A page's original file (PDF, image, HTML)                  | `browserless_export`                                                                                                            |
 | Page speed, Core Web Vitals, accessibility, SEO            | `browserless_performance` with `device` (`"mobile"` or `"desktop"`) and `categories`                                            |
 | A specific scripted Puppeteer routine                      | `browserless_function`                                                                                                          |
