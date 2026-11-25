@@ -105,12 +105,17 @@ out of committed config.
    ```bash
    ENV_FILE="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/.env"
    printf 'Browserless token: '; read -rs BROWSERLESS_TOKEN; echo
-   (umask 077 && touch "$ENV_FILE") && chmod 600 "$ENV_FILE" &&
-     printf '\nBROWSERLESS_TOKEN=%s\n' "$BROWSERLESS_TOKEN" >> "$ENV_FILE"
+   if [ -n "$BROWSERLESS_TOKEN" ]; then
+     (umask 077 && touch "$ENV_FILE") && chmod 600 "$ENV_FILE" &&
+       printf '\nBROWSERLESS_TOKEN=%s\n' "$BROWSERLESS_TOKEN" >> "$ENV_FILE"
+   else
+     echo "No token entered; nothing written." >&2
+   fi
    unset BROWSERLESS_TOKEN
    ```
 
-   If `touch` or `chmod` fails, nothing is written. You can also open the file
+   If you press Enter without a token, or `touch` or `chmod` fails, nothing is
+   written, so an existing token in the file stays in effect. You can also open the file
    in an editor and add the `BROWSERLESS_TOKEN=` line yourself.
 
 2. Override the plugin's server definition so it sends the token instead of
