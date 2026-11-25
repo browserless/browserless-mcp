@@ -2,7 +2,7 @@
   "name": "@browserless/clawhub",
   "displayName": "Browserless",
   "version": "1.0.0",
-  "description": "Browserless for OpenClaw: registers the hosted Browserless MCP server and a usage skill.",
+  "description": "Give OpenClaw a real cloud browser: scrape, search, map and crawl sites, log in and automate multi-step flows, solve captchas, use residential proxies and saved logins, run Lighthouse audits, export PDFs and screenshots, and replay sessions.",
   "type": "module",
   "private": true,
   "author": "browserless.io",

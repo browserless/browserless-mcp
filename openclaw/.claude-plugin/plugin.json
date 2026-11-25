@@ -1,7 +1,7 @@
 {
-  "name": "browserless",
+  "name": "Browserless",
   "version": "1.0.0",
-  "description": "Connect OpenClaw to the hosted Browserless MCP: scrape, search, map and crawl sites, drive a real cloud browser, solve captchas, use residential proxies and saved logins, run Lighthouse audits, export files, and inspect session replays.",
+  "description": "Give OpenClaw a real cloud browser: scrape, search, map and crawl sites, log in and automate multi-step flows, solve captchas, use residential proxies and saved logins, run Lighthouse audits, export PDFs and screenshots, and replay sessions.",
   "author": {
     "name": "Browserless",
     "url": "https://browserless.io"

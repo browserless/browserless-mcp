@@ -24,7 +24,7 @@ openclaw plugins install clawhub:@browserless/clawhub
 ```
 
 They connect from the Browserless plugin page in the OpenClaw Control UI
-(**Accounts → Connect**), or with an API token as described in the plugin's
+(**Accounts → Sign in**), or with an API token as described in the plugin's
 README. Never ask the user to paste a token, password or one-time code into
 chat.
 

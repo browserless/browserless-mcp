@@ -67,7 +67,7 @@ credentials. If no `browserless__` tools are available, or a call fails with
 an authorization error, tell the user to either:
 
 - open the Browserless plugin page in the OpenClaw Control UI and choose
-  **Connect** under **Accounts** (or **Sign in** under **Settings → MCP**), or
+  **Sign in** under **Accounts** (or under **Settings → MCP**), or
 - configure an API token as described in the plugin README.
 
 Do not try to work around missing authorization.

@@ -1,15 +1,20 @@
-# Browserless plugin for OpenClaw
+# Browserless for OpenClaw
 
-Connect [OpenClaw](https://openclaw.ai) to [Browserless](https://browserless.io)
-to scrape, search, map, and crawl the web; drive a real cloud browser; solve
-captchas; use residential proxies and saved login profiles; run Lighthouse
-audits; export files; and inspect session replays.
+Give your OpenClaw agent a real cloud browser.
+[Browserless](https://browserless.io) lets [OpenClaw](https://openclaw.ai) read
+any page as clean markdown, search the web, and map or crawl entire sites. It
+drives a full Chrome session to log in, fill forms and click through
+multi-step flows, with captcha solving, residential proxies and saved logins
+built in. It also runs Lighthouse audits, exports pages as PDFs and
+screenshots, and records session replays so you can see exactly what the agent
+did.
 
-This is a lightweight plugin bundle. It contains no code. It registers the
-hosted Browserless MCP server (`https://mcp.browserless.io/mcp`) and ships a
-short skill that tells the agent which Browserless tool fits which task. All
-tools come from the hosted server, so they stay current without updating the
-plugin.
+Install the plugin, sign in with your Browserless account, and the tools appear
+in your agent's sessions, along with a skill that teaches the agent which tool
+fits each task. The tools are served by Browserless's hosted MCP server
+(`https://mcp.browserless.io/mcp`), so new capabilities arrive without updating
+the plugin. No account yet?
+[Create one for free](https://www.browserless.io/signup/email?plan=free).
 
 ## Installation
 
@@ -47,16 +52,17 @@ The plugin declares the server with OAuth, so no credential is stored in the
 plugin or in your config.
 
 1. Open the OpenClaw Control UI and go to the **Browserless** plugin page.
-2. Under **Accounts**, choose **Connect** and sign in to Browserless.
-3. Return to OpenClaw. The account shows **Connected**.
+2. Under **Accounts**, choose **Sign in** (called **Connect** in some OpenClaw
+   versions) and sign in to Browserless.
+3. Return to OpenClaw. The account shows as signed in.
 
-Sign-in needs an administrator connection to the Control UI. If **Connect** is
+Sign-in needs an administrator connection to the Control UI. If **Sign in** is
 missing, **Settings → MCP** may offer **Sign in** for the same server.
 
 Browser sign-in only works when the Control UI is opened on the Gateway's own
 address: its HTTPS address (including a reverse proxy or Tailscale Serve
 route), its loopback address, or its published Tailscale address. A separately
-hosted UI can't receive the sign-in callback. Plugin-page **Connect** needs
+hosted UI can't receive the sign-in callback. Plugin-page sign-in needs
 OpenClaw 2026.9.9 or later. In any of these cases, use the terminal sign-in
 below.
 
