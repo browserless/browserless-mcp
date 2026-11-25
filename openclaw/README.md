@@ -295,7 +295,7 @@ the repository root:
 clawhub package validate ./openclaw
 clawhub package publish ./openclaw --owner browserless --dry-run
 clawhub package publish ./openclaw --owner browserless \
-  --topics "Browser Automation,Web Scraping,Data Extraction,Web Search,Screenshots,Lighthouse,MCP"
+  --topics "Browser Automation,Web Scraping,Data Extraction,Screenshots,Lighthouse"
 ```
 
 `clawhub package validate` writes reports to `openclaw/reports/`. They are
