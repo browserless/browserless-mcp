@@ -164,7 +164,7 @@ Errors tagged \`Category: <NAME>\`:
 Commands with defined parameters (validated server-side). A loaded skill or site recipe may name further commands; use those only as it shows.
 - Navigation and tabs: \`goto\`, \`back\`, \`forward\`, \`reload\`, \`getTabs\`, \`switchTab\`, \`createTab\`, \`closeTab\`.
 - Observe and interact: \`snapshot\`, \`text\`, \`html\`, \`evaluate\`, \`screenshot\`, \`click\`, \`type\`, \`select\`, \`checkbox\`, \`hover\`, \`scroll\`, \`solve\`.
-- Wait: \`waitForSelector\`, \`waitForNavigation\`, \`waitForTimeout\`, \`waitForRequest\`, \`waitForResponse\`.
+- Wait: \`waitForSelector\`, \`waitForNavigation\`, \`waitForTimeout\`, \`waitForRequest\`, \`waitForResponse\`. For a click that navigates, pass \`waitUntil: "load"\` on the \`click\` itself instead of following it with \`waitForNavigation\`, which can miss a fast navigation.
 - Files, capture and secrets: \`uploadFile\`, \`getDownloads\`, \`startRecording\`, \`stopRecording\`, \`liveURL\`, \`loadSecret\`, \`saveSecret\`, \`clearSecrets\`.
 - Reports and cleanup: \`reportSkillOutcome\`, \`reportOutcome\`, \`reportProfileAuthentication\`, \`close\`.
 

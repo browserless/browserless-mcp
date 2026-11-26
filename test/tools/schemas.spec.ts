@@ -1264,6 +1264,20 @@ describe('AgentParamsSchema click coordinates', () => {
       commands: [{ method: 'click', params }],
     }).success;
 
+  it('keeps waitUntil and timeout through per-command validation', () => {
+    const command = {
+      method: 'click',
+      params: { selector: 'button#go', waitUntil: 'load', timeout: 10000 },
+    };
+    expect(TypedAgentCommandSchema.parse(command)).to.deep.equal(command);
+  });
+
+  it('rejects a waitUntil the server does not accept on click', () => {
+    expect(
+      parseClick({ selector: 'button#go', waitUntil: 'domcontentloaded' }),
+    ).to.equal(false);
+  });
+
   it('accepts a selector alone', () => {
     expect(parseClick({ selector: 'button#go' })).to.equal(true);
   });
