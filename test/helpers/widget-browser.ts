@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,8 +28,12 @@ export const REPORT_SCRIPT = `
 `;
 
 interface HostPage {
-  /** Serves every path other than /result; `/` must load a page that calls report(). */
-  route(url: string, response: ServerResponse): void;
+  /** Widget HTML, served at /widget under the MCP Apps sandbox CSP. */
+  widget: string;
+  /** Bundled host script, which must include REPORT_SCRIPT and call report(). */
+  host: string;
+  /** CSS for the host page that frames the widget. */
+  style: string;
   /** Milliseconds to wait for report() before failing. */
   timeout: number;
   /** Extra Chrome flags, for example a screenshot capture. */
@@ -37,7 +41,13 @@ interface HostPage {
 }
 
 /** Opens the host page in headless Chrome and resolves with the text it reports. */
-export async function runHostPage({ route, timeout, args = [] }: HostPage) {
+export async function runHostPage({
+  widget,
+  host,
+  style,
+  timeout,
+  args = [],
+}: HostPage) {
   let settle!: (text: string) => void;
   const reported = new Promise<string>((resolve) => (settle = resolve));
   const http = createServer((request, response) => {
@@ -49,7 +59,22 @@ export async function runHostPage({ route, timeout, args = [] }: HostPage) {
         response.end();
         settle(body);
       });
-    } else route(request.url ?? '/', response);
+    } else if (request.url === '/widget') {
+      response.setHeader('content-type', 'text/html');
+      response.setHeader(
+        'content-security-policy',
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
+      );
+      response.end(widget);
+    } else if (request.url === '/host.js') {
+      response.setHeader('content-type', 'text/javascript');
+      response.end(host);
+    } else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<!doctype html><style>${style}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>`,
+      );
+    }
   });
   const directory = await mkdtemp(join(tmpdir(), 'widget-browser-'));
   let stderr = '';

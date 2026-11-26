@@ -208,24 +208,10 @@ describe('hosted agent run timeline browser', () => {
               '--force-device-scale-factor=2',
             ]
           : [],
-        route(url, response) {
-          if (url === '/widget') {
-            response.setHeader('content-type', 'text/html');
-            response.setHeader(
-              'content-security-policy',
-              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
-            );
-            response.end(widget);
-          } else if (url === '/host.js') {
-            response.setHeader('content-type', 'text/javascript');
-            response.end(host.outputFiles[0].text);
-          } else {
-            response.setHeader('content-type', 'text/html');
-            response.end(
-              '<!doctype html><style>body{background:#1d1d1f;color:white}iframe{width:min(100%,760px);height:1000px;border:0}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>',
-            );
-          }
-        },
+        widget: widget,
+        host: host.outputFiles[0].text,
+        style:
+          'body{background:#1d1d1f;color:white}iframe{width:min(100%,760px);height:1000px;border:0}',
       });
       assert.equal(result, 'PASS: hosted agent run timeline');
     },

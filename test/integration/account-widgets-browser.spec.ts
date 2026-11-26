@@ -176,24 +176,10 @@ describe('account widget browser controls', () => {
               '--window-size=1480,1500',
             ]
           : [],
-        route(url, response) {
-          if (url === '/widget') {
-            response.setHeader('content-type', 'text/html');
-            response.setHeader(
-              'content-security-policy',
-              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
-            );
-            response.end(resource.text);
-          } else if (url === '/host.js') {
-            response.setHeader('content-type', 'text/javascript');
-            response.end(host.outputFiles[0].text);
-          } else {
-            response.setHeader('content-type', 'text/html');
-            response.end(
-              '<!doctype html><style>body{background:#111;color:white}iframe{width:700px;height:620px;border:0;vertical-align:top}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>',
-            );
-          }
-        },
+        widget: resource.text,
+        host: host.outputFiles[0].text,
+        style:
+          'body{background:#111;color:white}iframe{width:700px;height:620px;border:0;vertical-align:top}',
       });
       assert.equal(
         result,
