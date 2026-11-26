@@ -56,6 +56,52 @@ const CompliantMapParamsSchema = MapParamsSchema.extend({
     .describe('Maximum number of URLs to return (default: 100, max: 500)'),
 }).strict();
 
+export function formatCoverageLines(
+  response: MapResponse,
+  params: MapParams,
+): string[] {
+  const coverage = response.coverage;
+  if (!coverage) {
+    return [
+      'Coverage: may be partial. Only the sitemap and the links on the start page are read; linked pages are not visited.',
+    ];
+  }
+
+  const { sitemapUrls, pagesScanned, timedOut } = coverage;
+  const limit = params.limit ?? 100;
+  const mode = params.sitemap ?? 'include';
+
+  let sitemap = `Sitemap: ${sitemapUrls} URLs from the site's sitemap`;
+  if (sitemapUrls === null) {
+    sitemap = 'Sitemap: not checked (sitemap mode "skip")';
+  } else if (sitemapUrls === 0) {
+    sitemap = params.search
+      ? 'Sitemap: no sitemap URLs matched the search'
+      : 'Sitemap: no URLs found (the site has no sitemap, or it could not be read)';
+  }
+
+  const count = pagesScanned.length;
+  let pages = 'Page links: not read (the start page could not be read in time)';
+  if (count > 0) {
+    pages = `Links read from ${count} page${count === 1 ? '' : 's'}: ${pagesScanned.join(', ')}. Linked pages were not visited.`;
+  } else if (mode === 'only') {
+    pages = 'Page links: not read (sitemap mode "only")';
+  } else if (sitemapUrls !== null && sitemapUrls >= limit) {
+    pages = `Page links: not read (the sitemap filled the limit of ${limit})`;
+  }
+
+  let verdict =
+    'Coverage: may be partial. Pages that are neither in the sitemap nor linked from the start page are not listed.';
+  if (timedOut) {
+    verdict =
+      'Coverage: partial. The request timed out before mapping finished.';
+  } else if ((response.links?.length ?? 0) >= limit) {
+    verdict = `Coverage: partial. Stopped at the limit of ${limit} URLs.`;
+  }
+
+  return [sitemap, pages, verdict];
+}
+
 export function registerMapTool(
   server: FastMCP,
   config: McpConfig,
@@ -66,11 +112,11 @@ export function registerMapTool(
     name: 'browserless_map',
     description: compliant
       ? COMPLIANT_MAP_DESCRIPTION
-      : 'Discover and map all URLs on a website using Browserless. ' +
-        'Scans a site via sitemaps and link extraction to find all pages. ' +
-        'Returns a list of URLs with optional titles and descriptions. ' +
+      : 'List the URLs of a website using Browserless. ' +
+        "Reads the site's sitemap and the links on the start page only; linked pages are not visited, so the result is often a partial list of the site. " +
+        "Returns URLs with optional titles and descriptions, followed by a coverage summary that says how many URLs came from the sitemap and which page's links were read. " +
         'Use the search parameter to order results by relevance to a query. ' +
-        'Useful for site audits, content discovery, and building site maps.',
+        'Useful for site audits and content discovery.',
     parameters: compliant ? CompliantMapParamsSchema : MapParamsSchema,
     annotations: {
       title: 'Browserless Map',
@@ -147,6 +193,7 @@ export function registerMapTool(
           `URLs Found: ${response.links?.length ?? 0}`,
           `Sitemap Mode: ${params.sitemap ?? 'include'}`,
           params.search ? `Search Query: ${params.search}` : '',
+          ...formatCoverageLines(response, params),
           '---',
         ]
           .filter(Boolean)
