@@ -94,7 +94,8 @@ export async function runHostPage({
         ...args,
         `http://127.0.0.1:${(http.address() as AddressInfo).port}/`,
       ],
-      { stdio: ['ignore', 'ignore', 'pipe'] },
+      // Own process group, so cleanup can stop Chrome's helper processes too.
+      { stdio: ['ignore', 'ignore', 'pipe'], detached: true },
     );
     browser.stderr!.on('data', (chunk) => (stderr += chunk));
     // Chrome exits by itself after --screenshot; give an in-flight report a moment to land.
@@ -138,13 +139,24 @@ export async function runHostPage({
     return text;
   } finally {
     clearTimeout(timer);
-    if (browser && browser.exitCode === null && browser.signalCode === null) {
+    if (browser?.pid) {
+      const running = browser.exitCode === null && browser.signalCode === null;
       const closed = new Promise((resolve) => browser!.once('exit', resolve));
-      browser.kill('SIGKILL');
-      await closed;
+      try {
+        process.kill(-browser.pid, 'SIGKILL');
+      } catch {
+        // The group has already exited.
+      }
+      if (running) await closed;
     }
     http.closeAllConnections();
     await new Promise<void>((resolve) => http.close(() => resolve()));
-    await rm(directory, { recursive: true, force: true });
+    // Killed helpers can still be flushing into the profile for a moment.
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
   }
 }
