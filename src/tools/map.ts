@@ -71,32 +71,27 @@ export function formatCoverageLines(
   const limit = params.limit ?? 100;
   const mode = params.sitemap ?? 'include';
 
-  let sitemap = `Sitemap: ${sitemapUrls} URLs from the site's sitemap`;
-  if (sitemapUrls === null) {
-    sitemap = 'Sitemap: not checked (sitemap mode "skip")';
-  } else if (sitemapUrls === 0) {
-    sitemap = params.search
-      ? 'Sitemap: no sitemap URLs matched the search'
-      : 'Sitemap: no URLs found (the site has no sitemap, or it could not be read)';
-  }
+  const sitemap =
+    sitemapUrls === null
+      ? 'Sitemap: not checked (sitemap mode "skip")'
+      : `Sitemap: ${sitemapUrls} of the returned URLs came from a sitemap`;
 
   const count = pagesScanned.length;
-  let pages = 'Page links: not read (the start page could not be read in time)';
+  let pages = 'Page links: none read';
   if (count > 0) {
     pages = `Links read from ${count} page${count === 1 ? '' : 's'}: ${pagesScanned.join(', ')}. Linked pages were not visited.`;
   } else if (mode === 'only') {
     pages = 'Page links: not read (sitemap mode "only")';
-  } else if (sitemapUrls !== null && sitemapUrls >= limit) {
-    pages = `Page links: not read (the sitemap filled the limit of ${limit})`;
   }
 
+  const returned = response.links?.length ?? 0;
   let verdict =
     'Coverage: may be partial. Pages that are neither in the sitemap nor linked from the start page are not listed.';
   if (timedOut) {
     verdict =
-      'Coverage: partial. The request timed out before mapping finished.';
-  } else if ((response.links?.length ?? 0) >= limit) {
-    verdict = `Coverage: partial. Stopped at the limit of ${limit} URLs.`;
+      'Coverage: may be partial. The request timed out before mapping finished.';
+  } else if (returned === limit) {
+    verdict = `Coverage: may be partial. ${returned} URLs returned, which is the limit of ${limit}.`;
   }
 
   return [sitemap, pages, verdict];

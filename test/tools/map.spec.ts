@@ -69,7 +69,7 @@ describe('formatCoverageLines', () => {
       name: 'does not imply the sitemap was missing when searching',
       coverage: { sitemapUrls: 0, pagesScanned: [url], timedOut: false },
       params: { search: 'pricing' },
-      expected: [[0, 'Sitemap: no sitemap URLs matched the search']],
+      expected: [[0, 'Sitemap: 0 of the returned URLs came from a sitemap']],
     },
     {
       name: 'explains when sitemap results fill the limit',
@@ -77,9 +77,12 @@ describe('formatCoverageLines', () => {
       params: { limit: 20 },
       count: 20,
       expected: [
-        [0, "Sitemap: 20 URLs from the site's sitemap"],
-        [1, 'Page links: not read (the sitemap filled the limit of 20)'],
-        [2, 'Coverage: partial. Stopped at the limit of 20 URLs.'],
+        [0, 'Sitemap: 20 of the returned URLs came from a sitemap'],
+        [1, 'Page links: none read'],
+        [
+          2,
+          'Coverage: may be partial. 20 URLs returned, which is the limit of 20.',
+        ],
       ],
     },
     {
@@ -94,10 +97,10 @@ describe('formatCoverageLines', () => {
       params: { limit: 50 },
       count: 5,
       expected: [
-        [1, 'Page links: not read (the start page could not be read in time)'],
+        [1, 'Page links: none read'],
         [
           2,
-          'Coverage: partial. The request timed out before mapping finished.',
+          'Coverage: may be partial. The request timed out before mapping finished.',
         ],
       ],
     },
@@ -124,7 +127,7 @@ describe('formatCoverageLines', () => {
       expected: [
         [
           2,
-          'Coverage: partial. The request timed out before mapping finished.',
+          'Coverage: may be partial. The request timed out before mapping finished.',
         ],
       ],
     },
@@ -255,7 +258,7 @@ describe('browserless_map tool', () => {
             `Base URL: ${url}`,
             'URLs Found: 47',
             'Sitemap Mode: include',
-            'Sitemap: no URLs found (the site has no sitemap, or it could not be read)',
+            'Sitemap: 0 of the returned URLs came from a sitemap',
             `Links read from 1 page: ${url}. Linked pages were not visited.`,
             'Coverage: may be partial. Pages that are neither in the sitemap nor linked from the start page are not listed.',
             '---',
