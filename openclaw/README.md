@@ -308,7 +308,7 @@ each one under the same owner, with the source linked:
 
 ```bash
 publish_skill() {
-  clawhub skill publish "./openclaw/clawhub-skills/$1" \
+  clawhub --workdir "$PWD" skill publish "./openclaw/clawhub-skills/$1" \
     --owner browserless --source-repo browserless/browserless-mcp \
     --source-commit "$(git rev-parse HEAD)" \
     --source-path "openclaw/clawhub-skills/$1" --categories "$2" --topics "$3"
@@ -317,6 +317,10 @@ publish_skill browserless-web-scraper research "Web Scraping,Web Search,Data Ext
 publish_skill browserless-browser-automation automation,research "Browser Automation,Logins,Forms,CAPTCHA"
 publish_skill browserless-site-audit research,development "Lighthouse,Performance,SEO,Accessibility,Screenshots"
 ```
+
+`--workdir "$PWD"` matters on a machine with OpenClaw installed: without it,
+`clawhub` resolves skill paths from OpenClaw's workspace instead of the
+repository, and the publish fails with "Path must be a folder".
 
 Categories must be slugs from ClawHub's list; a skill published without one
 lands in `other`, and `--dry-run` does not check them. Add `--dry-run` to the

@@ -569,6 +569,21 @@ Add to your Windsurf MCP configuration:
 }
 ```
 
+### OpenClaw
+
+Install the Browserless plugin from
+[ClawHub](https://clawhub.ai/browserless/plugins/clawhub), then sign in to
+Browserless from the plugin's page in the OpenClaw Control UI
+(**Accounts → Sign in**):
+
+```bash
+openclaw plugins install clawhub:@browserless/clawhub
+```
+
+Task skills for web scraping, browser automation and site audits are also on
+[ClawHub](https://clawhub.ai/browserless). See
+[openclaw/README.md](openclaw/README.md) for API-token setup.
+
 ## Self-Hosting
 
 The server can also be run locally — useful for air-gapped deployments or pointing at a self-hosted Browserless instance. Clone this repo and build the Docker image:
