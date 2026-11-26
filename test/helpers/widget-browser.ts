@@ -98,6 +98,12 @@ export async function runHostPage({
       { stdio: ['ignore', 'ignore', 'pipe'], detached: true },
     );
     browser.stderr!.on('data', (chunk) => (stderr += chunk));
+    const startFailed = new Promise<never>((_, reject) =>
+      browser!.once('error', (error) =>
+        reject(new Error(`Chrome failed to start: ${error.message}`)),
+      ),
+    );
+    startFailed.catch(() => {}); // Only raced while waiting for a result.
     // Chrome exits by itself after --screenshot; give an in-flight report a moment to land.
     const exited = new Promise<never>((_, reject) =>
       browser!.once('exit', (code, signal) =>
@@ -124,17 +130,24 @@ export async function runHostPage({
         timeout,
       );
     });
-    const text = await Promise.race([reported, exited, timedOut]);
+    const text = await Promise.race([reported, startFailed, exited, timedOut]);
     // A --screenshot run captures after its virtual time budget; let it finish.
     if (args.some((arg) => arg.startsWith('--screenshot='))) {
-      await Promise.race([
-        new Promise((resolve) => {
+      const [code, signal] = await Promise.race([
+        new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
           if (browser!.exitCode !== null || browser!.signalCode !== null)
-            resolve(undefined);
-          else browser!.once('exit', resolve);
+            resolve([browser!.exitCode, browser!.signalCode]);
+          else
+            browser!.once('exit', (exitCode, exitSignal) =>
+              resolve([exitCode, exitSignal]),
+            );
         }),
         timedOut,
       ]);
+      if (code !== 0 || signal)
+        throw new Error(
+          `Chrome exited (${signal ?? code}) before writing the screenshot\n${stderr}`,
+        );
     }
     return text;
   } finally {
