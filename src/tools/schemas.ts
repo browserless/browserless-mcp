@@ -223,6 +223,18 @@ const ClickCommandSchema = z.object({
         .number()
         .optional()
         .describe('Vision fallback: raw screenshot-pixel Y to click. See x.'),
+      waitUntil: z
+        .enum(['load'])
+        .optional()
+        .describe(
+          'Set when the click triggers a page navigation (form submit, link). The navigation wait starts before the click, so a fast navigation is not missed, and the command returns once the new page reaches this state. Prefer this over a click followed by waitForNavigation. Omit for clicks that do not navigate — the command would time out.',
+        ),
+      timeout: z
+        .number()
+        .optional()
+        .describe(
+          'Timeout in milliseconds (default 5000). With waitUntil it is one budget covering both finding the element and the navigation — raise it (e.g. 10000) for slow submits.',
+        ),
     })
     .refine(
       (p) =>
