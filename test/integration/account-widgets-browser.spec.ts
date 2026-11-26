@@ -1,31 +1,19 @@
 import assert from 'node:assert/strict';
 import sinon from 'sinon';
-import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { build } from 'esbuild';
 import { FastMCP } from 'fastmcp';
 import { registerViewWidget } from '../../src/resources/view-widget.js';
-
-const chrome =
-  process.env.CHROME_PATH ||
-  [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-  ].find((path) => existsSync(path));
+import {
+  chrome,
+  REPORT_SCRIPT,
+  runHostPage,
+} from '../helpers/widget-browser.js';
 
 describe('account widget browser controls', () => {
   (chrome ? it : it.skip)(
     'updates independent snapshots in place, preserves filters and recovers failed updates under CSP',
     async function () {
-      this.timeout(25000);
+      this.timeout(30000);
       const server = new FastMCP({ name: 'account-browser', version: '1.0.0' });
       const resources = sinon.spy(server, 'addResource');
       registerViewWidget(server);
@@ -38,7 +26,7 @@ describe('account widget browser controls', () => {
           resolveDir: process.cwd(),
           contents: `
         import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
-        const output = document.querySelector('pre');
+        ${REPORT_SCRIPT}
         const assert = (condition, message) => { if (!condition) throw new Error(message); };
         function until(doc, condition) {
           if (condition()) return Promise.resolve();
@@ -170,8 +158,8 @@ describe('account widget browser controls', () => {
           await a.bridge.teardownResource({});
           assert(a.root.childNodes.length === 0, 'Teardown left account UI');
           a.frame.remove();
-          output.textContent = 'PASS: account widgets, filters, refresh, retry, isolation, expiry, teardown, CSP';
-        } catch (error) { output.textContent = 'FAIL: ' + error.message; }
+          await report('PASS: account widgets, filters, refresh, retry, isolation, expiry, teardown, CSP');
+        } catch (error) { await report('FAIL: ' + error.message); }
       `,
         },
         bundle: true,
@@ -179,61 +167,38 @@ describe('account widget browser controls', () => {
         platform: 'browser',
         write: false,
       });
-      const http = createServer((request, response) => {
-        if (request.url === '/widget') {
-          response.setHeader('content-type', 'text/html');
-          response.setHeader(
-            'content-security-policy',
-            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
-          );
-          response.end(resource.text);
-        } else if (request.url === '/host.js') {
-          response.setHeader('content-type', 'text/javascript');
-          response.end(host.outputFiles[0].text);
-        } else {
-          response.setHeader('content-type', 'text/html');
-          response.end(
-            '<!doctype html><style>body{background:#111;color:white}iframe{width:700px;height:620px;border:0;vertical-align:top}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>',
-          );
-        }
+      const result = await runHostPage({
+        timeout: 20000,
+        args: process.env.WIDGET_SCREENSHOT_PATH
+          ? [
+              '--virtual-time-budget=10000',
+              `--screenshot=${process.env.WIDGET_SCREENSHOT_PATH}`,
+              '--window-size=1480,1500',
+            ]
+          : [],
+        route(url, response) {
+          if (url === '/widget') {
+            response.setHeader('content-type', 'text/html');
+            response.setHeader(
+              'content-security-policy',
+              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
+            );
+            response.end(resource.text);
+          } else if (url === '/host.js') {
+            response.setHeader('content-type', 'text/javascript');
+            response.end(host.outputFiles[0].text);
+          } else {
+            response.setHeader('content-type', 'text/html');
+            response.end(
+              '<!doctype html><style>body{background:#111;color:white}iframe{width:700px;height:620px;border:0;vertical-align:top}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>',
+            );
+          }
+        },
       });
-      const directory = await mkdtemp(
-        join(tmpdir(), 'account-widgets-browser-'),
+      assert.equal(
+        result,
+        'PASS: account widgets, filters, refresh, retry, isolation, expiry, teardown, CSP',
       );
-      try {
-        await new Promise<void>((resolve) =>
-          http.listen(0, '127.0.0.1', resolve),
-        );
-        const { stdout } = await promisify(execFile)(
-          chrome!,
-          [
-            '--headless',
-            '--no-sandbox',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-default-browser-check',
-            `--user-data-dir=${directory}`,
-            '--dump-dom',
-            '--virtual-time-budget=10000',
-            ...(process.env.WIDGET_SCREENSHOT_PATH
-              ? [
-                  `--screenshot=${process.env.WIDGET_SCREENSHOT_PATH}`,
-                  '--window-size=1480,1500',
-                ]
-              : []),
-            `http://127.0.0.1:${(http.address() as AddressInfo).port}/`,
-          ],
-          { timeout: 20000, maxBuffer: 8 * 1024 * 1024 },
-        );
-        assert.equal(
-          /<pre>([\s\S]*?)<\/pre>/.exec(stdout)?.[1],
-          'PASS: account widgets, filters, refresh, retry, isolation, expiry, teardown, CSP',
-        );
-      } finally {
-        http.closeAllConnections();
-        await new Promise<void>((resolve) => http.close(() => resolve()));
-        await rm(directory, { recursive: true, force: true });
-      }
     },
   );
 });

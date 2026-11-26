@@ -1,22 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { promisify } from 'node:util';
+import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
+import {
+  chrome,
+  REPORT_SCRIPT,
+  runHostPage,
+} from '../helpers/widget-browser.js';
 
-const chrome =
-  process.env.CHROME_PATH ||
-  [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-  ].find((path) => existsSync(path));
 const fixture = JSON.parse(
   readFileSync('test/fixtures/agent-run.json', 'utf8'),
 );
@@ -33,6 +23,7 @@ describe('hosted agent run timeline browser', () => {
           resolveDir: process.cwd(),
           contents: `
       import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
+      ${REPORT_SCRIPT}
       const fixture = ${JSON.stringify(fixture)};
       const assert = (ok, message) => { if (!ok) throw new Error(message); };
       function until(doc, check) {
@@ -111,6 +102,10 @@ describe('hosted agent run timeline browser', () => {
         assert(open(failed) && panel && !panel.hidden && panel.textContent.includes('SELECTOR_MISS'), 'Failure details did not expand');
         assert(panel.textContent.includes('type #search (7 chars typed)'), 'Command details lost typed length');
         failed.click();
+        // A real click gives the widget frame focus first; headless Chrome does not
+        // reliably do that for synthetic clicks, and focus() is a no-op in an unfocused frame.
+        frame.contentWindow.focus();
+        assert(doc.hasFocus(), 'Widget frame did not take focus');
         button('Jump to first failure').click();
         assert(open(failed) && doc.activeElement === failed, 'Jump did not expand and focus the failed action');
         const notes = details('2 agent notes'), final = details('Final result');
@@ -194,8 +189,8 @@ describe('hosted agent run timeline browser', () => {
           details('Run final result').open = true;
         }
         assert(violations.length === 0, 'Unexpected CSP violations: ' + violations.join(', '));
-        document.querySelector('pre').textContent = 'PASS: hosted agent run timeline';
-      } catch (error) { document.querySelector('pre').textContent = 'FAIL: ' + error.message; }
+        await report('PASS: hosted agent run timeline');
+      } catch (error) { await report('FAIL: ' + error.message); }
     `,
         },
         bundle: true,
@@ -203,62 +198,36 @@ describe('hosted agent run timeline browser', () => {
         platform: 'browser',
         write: false,
       });
-      const http = createServer((request, response) => {
-        if (request.url === '/widget') {
-          response.setHeader('content-type', 'text/html');
-          response.setHeader(
-            'content-security-policy',
-            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
-          );
-          response.end(widget);
-        } else if (request.url === '/host.js') {
-          response.setHeader('content-type', 'text/javascript');
-          response.end(host.outputFiles[0].text);
-        } else {
-          response.setHeader('content-type', 'text/html');
-          response.end(
-            '<!doctype html><style>body{background:#1d1d1f;color:white}iframe{width:min(100%,760px);height:1000px;border:0}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>',
-          );
-        }
+      const result = await runHostPage({
+        timeout: 25000,
+        args: screenshotPath
+          ? [
+              '--virtual-time-budget=12000',
+              `--screenshot=${screenshotPath}`,
+              '--window-size=800,1000',
+              '--force-device-scale-factor=2',
+            ]
+          : [],
+        route(url, response) {
+          if (url === '/widget') {
+            response.setHeader('content-type', 'text/html');
+            response.setHeader(
+              'content-security-policy',
+              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'",
+            );
+            response.end(widget);
+          } else if (url === '/host.js') {
+            response.setHeader('content-type', 'text/javascript');
+            response.end(host.outputFiles[0].text);
+          } else {
+            response.setHeader('content-type', 'text/html');
+            response.end(
+              '<!doctype html><style>body{background:#1d1d1f;color:white}iframe{width:min(100%,760px);height:1000px;border:0}</style><pre>Waiting</pre><script type="module" src="/host.js"></script>',
+            );
+          }
+        },
       });
-      const directory = await mkdtemp(
-        join(process.env.TMPDIR || tmpdir(), 'agent-run-browser-'),
-      );
-      try {
-        await new Promise<void>((resolve) =>
-          http.listen(0, '127.0.0.1', resolve),
-        );
-        const { stdout } = await promisify(execFile)(
-          chrome!,
-          [
-            '--headless',
-            '--no-sandbox',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-default-browser-check',
-            `--user-data-dir=${directory}`,
-            '--dump-dom',
-            '--virtual-time-budget=12000',
-            ...(screenshotPath
-              ? [
-                  `--screenshot=${screenshotPath}`,
-                  '--window-size=800,1000',
-                  '--force-device-scale-factor=2',
-                ]
-              : []),
-            `http://127.0.0.1:${(http.address() as AddressInfo).port}/`,
-          ],
-          { timeout: 25000, maxBuffer: 8 * 1024 * 1024 },
-        );
-        assert.equal(
-          /<pre>([\s\S]*?)<\/pre>/.exec(stdout)?.[1],
-          'PASS: hosted agent run timeline',
-        );
-      } finally {
-        http.closeAllConnections();
-        await new Promise<void>((resolve) => http.close(() => resolve()));
-        await rm(directory, { recursive: true, force: true });
-      }
+      assert.equal(result, 'PASS: hosted agent run timeline');
     },
   );
 });
