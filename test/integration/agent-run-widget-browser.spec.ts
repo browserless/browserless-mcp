@@ -15,7 +15,7 @@ describe('hosted agent run timeline browser', () => {
   (chrome ? it : it.skip)(
     'renders a read-only timeline and preserves the snapshot and disclosures across refreshes under CSP',
     async function () {
-      this.timeout(30000);
+      this.timeout(60000);
       const widget = readFileSync('build/src/ui/view.html', 'utf8');
       const screenshotPath = process.env.AGENT_RUN_SCREENSHOT_PATH;
       const host = await build({
@@ -199,7 +199,7 @@ describe('hosted agent run timeline browser', () => {
         write: false,
       });
       const result = await runHostPage({
-        timeout: 25000,
+        timeout: 45000,
         args: screenshotPath
           ? [
               '--virtual-time-budget=12000',

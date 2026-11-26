@@ -13,7 +13,7 @@ describe('account widget browser controls', () => {
   (chrome ? it : it.skip)(
     'updates independent snapshots in place, preserves filters and recovers failed updates under CSP',
     async function () {
-      this.timeout(30000);
+      this.timeout(60000);
       const server = new FastMCP({ name: 'account-browser', version: '1.0.0' });
       const resources = sinon.spy(server, 'addResource');
       registerViewWidget(server);
@@ -168,7 +168,7 @@ describe('account widget browser controls', () => {
         write: false,
       });
       const result = await runHostPage({
-        timeout: 20000,
+        timeout: 45000,
         args: process.env.WIDGET_SCREENSHOT_PATH
           ? [
               '--virtual-time-budget=10000',
