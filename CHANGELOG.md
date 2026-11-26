@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.52.0](https://github.com/browserless/browserless-mcp/compare/v1.51.0...v1.52.0) (2026-11-26)
+
+
+### Features
+
+* classify Devin as its own client family ([#586](https://github.com/browserless/browserless-mcp/issues/586)) ([0b3eb54](https://github.com/browserless/browserless-mcp/commit/0b3eb540558e2c84e01dd637a1f6eb50c6fa11a6))
+* let click wait for the navigation it triggers ([#600](https://github.com/browserless/browserless-mcp/issues/600)) ([0e4150e](https://github.com/browserless/browserless-mcp/commit/0e4150eaccb27e8ab945c9d51b122e418396cb50))
+
+
+### Bug Fixes
+
+* allow Replit's MCP connector OAuth redirect URI ([#602](https://github.com/browserless/browserless-mcp/issues/602)) ([d0bcb73](https://github.com/browserless/browserless-mcp/commit/d0bcb73c533b756d6e9f48d226da4755f0f922ce))
+* omit search limit unless the caller sets one ([#597](https://github.com/browserless/browserless-mcp/issues/597)) ([07fba47](https://github.com/browserless/browserless-mcp/commit/07fba47a35fa0f1b57986d57a86e085ec5a864ab))
+
 ## [1.51.0](https://github.com/browserless/browserless-mcp/compare/v1.50.0...v1.51.0) (2026-11-23)
 
 
