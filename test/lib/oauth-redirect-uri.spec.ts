@@ -30,6 +30,7 @@ const EXACT_CALLBACKS = [
   'https://www.make.com/oauth/cb/mcp',
   'https://us1.make.celonis.com/oauth/cb/mcp',
   'https://eu1.make.celonis.com/oauth/cb/mcp',
+  'https://replit.com/connectors/oauth/callback',
 ];
 
 const WILDCARD_CALLBACKS = [
@@ -52,6 +53,12 @@ const LOOKALIKE_CALLBACKS = [
   'https://wwwxmake.com/oauth/cb/mcp',
   'https://us1.makexcelonis.com/oauth/cb/mcp',
   'https://eu1.makexcelonis.com/oauth/cb/mcp',
+  'https://replitxcom/connectors/oauth/callback',
+  'https://replit.com.evil.example/connectors/oauth/callback',
+  'https://replit.com/connectors/oauth/callback/',
+  'https://replit.com/connectors/oauth/callback?next=evil',
+  'http://replit.com/connectors/oauth/callback',
+  'https://connectors.replit.com/connect/callback',
 ];
 
 const LOOPBACK_CONFUSION_CALLBACKS = [
@@ -733,6 +740,39 @@ describe('Browserless OAuth redirect URI validation', () => {
           '127.0.0.1:9/oauth/authorize',
         );
       }
+    } finally {
+      proxy.destroy();
+    }
+  });
+
+  it("registers Replit's captured DCR request and authorizes its callback", async () => {
+    const proxy = new BrowserlessOAuthProxy(buildConfig());
+    const redirectUri = 'https://replit.com/connectors/oauth/callback';
+    try {
+      const registration = await proxy.registerClient({
+        redirect_uris: [redirectUri],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        client_name: 'Replit MCP Connector',
+        client_uri: 'https://replit.com',
+        logo_uri: 'https://cdn.replit.com/dotcom/favicon-rb-48.png',
+        scope: '',
+      });
+      expect(registration.redirect_uris).to.deep.equal([redirectUri]);
+      const response = await proxy.authorize({
+        client_id: registration.client_id,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        code_challenge: 'pEBxCafD9QGkNN6MEtL_JBmM8tP-5jcOlDwInA2IYdc',
+        code_challenge_method: 'S256',
+        resource: 'http://127.0.0.1:18081/mcp',
+        state: 'replit-state',
+      });
+      expect(response.status).to.equal(302);
+      expect(response.headers.get('location')).to.include(
+        '127.0.0.1:9/oauth/authorize',
+      );
     } finally {
       proxy.destroy();
     }

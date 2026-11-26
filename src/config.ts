@@ -28,6 +28,7 @@ const DEFAULT_ALLOWED_REDIRECT_URI_PATTERNS = [
   'https://www.make.com/oauth/cb/mcp', // Make.com MCP client (canonical www host even for regional orgs)
   'https://us1.make.celonis.com/oauth/cb/mcp', // Make.com Celonis-hosted (enterprise) — US region
   'https://eu1.make.celonis.com/oauth/cb/mcp', // Make.com Celonis-hosted (enterprise) — EU region
+  'https://replit.com/connectors/oauth/callback', // Replit Agent MCP connector
 ];
 
 // Fail closed: any SET value except an explicit opt-out (false/0/no/off) enables

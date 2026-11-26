@@ -34,6 +34,7 @@ const BASELINE_PATTERNS = [
   'https://www.make.com/oauth/cb/mcp',
   'https://us1.make.celonis.com/oauth/cb/mcp',
   'https://eu1.make.celonis.com/oauth/cb/mcp',
+  'https://replit.com/connectors/oauth/callback',
 ];
 
 describe('config.uploadDirs', () => {
