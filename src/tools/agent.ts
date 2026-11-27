@@ -126,6 +126,16 @@ export {
 } from '../lib/agent-format.js';
 
 const SNAPSHOT_METHOD = 'snapshot';
+
+const snapshotStatsOf = (
+  snapshot: SnapshotResult,
+  snapshotText: string,
+  response: string,
+): Record<string, number | boolean> => ({
+  snapshot_elements: snapshot.elements.length,
+  snapshot_paged: /^… \d+ more elements not shown/m.test(snapshotText),
+  response_chars: response.length,
+});
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
 const CAPTURE_BLOCKED_SUGGESTION = /^CaptureBlocked:/;
 const SECRET_SAFE_METHODS = new Set([
@@ -1940,6 +1950,14 @@ export const runAgentCommands = async (
           suggestion = err.suggestion;
         }
 
+        const errorSnapshotText =
+          !secretCaptureBlocked && err.snapshot
+            ? formatSnapshot(err.snapshot, {
+                // Half: the error text and any skill it triggers are added
+                // around this snapshot after it is formatted.
+                maxChars: SNAPSHOT_CHAR_BUDGET / 2,
+              })
+            : undefined;
         const body = formatErrorMessage({
           category: classified.category,
           code: classified.category === 'UNKNOWN' ? err.code : undefined,
@@ -1947,14 +1965,7 @@ export const runAgentCommands = async (
           message: err.message,
           suggestion,
           recovery: captureBlockedSuggestion ?? classified.recovery,
-          snapshotText:
-            !secretCaptureBlocked && err.snapshot
-              ? formatSnapshot(err.snapshot, {
-                  // Half: the error text and any skill it triggers are added
-                  // around this snapshot after it is formatted.
-                  maxChars: SNAPSHOT_CHAR_BUDGET / 2,
-                })
-              : undefined,
+          snapshotText: errorSnapshotText,
         });
 
         const triggered =
@@ -1975,15 +1986,23 @@ export const runAgentCommands = async (
               );
         if (options.extras) markFired(agentSession.skillState, triggered);
 
-        throw new AgentRunError(
-          [
-            options.extras ? appendSkills(body, triggered, compliant) : body,
-            fatal ? '' : sessionLine(agentSession, compliant),
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-          { kind: 'command', detail: err.message },
-        );
+        const errorText = [
+          options.extras ? appendSkills(body, triggered, compliant) : body,
+          fatal ? '' : sessionLine(agentSession, compliant),
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        if (err.snapshot && errorSnapshotText) {
+          snapshotStats = snapshotStatsOf(
+            err.snapshot,
+            errorSnapshotText,
+            errorText,
+          );
+        }
+        throw new AgentRunError(errorText, {
+          kind: 'command',
+          detail: err.message,
+        });
       }
 
       const navFailure = classifyNavigationResult(cmd.method, resp.result);
@@ -2294,11 +2313,11 @@ export const runAgentCommands = async (
         from,
         maxChars,
         carry: { targetId, maxElements },
-        nextPageNote:
-          closedDuringBatch ||
-          !(keepAlive || downloadsPending || createProfile || attachSessionId)
-            ? 'This browser closes with this call, so first repeat the batch with `keepSessionAlive: true`.'
-            : undefined,
+        nextPageNote: closedDuringBatch
+          ? 'This batch closed the browser. To page, open the page again without `close` and with `keepSessionAlive: true`.'
+          : keepAlive || downloadsPending || createProfile || attachSessionId
+            ? undefined
+            : 'This browser closes with this call. To page, open the page again with `keepSessionAlive: true`.',
       });
       const full = page.text;
       let snapshotText = full;
@@ -2327,19 +2346,21 @@ export const runAgentCommands = async (
       // Never let a peek's other-tab elements become the active baseline.
       if (!peeking) {
         // A diff lists everything outside the baseline as new, so after one
-        // the client has seen it all; a page adds only its own elements.
-        const baseline =
-          snapshotText !== full
-            ? indexByIdentity(lastSnapshot)
-            : shownBaseline(
-                lastSnapshot,
-                page,
-                from === undefined ? undefined : prevElements,
-              );
-        agentSession.lastElements = baseline;
-        // Positional diffing compares every position, so it needs them all.
+        // the client has seen it all; a page adds only its own elements. Only
+        // a `from` request on the same page continues the earlier baseline.
+        const sentDiff = snapshotText !== full;
+        const continued =
+          from !== undefined && !switchedTab && !notice
+            ? prevElements
+            : undefined;
+        agentSession.lastElements = sentDiff
+          ? indexByIdentity(lastSnapshot)
+          : shownBaseline(lastSnapshot, page, continued);
+        // Positional diffing compares every position, so it needs a response
+        // that carried them all in their current state.
         agentSession.lastSnapshotElements =
-          baseline.size === lastSnapshot.elements.length
+          sentDiff ||
+          (page.start === 0 && page.end === lastSnapshot.elements.length)
             ? lastSnapshot.elements
             : undefined;
         agentSession.lastActiveTargetId = lastSnapshot.activeTargetId;
@@ -2347,11 +2368,7 @@ export const runAgentCommands = async (
       const text = appendExtra(
         batchPrefix + noticeBlock + snapshotText + closedSuffix,
       );
-      snapshotStats = {
-        snapshot_elements: lastSnapshot.elements.length,
-        snapshot_paged: /^… \d+ more elements not shown/m.test(snapshotText),
-        response_chars: text.length,
-      };
+      snapshotStats = snapshotStatsOf(lastSnapshot, snapshotText, text);
       baseContent = [{ type: 'text' as const, text }];
     } else if (last.method === 'getDownloads') {
       // Explicit drain.

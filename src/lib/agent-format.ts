@@ -356,20 +356,18 @@ export const indexByIdentity = (
 // Diff baseline after a page: only the elements the client has been shown, so
 // a later diff lists the rest as new instead of calling them unchanged. Keyed
 // by identity, not position, so an element inserted between page requests is
-// not mistaken for one already shown. `earlier` is the baseline being
-// continued by a `from` request.
+// not mistaken for one already shown. `earlier` is the baseline a `from`
+// request continues; its entries keep the state they were shown in, so a
+// change made since then still surfaces in the next diff.
 export const shownBaseline = (
   snapshot: SnapshotResult,
   page: { start: number; end: number },
   earlier?: Map<string, SnapshotElement>,
-): Map<string, SnapshotElement> => {
-  const entries = identityEntries(snapshot.elements);
-  const shown = new Set([
-    ...(earlier?.keys() ?? []),
-    ...entries.slice(page.start, page.end).map(([key]) => key),
+): Map<string, SnapshotElement> =>
+  new Map([
+    ...(earlier ?? []),
+    ...identityEntries(snapshot.elements).slice(page.start, page.end),
   ]);
-  return new Map(entries.filter(([key]) => shown.has(key)));
-};
 
 const frameLabelsOf = (snapshot: SnapshotResult): Map<string, string> => {
   const labels = new Map<string, string>();

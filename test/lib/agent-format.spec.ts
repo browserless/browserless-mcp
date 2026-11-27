@@ -249,6 +249,31 @@ describe('formatSnapshot paging', () => {
     );
   });
 
+  it('keeps an earlier page in the state it was shown in', () => {
+    const before = many(6);
+    const first = shownBaseline(before, { start: 0, end: 3 });
+    // Item 1 changes after page one was shown, before page two is requested.
+    const after: SnapshotResult = {
+      ...before,
+      elements: before.elements.map((el, i) =>
+        i === 0 ? { ...el, name: 'Item 1 (edited)' } : el,
+      ),
+    };
+    const baseline = shownBaseline(after, { start: 3, end: 6 }, first);
+
+    const diff = formatSnapshotDiff(after, baseline);
+
+    expect(diff).to.include('1 changed');
+    expect(diff).to.include('~ [1] a link "Item 1 (edited)"');
+  });
+
+  it('starts over when no earlier baseline is continued', () => {
+    const snap = many(6);
+    const baseline = shownBaseline(snap, { start: 3, end: 6 });
+
+    expect([...baseline.values()].map((el) => el.ref)).to.deep.equal([4, 5, 6]);
+  });
+
   it('adds the caller note after the next-page call', () => {
     const output = formatSnapshot(many(100), {
       maxChars: 2000,
