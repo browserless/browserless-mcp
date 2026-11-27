@@ -52,6 +52,15 @@ const mockContext = {
 describe('formatCoverageLines', () => {
   const url = 'https://example.com';
   const defaults = MapParamsSchema.parse({ url });
+  for (const sitemap of ['only', 'skip'] as const) {
+    it(`does not infer sources with legacy coverage in ${sitemap} mode`, () => {
+      expect(
+        formatCoverageLines({ success: true }, { ...defaults, sitemap }),
+      ).to.deep.equal([
+        'Coverage: may be partial. The API did not report which sources were read; linked pages are not visited.',
+      ]);
+    });
+  }
   const cases: {
     name: string;
     coverage: MapCoverage;
@@ -227,7 +236,7 @@ describe('browserless_map tool', () => {
         'Base URL: https://example.com',
         'URLs Found: 3',
         'Sitemap Mode: include',
-        'Coverage: may be partial. Only the sitemap and the links on the start page are read; linked pages are not visited.',
+        'Coverage: may be partial. The API did not report which sources were read; linked pages are not visited.',
         '---',
       ].join('\n'),
     });

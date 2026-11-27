@@ -63,7 +63,7 @@ export function formatCoverageLines(
   const coverage = response.coverage;
   if (!coverage) {
     return [
-      'Coverage: may be partial. Only the sitemap and the links on the start page are read; linked pages are not visited.',
+      'Coverage: may be partial. The API did not report which sources were read; linked pages are not visited.',
     ];
   }
 
