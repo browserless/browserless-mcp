@@ -311,12 +311,16 @@ publish_skill() {
   clawhub --workdir "$PWD" skill publish "./openclaw/clawhub-skills/$1" \
     --owner browserless --source-repo browserless/browserless-mcp \
     --source-commit "$(git rev-parse HEAD)" \
-    --source-path "openclaw/clawhub-skills/$1" --categories "$2" --topics "$3"
+    --source-path "openclaw/clawhub-skills/$1" --name "$2" \
+    --categories "$3" --topics "$4"
 }
-publish_skill browserless-web-scraper research "Web Scraping,Web Search,Data Extraction,Research"
-publish_skill browserless-browser-automation automation,research "Browser Automation,Logins,Forms,CAPTCHA"
-publish_skill browserless-site-audit research,development "Lighthouse,Performance,SEO,Accessibility,Screenshots"
+publish_skill browserless-web-scraper "Browserless Web Scraper" research "Web Scraping,Web Search,Data Extraction,Research"
+publish_skill browserless-browser-automation "Browserless Browser Automation" automation,research "Browser Automation,Logins,Forms,CAPTCHA"
+publish_skill browserless-site-audit "Browserless Site Audit" research,development "Lighthouse,Performance,SEO,Accessibility,Screenshots"
 ```
+
+Pass `--name` on every publish; without it ClawHub shows the slug as the
+skill's display name.
 
 `--workdir "$PWD"` matters on a machine with OpenClaw installed: without it,
 `clawhub` resolves skill paths from OpenClaw's workspace instead of the
