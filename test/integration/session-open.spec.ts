@@ -51,6 +51,7 @@ async function withServer(
   options: {
     compliant?: boolean;
     hostileAttribution?: boolean;
+    mcpSource?: string;
   },
   run: (fixture: {
     base: string;
@@ -187,7 +188,12 @@ async function withServer(
       output: () => output,
       queueRequests: () => queueRequests,
       connect: async (name) => {
-        const client = await connect(base, name, options.hostileAttribution);
+        const client = await connect(
+          base,
+          name,
+          options.hostileAttribution,
+          options.mcpSource,
+        );
         clients.push(client);
         return client;
       },
@@ -210,11 +216,18 @@ async function withServer(
   }
 }
 
-async function connect(base: string, name: string, hostileAttribution = false) {
+async function connect(
+  base: string,
+  name: string,
+  hostileAttribution = false,
+  mcpSource?: string,
+) {
+  const url = new URL(`${base}/mcp`);
+  if (mcpSource) url.searchParams.set('mcpSource', mcpSource);
   const client = new Client({ name, version: '1.0.0' });
   try {
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      new StreamableHTTPClientTransport(url, {
         requestInit: {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -276,6 +289,24 @@ describe('Session opening telemetry', function () {
         expect(events).to.deep.equal([]);
         expect(queueRequests()).to.equal(0);
         expect(output()).to.include('Client connected:');
+      },
+    );
+  });
+
+  it('records the Claude plugin source tag from the connection URL', async () => {
+    await withServer(
+      { mcpSource: 'claude-plugin' },
+      async ({ connect, records, events, settle }) => {
+        await connect('probe-plugin');
+        await settle();
+        const props = expectOpen(
+          records,
+          'streamable-http',
+          'api_key_header',
+          'probe-plugin',
+        );
+        expect(props.source).to.equal('claude-plugin');
+        expect(events).to.deep.equal([]);
       },
     );
   });

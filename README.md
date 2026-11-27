@@ -666,7 +666,9 @@ Fields are `result=hit|miss|error`, normalized `domain`, UUID `request_id`,
 available `http_status`. `skill_count` appears only on valid responses: positive
 for hits, zero for misses. Errors carry `error_category=timeout|network_error|http_error|invalid_json|invalid_shape`.
 Sources are `cli_agent`, `script_builder`, `autologin`, `agent_run`, `mcp_client`,
-or `unknown`. Each fetch currently has `attempt=1`; no run identifier is
+`claude-plugin`, or `unknown`. `claude-plugin` is the tag the Browserless Claude
+Code plugin sends as `?mcpSource=claude-plugin`.
+Each fetch currently has `attempt=1`; no run identifier is
 available at these call sites, so `run_id` is omitted.
 Domains outside the bounded hostname format become `invalid` without dropping
 the completion from the denominator.

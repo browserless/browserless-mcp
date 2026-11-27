@@ -75,6 +75,7 @@ describe('Session opening records', () => {
       'autologin',
       'agent_run',
       'mcp_client',
+      'claude-plugin',
     ])
       expect(
         sessionOpenAttributes({ ...auth, source }, undefined).source,

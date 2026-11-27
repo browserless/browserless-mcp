@@ -45,6 +45,7 @@ export const skillSource = (source: string): string =>
     'autologin',
     'agent_run',
     'mcp_client',
+    'claude-plugin',
   ].includes(source)
     ? source
     : 'unknown';

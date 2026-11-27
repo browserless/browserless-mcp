@@ -113,8 +113,21 @@ describe('skill telemetry contract', () => {
       body: 'secret',
     });
     expect(parsed).to.deep.equal(completion);
-    expect(skillSource('mcp_client')).to.equal('mcp_client');
-    expect(skillSource('private client name')).to.equal('unknown');
+    for (const [input, expected] of [
+      ['cli_agent', 'cli_agent'],
+      ['script_builder', 'script_builder'],
+      ['autologin', 'autologin'],
+      ['agent_run', 'agent_run'],
+      ['mcp_client', 'mcp_client'],
+      ['claude-plugin', 'claude-plugin'],
+      ['Claude-Plugin', 'unknown'],
+      ['claude-plugin ', 'unknown'],
+      ['claude_plugin', 'unknown'],
+      ['ai-evals', 'unknown'],
+      ['private client name', 'unknown'],
+      ['', 'unknown'],
+    ])
+      expect(skillSource(input), JSON.stringify(input)).to.equal(expected);
   });
 
   it('delivers OTLP JSON to a local HTTP sink and isolates non-2xx responses without retry', async () => {

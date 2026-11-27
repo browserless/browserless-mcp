@@ -542,6 +542,37 @@ describe('Amplitude MCP analytics', () => {
       expect(tracked.callCount).to.equal(0);
     });
 
+    it('labels Claude plugin retrievals as claude-plugin on the queue', async () => {
+      const mock = new MockAmplitudeMCPAnalytics({
+        serverName: 'browserless-mcp',
+        serverVersion: '1.0.0',
+      });
+      const tracked = sinon.spy(mock, 'trackToolEvent');
+      initializeAmplitudeAnalytics('test-key', '1.0.0', () => mock);
+      const helper = new AnalyticsHelper(true);
+      const queued = sinon.stub(helper, 'send').resolves(true);
+      runWithContext(toolCtx(), () =>
+        helper.fireSkillRetrieval(
+          'queue-auth-token',
+          {
+            result: 'miss',
+            skill_count: 0,
+            domain: 'shop.example',
+            request_id: '416e0409-25e2-4399-a3fa-6939f43a75e0',
+            attempt: 1,
+            duration_ms: 17,
+            stage: 'validate',
+          },
+          'claude-plugin',
+        ),
+      );
+      await new Promise(setImmediate);
+      expect(queued.callCount).to.equal(1);
+      expect(queued.firstCall.args[0]).to.equal('Skill Retrieval Completed');
+      expect(queued.firstCall.args[2]).to.include({ source: 'claude-plugin' });
+      expect(tracked.callCount).to.equal(0);
+    });
+
     it('sends session starts only through the queue even inside an SDK frame', () => {
       const mock = new MockAmplitudeMCPAnalytics({
         serverName: 'test',
