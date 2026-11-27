@@ -85,8 +85,15 @@ describe('formatSnapshot paging', () => {
   const shown = (output: string): number[] =>
     [...output.matchAll(/^\[(\d+)\] /gm)].map((m) => Number(m[1]));
 
+  it('does not page unless the caller sets a budget', () => {
+    const output = formatSnapshot(many(2000));
+
+    expect(shown(output)).to.have.lengthOf(2000);
+    expect(output).to.include('Snapshot: 2000 elements');
+  });
+
   it('leaves a snapshot within the budget untouched', () => {
-    const output = formatSnapshot(many(3));
+    const output = formatSnapshot(many(3), { maxChars: 400 });
 
     expect(output).to.include('Snapshot: 3 elements');
     expect(output).to.not.include('more elements not shown');
@@ -128,6 +135,6 @@ describe('formatSnapshot paging', () => {
     const output = formatSnapshot(many(3), { from: 10 });
 
     expect(shown(output)).to.deep.equal([]);
-    expect(output).to.include('Snapshot: elements 3-3 of 3');
+    expect(output).to.include('Snapshot: no elements at or after 10 (3 total)');
   });
 });

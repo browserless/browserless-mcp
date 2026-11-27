@@ -1947,7 +1947,9 @@ export const runAgentCommands = async (
           recovery: captureBlockedSuggestion ?? classified.recovery,
           snapshotText:
             !secretCaptureBlocked && err.snapshot
-              ? formatSnapshot(err.snapshot)
+              ? formatSnapshot(err.snapshot, {
+                  maxChars: SNAPSHOT_CHAR_BUDGET,
+                })
               : undefined,
         });
 
