@@ -105,7 +105,6 @@ import {
   buildCrossOriginNotice,
   formatConnectError,
   formatErrorMessage,
-  formatSnapshot,
   formatSnapshotDiff,
   formatSnapshotDiffPositional,
   indexByIdentity,
@@ -127,13 +126,16 @@ export {
 
 const SNAPSHOT_METHOD = 'snapshot';
 
+// `page` is the element range the response showed, or undefined when it
+// carried the whole snapshot (a diff does: it lists everything not yet shown).
 const snapshotStatsOf = (
   snapshot: SnapshotResult,
-  snapshotText: string,
+  page: { start: number; end: number } | undefined,
   response: string,
 ): Record<string, number | boolean> => ({
   snapshot_elements: snapshot.elements.length,
-  snapshot_paged: /^… \d+ more elements not shown/m.test(snapshotText),
+  snapshot_paged:
+    !!page && (page.start > 0 || page.end < snapshot.elements.length),
   response_chars: response.length,
 });
 const FATAL_CODES = new Set(['BROWSER_CRASHED']);
@@ -1950,9 +1952,9 @@ export const runAgentCommands = async (
           suggestion = err.suggestion;
         }
 
-        const errorSnapshotText =
+        const errorPage =
           !secretCaptureBlocked && err.snapshot
-            ? formatSnapshot(err.snapshot, {
+            ? pageSnapshot(err.snapshot, {
                 // Half: the error text and any skill it triggers are added
                 // around this snapshot after it is formatted.
                 maxChars: SNAPSHOT_CHAR_BUDGET / 2,
@@ -1965,7 +1967,7 @@ export const runAgentCommands = async (
           message: err.message,
           suggestion,
           recovery: captureBlockedSuggestion ?? classified.recovery,
-          snapshotText: errorSnapshotText,
+          snapshotText: errorPage?.text,
         });
 
         const triggered =
@@ -1992,12 +1994,8 @@ export const runAgentCommands = async (
         ]
           .filter(Boolean)
           .join('\n\n');
-        if (err.snapshot && errorSnapshotText) {
-          snapshotStats = snapshotStatsOf(
-            err.snapshot,
-            errorSnapshotText,
-            errorText,
-          );
+        if (err.snapshot && errorPage) {
+          snapshotStats = snapshotStatsOf(err.snapshot, errorPage, errorText);
         }
         throw new AgentRunError(errorText, {
           kind: 'command',
@@ -2368,7 +2366,11 @@ export const runAgentCommands = async (
       const text = appendExtra(
         batchPrefix + noticeBlock + snapshotText + closedSuffix,
       );
-      snapshotStats = snapshotStatsOf(lastSnapshot, snapshotText, text);
+      snapshotStats = snapshotStatsOf(
+        lastSnapshot,
+        snapshotText === full ? page : undefined,
+        text,
+      );
       baseContent = [{ type: 'text' as const, text }];
     } else if (last.method === 'getDownloads') {
       // Explicit drain.
