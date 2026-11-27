@@ -2315,7 +2315,7 @@ export const runAgentCommands = async (
       );
       snapshotStats = {
         snapshot_elements: lastSnapshot.elements.length,
-        snapshot_paged: snapshotText.includes('more elements not shown'),
+        snapshot_paged: /^… \d+ more elements not shown/m.test(snapshotText),
         response_chars: text.length,
       };
       baseContent = [{ type: 'text' as const, text }];
