@@ -1,6 +1,11 @@
 import { expect } from 'chai';
 
-import { formatSnapshot } from '../../src/lib/agent-format.js';
+import {
+  formatSnapshot,
+  formatSnapshotDiff,
+  indexByIdentity,
+  pageSnapshot,
+} from '../../src/lib/agent-format.js';
 import type {
   SnapshotElement,
   SnapshotResult,
@@ -93,7 +98,7 @@ describe('formatSnapshot paging', () => {
   });
 
   it('leaves a snapshot within the budget untouched', () => {
-    const output = formatSnapshot(many(3), { maxChars: 400 });
+    const output = formatSnapshot(many(3), { maxChars: 2000 });
 
     expect(output).to.include('Snapshot: 3 elements');
     expect(output).to.not.include('more elements not shown');
@@ -101,12 +106,13 @@ describe('formatSnapshot paging', () => {
   });
 
   it('stops at the budget and names the next page', () => {
-    const output = formatSnapshot(many(100), { maxChars: 400 });
+    const output = formatSnapshot(many(100), { maxChars: 2000 });
     const refs = shown(output);
     const last = refs.at(-1) as number;
 
     expect(refs[0]).to.equal(1);
     expect(last).to.be.lessThan(100);
+    expect(output.length).to.be.at.most(2000);
     expect(output).to.include(`Snapshot: elements 1-${last} of 100`);
     expect(output).to.include(`${100 - last} more elements not shown`);
     expect(output).to.include(
@@ -115,12 +121,27 @@ describe('formatSnapshot paging', () => {
     expect(output.trimEnd()).to.match(/--- END SNAPSHOT ---$/);
   });
 
+  it('counts tab and frame context against the budget', () => {
+    const snap = many(100);
+    snap.activeTargetId = 'A';
+    snap.tabs = ['A', 'B'].map((targetId) => ({
+      targetId,
+      title: 't'.repeat(300),
+      url: `https://example.com/${'u'.repeat(300)}`,
+      active: targetId === 'A',
+    }));
+    const output = formatSnapshot(snap, { maxChars: 3000 });
+
+    expect(output.length).to.be.at.most(3000);
+    expect(shown(output).length).to.be.greaterThan(0);
+  });
+
   it('pages through every element exactly once', () => {
     const snap = many(100);
     const seen: number[] = [];
     let from: number | undefined = 1;
     while (from !== undefined) {
-      const output = formatSnapshot(snap, { from, maxChars: 400 });
+      const output = formatSnapshot(snap, { from, maxChars: 2000 });
       seen.push(...shown(output));
       const next = output.match(/"from":(\d+)/);
       from = next ? Number(next[1]) : undefined;
@@ -129,9 +150,17 @@ describe('formatSnapshot paging', () => {
     expect(seen).to.deep.equal(snap.elements.map((el) => el.ref));
   });
 
+  it('reports the element range a page shows', () => {
+    const page = pageSnapshot(many(100), { from: 11, maxChars: 2000 });
+
+    expect(page.start).to.equal(10);
+    expect(shown(page.text)).to.have.lengthOf(page.end - page.start);
+    expect(shown(page.text)[0]).to.equal(11);
+  });
+
   it('repeats the params that select the snapshot in the next-page call', () => {
     const output = formatSnapshot(many(100), {
-      maxChars: 400,
+      maxChars: 2000,
       carry: { targetId: 'TAB-B', maxElements: 1000 },
     });
 
@@ -140,18 +169,55 @@ describe('formatSnapshot paging', () => {
     );
   });
 
-  it('cuts a single line that is longer than the page, keeping its ref', () => {
+  it('cuts only the tail of a line that is longer than the page', () => {
     const snap = many(3);
     snap.elements[0].options = Array.from({ length: 100 }, () =>
       'x'.repeat(80),
     );
-    const output = formatSnapshot(snap, { maxChars: 400 });
+    const output = formatSnapshot(snap, { maxChars: 2000 });
     const first = output.split('\n').find((l) => l.startsWith('[1] ')) ?? '';
 
-    expect(first).to.have.lengthOf(400);
-    expect(first).to.include("ref=a[href='/item/1']");
+    expect(output.length).to.be.at.most(2000);
+    expect(first).to.include("ref=a[href='/item/1'] options=[xxx");
     expect(first.endsWith('… [line truncated]')).to.equal(true);
     expect(output).to.include('"from":2');
+  });
+
+  it('never cuts the name or selector, even when they alone exceed the page', () => {
+    const snap = many(2);
+    const selector = `a[href='/${'s'.repeat(600)}']`;
+    snap.elements[0] = {
+      ...snap.elements[0],
+      name: 'n'.repeat(200),
+      selector,
+      value: 'v'.repeat(200),
+    };
+    const first =
+      formatSnapshot(snap, { maxChars: 700 })
+        .split('\n')
+        .find((l) => l.startsWith('[1] ')) ?? '';
+
+    expect(first).to.include(`"${'n'.repeat(200)}" ref=${selector} `);
+    expect(first.endsWith('… [line truncated]')).to.equal(true);
+  });
+
+  it('diffs against only the elements a page showed', () => {
+    const snap = many(10);
+    const page = pageSnapshot(snap, { maxChars: 700 });
+    expect(page.end).to.be.lessThan(10);
+    const baseline = indexByIdentity(
+      snap,
+      new Set(Array.from({ length: page.end }, (_, i) => i)),
+    );
+
+    const diff = formatSnapshotDiff(snap, baseline);
+
+    expect(baseline.size).to.equal(page.end);
+    expect(diff).to.include(
+      `Changes: ${10 - page.end} new, 0 changed, 0 removed, ${page.end} unchanged (10 total)`,
+    );
+    expect(diff).to.include('+ [10] a link "Item 10" ref=a[href=\'/item/10\']');
+    expect(diff).to.not.include('+ [1] ');
   });
 
   it('reports an empty page when from is past the end', () => {
