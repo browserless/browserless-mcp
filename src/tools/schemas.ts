@@ -99,6 +99,15 @@ const SnapshotCommandSchema = z.object({
         .positive()
         .optional()
         .describe('Maximum number of elements to return (default 500)'),
+      from: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          'Position of the first element to show (1-based). A long snapshot is ' +
+            'returned in pages; pass the `from` value its last line gives to read the next page.',
+        ),
       targetId: z
         .string()
         .optional()

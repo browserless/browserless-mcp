@@ -169,7 +169,7 @@ Commands with defined parameters (validated server-side). A loaded skill or site
 - Reports and cleanup: \`reportSkillOutcome\`, \`reportOutcome\`, \`reportProfileAuthentication\`, \`close\`.
 
 - **goto** { url, waitUntil? } — default "domcontentloaded"
-- **snapshot** { maxElements?, targetId? } — cap 500; targetId peeks non-active tab
+- **snapshot** { maxElements?, from?, targetId? } — cap 500; a long snapshot comes in pages and its last line gives the \`from\` for the next one; targetId peeks non-active tab
 - **evaluate** { content } — see Reading content
 - **waitForSelector** { selector, timeout? } — set 5000-10000ms
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
@@ -292,7 +292,7 @@ Never retry the same failed action without re-snapshot.
 
 ## Methods (non-obvious)
 - **goto** { url, waitUntil? } — default "domcontentloaded"; prefer over click for links
-- **snapshot** { maxElements?, targetId? } — cap 500; targetId peeks non-active tab
+- **snapshot** { maxElements?, from?, targetId? } — cap 500; a long snapshot comes in pages and its last line gives the \`from\` for the next one; targetId peeks non-active tab
 - **waitForSelector** { selector, timeout? } — set 5000-10000ms
 - **waitForResponse** { url?, statuses?, timeout? } — url is glob \`"*api/results*"\`
 - **createTab** { url?, activate?, waitUntil? } — default activate: true; false = background

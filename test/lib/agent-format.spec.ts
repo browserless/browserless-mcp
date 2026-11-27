@@ -68,3 +68,66 @@ describe('formatSnapshot contextual signals', () => {
     });
   }
 });
+
+describe('formatSnapshot paging', () => {
+  const many = (count: number): SnapshotResult => ({
+    url: 'https://example.com',
+    title: 'Example',
+    time: 1,
+    elements: Array.from({ length: count }, (_, i) => ({
+      ref: i + 1,
+      role: 'link',
+      name: `Item ${i + 1}`,
+      selector: `a[href='/item/${i + 1}']`,
+      tag: 'a',
+    })),
+  });
+  const shown = (output: string): number[] =>
+    [...output.matchAll(/^\[(\d+)\] /gm)].map((m) => Number(m[1]));
+
+  it('leaves a snapshot within the budget untouched', () => {
+    const output = formatSnapshot(many(3));
+
+    expect(output).to.include('Snapshot: 3 elements');
+    expect(output).to.not.include('more elements not shown');
+    expect(shown(output)).to.deep.equal([1, 2, 3]);
+  });
+
+  it('stops at the budget and names the next page', () => {
+    const output = formatSnapshot(many(100), { maxChars: 400 });
+    const refs = shown(output);
+    const last = refs.at(-1) as number;
+
+    expect(refs[0]).to.equal(1);
+    expect(last).to.be.lessThan(100);
+    expect(output).to.include(`Snapshot: elements 1-${last} of 100`);
+    expect(output).to.include(`${100 - last} more elements not shown`);
+    expect(output).to.include(`"params": { "from": ${last + 1} }`);
+    expect(output.trimEnd()).to.match(/--- END SNAPSHOT ---$/);
+  });
+
+  it('pages through every element exactly once', () => {
+    const snap = many(100);
+    const seen: number[] = [];
+    let from: number | undefined = 1;
+    while (from !== undefined) {
+      const output = formatSnapshot(snap, { from, maxChars: 400 });
+      seen.push(...shown(output));
+      const next = output.match(/"from": (\d+)/);
+      from = next ? Number(next[1]) : undefined;
+    }
+
+    expect(seen).to.deep.equal(snap.elements.map((el) => el.ref));
+  });
+
+  it('always shows one element, even when it alone exceeds the budget', () => {
+    expect(shown(formatSnapshot(many(5), { maxChars: 1 }))).to.deep.equal([1]);
+  });
+
+  it('reports an empty page when from is past the end', () => {
+    const output = formatSnapshot(many(3), { from: 10 });
+
+    expect(shown(output)).to.deep.equal([]);
+    expect(output).to.include('Snapshot: elements 3-3 of 3');
+  });
+});

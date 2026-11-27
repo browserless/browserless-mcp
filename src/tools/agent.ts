@@ -109,6 +109,7 @@ import {
   formatSnapshotDiff,
   formatSnapshotDiffPositional,
   indexByIdentity,
+  SNAPSHOT_CHAR_BUDGET,
   sanitizeUpgradeBody,
 } from '../lib/agent-format.js';
 
@@ -1349,6 +1350,7 @@ export const runAgentCommands = async (
     sessionAgeMs = ageMs;
   };
   let lastFailure: Record<string, unknown> | undefined;
+  let snapshotStats: Record<string, number | boolean> | undefined;
   const validationFailure = failureDetails(undefined, {
     category: 'INVALID_PARAMS',
     source: 'validation',
@@ -1378,6 +1380,7 @@ export const runAgentCommands = async (
       agent_session_handle: agentSessionHandle,
       ...verdict,
       methods: commands.map((c) => c.method).join(','),
+      ...snapshotStats,
       command_count: commands.length,
       repeat_count: repeatCount,
       api_url: apiUrl,
@@ -2270,13 +2273,21 @@ export const runAgentCommands = async (
         prevElements.size < lastSnapshot.elements.length * 0.25;
       const forceFull =
         (lastCmd?.params as { full?: boolean } | undefined)?.full === true;
-      const full = formatSnapshot(lastSnapshot);
+      const from = (lastCmd?.params as { from?: number } | undefined)?.from;
+      // The budget covers the whole response, so injected skills and notices
+      // shrink the page instead of pushing it past the client's limit.
+      const maxChars = Math.max(
+        SNAPSHOT_CHAR_BUDGET - extraText.length,
+        SNAPSHOT_CHAR_BUDGET / 5,
+      );
+      const full = formatSnapshot(lastSnapshot, { from, maxChars });
       let snapshotText = full;
       if (
         prevElements &&
         !notice &&
         !hydrating &&
         !forceFull &&
+        from === undefined &&
         !peeking &&
         !switchedTab
       ) {
@@ -2299,14 +2310,15 @@ export const runAgentCommands = async (
         agentSession.lastSnapshotElements = lastSnapshot.elements;
         agentSession.lastActiveTargetId = lastSnapshot.activeTargetId;
       }
-      baseContent = [
-        {
-          type: 'text' as const,
-          text: appendExtra(
-            batchPrefix + noticeBlock + snapshotText + closedSuffix,
-          ),
-        },
-      ];
+      const text = appendExtra(
+        batchPrefix + noticeBlock + snapshotText + closedSuffix,
+      );
+      snapshotStats = {
+        snapshot_elements: lastSnapshot.elements.length,
+        snapshot_paged: snapshotText.includes('more elements not shown'),
+        response_chars: text.length,
+      };
+      baseContent = [{ type: 'text' as const, text }];
     } else if (last.method === 'getDownloads') {
       // Explicit drain.
       const prefix = batchPrefix + (closedSuffix ? `${closedSuffix}\n\n` : '');
