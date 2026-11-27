@@ -75,7 +75,7 @@ export const PERFORMANCE_RESULT_DESCRIPTION =
   'Retrieve an existing inline Lighthouse audit for follow-up analysis using its exact auditRef. Never starts or repeats an audit. If still pending, let the widget finish; do not poll.';
 
 export const COMPLIANT_MAP_DESCRIPTION =
-  'List the URLs of a website, found from its sitemap and the links on its pages, without fetching page content. Use it to see which pages a site has before reading specific ones with browserless_read_page or browserless_export. Optionally order the results by relevance to a search phrase, include, skip or use only the sitemap, and limit the count (up to 500).';
+  'List the URLs of a website, found from its sitemap and the links on its start page, without returning page content. Linked pages are not visited, so the list can be partial; the result ends with a coverage summary. Use it to see which pages a site has before reading specific ones with browserless_read_page or browserless_export. Optionally order the results by relevance to a search phrase, include, skip or use only the sitemap, and limit the count (up to 500).';
 
 export const COMPLIANT_SKILL_TOOL_DESCRIPTION = `Load a Browserless agent skill on demand.
 

@@ -510,9 +510,16 @@ export interface MapLink {
   description?: string;
 }
 
+export interface MapCoverage {
+  sitemapUrls: number | null;
+  pagesScanned: string[];
+  timedOut: boolean;
+}
+
 export interface MapResponse {
   success: boolean;
   links?: MapLink[];
+  coverage?: MapCoverage;
   error?: string;
 }
 
