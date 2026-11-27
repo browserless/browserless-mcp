@@ -1948,7 +1948,9 @@ export const runAgentCommands = async (
           snapshotText:
             !secretCaptureBlocked && err.snapshot
               ? formatSnapshot(err.snapshot, {
-                  maxChars: SNAPSHOT_CHAR_BUDGET,
+                  // Half: the error text and any skill it triggers are added
+                  // around this snapshot after it is formatted.
+                  maxChars: SNAPSHOT_CHAR_BUDGET / 2,
                 })
               : undefined,
         });
@@ -2275,14 +2277,22 @@ export const runAgentCommands = async (
         prevElements.size < lastSnapshot.elements.length * 0.25;
       const forceFull =
         (lastCmd?.params as { full?: boolean } | undefined)?.full === true;
-      const from = (lastCmd?.params as { from?: number } | undefined)?.from;
+      const { from, maxElements } = (lastCmd?.params ?? {}) as {
+        from?: number;
+        maxElements?: number;
+      };
       // The budget covers the whole response, so injected skills and notices
       // shrink the page instead of pushing it past the client's limit.
       const maxChars = Math.max(
-        SNAPSHOT_CHAR_BUDGET - extraText.length,
+        SNAPSHOT_CHAR_BUDGET -
+          [batchPrefix, noticeBlock, closedSuffix, extraText].join('').length,
         SNAPSHOT_CHAR_BUDGET / 5,
       );
-      const full = formatSnapshot(lastSnapshot, { from, maxChars });
+      const full = formatSnapshot(lastSnapshot, {
+        from,
+        maxChars,
+        carry: { targetId, maxElements },
+      });
       let snapshotText = full;
       if (
         prevElements &&

@@ -194,11 +194,15 @@ export interface SnapshotPage {
   from?: number;
   /** Characters of element lines to emit before paging. Unbounded when omitted. */
   maxChars?: number;
+  /** Snapshot params the next-page call must repeat to read the same snapshot. */
+  carry?: { targetId?: string; maxElements?: number };
 }
+
+const LINE_TRUNCATED = '… [line truncated]';
 
 export const formatSnapshot = (
   snapshot: SnapshotResult,
-  { from = 1, maxChars = Infinity }: SnapshotPage = {},
+  { from = 1, maxChars = Infinity, carry }: SnapshotPage = {},
 ): string => {
   const total = snapshot.elements.length;
   const frameLabels = frameLabelsOf(snapshot);
@@ -206,7 +210,14 @@ export const formatSnapshot = (
   const elementLines: string[] = [];
   let used = 0;
   for (const el of snapshot.elements.slice(start)) {
-    const line = formatElement(el, frameLabels);
+    const whole = formatElement(el, frameLabels);
+    // A single line longer than the page (a select with many long options)
+    // would overflow every page it starts, so it is the one thing cut short.
+    const line =
+      whole.length > maxChars
+        ? whole.slice(0, Math.max(maxChars - LINE_TRUNCATED.length, 0)) +
+          LINE_TRUNCATED
+        : whole;
     // Always emit one element so a page can never come back empty.
     if (elementLines.length > 0 && used + line.length > maxChars) break;
     elementLines.push(line);
@@ -245,8 +256,12 @@ export const formatSnapshot = (
   lines.push('', ...elementLines);
 
   if (end < total) {
+    const next = JSON.stringify({
+      method: 'snapshot',
+      params: { ...carry, from: end + 1 },
+    });
     lines.push(
-      `… ${total - end} more elements not shown (response size limit). Next page: { "method": "snapshot", "params": { "from": ${end + 1} } }. To read page content instead, use \`text\` with no selector.`,
+      `… ${total - end} more elements not shown (response size limit). Next page: ${next}. To read page content instead, use \`text\` with no selector.`,
     );
   }
 

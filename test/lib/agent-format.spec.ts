@@ -109,7 +109,9 @@ describe('formatSnapshot paging', () => {
     expect(last).to.be.lessThan(100);
     expect(output).to.include(`Snapshot: elements 1-${last} of 100`);
     expect(output).to.include(`${100 - last} more elements not shown`);
-    expect(output).to.include(`"params": { "from": ${last + 1} }`);
+    expect(output).to.include(
+      `Next page: {"method":"snapshot","params":{"from":${last + 1}}}.`,
+    );
     expect(output.trimEnd()).to.match(/--- END SNAPSHOT ---$/);
   });
 
@@ -120,15 +122,36 @@ describe('formatSnapshot paging', () => {
     while (from !== undefined) {
       const output = formatSnapshot(snap, { from, maxChars: 400 });
       seen.push(...shown(output));
-      const next = output.match(/"from": (\d+)/);
+      const next = output.match(/"from":(\d+)/);
       from = next ? Number(next[1]) : undefined;
     }
 
     expect(seen).to.deep.equal(snap.elements.map((el) => el.ref));
   });
 
-  it('always shows one element, even when it alone exceeds the budget', () => {
-    expect(shown(formatSnapshot(many(5), { maxChars: 1 }))).to.deep.equal([1]);
+  it('repeats the params that select the snapshot in the next-page call', () => {
+    const output = formatSnapshot(many(100), {
+      maxChars: 400,
+      carry: { targetId: 'TAB-B', maxElements: 1000 },
+    });
+
+    expect(output).to.match(
+      /Next page: \{"method":"snapshot","params":\{"targetId":"TAB-B","maxElements":1000,"from":\d+\}\}\./,
+    );
+  });
+
+  it('cuts a single line that is longer than the page, keeping its ref', () => {
+    const snap = many(3);
+    snap.elements[0].options = Array.from({ length: 100 }, () =>
+      'x'.repeat(80),
+    );
+    const output = formatSnapshot(snap, { maxChars: 400 });
+    const first = output.split('\n').find((l) => l.startsWith('[1] ')) ?? '';
+
+    expect(first).to.have.lengthOf(400);
+    expect(first).to.include("ref=a[href='/item/1']");
+    expect(first.endsWith('… [line truncated]')).to.equal(true);
+    expect(output).to.include('"from":2');
   });
 
   it('reports an empty page when from is past the end', () => {
