@@ -204,6 +204,8 @@ export interface SnapshotPage {
   maxChars?: number;
   /** Snapshot params the next-page call must repeat to read the same snapshot. */
   carry?: { targetId?: string; maxElements?: number };
+  /** Said after the next-page call, e.g. when this browser will not survive to serve it. */
+  nextPageNote?: string;
 }
 
 const LINE_TRUNCATED = '… [line truncated]';
@@ -213,7 +215,7 @@ const FOOTER_RESERVE = 400;
 /** A formatted snapshot page and the half-open element range it shows. */
 export const pageSnapshot = (
   snapshot: SnapshotResult,
-  { from = 1, maxChars = Infinity, carry }: SnapshotPage = {},
+  { from = 1, maxChars = Infinity, carry, nextPageNote }: SnapshotPage = {},
 ): { text: string; start: number; end: number } => {
   const total = snapshot.elements.length;
   const frameLabels = frameLabelsOf(snapshot);
@@ -278,7 +280,7 @@ export const pageSnapshot = (
       params: { ...carry, from: end + 1 },
     });
     lines.push(
-      `… ${total - end} more elements not shown (response size limit). Next page: ${next}. To read page content instead, use \`text\` with no selector.`,
+      `… ${total - end} more elements not shown (response size limit). Next page: ${next}.${nextPageNote ? ` ${nextPageNote}` : ''} To read page content instead, use \`text\` with no selector.`,
     );
   }
 
@@ -347,16 +349,27 @@ const identityEntries = (
   });
 };
 
-// `shown` limits the index to elements the client actually received, by
-// position. Keys are still numbered over the whole snapshot so they line up
-// with the next diff, which numbers the whole snapshot too.
 export const indexByIdentity = (
   snapshot: SnapshotResult,
-  shown?: Set<number>,
-): Map<string, SnapshotElement> =>
-  new Map(
-    identityEntries(snapshot.elements).filter((_, i) => !shown || shown.has(i)),
-  );
+): Map<string, SnapshotElement> => new Map(identityEntries(snapshot.elements));
+
+// Diff baseline after a page: only the elements the client has been shown, so
+// a later diff lists the rest as new instead of calling them unchanged. Keyed
+// by identity, not position, so an element inserted between page requests is
+// not mistaken for one already shown. `earlier` is the baseline being
+// continued by a `from` request.
+export const shownBaseline = (
+  snapshot: SnapshotResult,
+  page: { start: number; end: number },
+  earlier?: Map<string, SnapshotElement>,
+): Map<string, SnapshotElement> => {
+  const entries = identityEntries(snapshot.elements);
+  const shown = new Set([
+    ...(earlier?.keys() ?? []),
+    ...entries.slice(page.start, page.end).map(([key]) => key),
+  ]);
+  return new Map(entries.filter(([key]) => shown.has(key)));
+};
 
 const frameLabelsOf = (snapshot: SnapshotResult): Map<string, string> => {
   const labels = new Map<string, string>();

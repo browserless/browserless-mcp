@@ -110,6 +110,7 @@ import {
   formatSnapshotDiffPositional,
   indexByIdentity,
   pageSnapshot,
+  shownBaseline,
   SNAPSHOT_CHAR_BUDGET,
   sanitizeUpgradeBody,
 } from '../lib/agent-format.js';
@@ -2293,6 +2294,11 @@ export const runAgentCommands = async (
         from,
         maxChars,
         carry: { targetId, maxElements },
+        nextPageNote:
+          closedDuringBatch ||
+          !(keepAlive || downloadsPending || createProfile || attachSessionId)
+            ? 'This browser closes with this call, so first repeat the batch with `keepSessionAlive: true`.'
+            : undefined,
       });
       const full = page.text;
       let snapshotText = full;
@@ -2320,29 +2326,22 @@ export const runAgentCommands = async (
       }
       // Never let a peek's other-tab elements become the active baseline.
       if (!peeking) {
-        // The diff baseline holds only what the client was shown: a diff
-        // lists everything outside it as new, so it completes the picture,
-        // while a page adds its own range (to earlier pages when continuing).
-        const total = lastSnapshot.elements.length;
-        const positions = Array.from({ length: total }, (_, i) => i);
-        const earlier =
-          from === undefined || !prevElements
-            ? []
-            : (agentSession.lastShown ?? positions);
-        const shown =
+        // A diff lists everything outside the baseline as new, so after one
+        // the client has seen it all; a page adds only its own elements.
+        const baseline =
           snapshotText !== full
-            ? undefined
-            : new Set([...earlier, ...positions.slice(page.start, page.end)]);
-        const complete = !shown || shown.size >= total;
-        agentSession.lastShown = complete ? undefined : shown;
-        agentSession.lastElements = indexByIdentity(
-          lastSnapshot,
-          agentSession.lastShown,
-        );
+            ? indexByIdentity(lastSnapshot)
+            : shownBaseline(
+                lastSnapshot,
+                page,
+                from === undefined ? undefined : prevElements,
+              );
+        agentSession.lastElements = baseline;
         // Positional diffing compares every position, so it needs them all.
-        agentSession.lastSnapshotElements = complete
-          ? lastSnapshot.elements
-          : undefined;
+        agentSession.lastSnapshotElements =
+          baseline.size === lastSnapshot.elements.length
+            ? lastSnapshot.elements
+            : undefined;
         agentSession.lastActiveTargetId = lastSnapshot.activeTargetId;
       }
       const text = appendExtra(

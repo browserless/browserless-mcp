@@ -3,8 +3,8 @@ import { expect } from 'chai';
 import {
   formatSnapshot,
   formatSnapshotDiff,
-  indexByIdentity,
   pageSnapshot,
+  shownBaseline,
 } from '../../src/lib/agent-format.js';
 import type {
   SnapshotElement,
@@ -205,10 +205,7 @@ describe('formatSnapshot paging', () => {
     const snap = many(10);
     const page = pageSnapshot(snap, { maxChars: 700 });
     expect(page.end).to.be.lessThan(10);
-    const baseline = indexByIdentity(
-      snap,
-      new Set(Array.from({ length: page.end }, (_, i) => i)),
-    );
+    const baseline = shownBaseline(snap, page);
 
     const diff = formatSnapshotDiff(snap, baseline);
 
@@ -218,6 +215,49 @@ describe('formatSnapshot paging', () => {
     );
     expect(diff).to.include('+ [10] a link "Item 10" ref=a[href=\'/item/10\']');
     expect(diff).to.not.include('+ [1] ');
+  });
+
+  it('does not count an element inserted between pages as shown', () => {
+    const before = many(6);
+    const first = shownBaseline(before, { start: 0, end: 3 });
+    // A new element lands at position 0, shifting the rest down by one.
+    const after: SnapshotResult = {
+      ...before,
+      elements: [
+        {
+          ref: 0,
+          role: 'link',
+          name: 'Inserted',
+          selector: "a[href='/inserted']",
+          tag: 'a',
+        },
+        ...before.elements,
+      ],
+    };
+    // The follow-up page shows positions 4-5, i.e. Item 4 and Item 5.
+    const baseline = shownBaseline(after, { start: 4, end: 6 }, first);
+
+    expect([...baseline.values()].map((el) => el.name)).to.deep.equal([
+      'Item 1',
+      'Item 2',
+      'Item 3',
+      'Item 4',
+      'Item 5',
+    ]);
+    expect(formatSnapshotDiff(after, baseline)).to.include(
+      '+ [0] a link "Inserted"',
+    );
+  });
+
+  it('adds the caller note after the next-page call', () => {
+    const output = formatSnapshot(many(100), {
+      maxChars: 2000,
+      nextPageNote: 'Keep the browser first.',
+    });
+
+    expect(output).to.match(
+      /"from":\d+\}\}\. Keep the browser first\. To read/,
+    );
   });
 
   it('reports an empty page when from is past the end', () => {

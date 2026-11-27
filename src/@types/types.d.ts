@@ -268,9 +268,6 @@ export interface ActiveSession {
   mediaPageUrl?: string;
   lastElements?: Map<string, SnapshotElement>;
   lastSnapshotElements?: SnapshotElement[];
-  // Positions of the last snapshot's elements the client has been shown.
-  // Undefined means all of them; a paged snapshot leaves the rest out.
-  lastShown?: Set<number>;
   // Active tab the cache above belongs to; a change means re-baseline (new tab).
   lastActiveTargetId?: string | null;
   // Saved-login first-page check state; undefined on sessions without a profile.
