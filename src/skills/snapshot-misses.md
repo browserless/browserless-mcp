@@ -4,18 +4,17 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
 
 ## Why content goes missing
 
-- **Truncation**: snapshots cap at 500 elements by default. Dense pages (long lists, search results, infinite scroll) overflow
+- **Truncation**: snapshots cap at 500 elements by default, and a long snapshot is returned in pages. Element order is not guaranteed to follow the page top to bottom, so a cut-off snapshot can be missing elements from anywhere on the page, not only its end
 - **No accessible name**: images without `alt`, icon-only buttons, decorative links, SVGs without ARIA labels excluded from accessibility tree
 - **Image-rendered content**: math, formulas, charts (WolframAlpha, LaTeX, Wikipedia formulas, Google image search) — result is single `<img>` with meaning in `alt` text, not DOM
 - **Late-loading content**: page still hydrating. Wait (see dynamic-content skill if `wait*` call fails), re-snapshot
 
 ## Recipe
 
-1. **If truncated, narrow scope first.** Most tasks don't need every element — re-snapshot with higher `maxElements` only if element genuinely beyond 500:
-
-   ```json
-   { "method": "snapshot", "params": { "maxElements": 1000 } }
-   ```
+1. **If the snapshot was cut off, pick the cheapest way to what you need:**
+   - Its last line names the next page: `{ "method": "snapshot", "params": { "from": N } }`. Use it when you need to act on an element that is not shown yet.
+   - To read content, use `text` with no selector, or `text` / `html` on a container `ref=` the snapshot did show.
+   - Raise `maxElements` only when the snapshot reports 500 elements in total and the element is still missing after paging.
 
 <!-- compliant-omit -->
 
@@ -70,12 +69,13 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
 
 <!-- /compliant-only -->
 
-4. **For very long lists**, scroll and re-snapshot rather than raising `maxElements` — snapshot pagination more reliable than one giant pull:
+4. **Scroll only for lists that load more as you scroll** (infinite feeds, lazy results). The snapshot covers the whole page, not the viewport, so scrolling a static page returns the same elements:
 
    ```json
    {
      "commands": [
        { "method": "scroll", "params": { "direction": "down" } },
+       { "method": "waitForTimeout", "params": { "time": 1000 } },
        { "method": "snapshot" }
      ]
    }
@@ -83,7 +83,8 @@ Snapshot at element limit (truncated) or empty. What you need may not be in it.
 
 ## Don't
 
-- Raise `maxElements` past ~2000 — model spends more on snapshot reading than task gains. Scroll and paginate instead
+- Raise `maxElements` to read content — it multiplies the snapshot size. Read with `text`, or page with `from`
+- Scroll a static page to reach more elements — it changes nothing
 
 <!-- compliant-omit -->
 

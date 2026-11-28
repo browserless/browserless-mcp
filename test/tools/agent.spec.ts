@@ -2342,6 +2342,131 @@ describe('browserless_agent repetition self-check', () => {
 describe('browserless_agent one-shot sessions', () => {
   afterEach(() => sinon.restore());
 
+  // 600 links with long refs: well past one snapshot page.
+  const denseSnapshot = {
+    url: 'https://example.com/list',
+    title: 'List',
+    time: 1,
+    elements: Array.from({ length: 600 }, (_, i) => ({
+      ref: i + 1,
+      role: 'link',
+      name: `Item ${i + 1}`,
+      selector: `a[href='/item/${i + 1}/${'x'.repeat(120)}']`,
+      tag: 'a',
+    })),
+  };
+  const denseServer = () =>
+    makeRespondingServer((method) =>
+      method === 'snapshot' ? denseSnapshot : {},
+    );
+  const NEXT_PAGE =
+    /Next page: \{"method":"snapshot","params":\{"from":(\d+)\}\}\./;
+  const REOPEN =
+    'This browser closes with this call. To page, open the page again with `keepSessionAlive: true`.';
+  const REOPEN_WITHOUT_CLOSE =
+    'This batch closed the browser. To page, open the page again without `close` and with `keepSessionAlive: true`.';
+  const goto = { method: 'goto', params: { url: denseSnapshot.url } };
+
+  for (const [name, keepSessionAlive] of [
+    ['by default', undefined],
+    ['with keepSessionAlive: false', false],
+  ] as const) {
+    it(`says a paged snapshot cannot be continued when the browser closes ${name}`, async () => {
+      const srv = await denseServer();
+      try {
+        const text = JSON.stringify(
+          await getAgentExecute(srv.url)(
+            { keepSessionAlive, commands: [goto, { method: 'snapshot' }] },
+            mockContext,
+          ),
+        );
+        expect(text).to.match(
+          new RegExp(NEXT_PAGE.source.replace(/"/g, '\\\\"')),
+        );
+        expect(text).to.include(REOPEN);
+        expect(text).to.include('Browser session closed (one-shot)');
+      } finally {
+        await srv.close();
+      }
+    });
+  }
+
+  it('tells the caller to drop close when the batch itself closed the browser', async () => {
+    const srv = await denseServer();
+    try {
+      const text = JSON.stringify(
+        await getAgentExecute(srv.url)(
+          {
+            keepSessionAlive: true,
+            commands: [goto, { method: 'snapshot' }, { method: 'close' }],
+          },
+          mockContext,
+        ),
+      );
+      expect(text).to.include(REOPEN_WITHOUT_CLOSE);
+      expect(text).not.to.include(REOPEN);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('pages a kept-alive snapshot without a closing note and records each page as paged', async () => {
+    const srv = await denseServer();
+    const analytics = new AnalyticsHelper(false);
+    const fire = sinon.stub(analytics, 'fireToolRequest');
+    const execute = getAgentExecute(srv.url, 'stdio', analytics);
+    const textOf = (result: unknown): string =>
+      (result as { content: Array<{ text: string }> }).content[0].text;
+    try {
+      const first = textOf(
+        await execute(
+          { keepSessionAlive: true, commands: [goto, { method: 'snapshot' }] },
+          mockContext,
+        ),
+      );
+      const sessionId = first.match(/sessionId: (\S+)/)?.[1];
+      const from = Number(first.match(NEXT_PAGE)?.[1]);
+
+      expect(first).not.to.include('To page, open the page again');
+      expect(first.length).to.be.at.most(50_000);
+      expect(from).to.be.greaterThan(1);
+
+      let last = first;
+      for (let next = from; next;) {
+        last = textOf(
+          await execute(
+            {
+              sessionId,
+              commands: [{ method: 'snapshot', params: { from: next } }],
+            },
+            mockContext,
+          ),
+        );
+        next = Number(last.match(NEXT_PAGE)?.[1] ?? 0);
+      }
+
+      expect(last).to.include('of 600');
+      expect(last).to.include('[600] a link "Item 600"');
+      expect(last).not.to.include('more elements not shown');
+      for (const call of fire.getCalls()) {
+        expect(call.args[2]).to.include({
+          snapshot_elements: 600,
+          snapshot_paged: true,
+        });
+        expect(
+          (call.args[2] as { response_chars?: unknown }).response_chars,
+        ).to.be.a('number');
+      }
+      expect(fire.callCount).to.be.greaterThan(1);
+      await execute(
+        { sessionId, commands: [{ method: 'close' }] },
+        mockContext,
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+
   for (const row of [
     {
       name: 'dead handle',
