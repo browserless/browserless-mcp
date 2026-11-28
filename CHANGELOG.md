@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.53.0](https://github.com/browserless/browserless-mcp/compare/v1.52.0...v1.53.0) (2026-11-28)
+
+
+### Features
+
+* show map discovery coverage ([#603](https://github.com/browserless/browserless-mcp/issues/603)) ([e8747bf](https://github.com/browserless/browserless-mcp/commit/e8747bff33bd4da6fd2266c48d9c5832957b6a29))
+
+
+### Bug Fixes
+
+* recognize claude-plugin as a skill telemetry source ([#605](https://github.com/browserless/browserless-mcp/issues/605)) ([9e6edfb](https://github.com/browserless/browserless-mcp/commit/9e6edfbe99284cb817e46d44ef2f3f84e06baea1))
+
 ## [1.52.0](https://github.com/browserless/browserless-mcp/compare/v1.51.0...v1.52.0) (2026-11-26)
 
 
