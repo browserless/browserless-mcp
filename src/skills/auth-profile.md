@@ -65,10 +65,24 @@ the session handle retains the profile, so repeating `profile` is optional.
    { "method": "saveProfile", "params": { "name": "github" } }
    ```
    Pass the same `name` you opened the session with. If a profile with that
-   name already exists for this token, the call returns `ok: false` with an
-   `error` saying the profile already exists. Don't retry `saveProfile` with the
-   same name — choose a different name, or tell the user a profile by that name
-   already exists.
+   name already exists in your account, `saveProfile` refuses to replace it
+   by default (`ok: false`) and leaves the saved login unchanged. Use a
+   different name to keep a separate profile. To replace the saved login,
+   first confirm that this session is signed in to the intended site and
+   account and that replacement is intended. **Replacement cannot be undone.**
+   Only then retry in the same session with:
+   ```json
+   {
+     "method": "saveProfile",
+     "params": { "name": "github", "overwrite": true }
+   }
+   ```
+   Only the exact boolean `true` permits replacement; omitted, `false`,
+   `"true"`, or `1` does not. Replacement keeps the same `profileId` and
+   capture settings and returns `ok: true`. A new name still creates a profile.
+   Use `saveProfile` with `overwrite: true` for this retry, not a
+   `refreshProfile` agent command. Creation sessions, uploads, renames, and
+   autologin creation still reject duplicate names.
 5. **Inspect the result.** A successful save returns:
 
    ```json
