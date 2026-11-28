@@ -1394,6 +1394,191 @@ describe('Stripe Link tools', () => {
     }
   });
 
+  describe('payment verification', () => {
+    const verified = {
+      source: 'stripe_link',
+      payment_confirmed: true,
+      link_status: 'succeeded',
+      amount_minor: 3500,
+      currency: 'usd',
+      merchant: 'Stripe Press',
+      last4: '4242',
+      charged_amount_minor: 3500,
+      charged_at: '2025-11-13T02:13:20.000Z',
+    };
+    const cases = [
+      { status: 'succeeded', verified },
+      {
+        status: 'recovery_required',
+        verified: undefined,
+        instruction:
+          'Payment confirmation timed out. Do not submit again, resume, or create a new checkout. Review Link activity and the merchant receipt before taking further action.',
+      },
+      {
+        status: 'recovery_required',
+        verified: {
+          ...verified,
+          payment_confirmed: false,
+          mismatch: ['amount_minor'],
+        },
+        instruction:
+          'Stripe Link recorded this payment, but its amount, currency, or merchant does not match what the buyer approved. The payment may have been charged. Do not submit again or create a new checkout. Tell the user to review this payment in their Link activity.',
+      },
+      {
+        status: 'succeeded',
+        verified: { ...verified, card_number: 'not-forwarded' },
+      },
+    ];
+    for (const body of cases) {
+      it(`retires ${body.status} checkout ${body.verified ? 'with' : 'without'} verification`, async () => {
+        const browser = await makeRespondingServer(() => body);
+        try {
+          const session = await getOrCreateSession(
+            'verified-result',
+            browser.url,
+            mockConfig.browserlessToken!,
+          );
+          session.stripeLinkContinuation = {
+            checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+            allowedNextAction: 'report',
+            validUntil: VALID_UNTIL_MS,
+          };
+          session.skillState.fired.set('agentic-checkout', 0);
+          const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+            ...mockConfig,
+            browserlessApiUrl: browser.url,
+          });
+          const result = JSON.parse(
+            textOf(
+              await checkout(
+                {
+                  action: 'report',
+                  outcome: 'success',
+                  checkout_id: session.stripeLinkContinuation.checkoutId,
+                  browser_session_handle: session.handle,
+                },
+                mockContext,
+              ),
+            ),
+          );
+          expect(result.verified).to.deep.equal(
+            body.status === 'recovery_required' ? body.verified : verified,
+          );
+          if (!body.verified) {
+            expect(result).not.to.have.property('verified');
+          }
+          expect(result.instruction).to.equal(body.instruction);
+          expect(session.stripeLinkContinuation).to.equal(undefined);
+          expect(session.skillState.fired.has('agentic-checkout')).to.equal(
+            false,
+          );
+        } finally {
+          await browser.close();
+        }
+      });
+    }
+
+    const invalid: { status: string; verified: unknown }[] = [
+      null,
+      [],
+      'bad',
+      { ...verified, source: 'other' },
+      { ...verified, payment_confirmed: 'true' },
+      { ...verified, link_status: 'bogus' },
+      ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '3500'].flatMap((value) => [
+        { ...verified, amount_minor: value },
+        { ...verified, charged_amount_minor: value },
+      ]),
+      { ...verified, currency: 'USD1' },
+      { ...verified, currency: 'usd\n' },
+      ...['', 'a\nb', 'a\rb', 'x'.repeat(161)].map((merchant) => ({
+        ...verified,
+        merchant,
+      })),
+      { ...verified, last4: '12a4' },
+      { ...verified, last4: '4242\n' },
+      { ...verified, charged_at: 'nope' },
+      { ...verified, mismatch: [] },
+      { ...verified, mismatch: ['amount_minor'] },
+    ].map((verified) => ({ status: 'succeeded', verified }));
+    invalid.push(
+      { status: 'submitted', verified },
+      {
+        status: 'succeeded',
+        verified: { ...verified, link_status: 'submitted' },
+      },
+      { status: 'recovery_required', verified: null },
+      {
+        status: 'recovery_required',
+        verified: { ...verified, payment_confirmed: false },
+      },
+      {
+        status: 'recovery_required',
+        verified: {
+          ...verified,
+          payment_confirmed: false,
+          mismatch: ['bogus'],
+        },
+      },
+      {
+        status: 'recovery_required',
+        verified: {
+          ...verified,
+          payment_confirmed: false,
+          mismatch: ['amount_minor', 'amount_minor'],
+        },
+      },
+      {
+        status: 'recovery_required',
+        verified: { ...verified, payment_confirmed: false, mismatch: [] },
+      },
+      {
+        status: 'recovery_required',
+        verified: { ...verified, mismatch: ['amount_minor'] },
+      },
+    );
+    for (const [index, body] of invalid.entries()) {
+      it(`rejects malformed verification ${index}`, async () => {
+        const browser = await makeRespondingServer(() => body);
+        try {
+          const session = await getOrCreateSession(
+            'invalid-verification',
+            browser.url,
+            mockConfig.browserlessToken!,
+          );
+          session.stripeLinkContinuation = {
+            checkoutId: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+            allowedNextAction: 'report',
+            validUntil: VALID_UNTIL_MS,
+          };
+          const checkout = captureExecute(registerStripeLinkCheckoutTool, {
+            ...mockConfig,
+            browserlessApiUrl: browser.url,
+          });
+          let error: unknown;
+          try {
+            await checkout(
+              {
+                action: 'report',
+                outcome: 'success',
+                checkout_id: 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF',
+                browser_session_handle: session.handle,
+              },
+              mockContext,
+            );
+          } catch (caught) {
+            error = caught;
+          }
+          expect(String(error)).to.include(
+            'Browserless returned an invalid checkout verification',
+          );
+        } finally {
+          await browser.close();
+        }
+      });
+    }
+  });
+
   it('treats a submitted card report as terminal and clears the checkout', async () => {
     const checkoutId = 'lkco_abcdefghijklmnopqrstuvwxyzABCDEF';
     const browser = await makeRespondingServer(() => ({

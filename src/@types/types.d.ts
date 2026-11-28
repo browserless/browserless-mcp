@@ -747,6 +747,18 @@ export type StripeLinkCheckoutRequest =
 
 export interface StripeLinkCheckoutResponse {
   status: string;
+  verified?: {
+    source: 'stripe_link';
+    payment_confirmed: boolean;
+    link_status: string;
+    amount_minor?: number;
+    currency?: string;
+    merchant?: string;
+    last4?: string;
+    charged_amount_minor?: number;
+    charged_at?: string;
+    mismatch?: string[];
+  };
   approval_url?: string;
   action_url?: string;
   action_type?: string;
